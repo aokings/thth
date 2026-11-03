@@ -20,6 +20,7 @@ import contextlib
 import datetime
 import http.server
 import json
+import os
 import threading
 import urllib.parse
 
@@ -30,7 +31,7 @@ from tests.test_b17_remote_reads import ThreadAdapter, call, thread  # noqa: F40
 from tests.test_v212_server_writes import env  # noqa: F401  (fixture)
 from tests.test_v3140_server_reads import media  # noqa: F401  (fixture)
 from tests.test_threads_read_permissions import _scan_for, _write_token
-from thth import jst, topic_advice, topic_store
+from thth import jst, topic_advice, topic_store, where_keep
 from thth import topic_models as models
 from thth import threads_read_cli
 
@@ -131,7 +132,7 @@ def test_tagはsearch_mode_TAGで問い_数と時刻だけを返す(account, tht
                               "oldest_at": "2026-10-30T09:00:00+09:00", "n_with_timestamp": 3,
                               "n_label_matched": 2, "n_label_other": 1, "n_label_absent": 1}
     assert data["n_returned"] == 4 and data["more_may_exist"] is False
-    assert data["storage"] == "display_only" and data["observation_id"] is None
+    assert data["storage"] == "display_only" and data["kept"] is None
     assert "--note 苦味 --status ok" in data["note_hint"]
     # **他人の本文・username・post_id・permalink は出さない**（数と時刻だけ）。
     for needle in (TEXT_A, TEXT_B, "alice_tag", "bob_tag", "PIDTAG1", "https://t/"):
@@ -203,123 +204,152 @@ def test_tagとkeepの組み合わせの誤りは断る(account, tmp_path, isola
     assert r3.returncode == 2 and "--tag は Threads の検索の引数です" in r3.stderr
 
 
-# ======================================================== --keep と topic_advice
+# ======================================================== --keep（project の棚）と topic_advice
 
 # 件数 6・投稿者 5（`--keep` で値が残る大きさ。5 未満は欠測）。
 MANY = [{"id": f"PIDMANY{i}", "text": f"多い方の本文{i}・QZ7MANY", "username": f"many_user{i % 5}",
          "timestamp": f"2026-11-0{1 + i % 2}T0{i}:00:00+0000", "topic_tag": "苦味"} for i in range(6)]
 
 
-def test_keepは数と日付だけを観測として残す(account, thth_root):
+def _shelf_rows(project="nigamilab"):
+    rows, broken = where_keep.read(project)
+    assert broken == 0
+    return [row for row in rows if row["kind"] == "topic_tag"]
+
+
+def test_keepはwhere_keepと同じprojectの棚に数と日付だけを残す(account, thth_root):
     with _server(rows=MANY) as (base_url, _requests):
         r = _cli(["topics", account["name"], "--search", "苦味", "--tag", "--keep", "--json"], base_url)
     assert r.returncode == 0, r.stdout + r.stderr
     data = json.loads(r.stdout)
-    assert data["storage"] == "kept" and data["observation_id"].startswith("sha256:")
-    assert data["observation_id"] in data["note_hint"]
-    saved = topic_store.get("observations", data["observation_id"])
-    assert saved["search_mode"] == "topic_tag" and saved["provider"] == "threads_api"
-    assert saved["status"] == "ok" and saved["samples"] == [] and saved["account"] == account["name"]
-    assert saved["counts"] == {"n": 6, "distinct_authors": 5, "latest_date": "2026-11-02",
-                               "oldest_date": "2026-11-01", "n_with_timestamp": 6, "n_label_matched": 6,
-                               "n_label_other": None, "n_label_absent": None}   # 0 も 5 未満なので欠測
-    assert data["kept_counts"] == saved["counts"]
-    assert saved["submitted_by"] == "test-tag"
-    assert set(saved) <= models.TAG_COUNTS_OBSERVATION_KEYS | {"schema_version", "observation_id"}
-    # 本文・username・post_id は残らない。**正確な時刻も残らない**（日付だけ）。
+    assert data["storage"] == "kept" and "state/_map/<project>/" in data["kept_place"]
+    (row,) = _shelf_rows()
+    assert data["kept"] == row
+    assert row["kind"] == "topic_tag" and row["word"] == "苦味" and row["medium"] == "threads"
+    assert row["status"] == "ok" and row["n"] == 6 and row["distinct_authors"] == 5
+    assert row["latest_date"] == "2026-11-02" and row["oldest_date"] == "2026-11-01"
+    assert row["n_label_other"] is None and row["n_label_absent"] is None   # 0 も 5 未満なので欠測
+    assert row["submitted_by"] == "test-tag"
+    # 置き場は project の棚だけ。**観測の棚（project をまたぐ）には何も置かない。**
+    assert topic_store.load_all("observations")[0] == []
+    assert os.path.isdir(os.path.join(thth_root, "state", "_map", "nigamilab"))
+    # 本文・username・post_id・正確な時刻は残らない（日付だけ）。
     for needle in ("QZ7MANY", "many_user", "PIDMANY", "T00:00", "T05:00"):
         assert _scan_for(thth_root, needle) == [], needle
-    # 画面の数は正確なまま（表示だけ）。
-    assert data["counts"]["latest_at"] == "2026-11-02T14:00:00+09:00"
+    assert data["counts"]["latest_at"] == "2026-11-02T14:00:00+09:00"   # 画面の数は正確なまま（表示だけ）
+    # where-log で読める（project の中だけ）。
+    log = run_thth(["where-log", "nigamilab", "--json"])
+    assert log.returncode == 0, log.stderr
+    assert json.loads(log.stdout)["topic_tag"][0]["days"][0]["n"] == 6
 
 
-def test_keepは5未満の数を欠測で残す(account, thth_root):
+def test_keepは5未満と0件を欠測で残し_読めなかったことも残す(account):
     with _server() as (base_url, _requests):
         r = _cli(["topics", account["name"], "--search", "苦味", "--tag", "--keep"], base_url)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "残した数: 件数 欠測（5 未満）・投稿者 欠測（5 未満）・最新 —" in r.stdout
-    (obs,), _broken, _taken = topic_store.load_all("observations")
-    assert obs["counts"] == {k: None for k in models.TAG_COUNT_KEYS}
-    _no_trace(thth_root, account["repo_dir"])
-
-
-def test_keepは読めなかったことも0件と分けて残す(account):
+    (row,) = _shelf_rows()
+    assert row["reason"] == "small_sample" and all(row[k] is None for k in where_keep.TOPIC_COUNT_KEYS)
+    with _server(rows=[]) as (base_url, _requests):
+        _cli(["topics", account["name"], "--search", "苦味", "--tag", "--keep"], base_url)
+    (row,) = _shelf_rows()   # 同じ日・同じ語は置き換え
+    assert row["status"] == "empty" and row["n"] is None and row["reason"] == "zero_or_filtered"
     with _server(mode="5xx") as (base_url, _requests):
         r = _cli(["topics", account["name"], "--search", "苦味", "--tag", "--keep", "--json"], base_url)
     assert r.returncode == 1
+    (row,) = _shelf_rows()
+    assert row["status"] == "unavailable" and row["n"] is None and row["reason"] is None
+
+
+def test_projectの無いaccountはkeepを断る(tmp_path, isolated_account_factory):
+    token_path = str(tmp_path / "np.token")
+    acc = isolated_account_factory("tag-noproject", token=token_path, handle="nigamilab", project=None)
+    _write_token(token_path)
+    with _server(rows=MANY) as (base_url, _requests):
+        r = _cli(["topics", acc["name"], "--search", "苦味", "--tag", "--keep", "--json"], base_url)
+    assert r.returncode == 1
     data = json.loads(r.stdout)
-    saved = topic_store.get("observations", data["observation_id"])
-    assert saved["status"] == "unavailable" and "counts" not in saved
-    with _server(rows=[]) as (base_url, _requests):
-        data = json.loads(_cli(["topics", account["name"], "--search", "苦味", "--tag", "--keep",
-                                "--json"], base_url).stdout)
-    saved = topic_store.get("observations", data["observation_id"])
-    assert saved["status"] == "empty" and saved["counts"]["n"] == 0
+    assert data["storage"] == "display_only" and "project がありません" in data["keep_error"]
 
 
-def _tag_obs(n, authors, *, mode="topic_tag", provider="threads_api"):
-    now = jst.now_jst()
-    return {"topic": "苦味", "normalized_topic": "苦味", "search_mode": mode, "provider": provider,
-            "retrieved_at": jst.iso(now - datetime.timedelta(hours=1)), "status": "ok", "samples": [],
-            "observation_id": f"sha256:{n}{authors}{mode}{provider}",
-            "counts": {"n": n, "distinct_authors": authors, "latest_date": None, "oldest_date": None,
-                       "n_with_timestamp": n, "n_label_matched": n, "n_label_other": 0, "n_label_absent": 0}}
+def _context(account):
+    return {"profile_version": "p1", "profile_status": "confirmed", "account": account}
 
 
-def _observation_shortfalls(*observations):
-    context = {"profile_version": "p1", "profile_status": "confirmed"}
+def _shortfalls(account, *observations):
     chosen = {"topic": "苦味", "article_fit": 3, "conversation_fit": 3,
               "observation_refs": [o["observation_id"] for o in observations]}
-    out, _notes = topic_advice._shortfalls(context, chosen, {o["observation_id"]: o for o in observations},
-                                           now=jst.now_jst())
-    return [text for kind, text in out if kind == "observation"]
+    out, notes = topic_advice._shortfalls(_context(account), chosen,
+                                          {o["observation_id"]: o for o in observations}, now=jst.now_jst())
+    return [text for kind, text in out if kind == "observation"], notes
 
 
-def test_topic_adviceは数だけの観測をトピックの使用例として数える():
-    assert _observation_shortfalls(_tag_obs(8, 5)) == []
-    # 件数・投稿者が 5 未満で欠測なら、0 人とも author_key が無いとも言わず、残していないと言う。
-    texts = _observation_shortfalls(_tag_obs(8, None))
-    assert any("投稿者の数は 5 未満で残っていない" in t for t in texts) and not any("author_key" in t for t in texts)
-    texts = _observation_shortfalls(_tag_obs(None, None))
-    assert any("投稿例が 0 件" in t and "5 未満を残さない" in t for t in texts)
-    # 数だけの観測どうしの投稿者は足さない（同じ人を二度数えうる）。いちばん多い 1 件。
-    assert topic_advice._author_count([_tag_obs(6, 5), _tag_obs(7, 6)]) == 6
+def _keep_row(project, *, n, authors, word="苦味", date=None, status="ok"):
+    material = {"account": "x", "topic": word, "search_type": "RECENT", "requested_limit": 25, "narrow": None,
+                "status": status, "cannot_say": None,
+                "counts": {"n": n, "distinct_authors": authors, "latest_at": "2026-11-02T10:00:00+09:00",
+                           "oldest_at": "2026-11-01T10:00:00+09:00", "n_with_timestamp": n,
+                           "n_label_matched": n, "n_label_other": 0, "n_label_absent": 0}}
+    row = where_keep.topic_tag_row(date or jst.now_jst().date().isoformat(), material, by="t")
+    where_keep.write(project, [row])
 
 
-def test_topic_adviceはキーワード検索の数をトピックの使用例にしない():
-    # 形の上で counts を持っていても、トピックで引いた観測でなければ数えない（読む側でも見る）。
-    texts = _observation_shortfalls(_tag_obs(20, 10, mode="keyword"))
+def test_topic_adviceは自分のprojectの棚の行をトピックの使用例として数える(account):
+    _keep_row("nigamilab", n=8, authors=6)
+    texts, _notes = _shortfalls(account["name"])
+    assert texts == []
+    # 5 未満は欠測で残る → 「残していない」と言う（0 人とも author_key が無いとも言わない）。
+    _keep_row("nigamilab", n=8, authors=3)
+    texts, _notes = _shortfalls(account["name"])
+    assert any("投稿者の数は 5 未満で残っていない" in t for t in texts)
+    assert not any("author_key" in t for t in texts)
+
+
+def test_topic_adviceはほかのprojectと古い行を読まない(account, tmp_path, isolated_account_factory):
+    _keep_row("otherproj", n=20, authors=10)                     # ほかの project の棚
+    old = (jst.now_jst().date() - datetime.timedelta(days=topic_advice.FRESH_DAYS + 1)).isoformat()
+    _keep_row("nigamilab", n=20, authors=10, date=old)           # 自分の棚でも 7 日より古い
+    texts, _notes = _shortfalls(account["name"])
+    assert any("観測の参照がありません" in t for t in texts), texts
+
+
+def test_topic_adviceはキーワード検索の数と混ぜない(account):
+    # 観測の棚にキーワード検索の観測があっても、トピックの使用例にはならない（棚の行が無ければ足りない）。
+    obs = {"topic": "苦味", "normalized_topic": "苦味", "search_mode": "keyword", "provider": "threads_api",
+           "retrieved_at": jst.iso(jst.now_jst() - datetime.timedelta(hours=1)), "status": "ok",
+           "samples": [{"author_key": f"k{i}", "tagged": True} for i in range(10)], "observation_id": "sha256:kw"}
+    texts, _notes = _shortfalls(account["name"], obs)
     assert any("keyword 検索の結果は tag の利用例になりません" in t for t in texts)
-    texts = _observation_shortfalls(_tag_obs(20, 10, provider="browser"))
-    assert any("投稿例が 0 件" in t for t in texts)
+    # 棚の行があっても、キーワード検索の 10 件・10 人は足さずに棚の数だけで判定する。
+    _keep_row("nigamilab", n=8, authors=3)   # 投稿者は 5 未満で欠測
+    texts, _notes = _shortfalls(account["name"], obs)
+    assert any("投稿者の数は 5 未満で残っていない" in t for t in texts), texts
 
 
-# ======================================================== 数だけの観測の形（柵）
+# ======================================================== 棚の行の形（柵）
 
-def _counts_row(**over):
-    row = threads_read_cli.tag_observation(
-        threads_read_cli.tag_json([], "acct", "苦味", search_type="TOP", limit=25), by="x")
-    row = {k: v for k, v in row.items() if k not in ("observation_id", "schema_version")}
-    row.update(status="ok", counts=dict(row["counts"], n=6, distinct_authors=5, n_with_timestamp=6,
-                                        n_label_matched=None, n_label_other=None, n_label_absent=6,
-                                        latest_date="2026-11-02", oldest_date="2026-11-01"))
+def _valid_row(**over):
+    material = {"account": "x", "topic": "苦味", "search_type": "TOP", "requested_limit": 25, "narrow": None,
+                "status": "ok", "cannot_say": None,
+                "counts": {"n": 6, "distinct_authors": 5, "latest_at": "2026-11-02T10:00:00+09:00",
+                           "oldest_at": "2026-11-01T10:00:00+09:00", "n_with_timestamp": 6,
+                           "n_label_matched": 6, "n_label_other": 0, "n_label_absent": 0}}
+    row = where_keep.topic_tag_row("2026-11-03", material, by="t")
     row.update(over)
     return row
 
 
-def test_数だけの観測は許可リストの鍵と5未満なしと日付だけ():
-    models.build_observation(_counts_row())
-    good = _counts_row()["counts"]
-    for bad in ({"text": "本文"}, {"usernames": ["alice"]}, {"samples": [{"author_key": "k", "tagged": True}]},
-                {"search_mode": "keyword"}, {"provider": "browser"}, {"status": "partial"},
-                {"counts": {"n": 6}},
-                {"counts": dict(good, distinct_authors=3)},                         # 5 未満の値
-                {"counts": dict(good, latest_date="2026-11-02T10:00:00+09:00")},    # 正確な時刻
-                {"counts": dict(good, n=None)},                                     # 件数欠測なのに内訳あり
-                {"counts": dict(good, n=0, distinct_authors=0, n_with_timestamp=0, n_label_absent=0,
-                                latest_date=None, oldest_date=None)}):              # ok なのに 0 件
-        with pytest.raises(models.SchemaError):
-            models.build_observation(_counts_row(**bad))
+def test_棚の行は許可リストの鍵と5未満なしと日付だけ():
+    assert where_keep.valid_row(_valid_row())
+    for bad in ({"text": "本文"}, {"username": "alice"}, {"distinct_authors": 3}, {"n": 0},
+                {"latest_date": "2026-11-02T10:00:00+09:00"}, {"medium": "x"}, {"status": "partial"},
+                {"n": None}, {"window": {"since": None}}, {"submitted_by": "x" * 200}):
+        assert not where_keep.valid_row(_valid_row(**bad)), bad
+    # 観測の棚（project をまたぐ）には数だけの観測を入れない。
+    with pytest.raises(models.SchemaError):
+        models.build_observation({"topic": "苦味", "search_mode": "topic_tag", "provider": "threads_api",
+                                  "retrieved_at": "2026-11-03T10:00:00+09:00", "status": "ok", "samples": [],
+                                  "counts": {"n": 6}})
 
 
 # ======================================================== 遠くの道（VM の読む口）
@@ -328,7 +358,9 @@ def test_サーバの読む口もtagとkeepを受けて数と時刻だけを返�
     got = call(env, "topics_search", query="苦味", tag=True, keep=True, limit=6)
     assert ThreadAdapter.seen["search_mode"] == "TAG"
     assert got["status"] == "ok" and got["counts"]["n"] == 6 and got["storage"] == "kept"
-    assert got["kept_counts"]["n"] == 6 and got["kept_counts"]["distinct_authors"] == 6
+    assert got["kept"]["n"] == 6 and got["kept"]["distinct_authors"] == 6
+    # 残した人は鍵の主（監査 N-4）。
+    assert got["kept"]["submitted_by"] == env["context"].actor and got["kept"]["submitted_by"]
     assert "posts" not in got and "検索の本文" not in json.dumps(got, ensure_ascii=False)
     assert "who0" not in json.dumps(got, ensure_ascii=False)
 

@@ -208,6 +208,10 @@ def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True,
       （`insights()` が決める）。Meta は反応が 1 件も無い区分では欄ごと返さないので、リンククリックも
       頁が開いた数も 0。
     """
+    if actions_absent_as_zero and (_count(inline_link_clicks) or 0) > 0:
+        # 広告の中のリンクは押されている（inline が 1 以上）。欄が無いのを 0 と見なすと「押されたのに
+        # リンククリック 0・頁が開いた 0」と食い違うので、この行は 0 と見なさない（不明のまま・監査 N-1）。
+        actions_absent_as_zero = False
     if actions_absent_as_zero:
         actions = []
     counts = _action_counts(actions) if actions is not None else None
@@ -585,7 +589,9 @@ class Reader:
         actions_in_read = any(isinstance(row.get("actions"), list) for row in rows)
         out = []
         for row in rows:
-            absent_as_zero = actions_in_read and row.get("actions") is None
+            # ただし広告の中のリンクが押された行（inline_link_clicks が 1 以上）は 0 と見なさない（監査 N-1）。
+            absent_as_zero = (actions_in_read and row.get("actions") is None
+                              and not (_count(row.get("inline_link_clicks")) or 0) > 0)
             item = {"spend": row.get("spend") if isinstance(row.get("spend"), str) else None,
                     "spend_minor": spend_minor(row.get("spend"), currency),
                     "impressions": _count(row.get("impressions")),

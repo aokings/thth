@@ -17,7 +17,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 | 言及（`thth mentions`） | ○ | ○ | ○ | － |
 | プロフィールと場所の検索 | ○ | － | － | － |
 
-- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。Threads では `--tag` を付けると、その語を**トピックに付けた**投稿の件数・投稿者の数・最新と最古の時刻だけを見ます（本文と投稿者は出しません。`--keep` で数と日付を下調べの記録に残します・5.7.0）。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
+- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。Threads では `--tag` を付けると、その語を**トピックに付けた**投稿の件数・投稿者の数・最新と最古の時刻だけを見ます（本文と投稿者は出しません。`--keep` で数と日付を `where --keep` と同じ project の置き場に残します・5.7.0）。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **広告の成績と手順の skill**（5.6.3・下書き）: `thth ads insights` が反応の内訳（いいね・リアクション／コメント／シェア／写真を開いた／ページへのいいね）・サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）・1 件あたりの額・効率（frequency・cpm・ctr・cpc ほか Meta の計算済みの値）・動画の見られた深さを出します。`clicks` はリンクのクリックではありません。数が 0 か、計測が無くて分からないかを分けて書きます（`site.why`）。`--by age-gender|region|country|placement|device|hour` で内訳、`thth ads estimate` で出す前の見積もり、`thth ads doctor`・`show` でピクセルの有無と最後に動いた時刻を読みます（読むだけ）。`thth ads boost --utm-campaign <原稿のファイル名>` でリンクに有機の投稿と同じ campaign の UTM（`utm_medium=paid`）を付けます。広告を出す LLM 向けの手順は skill `thth-ads`（`skills/thth-ads/`・`thth ads skill --print`）で、広告の命令の次の一手（`next_steps`）とエラーの文は先頭でそれを示します（[リリースノート 5.6.3（下書き）](docs/リリースノート_5.6.3_2026-11-03.md)）。
 - **Meta の広告**（5.6.2）: `thth ads boost` は全部 PAUSED で作り、始めるのは `thth ads activate` の 2 段だけです。`thth ads watch` は成績を読み続け、指定の額か表示数に達したら `thth ads stop` と同じに止めます（`--until` で必ず終わる）。`spend_cap`・月の上限・旗を上げる命令はありません。例外は 1 つで、止めた印を外す `thth ads resume` は 2 段＋hub の承認の番号が必須です（masaru 11/02・外すのは印だけで、広告は PAUSED のまま）（[リリースノート 5.6.2](docs/リリースノート_5.6.2_2026-11-02.md)）。
@@ -94,7 +94,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 ## 保存しないもの
 
-- 検索結果（`topics --search`・`where`・`thread`・`who`）の本文と投稿者は、その場で見せるだけで保存しません。`where … --keep` のときだけ、語ごとの数（件数・問いの形・分類・also の当たり）を日付つきで project の私有の置き場に残します（5 未満は欠測・`thth where-log` で読む・3.18.0）。`topics --search <語> --tag --keep` のときだけ、その語をトピックに付けた投稿の件数・投稿者の数・最新と最古の日付をトピックの下調べの記録に残します（5 未満は欠測・正確な時刻は残さない・5.7.0）。
+- 検索結果（`topics --search`・`where`・`thread`・`who`）の本文と投稿者は、その場で見せるだけで保存しません。`where … --keep` のときだけ、語ごとの数（件数・問いの形・分類・also の当たり）を日付つきで project の私有の置き場に残します（5 未満は欠測・`thth where-log` で読む・3.18.0）。`topics --search <語> --tag --keep`（5.7.0）も同じ置き場・同じ決まりで、その語をトピックに付けた投稿の件数・投稿者の数・最新と最古の日付だけを残します（5 未満は欠測・正確な時刻は残さない・`thth where-log` で読む）。
 - ダイレクトメッセージは読みません。
 - トークンとシークレットは、ログと出力から伏せます。
 

@@ -1037,12 +1037,12 @@ SERVER_TOOLS += [
      "description":("語で公開投稿を検索する（thth topics --search --json と同じ形・集計と指す先と本文の全文・保存しない）。"
                     "tag=true は Threads のトピックで絞った検索（search_mode=TAG）で、その語を付けた投稿の件数・投稿者の数・"
                     "最新と最古の時刻だけを返す（本文・username は返さない。0 件は status empty、読めなかったときは "
-                    "status cannot_say）。keep=true で数と時刻を下調べの観測として残す（topic_advice が数える）"),
+                    "status cannot_say）。keep=true で数と日付を where --keep と同じ project の棚に残す（5 未満は欠測・topic_advice が数える）"),
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"query":{"type":"string"},
                     "limit":_READ_LIMIT,
                     "recent":{"type":"boolean","description":"TOP でなく RECENT（新しい順）で検索する"},
                     "tag":{"type":"boolean","description":"Threads だけ: 語をトピックとして検索し、数と時刻だけを返す"},
-                    "keep":{"type":"boolean","description":"tag と併用: 数と時刻を下調べの観測として残す"},
+                    "keep":{"type":"boolean","description":"tag と併用: 数と日付を project の棚に残す（where --keep と同じ決まり）"},
                     "since":{"type":"string","description":"Threads だけ: ここから（7d・24h・ISO）"},
                     "until":{"type":"string","description":"Threads だけ: ここまで（7d・24h・ISO）"},
                     "media":{"type":"string","enum":["text","image","video"],
