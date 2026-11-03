@@ -285,7 +285,7 @@ def _mentions(account, request, cfg):
     return reads.mentions_json(account, rows[:_limit(request)])
 
 
-def _topics_search(account, request, cfg):
+def _topics_search(account, request, cfg, context=None):
     from . import threads_read_cli as reads
     query = request['query'].strip()
     limit = _limit(request)
@@ -305,7 +305,8 @@ def _topics_search(account, request, cfg):
         except ValueError:
             error('invalid_request')
     if tag:
-        return _topics_tag(account, request, query, search_type=search_type, limit=limit, narrow=narrow)
+        return _topics_tag(account, request, query, search_type=search_type, limit=limit, narrow=narrow,
+                           by=getattr(context, 'actor', None))
     try:
         result = reads._fetch(account, capability='keyword_search',
                               call=lambda adapter: reads.search_call(adapter, account, query,
@@ -324,7 +325,7 @@ def _topics_search(account, request, cfg):
     return material
 
 
-def _topics_tag(account, request, query, *, search_type, limit, narrow):
+def _topics_tag(account, request, query, *, search_type, limit, narrow, by=None):
     """`topics --search --tag`（5.7.0）: 数と時刻だけ。読めなかったときも 0 件と混ぜず `status: cannot_say`。"""
     from . import threads_read_cli as reads
     try:
@@ -340,7 +341,8 @@ def _topics_tag(account, request, query, *, search_type, limit, narrow):
                                          narrow=narrow)
         material['cannot_say'] = dict(material['cannot_say'], message=short(material['cannot_say']['message']))
     if request.get('keep'):
-        reads.keep_tag(material, by=None)
+        # 残した人は鍵の主（ほかの書く口と同じ `context.actor`・監査 N-4）。棚は鍵の口座の project だけ。
+        reads.keep_tag(material, by=by)
         if material.get('keep_error'):
             material['keep_error'] = short(material['keep_error'])
     material['note_hint'] = reads.note_hint(material)
@@ -664,6 +666,8 @@ def execute(context, request):
                     return _article_reactions(account, request, cfg, context)
                 if request['operation'] == 'dashboard':
                     return _dashboard(account, request, cfg, context)
+                if request['operation'] == 'topics_search':
+                    return _topics_search(account, request, cfg, context)
                 return _HANDLERS[request['operation']](account, request, cfg)
     except accounts.AccountLeaving:
         error('account_leaving')

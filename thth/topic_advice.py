@@ -319,12 +319,40 @@ def _tag_counts(observation: dict) -> dict | None:
             or observation.get("provider") != models.TAG_COUNTS_PROVIDER
             or not isinstance(counts, dict)):
         return None
-    # 5 未満の数は null（欠測）で残る（`topic_models.TAG_SMALL`）。null は 0 として数えるが、
+    # 5 未満の数は null（欠測）で残る（`where_keep.SMALL_SAMPLE`）。null は 0 として数えるが、
     # 「残していない」ことは `_small_tag_counts()` で別に言う。
     if any(counts.get(k) is not None and (type(counts.get(k)) is not int or counts.get(k) < 0)
            for k in ("n", "distinct_authors")):
         return None
     return counts
+
+
+def _shelf_observations(account, topic, *, now) -> tuple:
+    """この account の project の棚にある、この語の `topic_tag` の行（7 日以内）を仮の観測にする。
+
+    戻りは `(観測の並び, 読めなかった理由 or None)`。project が無い・行が無いは空（理由なし）。
+    """
+    from . import map_store
+    from . import where_keep
+    word = queuefile.normalize_topic(topic) if isinstance(topic, str) else None
+    project = where_keep.project_of(account) if isinstance(account, str) and account else None
+    if project is None or not word:
+        return [], None
+    since = (jst.to_jst(now).date() - datetime.timedelta(days=FRESH_DAYS)).isoformat()
+    try:
+        rows, broken = where_keep.topic_rows(project, word, since_date=since)
+    except (map_store.MapError, OSError):
+        return [], "project の棚（トピック検索の数）が読めませんでした（数えていません）"
+    out = []
+    for row in rows:
+        out.append({"topic": row["word"], "normalized_topic": row["word"], "search_mode": "topic_tag",
+                    "provider": models.TAG_COUNTS_PROVIDER, "status": row["status"], "samples": [],
+                    # 棚は日付だけ（正確な時刻は残さない）。その日の始まりを取った時刻にする。
+                    "retrieved_at": f"{row['date']}T00:00:00+09:00",
+                    "counts": {"n": row["n"], "distinct_authors": row["distinct_authors"]},
+                    "observation_id": f"shelf:{project}:{row['date']}:{row['word']}"})
+    problem = (f"project の棚に読めない行が {broken} 行あります（数えていません）" if broken else None)
+    return out, problem
 
 
 def _counted_posts(observations: list) -> int:
@@ -559,6 +587,12 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
 
     fresh = [r for r in refs if _is_fresh(r, now=now)]
     stale = len(refs) - len(fresh)
+    # **project の棚のトピック検索の数**（`topics --search --tag --keep`・監査 K-1）。参照（observation_refs）
+    # でなく、この account の project の棚から、この語の 7 日以内の行を読む（ほかの project の行は読まない）。
+    shelf, shelf_problem = _shelf_observations(context.get("account"), chosen["topic"], now=now)
+    if shelf_problem:
+        notes.append(shelf_problem)
+    fresh = fresh + shelf
     if not fresh:
         # 受け入れ T08。**古い観測だけでは recommended にしない。**
         out.append(("observation",
@@ -584,7 +618,10 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
         # **次に何をすればよいのかが分からなくなる**（2026-09-11 に実データで
         # 2 度踏んだ: `status: partial` の tag 観測を「keyword だから」と言い、
         # 引き方の記録が無い旧記録も「keyword だから」と言っていた）。
-        if by_tag:
+        if by_tag and all(r.get("status") == "empty" for r in by_tag):
+            out.append(("observation",
+                         "トピックで引いた結果はその条件で 0 件でした（人がいないとは限りません）"))
+        elif by_tag:
             statuses = sorted({r.get("status") or "不明" for r in by_tag})
             out.append(("observation",
                          f"トピックを引いた観測はありますが、取得が完了していません"
@@ -687,9 +724,8 @@ OBSERVATION_SHAPE = {
                                  "ことは証拠にならない**"}],
         "coverage": {"pages": "見たページ数", "fetched": "取れた件数",
                       "has_more": "まだ続きがあるか（不明は null）"},
-        "counts": ("**数だけの観測**（任意・5.7.0）。手で書かず "
-                   "`thth topics <account> --search <語> --tag --keep` に作らせる"
-                   "（件数・投稿者の数・最新と最古の日付だけ・5 未満は欠測・samples は空）"),
+        "_トピック検索の数": ("観測の棚には入れない。`thth topics <account> --search <語> --tag --keep` が "
+                             "project の棚に残し、判定は参照なしでこの account の project の 7 日以内の行を数える"),
         "note": "気づいたこと（**判定は混ぜない**）",
         "_注意": "status が ok なら samples が要ります。取得できて 0 件だったなら "
                   "empty です（**0 件は「人がいない」ではありません**）",

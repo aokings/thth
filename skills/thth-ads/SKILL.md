@@ -107,7 +107,7 @@ thth ads insights <広告の口座> --preset last_7d --by age-gender
 - `reported`: Meta が返した数。`zero_reported_list`: 並びに行が無い＝0（Meta は 0 の行を出さない）。
 - `no_link_clicks`: リンクが 1 度も押されていないので本当に 0。
 - `not_measured_or_left`: リンクは押されたのに頁が開いた記録が無い。**0 と書かない**。頁の計測（ピクセル）が無いか、開く前に離れた。このとき `next_steps` にピクセルの一手が出る。
-- `actions_absent_as_zero`（行の `actions_absent_as_zero: true`）: その行に `actions` の欄が無いが、同じ読みのほかの行には返っている＝反応が 1 件も無かった区分（Meta は欄ごと返さない）。反応もリンククリックも頁が開いた数も 0（5.7.0）。
+- `actions_absent_as_zero`（行の `actions_absent_as_zero: true`）: その行に `actions` の欄が無いが、同じ読みのほかの行には返っている＝反応が 1 件も無かった区分（Meta は欄ごと返さない）。反応もリンククリックも頁が開いた数も 0（5.7.0）。ただしその行の `inline_link_clicks` が 1 以上なら 0 と見なさない（押されているので不明のまま）。
 - `actions_missing`・`outbound_clicks_missing` など、値が null: 欄が無い＝不明。`actions` は**読み全体で 1 行も返らない**ときだけ不明（内訳なしの 1 行の読みもこちら）。
 - `clicks` は広告のどこを押しても数える。**リンクのクリックではない**。サイトへの誘導は `site` を読む。
 - 品質の評価（quality_ranking など）は THTH では読まない（公式の欄の一覧で名前を確かめられていない）。

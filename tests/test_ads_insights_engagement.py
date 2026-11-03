@@ -188,3 +188,21 @@ def test_欄が壊れている行は0にしない(env, capsys):
     rows = _insights(env, capsys, "--level", "campaign")["rows"]
     assert rows[1]["engagement"] is None and rows[1]["engagement_unknown"] == "actions_unreadable"
     assert rows[1]["actions_absent_as_zero"] is False
+
+
+def test_actionsの欄が無くても広告の中のリンクが押された行は0と言わない(env, capsys):
+    # 監査 N-1: 欄の無い行を 0 と見なすと、inline_link_clicks 3 の行で「リンククリック 0・頁が開いた 0」と
+    # 食い違う。押されたのだから 0 ではない → この行は不明のまま（頁が開いた数も 0 と言わない）。
+    ready(env)
+    env["insights_route"] = _rows({"age": "35-44", "gender": "female",
+                                   "actions": [{"action_type": "post_reaction", "value": "2"}],
+                                   "inline_link_clicks": "0"},
+                                  {"age": "25-34", "gender": "male", "inline_link_clicks": "3"})
+    row = _insights(env, capsys, "--by", "age-gender")["rows"][1]
+    assert row["actions_absent_as_zero"] is False
+    assert row["engagement"] is None and row["engagement_unknown"] == "actions_missing"
+    assert row["site"]["inline_link_clicks"] == 3
+    assert row["site"]["link_clicks"] is None and row["site"]["landing_page_views"] is None
+    # site() を直に呼んでも同じ（呼ぶ側が印を立てても 0 にしない）。
+    s = graphread.site(None, "3", None, outbound_asked=False, actions_absent_as_zero=True)
+    assert s["link_clicks"] is None and s["landing_page_views"] is None

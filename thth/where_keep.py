@@ -4,11 +4,13 @@
 Meta の許可された用途（10 権限すべてに「集計され、非特定化または匿名化された情報の利用を通じて
 アプリを改善する」）の中で、**件数だけ・5 未満は残さない・privacy に書く**を条件に残してよい。
 
-残すのは 2 種類の行だけ:
+残すのは 3 種類の行だけ:
 
   - `aggregate`（A2・`--aggregate --keep`）: 語ごとの件数・問いの形の数・lexicon の分類ごとの数。
   - `also_hits`（A3・`--also … --keep`）: 語ごとの「取れた・also に合った」の数（当たり率は読む
     ときに割る）。翌日の配り直し（どの語に何本配るか）の材料。
+  - `topic_tag`（5.7.0・`thth topics <account> --search <語> --tag --keep`）: その語をトピックに付けた
+    投稿の件数・投稿者の数・最新と最古の日付。topic_advice がこの project の 7 日以内の行を数える。
 
 規律（観測の地図の世間の層 `thth/map_world.py` の (a)〜(h) と同じ作法）:
 
@@ -43,7 +45,7 @@ from . import accounts, jst, map_store
 FILE = re.compile(r"where-(\d{4})-(\d{2})\.ndjson\Z")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 SMALL_SAMPLE = 5
-KINDS = ("aggregate", "also_hits")
+KINDS = ("aggregate", "also_hits", "topic_tag")
 MEDIA = ("threads", "bluesky", "mastodon", "x")
 SEARCH_TYPES = ("TOP", "RECENT")
 # `where` の絞り込み（3.18.0・A5）の符丁。行に残すのは符丁だけ（絞った件数は残さない）。
@@ -54,6 +56,17 @@ COMMON_KEYS = frozenset(("date", "medium", "kind", "word", "search_type", "reque
 AGGREGATE_KEYS = COMMON_KEYS | {"n", "ends_with_question_mark", "contains_question_mark",
                                 "lexicon"}
 HITS_KEYS = COMMON_KEYS | {"also", "n_fetched", "n_matched"}
+# `topics --search <語> --tag --keep`（5.7.0・監査 K-1）: その語をトピックに付けた投稿の数。同じ棚・同じ決まり
+# （5 未満は 0 も含めて欠測・正確な時刻は残さない＝日付だけ・project の中だけ・同じ保持・退出で消える）。
+# `window` は問いの絞り込み（Unix 秒の since／until と media_type。投稿の時刻ではない）。`status` は
+# 読めたか（ok／empty）・読めなかったか（permission_denied／unavailable）。`submitted_by` は残した人。
+TOPIC_COUNT_KEYS = ("n", "distinct_authors", "n_with_timestamp", "n_label_matched", "n_label_other",
+                    "n_label_absent")
+TOPIC_STATUS = ("ok", "empty", "permission_denied", "unavailable")
+TOPIC_MEDIA_TYPES = ("TEXT", "IMAGE", "VIDEO")
+TOPIC_KEYS = COMMON_KEYS | set(TOPIC_COUNT_KEYS) | {"latest_date", "oldest_date", "status", "window",
+                                                     "submitted_by"}
+MAX_BY_CHARS = 100
 MAX_WORD_CHARS = 200
 MAX_LEXICON = 30
 MAX_ALSO = 5
@@ -94,6 +107,10 @@ def valid_row(row) -> bool:
                     or not all(isinstance(k, str) and k for k in lexicon)):
                 return False
             counts.extend(lexicon.values())
+    elif kind == "topic_tag":
+        if set(row) != TOPIC_KEYS or not _valid_topic(row):
+            return False
+        counts = [row[key] for key in TOPIC_COUNT_KEYS]
     elif kind == "also_hits":
         if set(row) != HITS_KEYS:
             return False
@@ -118,6 +135,71 @@ def valid_row(row) -> bool:
     if not isinstance(filters, list) or any(f not in FILTERS for f in filters):
         return False
     return row["reason"] is None or row["reason"] in REASONS
+
+
+def _valid_topic(row) -> bool:
+    """`topic_tag` の行の中身（数の 5 未満は `valid_row()` の共通の検査が断る）。"""
+    if row["medium"] != "threads" or row["filters"] != [] or row["status"] not in TOPIC_STATUS:
+        return False
+    for key in ("latest_date", "oldest_date"):
+        if row[key] is not None and (not isinstance(row[key], str) or not DATE.match(row[key])):
+            return False
+    if (row["latest_date"] is None) != (row["oldest_date"] is None):
+        return False
+    window = row["window"]
+    if not isinstance(window, dict) or set(window) != {"since", "until", "media_type"}:
+        return False
+    if any(window[k] is not None and type(window[k]) is not int for k in ("since", "until")):
+        return False
+    if window["media_type"] is not None and window["media_type"] not in TOPIC_MEDIA_TYPES:
+        return False
+    by = row["submitted_by"]
+    if by is not None and (not isinstance(by, str) or not by.strip() or len(by) > MAX_BY_CHARS):
+        return False
+    rest = [row[k] for k in TOPIC_COUNT_KEYS if k != "n"] + [row["latest_date"]]
+    if row["status"] in ("permission_denied", "unavailable"):
+        return row["n"] is None and all(v is None for v in rest) and row["reason"] is None
+    if row["status"] == "empty":
+        return row["n"] is None and row["reason"] == "zero_or_filtered" and row["latest_date"] is None
+    # ok: 件数が 5 未満なら内訳も日付も欠測（small_sample）。5 以上なら値。
+    if row["n"] is None:
+        return row["reason"] == "small_sample" and all(v is None for v in rest)
+    return row["reason"] is None
+
+
+def topic_tag_row(date, material, *, by=None):
+    """`threads_read_cli.tag_json()`／`tag_failed_json()` の**出力の数**から 1 行（本文・名前・id は受け取らない）。"""
+    narrow = material.get("narrow") or {}
+    row = _base(date, "threads", "topic_tag", material["topic"], search_type=material["search_type"],
+                requested=material["requested_limit"], filters=[])
+    row.update({key: None for key in TOPIC_COUNT_KEYS}, latest_date=None, oldest_date=None,
+               window={"since": narrow.get("since"), "until": narrow.get("until"),
+                       "media_type": narrow.get("media_type")},
+               submitted_by=(by.strip()[:MAX_BY_CHARS] if isinstance(by, str) and by.strip() else None))
+    status = material["status"]
+    if status == "cannot_say":
+        kind = (material.get("cannot_say") or {}).get("kind")
+        row["status"] = {"not_granted": "permission_denied", "narrowed": "permission_denied",
+                         "upstream": "unavailable"}.get(kind)
+        return row if row["status"] else None
+    counts = material["counts"]
+    row["status"] = status
+    if status == "empty" or counts["n"] == 0:
+        row.update(status="empty", reason="zero_or_filtered")
+        return row
+    if _small(counts["n"]):
+        row["reason"] = "small_sample"
+        return row
+    row.update({key: kept(counts[key]) for key in TOPIC_COUNT_KEYS})
+    row.update(latest_date=(counts.get("latest_at") or "")[:10] or None,
+               oldest_date=(counts.get("oldest_at") or "")[:10] or None)
+    return row
+
+
+def topic_rows(project, topic, *, since_date) -> tuple:
+    """その project の棚にある `topic_tag` の行のうち、語が `topic` で `since_date` 以降のもの。"""
+    rows, broken = read(project, since_date=since_date)
+    return [row for row in rows if row["kind"] == "topic_tag" and row["word"] == topic], broken
 
 
 def _base(date, medium, kind, word, *, search_type, requested, filters):
@@ -359,10 +441,15 @@ def summary(target, *, since="14d", medium=None, budget=None, now=None) -> dict:
                         until_date=jst.to_jst(now).date().isoformat())
     if medium is not None:
         rows = [row for row in rows if row["medium"] == medium]
-    hits, aggs = {}, {}
+    hits, aggs, topics = {}, {}, {}
     for row in sorted(rows, key=lambda r: r["date"]):
         cell_key = (row["medium"], row["word"])
-        if row["kind"] == "also_hits":
+        if row["kind"] == "topic_tag":
+            cell = topics.setdefault(cell_key, {"medium": row["medium"], "word": row["word"], "days": []})
+            cell["days"].append({k: row[k] for k in ("date", "status", "n", "distinct_authors",
+                                                     "latest_date", "oldest_date", "search_type",
+                                                     "requested", "window", "reason", "submitted_by")})
+        elif row["kind"] == "also_hits":
             cell = hits.setdefault(cell_key, {"medium": row["medium"], "word": row["word"],
                                               "days": [], "n_fetched_sum": 0, "n_matched_sum": 0,
                                               "days_counted": 0})
@@ -390,6 +477,7 @@ def summary(target, *, since="14d", medium=None, budget=None, now=None) -> dict:
            "until": jst.to_jst(now).date().isoformat(), "medium": medium,
            "also_hits": hit_rows,
            "aggregate": sorted(aggs.values(), key=lambda c: (c["medium"], c["word"])),
+           "topic_tag": sorted(topics.values(), key=lambda c: (c["medium"], c["word"])),
            "small_sample_rule": "5 未満の数は残していません（null・欠測）",
            "broken_rows": broken, "allocation": None}
     if budget is not None:
@@ -404,7 +492,7 @@ def summary(target, *, since="14d", medium=None, budget=None, now=None) -> dict:
 def render(result) -> None:
     print(f"where-log  project {result['project']}  {result['since']}〜{result['until']}"
           + (f"  媒体 {result['medium']}" if result["medium"] else ""))
-    if not result["also_hits"] and not result["aggregate"]:
+    if not result["also_hits"] and not result["aggregate"] and not result.get("topic_tag"):
         print("  残した行がありません（where … --keep で残します）")
     if result["also_hits"]:
         print("  also の当たり率（期間の和・高い順）:")
@@ -418,6 +506,13 @@ def render(result) -> None:
     for cell in result["aggregate"]:
         days = "・".join(f"{d['date'][5:]} n={d['n'] if d['n'] is not None else '—'}"
                         f" 問い={d['contains_question_mark'] if d['contains_question_mark'] is not None else '—'}"
+                        for d in cell["days"])
+        print(f"    [{cell['medium']}] 語「{cell['word']}」 {days}")
+    if result.get("topic_tag"):
+        print("  トピックの下調べ（topics --search --tag --keep・日ごと）:")
+    for cell in result.get("topic_tag") or []:
+        days = "・".join(f"{d['date'][5:]} {d['status']} n={d['n'] if d['n'] is not None else '—'}"
+                        f" 投稿者={d['distinct_authors'] if d['distinct_authors'] is not None else '—'}"
                         for d in cell["days"])
         print(f"    [{cell['medium']}] 語「{cell['word']}」 {days}")
     allocation = result.get("allocation")

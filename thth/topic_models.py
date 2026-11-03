@@ -126,68 +126,11 @@ OBS_STATUS = ("ok", "empty", "permission_denied", "unavailable",
 OBSERVATION_KEYS = ("topic", "search_mode", "provider", "retrieved_at", "status",
                     "samples")
 
-# **数だけの観測**（5.7.0・nigamilab の依頼 11/03）: `thth topics <account> --search <語> --tag --keep`
-# が残す。Threads の検索 API にトピック（search_mode=TAG）で問い、その語を付けた投稿の件数・投稿者の
-# 数（重複なし）・最新と最古の**日付**だけを持つ。**他人の本文・username・post_id・仮名・正確な時刻は
-# 持たない**ので、`samples` は空で、鍵は下の許可リストだけ（ほかの鍵があれば保存しない）。
-#
-# 残す数の決まりは `where --keep` と同じ（privacy の「numbers below 5 … saved as missing」「exact times
-# are not saved」・`thth/where_keep.py`）: **5 未満の数は null（欠測）**、件数 n が 5 未満なら内訳と日付も
-# 全部 null。0 件は `status: empty`（数は 0 のまま・観測の地図が 0 件を 0 で残すのと同じ）。
-TAG_COUNTS_PROVIDER = "threads_api"
-TAG_SMALL = 5
-TAG_COUNT_KEYS = ("n", "distinct_authors", "latest_date", "oldest_date", "n_with_timestamp",
-                  "n_label_matched", "n_label_other", "n_label_absent")
-TAG_COUNTS_OBSERVATION_KEYS = frozenset(OBSERVATION_KEYS + (
-    "normalized_topic", "query", "account", "submitted_by", "coverage", "counts", "search"))
-TAG_SEARCH_KEYS = ("search_type", "since", "until", "media_type", "requested_limit")
-_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
-
-
-def _check_tag_counts(row: dict) -> None:
-    """数だけの観測の形（`counts` を持つ観測）。**本文・名前・正確な時刻・5 未満の数が入る余地を残さない。**"""
-    extra = sorted(set(row) - TAG_COUNTS_OBSERVATION_KEYS)
-    if extra:
-        raise SchemaError(f"数だけの観測に入れてよい鍵ではありません: {', '.join(extra)}"
-                          f"（本文・username・post_id は残しません）")
-    if row["search_mode"] != "topic_tag" or row["provider"] != TAG_COUNTS_PROVIDER:
-        raise SchemaError("counts を持てるのは Threads の API でトピックを引いた観測だけです"
-                          "（search_mode: topic_tag・provider: threads_api）")
-    if row["samples"]:
-        raise SchemaError("数だけの観測に samples は入れません（投稿ごとの記録は残さない）")
-    if row["status"] not in ("ok", "empty"):
-        raise SchemaError("読めなかった観測に counts は付けません（counts は読めたときの数です）")
-    counts = row["counts"]
-    if not isinstance(counts, dict) or set(counts) != set(TAG_COUNT_KEYS):
-        raise SchemaError(f"counts の鍵は {', '.join(TAG_COUNT_KEYS)} です")
-    empty = row["status"] == "empty"
-    for key in TAG_COUNT_KEYS:
-        value = counts[key]
-        if key in ("latest_date", "oldest_date"):
-            if value is not None and (not isinstance(value, str) or not _DATE_RE.match(value)):
-                raise SchemaError(f"counts.{key} は日付（YYYY-MM-DD）か null です（正確な時刻は残しません）")
-        elif value is None:
-            continue
-        elif type(value) is not int:
-            raise SchemaError(f"counts.{key} は整数か null です: {value!r}")
-        elif value < TAG_SMALL and not (empty and value == 0):
-            raise SchemaError(f"counts.{key} が {value} です。{TAG_SMALL} 未満の数は null（欠測）で残します")
-    if empty:
-        if counts["n"] != 0:
-            raise SchemaError("status が empty なのに件数が 0 ではありません")
-    elif counts["n"] == 0:
-        raise SchemaError("件数 0 なら status は empty です（0 件は「人がいない」ではありません）")
-    if counts["n"] is None and any(counts[k] is not None for k in TAG_COUNT_KEYS):
-        raise SchemaError(f"件数が {TAG_SMALL} 未満（null）なら内訳と日付も null です")
-    n = counts["n"] or 0
-    for key in ("distinct_authors", "n_with_timestamp", "n_label_matched", "n_label_absent"):
-        if isinstance(counts[key], int) and counts[key] > n:
-            raise SchemaError(f"counts.{key} は件数 n を越えません")
-    if (counts["latest_date"] is None) != (counts["oldest_date"] is None):
-        raise SchemaError("counts の latest_date と oldest_date は両方あるか両方 null です")
-    search = row.get("search")
-    if search is not None and (not isinstance(search, dict) or not set(search) <= set(TAG_SEARCH_KEYS)):
-        raise SchemaError(f"search の鍵は {', '.join(TAG_SEARCH_KEYS)} のうちだけです")
+# **トピック検索の数**（5.7.0）は観測の棚（ここ・project をまたぐ）に置かない。`topics --search --tag --keep`
+# が `where --keep` と同じ project の棚（`thth/where_keep.py` の `topic_tag` の行）に残し、topic_advice が
+# そこから自分の project の行だけを読む（監査 K-1・privacy の頁の約束の範囲）。読む側が作る仮の観測の
+# `provider` がこれ（ほかの観測と混ぜない印）。
+TAG_COUNTS_PROVIDER = "threads_api_project_shelf"
 
 
 def build_observation(row: dict) -> dict:
@@ -242,8 +185,10 @@ def build_observation(row: dict) -> dict:
         if "tagged" in sample and not isinstance(sample["tagged"], bool):
             raise SchemaError(f"samples[{i}] の tagged は true/false")
     if "counts" in row:
-        _check_tag_counts(row)
-    elif row["status"] == "ok" and not row["samples"]:
+        # 数だけの観測は project の棚にだけ置く（この棚は project をまたぐ・監査 K-1）。
+        raise SchemaError("counts は観測の棚に入れません。トピック検索の数は "
+                          "`thth topics <account> --search <語> --tag --keep` が project の棚に残します")
+    if row["status"] == "ok" and not row["samples"]:
         raise SchemaError(
             "status が ok なのに samples が空です。"
             "取得できて 0 件だったなら status は empty です"
