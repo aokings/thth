@@ -374,6 +374,8 @@ def referrer_host(raw):
     text = text.split(":", 1)[0].rstrip(".")
     if not text or not _HOST_RE.fullmatch(text):
         return None
+    if all(label.isdigit() for label in text.split(".")):
+        return None   # IPv4（全ラベルが数字）も IPv6 と同じくホスト名として出さない（監査 段7 の 4）
     return text
 
 
@@ -397,7 +399,9 @@ def referrers_block(project, records=None, cannot=None) -> dict:
                 "dropped": {"rows": 0, "sessions": 0}, "stale": bool(record.get("newer_unavailable")),
                 "cannot_say": None}
         refs = record.get("referrers")
-        if refs is None:
+        if not isinstance(refs, list):
+            # 無い・list でない（文字列や dict）ときは言えない。文字を 1 行ずつ数えて dropped を水増ししない
+            # （監査 段7 の 4）。
             site["cannot_say"] = "referrers_unavailable"
             block["sites"].append(site)
             continue

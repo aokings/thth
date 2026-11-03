@@ -99,6 +99,8 @@ REASONS = frozenset((
     "invalid_declaration", "declaration_out_of_scope", "plaza_project_required",
     "invalid_visibility", "redaction_unavailable", "invalid_until", "nothing_to_update",
     "plaza_hidden", "already_hidden", "invalid_min_n",
+    # 管理者が非表示を戻す（5.11.0 段 7 の監査の直し）。
+    "not_hidden",
     # 利用者側の設計材料（設計 §9）。
     "invalid_kind_detail", "scope_required", "how_required", "invalid_how",
     "observed_is_tool_only", "invalid_evidence_level", "invalid_trial_result",
@@ -162,8 +164,14 @@ NEXT = {
     "invalid_trial_due": "--trial-due は気づき（finding）にだけ付けられ、2026-10-08 か "
                          "2026-10-08T09:00:00+09:00 のような日付・時刻です",
     "nothing_to_update": "--refresh・--verdict・--visibility のどれかを付けてください",
-    "plaza_hidden": "非表示の書き込みです（管理者か、置いた本人が隠しました）。返信・更新はできません",
-    "already_hidden": "既に非表示です",
+    "plaza_hidden": "非表示の書き込みです（管理者か、置いた本人が隠しました）。返信・更新はできません。"
+                    "戻してほしいときは、id と理由を添えて管理者に頼んでください（管理者は thth admin plaza "
+                    "unhide <id> --reason <理由> --by <名前> で戻せます）。書き直すなら、直した中身を "
+                    "thth plaza post … --preview で見てから新しく置けます",
+    "already_hidden": "既に非表示です（隠し直す必要はありません）。戻すのは管理者です（thth admin plaza "
+                      "unhide <id> --reason <理由> --by <名前>）。中身を直すなら新しく置いてください",
+    "not_hidden": "その書き込みは非表示ではありません（戻すものがありません）。状態は thth admin plaza show "
+                  "<id> で確かめられます。隠すなら thth admin plaza hide <id> --reason <理由> --by <名前> です",
     "invalid_min_n": "--min-n は 1 以上の整数です",
     "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
                     "どれかです（無ければ付けない）",
@@ -1692,6 +1700,36 @@ def hide(plaza_id, *, by, reason, via="cli", now=None, account=None):
         {"media": record.get("medium")}, by=by, via=via, diff=diff))
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_hidden",
             "plaza_id": record["plaza_id"], "hidden": record["hidden"]}
+
+
+def unhide(plaza_id, *, by, reason, via="cli", now=None):
+    """管理者が非表示を戻す（理由つき・変更ログ `plaza_unhidden`・5.11.0 段 7 の監査の直し）。
+
+    管理者の非表示も、置いた本人の非表示（`by_poster`）も戻せる。戻すと `hidden` は None
+    （置いたときと同じ形）。非表示でない 1 件は `not_hidden`。戻した理由は 1 件の `unhidden`
+    （時刻・誰・理由）に残し、変更ログには残さない（presence-only・`hide` と同じ）。
+    """
+    by = poster(by)
+    if via not in VIAS:
+        raise PlazaError("invalid_post")
+    if not (isinstance(reason, str) and reason.strip()):
+        raise PlazaError("reason_required")
+    reason = _text(reason, REASON_MAX)
+    _no_secret(reason)
+    at = jst.iso(now or jst.now_jst())
+
+    def change(record):
+        if not record.get("hidden"):
+            raise PlazaError("not_hidden")
+        record["hidden"] = None
+        record["unhidden"] = {"at": at, "by": by, "reason": reason}
+        record["updated_at"] = at
+
+    record = STORE.update(plaza_id, change, lambda record: admin_log.append(
+        "plaza_unhidden", record.get("account") or record.get("project") or "plaza",
+        {"media": record.get("medium")}, by=by, via=via, diff={"hidden": ["present", "absent"]}))
+    return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_unhidden",
+            "plaza_id": record["plaza_id"], "hidden": None, "unhidden": record["unhidden"]}
 
 
 def admin_list():

@@ -5,7 +5,11 @@
     （広場の件数・ファイルの mtime・`.lock`・変更ログが変わらない。置き場が無ければ作らない）。
     重複と上限はロックを取らずに確かめる。open の二段確認は今までどおり。MCP の `preview`。
   - 置いた本人が自分の 1 件を隠す口（`thth plaza hide <id> --as <account>`）: 他の持ち主の id は
-    `plaza_not_found`・隠し方は管理者と同じ・変更ログに残る。
+    `plaza_not_found`・隠し方は管理者と同じ・変更ログに残る。管理者が戻す口
+    （`thth admin plaza unhide <id> --reason --by`・変更ログ `plaza_unhidden`）。
+  - 監査のあとの直し: preview は `.lock` があってもロックを取らない（`--from`・宣言つきでも）・
+    伏せる登録は X の refresh を走らせない・近所の照合は account の Threads 原稿すべて・
+    `referrers` が list でなければ言えない・IPv4 は捨てる。
   - Threads の投稿ごとのクリック: 糸の show・dashboard campaign・seeds・plaza の `--from scenario` に、
     GA4 の訪問とは別の欄で。分母（言える本数／糸の Threads の本数）・Threads 以外は null と
     `per_post_clicks_unavailable:<媒体>`。
@@ -72,6 +76,47 @@ def test_previewは台帳に何も書かない_件数とmtimeとlockが変わら
                             by="s", scope_note=SCOPE, visibility=visibility, preview=True)
         assert result["report_type"] == "plaza_post_preview"
     assert _snapshot() == before
+
+
+def _no_lock(monkeypatch):
+    """`STORE.locked` が呼ばれたら赤（監査 段7 の 1-a: preview はロックを取らない）。"""
+    def locked(*_args, **_kwargs):
+        raise AssertionError("preview が STORE.locked を呼んだ")
+    monkeypatch.setattr(plaza.STORE, "locked", locked)
+
+
+def test_previewは_lockが既にあってもロックを取らない(owners, monkeypatch):
+    post()   # 置き場と .lock がある状態
+    join("kopicha", "other")
+    assert ".lock" in _tree("_plaza")
+    before = _snapshot()
+    _no_lock(monkeypatch)
+    for visibility in (None, "project", "open"):
+        result = plaza.post("kopicha-threads", kind="question", title="朝と夜のどちらが", body="どちら？",
+                            by="s", scope_note=SCOPE, visibility=visibility, preview=True)
+        assert result["report_type"] == "plaza_post_preview" and result["posted"] is False
+    assert _snapshot() == before
+
+
+def test_from_scenarioとfrom_afterとdeclaration付きのpreviewも何も書かない(clicks_world, monkeypatch):
+    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account, **kw: lambda post_id: {"covered": False})
+    before = _snapshot()
+    _no_lock(monkeypatch)
+    decl = {"schema_version": 1, "id": "d-preview", "account": "kp-threads", "hypothesis": "h",
+            "change": "c", "decision": {"status": "proposed"},
+            "baseline_post_ids": [], "changed_post_ids": []}
+    shapes = (
+        {"kind": "measure", "from_source": ("scenario", PROJECT, "clk-01")},
+        {"kind": "finding", "from_source": ("after", "kp-threads", 7)},
+        {"kind": "measure", "declarations": [decl], "how": "thth study-report d.json"},
+    )
+    for shape in shapes:
+        result = plaza.post("kp-threads", title="下見の見本", body="人の解釈", by="kp-session",
+                            scope_note="煎茶の糸", preview=True, **shape)
+        assert result["report_type"] == "plaza_post_preview" and result["posted"] is False, shape
+        assert result["plaza_id"] is None
+    assert _snapshot() == before
+    assert _tree("_plaza") is None, "置き場も .lock も作らない"
 
 
 def test_previewは重複と上限をロックなしで確かめる(owners):
@@ -190,6 +235,92 @@ def test_隠す口の変更ログ(owners):
     assert "書き直す" not in json.dumps(last, ensure_ascii=False)
 
 
+def _log_rows(event):
+    path = os.path.join(os.environ["THTH_ROOT"], "state", "_admin", "accounts.ndjson")
+    with open(path, encoding="utf-8") as f:
+        return [r for r in (json.loads(line) for line in f if line.strip()) if r["event"] == event]
+
+
+def test_管理者が非表示を戻す_本人の非表示も管理者の非表示も(owners, capsys):
+    mine = post()
+    theirs = post("other-threads", title="別の持ち主の書き込み")
+    plaza.hide(mine["plaza_id"], by="s", reason="書き直す", account="kopicha-threads")
+    plaza.hide(theirs["plaza_id"], by="operator", reason="確かめる")
+    # 本人の非表示は show に「（置いた本人）」。
+    assert cli.main(["admin", "plaza", "show", mine["plaza_id"]]) == 0
+    assert "[非表示]（置いた本人）" in capsys.readouterr().out
+    assert cli.main(["admin", "plaza", "show", theirs["plaza_id"]]) == 0
+    shown = capsys.readouterr().out
+    assert "[非表示] " in shown and "（置いた本人）" not in shown
+    # 戻す（CLI・理由つき）。管理者の口なので、どの持ち主の 1 件でも戻せる。
+    for pid in (mine["plaza_id"], theirs["plaza_id"]):
+        assert cli.main(["admin", "plaza", "unhide", pid, "--reason", "直った", "--by", "operator",
+                         "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["report_type"] == "plaza_unhidden" and payload["hidden"] is None
+        record = plaza.STORE.get(pid)
+        assert record["hidden"] is None
+        assert record["unhidden"]["reason"] == "直った" and record["unhidden"]["by"] == "operator"
+    # 戻すと他の持ち主の読み・返信・更新が元に戻る（隠す前と同じ）。
+    assert plaza.show(mine["plaza_id"], viewer("kopicha-bsky"))["hidden"] is None
+    rows = _log_rows("plaza_unhidden")
+    assert len(rows) == 2 and all(r["diff"] == {"hidden": ["present", "absent"]} for r in rows)
+    assert "直った" not in json.dumps(rows, ensure_ascii=False), "理由は変更ログに入れない"
+    # 非表示でない 1 件・理由なし・by なしは断る（何も書かない）。
+    with pytest.raises(plaza.PlazaError, match="^not_hidden$"):
+        plaza.unhide(mine["plaza_id"], by="operator", reason="もう一度")
+    with pytest.raises(plaza.PlazaError, match="^reason_required$"):
+        plaza.unhide(mine["plaza_id"], by="operator", reason=" ")
+    with pytest.raises(plaza.PlazaError, match="^plaza_not_found$"):
+        plaza.unhide("p20261103-00000000", by="operator", reason="x")
+    assert cli.main(["admin", "plaza", "unhide", mine["plaza_id"], "--reason", "x", "--by", "operator"]) == 2
+    assert "not_hidden" in capsys.readouterr().err
+    assert len(_log_rows("plaza_unhidden")) == 2
+    # 案内の文は、戻す口を名指しする（戻す口が無いのに「管理者」と言わない）。
+    for code in ("plaza_hidden", "already_hidden"):
+        assert "thth admin plaza unhide" in plaza.NEXT[code]
+    assert "not_hidden" in plaza.REASONS and plaza.NEXT["not_hidden"]
+
+
+def test_unhideのhelpとhideのhelpが戻す口を言う(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["admin", "plaza", "unhide", "--help"])
+    assert "--reason" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        cli.main(["plaza", "hide", "--help"])
+    assert "thth admin plaza unhide" in capsys.readouterr().out.replace("\n", "")
+
+
+def test_伏せる登録はXのrefreshを走らせない(monkeypatch):
+    from thth import admin_log
+    calls = []
+
+    def load_token(cfg, *, refresh_x=True):
+        calls.append(refresh_x)
+        return {"access_token": "FAKE-REGISTER-ONLY"}
+    monkeypatch.setattr(accounts_mod, "load_token", load_token)
+    monkeypatch.setattr(accounts_mod, "_refresh_x_if_due",
+                        lambda *a, **k: pytest.fail("登録のためだけに X の refresh を走らせた"))
+    admin_log.register_account_secrets({"media": "x", "token": "/nonexistent"}, via="mcp")
+    assert calls == [False]
+
+
+def test_伏せる登録は本物のload_tokenで値を登録する_refreshなしで(isolated_account_factory, monkeypatch):
+    """作り物でなく本物の `load_token(cfg, refresh_x=False)` を通して、値が伏せられること（登録が抜け落ちない）。"""
+    import secrets
+    from thth import admin_log, redact
+    isolated_account_factory("reg-x", project="reg", media="x", handle="reg_x")
+    cfg = accounts_mod.load_account("reg-x")
+    value = secrets.token_urlsafe(30)
+    os.makedirs(os.path.dirname(cfg["token"]), exist_ok=True)
+    with open(cfg["token"], "w", encoding="utf-8") as f:
+        json.dump({"access_token": value}, f)
+    monkeypatch.setattr(accounts_mod, "_refresh_x_if_due",
+                        lambda *a, **k: pytest.fail("登録のためだけに X の refresh を走らせた"))
+    admin_log.register_account_secrets(cfg, via="mcp")
+    assert value not in redact.redact(f"token は {value} です")
+
+
 # ================================================================== Threads のクリック
 
 THREAD = """---
@@ -282,6 +413,27 @@ def test_糸のshowにクリック_分母とThreads以外のnull_訪問とは別
     assert "x 1 本: —（per_post_clicks_unavailable:x）" in out
 
 
+def test_別の糸の同じURLの投稿があればurl_shared_72hで言えない_糸とseeds(clicks_world):
+    # 別の糸（clk-02）の Threads の投稿 D1 が、C3 の 2 日前に同じリンク先 LINK_B を使った。
+    # D1 は実測（insights）にまだ無い。糸の中の投稿だけで照合すると見落として C3 に寄せてしまう。
+    d_at = datetime.datetime(2026, 10, 18, 7, 0, tzinfo=jst.JST)
+    _write(os.path.join(clicks_world["queue"], "th-d1.md"),
+           _sns("kp-threads", status="posted", publish_at=jst.iso(d_at), thread="clk-02",
+                extra={"post_id": "D1", "posted_at": jst.iso(d_at)}))
+    sent_mod.write(accounts_mod.state_dir_for("kp-threads"), post_id="D1", text=f"別の糸 {LINK_B}",
+                   body_hash="h2", sent_at=jst.iso(d_at), goal="click")
+    clicks = scenario.show(PROJECT, "clk-01", now=NOW)["threads_clicks"]
+    by_file = {p["file"]: p for p in clicks["posts"]}
+    assert by_file["th-c3.md"]["clicks_72h"] is None
+    assert by_file["th-c3.md"]["cannot_say"] == "url_shared_72h"
+    assert clicks["clicks_72h"] == 7 and (clicks["n"], clicks["of"]) == (1, 3)
+    assert clicks["reasons"] == {"link_unrecorded": 1, "url_shared_72h": 1}
+    # seeds も同じ: 窓（9 日）の外の D1 も照合に入る。
+    payload = scenario_seeds.build(PROJECT, days=9, now=NOW)
+    threads = next(c for c in payload["columns"] if c["key"] == "clicks")["by_medium"]["threads"]
+    assert threads["rows"] == [] and threads["reasons"] == {"url_shared_72h": 1}
+
+
 def test_dashboard_campaignのoutcomesに別の欄で(clicks_world):
     got = dashboard_cli.build(PROJECT, "campaign", "clk-01", now=NOW)
     outcomes = got["campaign"]["outcomes"]
@@ -369,3 +521,20 @@ def test_referrer_hostの整え方():
     assert h("example.com.") == "example.com"
     assert h("(not set)") is None and h("") is None and h(None) is None and h("[::1]") is None
     assert h("a_b.example") is None
+    # IPv4（全ラベルが数字）も IPv6 と同じく捨てる。数字を含むホスト名は残す。
+    assert h("192.168.0.1") is None and h("http://10.0.0.1:8080/x") is None and h("1.2.3") is None
+    assert h("123.example") == "123.example" and h("t.co") == "t.co"
+
+
+def test_referrersがlistでなければ言えない_水増ししない():
+    base = {"site": "kp.example", "generated_at": "2026-10-28T06:00:00+09:00",
+            "window": {"from": "2026-10-21", "to": "2026-10-27"}, "rows": []}
+    for value in ("b.hatena.ne.jp", {"host": "t.co", "sessions": 3}, 5, None):
+        block = site_visits.referrers_block(PROJECT, records=[dict(base, referrers=value)], cannot=[])
+        site = block["sites"][0]
+        assert site["cannot_say"] == "referrers_unavailable", value
+        assert site["referrers"] == [] and site["dropped"] == {"rows": 0, "sessions": 0}, value
+    ok = site_visits.referrers_block(PROJECT, records=[dict(base, referrers=[
+        {"host": "t.co", "sessions": 3}, {"host": "192.168.0.1", "sessions": 2}])], cannot=[])
+    assert ok["sites"][0]["referrers"] == [{"host": "t.co", "sessions": 3}]
+    assert ok["sites"][0]["dropped"] == {"rows": 1, "sessions": 2}

@@ -39,7 +39,7 @@ class Clicks:
         self.now = now
         self._cache = {}
 
-    def _material(self, account, extra):
+    def _material(self, account):
         if account in self._cache:
             return self._cache[account]
         from . import analytics_comparison as comparison, click_attribution, measured
@@ -48,8 +48,10 @@ class Clicks:
             posted = {str(p["post_id"]): comparison._timestamp(p.get("posted_at"))
                       for p in loaded["posts"]}
             posts = list(posted.items())
-            # 台帳にまだ無い糸の投稿も、近くの投稿との照合に入れる（Index は重複を落とす）。
-            posts += [(pid, at) for pid, at in extra if pid not in posted]
+            # 実測にまだ無い投稿も、近くの投稿との照合に入れる（Index は重複を落とす）。照合に足すのは
+            # **台帳の中の、その account の投稿済み Threads 原稿すべて**（その糸・その窓だけでなく。別の糸の
+            # 同じ URL の投稿があれば `url_shared_72h` で言えない・監査 段7 の 3-a）。
+            posts += [(pid, at) for pid, at in account_posts(self.ledger, account) if pid not in posted]
             index = click_attribution.Index.for_account(
                 account, self.ledger.accounts.get(account) or {}, posts=posts,
                 account_daily=loaded.get("account_daily"), now=self.now)
@@ -59,7 +61,7 @@ class Clicks:
         self._cache[account] = material
         return material
 
-    def row(self, item, extra=()):
+    def row(self, item):
         """原稿 1 本の行（`clicks_72h` は言えるときだけ数・言えなければ null と `cannot_say`）。"""
         out = {"file": item.file, "account": item.account, "medium": item.medium, "thread": item.thread,
                "posted_at": None, "clicks_72h": None, "window_days": None, "cannot_say": None}
@@ -70,7 +72,7 @@ class Clicks:
         if post_id is None:
             out["cannot_say"] = "post_id_missing"
             return out
-        material = self._material(item.account, extra)
+        material = self._material(item.account)
         if material is None:
             out["cannot_say"] = "measured_unreadable"
             return out
@@ -90,12 +92,16 @@ class Clicks:
         return out
 
 
-def _extra(items):
-    """糸の Threads の投稿（先頭の post_id と時刻）——近くの投稿との照合に足す分。"""
+def account_posts(ledger, account):
+    """台帳の中の、その account の投稿済み Threads 原稿すべて（先頭の post_id と時刻）——近くの投稿との
+    照合に足す分。糸や窓で絞らない（絞ると、別の糸の同じ URL の投稿を見落として 1 本に寄せてしまう）。"""
+    from . import scenario
     out = []
-    for item in items:
+    for item in ledger.items:
+        if item.account != account or item.medium != MEDIUM or not scenario._is_posted(item):
+            continue
         pid = _head_post_id(item)
-        if item.medium == MEDIUM and pid and item.posted_at is not None:
+        if pid and item.posted_at is not None:
             out.append((pid, item.posted_at))
     return out
 
@@ -137,8 +143,7 @@ def thread_block(ledger, thread_id, *, with_posts=True) -> dict:
     items = [item for item in ledger.items if item.thread == thread_id
              and item.medium in scenario.SNS_MEDIA and scenario._is_posted(item)]
     clicks = Clicks(ledger, ledger.now)
-    extra = _extra(items)
-    rows = [clicks.row(item, extra) for item in sorted(items, key=lambda i: (i.posted_at or ledger.now, i.file))]
+    rows = [clicks.row(item) for item in sorted(items, key=lambda i: (i.posted_at or ledger.now, i.file))]
     block = summarize(rows)
     if with_posts:
         block["posts"] = [{key: row[key] for key in ("file", "account", "posted_at", "clicks_72h", "window_days",

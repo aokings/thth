@@ -269,9 +269,9 @@ def _clicks_column(ledger, since, now, *, limit, min_n, window):
     items = [item for item in ledger.items
              if item.medium in scenario_mod.SNS_MEDIA and scenario_mod._is_posted(item)
              and _in_window(item.posted_at, since, now)]
+    # 近くの投稿との照合は窓の外も含めた account の Threads 原稿すべて（`thread_clicks.account_posts`）。
     clicks = thread_clicks.Clicks(ledger, now)
-    extra = thread_clicks._extra(items)
-    rows = [clicks.row(item, extra) for item in items]
+    rows = [clicks.row(item) for item in items]
     summary = thread_clicks.summarize(rows)
     by_medium, codes = {}, []
     threads = [r for r in rows if r["medium"] == thread_clicks.MEDIUM]

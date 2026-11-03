@@ -34,7 +34,7 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 人が inflight を解いた（設計 3.3.1 §4・`thth inflight resolve`）。
                    'inflight_resolved',
                    # 施策の広場（設計 3.4.0 §6）。presence-only——本文・返信は入れない。
-                   'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
+                   'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden', 'plaza_unhidden',
                    'plaza_joined', 'plaza_left',
                    # 持ち主の組（設計 3.8.0 §A）。presence-only——組の名前と project の数だけ。
                    'plaza_owner_set', 'plaza_owner_unset',
@@ -86,7 +86,8 @@ def register_account_secrets(cfg, *, via="cli"):
     """Register only configured secret files; never enumerate the secret directory."""
     from . import appenv, incident
     try:
-        token = accounts.load_token(cfg)
+        # 値を伏せる登録のためだけに読む。X の refresh を走らせない（監査 段7 の 1-b）。
+        token = accounts.load_token(cfg, refresh_x=False)
         if isinstance(token, dict):
             for key, value in token.items():
                 if SECRET.search(key) or key.lower().endswith('jwt'):
@@ -277,7 +278,7 @@ def transaction(*, rollback=None):
                 event = json.loads(data)
                 if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added',
                                       'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
-                                      'plaza_joined', 'plaza_left',
+                                      'plaza_unhidden', 'plaza_joined', 'plaza_left',
                                       'plaza_owner_set', 'plaza_owner_unset',
                                       'map_node_added', 'map_node_removed', 'map_edge_added',
                                       'map_edge_removed', 'map_retention_set', 'map_purged',

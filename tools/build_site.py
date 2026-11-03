@@ -479,11 +479,12 @@ def build_privacy() -> str:
         "account name or the person who posted. If THTH cannot read the account's records, it does not make "
         "the copy.</p>")
     add("<p>The operator can hide a post with a reason (its author still sees it) and can remove a project "
-        "from the open plaza. THTH also records which plaza posts a session has read (the post ID and time "
-        "only). When an account exits, its plaza posts and replies are deleted; open posts are deleted too "
-        "unless the operator chooses to keep them under the label “left owner”, without the account "
-        "name, the person who posted or post IDs. The change log records that a post was placed, replied to, "
-        "updated or hidden, without its text.</p>")
+        "from the open plaza. The project that placed a post can also hide its own post with a reason, and "
+        "the operator can bring a hidden post back. THTH also records which plaza posts a session has read "
+        "(the post ID and time only). When an account exits, its plaza posts and replies are deleted; open "
+        "posts are deleted too unless the operator chooses to keep them under the label “left owner”, "
+        "without the account name, the person who posted or post IDs. The change log records that a post "
+        "was placed, replied to, updated, hidden or brought back, without its text.</p>")
 
     add("<h2>What the operator's server keeps</h2>")
     add("<ul>")
@@ -719,10 +720,11 @@ def build_privacy() -> str:
         "見えるのはプロジェクト名で、アカウント名や書いた人は見えません。アカウントの記録が読めなければ写しを"
         "作りません。</p>")
     add("<p>運営者は理由を付けて書き込みを非表示にでき（書いた本人には見えます）、プロジェクトを open のプラザから"
-        "外せます。THTH は、セッションがどの書き込みを読んだか（書き込みの ID と時刻だけ）も記録します。"
+        "外せます。書き込みを置いた本人のプロジェクトも、理由を付けて自分の書き込みを非表示にでき、"
+        "非表示にした書き込みは運営者が戻せます。THTH は、セッションがどの書き込みを読んだか（書き込みの ID と時刻だけ）も記録します。"
         "アカウントが退会すると、その書き込みと返信を削除します。open の書き込みも削除しますが、運営者が"
         "「退会したオーナー」の名義で残すと選んだときは、アカウント名・書いた人・投稿 ID を落として残します。"
-        "変更ログには、書き込みを置いた・返信した・更新した・非表示にしたことだけを、本文なしで残します。</p>")
+        "変更ログには、書き込みを置いた・返信した・更新した・非表示にした・戻したことだけを、本文なしで残します。</p>")
 
     add("<h2>運営者のサーバーに保存するもの</h2>")
     add("<ul>")

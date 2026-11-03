@@ -114,6 +114,8 @@ COMMANDS += ['ads watch', 'ads resume']
 COMMANDS += ['ads estimate', 'ads skill']
 # 5.11.0 段 7: 置いた本人が自分の 1 件を隠す口。
 COMMANDS += ['plaza hide']
+# 5.11.0 段 7 の監査の直し: 管理者が非表示を戻す口。
+COMMANDS += ['admin plaza unhide']
 
 
 def test_json_table_covers_every_parser():

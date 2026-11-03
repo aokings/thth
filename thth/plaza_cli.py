@@ -2,7 +2,7 @@
 
 利用者: `thth plaza post|list|show|reply|update|digest|hide`（hide は置いた本人の口・5.11.0）。
 `post --preview` は範囲を問わず置く中身を見せるだけ（何も書かない・5.11.0）。管理者: `thth admin plaza
-join|leave|hide|list|show|owner`。
+join|leave|hide|unhide|list|show|owner`（unhide は 5.11.0）。
 
 **CLI でも読む側を名指しする**（`show`・`reply`・`update` の `--as`）。VM の CLI は
 複数の持ち主の台帳を持つので、「誰として読むか」を言わないと他の持ち主の project
@@ -101,7 +101,8 @@ def render_post(payload, out=print):
         f"  {payload.get('account') or payload['owner']}（{payload.get('medium') or '—'}）")
     if payload.get("hidden"):
         hidden = payload["hidden"]
-        out(f"[非表示] {hidden.get('at')}  理由: {hidden.get('reason')}")
+        who = "（置いた本人）" if hidden.get("by_poster") else ""
+        out(f"[非表示]{who} {hidden.get('at')}  理由: {hidden.get('reason')}")
     out(f"題: {payload['title']}")
     detail = (f"・{plaza.KIND_DETAIL_LABELS[payload['kind_detail']]}"
               if payload.get("kind_detail") else "")
@@ -489,7 +490,9 @@ def cmd_hide(args) -> int:
                             account=args.viewer)
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
-    return _emit(args, result, lambda r: print(f"非表示にしました: {r['plaza_id']}（置いた本人として）"))
+    return _emit(args, result, lambda r: print(
+        f"非表示にしました: {r['plaza_id']}（置いた本人として）。戻すときは id と理由を添えて管理者に"
+        "頼んでください（thth admin plaza unhide）"))
 
 
 def register(sub) -> None:
@@ -637,7 +640,8 @@ def register(sub) -> None:
     hider = operations.add_parser(
         "hide", help="自分の持ち主が置いた 1 件を隠す（理由つき・変更ログ・管理者の非表示と同じ隠し方）",
         description="置いた本人（同じ project の account）が自分の 1 件を非表示にする（5.11.0）。"
-                    "他の持ち主の id は無い id と同じく断ります。戻すのは管理者に頼んでください。")
+                    "他の持ち主の id は無い id と同じく断ります。戻したいときは id と理由を添えて"
+                    "管理者に頼んでください（管理者が thth admin plaza unhide <id> で戻します）。")
     hider.add_argument("plaza_id")
     hider.add_argument("--as", required=True, dest="viewer", metavar="account",
                        help="隠す account（その 1 件を置いた持ち主＝同じ project の account）")
@@ -666,6 +670,15 @@ def cmd_admin_hide(args) -> int:
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
     return _emit(args, result, lambda r: print(f"非表示にしました: {r['plaza_id']}"))
+
+
+def cmd_admin_unhide(args) -> int:
+    """`thth admin plaza unhide <id> --reason … --by …`（5.11.0 段 7 の監査の直し）。"""
+    try:
+        result = plaza.unhide(args.plaza_id, by=args.by, reason=args.reason, via="cli")
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(f"非表示を戻しました: {r['plaza_id']}"))
 
 
 def cmd_admin_list(args) -> int:
@@ -719,7 +732,7 @@ def cmd_admin_owner(args) -> int:
 
 
 def register_admin(commands) -> None:
-    """`thth admin plaza join|leave|hide|list|show`（設計 3.4.0 §4）。"""
+    """`thth admin plaza join|leave|hide|unhide|list|show`（設計 3.4.0 §4・unhide は 5.11.0）。"""
     parser = commands.add_parser(
         "plaza", help="施策の広場（参加・非表示・全件の一覧）",
         description="持ち主（project）の広場への参加と退出、問題のある書き込みの非表示、"
@@ -738,7 +751,16 @@ def register_admin(commands) -> None:
     hider.add_argument("--by", default=None, help="誰が非表示にしたか（必須）")
     hider.add_argument("--json", action="store_true")
     hider.set_defaults(func=cmd_admin_hide)
-    lister = operations.add_parser("list", help="全部の書き込み（非表示も含む）")
+    unhider = operations.add_parser(
+        "unhide", help="非表示を戻す（管理者の非表示も、置いた本人の非表示も・理由つき・変更ログ）",
+        description="非表示の書き込みを戻す（5.11.0）。管理者が隠したものも、置いた本人が "
+                    "thth plaza hide で隠したものも戻せます。戻した理由は 1 件に残ります。")
+    unhider.add_argument("plaza_id")
+    unhider.add_argument("--reason", required=True, help="戻す理由（1 件に残る・変更ログには入れない）")
+    unhider.add_argument("--by", default=None, help="誰が戻したか（必須）")
+    unhider.add_argument("--json", action="store_true")
+    unhider.set_defaults(func=cmd_admin_unhide)
+    lister =operations.add_parser("list", help="全部の書き込み（非表示も含む）")
     lister.add_argument("--all", action="store_true", help="全部（既定も全部）")
     lister.add_argument("--json", action="store_true")
     lister.set_defaults(func=cmd_admin_list)
