@@ -87,6 +87,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - 命令: `thth scenario <project|account> [--json]`（一覧・`schema: "thth.scenario/1"`）・`thth scenario show <project> <id> [--json]`（段ごとの原稿の名前と状態・出来事。キャンペーンは `stages[].items`（段ごとの成果物）、シリーズは `slots_upcoming`（今後 4 週の枠）、両方に `items[].delivery`・`post_ids` と `deliveries`）・`thth scenario lint <project> [--json]`（宣言の誤り・無い id を指す札・未分類の原稿）。`next` は名詞（「x に 1 本（announce）」「article_published を糸のファイルに 1 行」）で、本文は入らない。読めない台帳は `cannot_say`（0 と混ぜない）。
 - 流れの型（段の名 `promote`・`selfbm`・`boost` と順・印・広告に進む条件）は skill `thth-flow`。`thth scenario`・`show`・`dashboard campaign` の 1 行目と `--json` の `skill` がそれを指す（`thth scenario skill --print` で全文）。
 - サイトの訪問（5.7.0）: hub が GA4 から作った `hub.site_visits/1` を `thth scenario site-import <project> --file <json>` で受け取り、campaign → 原稿の名前 → `thread:` で糸に結ぶ。`show` の `site_visits`・`dashboard campaign` の `outcomes.article_visits` に出る。読み方は skill `thth-flow` の §3。
+- 次の糸の種（5.9.0）: `thth scenario seeds <project> [--days 28] [--limit 5] [--json]`（読むだけ）。返信の多かった投稿・訪問の多かった告知・よく見られた投稿・閉じた糸の続き（宣言にあって使わなかった媒体）を、数の多い順に並べるだけ（媒体ごと・サイトごと・n が 5 未満は比べを言わない・他人の本文と username は出ない）。**選ぶのはあなた（窓口）と人。** 選んだら糸の宣言を書く（skill `thth-flow` の「糸を始める」）。MCP の道具は無い（CLI で叩く）。
 - `thth events` に 2 種類（どちらも `ongoing: true`・`account` と `project` は project の名前）: `scenario_stalled`（キャンペーンが `stale_after_days` を越えて動いていない・`stage`・`days`・`next`。段が進めば別の id）・`series_low`（シリーズの承認済みの未来の原稿が `stock_floor` を切った・`approved_future`・`floor`・`next_slot`）。宣言の無い project では出ない。
 
 ## ダッシュボード（会話の中に出す・5.0）

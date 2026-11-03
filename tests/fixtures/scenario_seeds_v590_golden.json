@@ -1,0 +1,280 @@
+{
+  "schema": "thth.scenario/1",
+  "report_type": "scenario_seeds",
+  "generated_at": "2026-10-28T11:20:00+09:00",
+  "skill": {
+    "name": "thth-flow",
+    "path": "skills/thth-flow/SKILL.md",
+    "command": "thth scenario skill --print",
+    "text": "流れの型は skill thth-flow（`thth scenario skill` で場所、`thth scenario skill --print` で全文）。段の名・印（UTM）・各段の命令・広告に進む条件はそこに"
+  },
+  "project": "kp",
+  "accounts": [
+    "kp-hatenablog",
+    "kp-threads",
+    "kp-x"
+  ],
+  "window": {
+    "days": 28,
+    "start": "2026-09-30T11:20:00+09:00",
+    "end": "2026-10-28T11:20:00+09:00",
+    "basis": "posted_at",
+    "timezone": "Asia/Tokyo"
+  },
+  "limit": 5,
+  "min_n": 5,
+  "chooses": "窓口（THTH は並べるだけ・選ばない）",
+  "skipped_counts": {},
+  "columns": [
+    {
+      "key": "replies",
+      "label": "返信の多かった投稿",
+      "metric": "replies_back_24h",
+      "measure": "24h の返ってきた返信（他人の返信の数・thth after と同じ計算）",
+      "sort_basis": "replies_back_24h の多い順・同じ数は投稿の新しい順・媒体ごと（媒体をまたいで並べない）",
+      "window": {
+        "days": 28,
+        "start": "2026-09-30T11:20:00+09:00",
+        "end": "2026-10-28T11:20:00+09:00",
+        "basis": "posted_at",
+        "timezone": "Asia/Tokyo"
+      },
+      "by_medium": {
+        "threads": {
+          "posts": 5,
+          "n": 5,
+          "min_n": 5,
+          "median": 2,
+          "p25": 2,
+          "p75": 3,
+          "comparable": true,
+          "uncovered_24h": 0,
+          "rows": [
+            {
+              "count": 7,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p2.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-21T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 3,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p1.md",
+              "thread": "seed-01",
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-20T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 2,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p5.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-24T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 2,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p4.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-23T07:00:00+09:00",
+              "covered_24h": true
+            }
+          ],
+          "more": 0
+        },
+        "x": {
+          "posts": 1,
+          "n": 1,
+          "min_n": 5,
+          "median": null,
+          "p25": null,
+          "p75": null,
+          "comparable": false,
+          "uncovered_24h": 0,
+          "rows": [
+            {
+              "count": 4,
+              "medium": "x",
+              "account": "kp-x",
+              "file": "x-x1.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-25T07:00:00+09:00",
+              "covered_24h": true
+            }
+          ],
+          "more": 0
+        }
+      },
+      "cannot_say": [
+        "below_min_n:x"
+      ],
+      "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
+    },
+    {
+      "key": "visits",
+      "label": "訪問の多かった告知",
+      "metric": "sessions",
+      "measure": "本記事への訪問（GA4・hub 経由）",
+      "source": "ga4_via_hub",
+      "sort_basis": "sessions の多い順・同じ数は原稿のパスの順・サイトごと（窓の違うサイトは混ぜない）",
+      "window_basis": "GA4 の窓（hub が決める）が --days の窓と重なる控えだけ",
+      "as_of": null,
+      "sites": [],
+      "cannot_say": [
+        "site_visits_not_imported"
+      ],
+      "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
+    },
+    {
+      "key": "views",
+      "label": "よく見られた投稿",
+      "metric": "views_24h",
+      "measure": "24h の views（thth after と同じ計算）",
+      "sort_basis": "views_24h の多い順・同じ数は投稿の新しい順・媒体ごと（媒体をまたいで並べない）",
+      "window": {
+        "days": 28,
+        "start": "2026-09-30T11:20:00+09:00",
+        "end": "2026-10-28T11:20:00+09:00",
+        "basis": "posted_at",
+        "timezone": "Asia/Tokyo"
+      },
+      "by_medium": {
+        "threads": {
+          "posts": 5,
+          "n": 5,
+          "min_n": 5,
+          "median": 50,
+          "p25": 30,
+          "p75": 100,
+          "comparable": true,
+          "uncovered_24h": 0,
+          "rows": [
+            {
+              "count": 400,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p3.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-22T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 100,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p1.md",
+              "thread": "seed-01",
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-20T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 50,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p2.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-21T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 30,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p5.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-24T07:00:00+09:00",
+              "covered_24h": true
+            },
+            {
+              "count": 10,
+              "medium": "threads",
+              "account": "kp-threads",
+              "file": "th-p4.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-23T07:00:00+09:00",
+              "covered_24h": true
+            }
+          ],
+          "more": 0
+        },
+        "x": {
+          "posts": 1,
+          "n": 1,
+          "min_n": 5,
+          "median": null,
+          "p25": null,
+          "p75": null,
+          "comparable": false,
+          "uncovered_24h": 0,
+          "rows": [
+            {
+              "count": 20,
+              "medium": "x",
+              "account": "kp-x",
+              "file": "x-x1.md",
+              "thread": null,
+              "head": "本文はここに書く秘密の一文",
+              "posted_at": "2026-10-25T07:00:00+09:00",
+              "covered_24h": true
+            }
+          ],
+          "more": 0
+        }
+      },
+      "cannot_say": [
+        "below_min_n:x"
+      ],
+      "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
+    },
+    {
+      "key": "closed_threads",
+      "label": "閉じた糸の続き",
+      "metric": "media_declared_untried",
+      "measure": "宣言にあって使わなかった媒体（plaza の「試していない媒体」と同じ計算）",
+      "sort_basis": "使わなかった媒体の数の多い順・同じ数は閉じた日の新しい順",
+      "rows": [
+        {
+          "count": 1,
+          "thread": "seed-01",
+          "title": "種の見本",
+          "closed_at": "2026-10-25T00:00:00+09:00",
+          "media_declared_untried": [
+            "x"
+          ],
+          "media_tried": [
+            "threads"
+          ],
+          "media_unknown": [
+            "ads"
+          ]
+        }
+      ],
+      "more": 0,
+      "cannot_say": [
+        "ads_account_missing"
+      ],
+      "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
+    }
+  ],
+  "cannot_say": [
+    "ads_account_missing",
+    "site_visits_not_imported"
+  ]
+}

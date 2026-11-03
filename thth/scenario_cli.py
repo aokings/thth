@@ -5,6 +5,10 @@
 - 出力の 1 行目は skill `thth-flow` の 1 行（`--json` は `skill` の欄）。`thth scenario skill [--print]` で場所と全文。
 - `thth scenario site-import <project> --file <json>`: hub の `hub.site_visits/1` を受け取り、
   `state/<project>/site_visits/` に控える（中身は `thth/site_visits.py`）。書くのはこの控えだけ。
+
+5.9.0（設計 効果測定と連動 §3 段 5「戻りの輪」）:
+- `thth scenario seeds <project> [--days N] [--limit N] [--json]`: 次の糸の種を合図ごとの列で並べる
+  （読むだけ・選ばない・数の多い順だけ。中身は `thth/scenario_seeds.py`）。`thth scenario <project>` の末尾に 1 行。
 """
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ import sys
 
 from . import scenario as scenario_mod
 
-SUBCOMMANDS = ("show", "lint", "site-import")
+SUBCOMMANDS = ("show", "lint", "site-import", "seeds")
 
 
 def _when(iso):
@@ -123,6 +127,12 @@ def render(payload, out=print) -> None:
     out(f"未分類の原稿: SNS {untied['drafts']}・はてなブログ {untied['deliveries']}（thth scenario lint で一覧）")
     if payload["cannot_say"]:
         out("読めなかったもの: " + "・".join(payload["cannot_say"]))
+    out(seeds_line(payload["project"]))
+
+
+def seeds_line(project) -> str:
+    return (f"次の糸の種: thth scenario seeds {project}（返信・訪問・views の多い順と閉じた糸の続き・"
+            "読むだけ・選ぶのは窓口）")
 
 
 def render_show(payload, out=print) -> None:
@@ -131,7 +141,7 @@ def render_show(payload, out=print) -> None:
             "threads": [payload[key]] if key == "thread" else [],
             "series": [payload[key]] if key == "series" else [],
             "untied": {"drafts": 0, "deliveries": 0}, "cannot_say": payload["cannot_say"]},
-           out=lambda line: None if line.startswith("未分類") else out(line))
+           out=lambda line: None if line.startswith(("未分類", "次の糸の種")) else out(line))
     body = payload[key]
     if key == "thread" and body["events"]:
         out("出来事:")
@@ -168,6 +178,63 @@ def render_import(payload, out=print) -> None:
         out(f"  結ばれない理由: {reasons}")
 
 
+def _median_text(node) -> str:
+    """群の数の 1 句。n が min_n に満たなければ中央値も比べも言わない。"""
+    if node.get("comparable"):
+        return f"中央値 {node['median']}（n={node['n']}）"
+    return f"n={node['n']}（{node['min_n']} 未満）なので中央値と比べは言えない・並びは数の順だけ"
+
+
+def render_seeds(payload, out=print) -> None:
+    out(skill_line(payload))
+    window = payload["window"]
+    out(f"{payload['project']}  次の糸の種（読むだけ・並べるだけ・選ぶのは窓口）  直近 {window['days']} 日"
+        f"（{window['start'][:10]}〜{window['end'][:10]}）  {_when(payload['generated_at'])}")
+    for number, column in enumerate(payload["columns"], start=1):
+        out(f"{number}. {column['label']}（{column['measure']}）  並べ方: {column['sort_basis']}")
+        if column["key"] in ("replies", "views"):
+            if not column["by_medium"]:
+                out("   窓の中の自分の投稿がありません")
+            for medium, node in column["by_medium"].items():
+                out(f"   {medium}  {node['posts']} 本（数の取れた {node['n']}・24h 未採取 {node['uncovered_24h']}）・"
+                    f"{_median_text(node)}")
+                for row in node["rows"]:
+                    thread = f"  糸 {row['thread']}" if row["thread"] else ""
+                    out(f"     {row['count']}  {_when(row['posted_at'])}  {row['file']}{thread}  「{row['head'] or ''}」")
+                if node["more"]:
+                    out(f"     ほか {node['more']} 本（--limit で増やす）")
+        elif column["key"] == "visits":
+            if column.get("as_of"):
+                out(f"   {_when(column['as_of'])} 時点")
+            if column["cannot_say"]:
+                out(f"   —（{'・'.join(column['cannot_say'])}）")
+            for site in column["sites"]:
+                window_ = site.get("window") or {}
+                span = f"{window_.get('from')}〜{window_.get('to')}"
+                if site["cannot_say"] in ("outside_window", "site_visits_unavailable", "no_tied_campaign"):
+                    out(f"   {site['site']} {span}: —（{site['cannot_say']}）")
+                    continue
+                stale = "（新しい窓は取れなかった・前の窓の数）" if site.get("stale") else ""
+                out(f"   {site['site']} {span}{stale}  原稿 {site['manuscripts']}・{_median_text(site)}")
+                for row in site["rows"]:
+                    thread = f"  糸 {row['thread']}" if row["thread"] else "  糸なし"
+                    out(f"     {row['sessions']}  {row['path']}{thread}")
+                if site["more"]:
+                    out(f"     ほか {site['more']} 本（--limit で増やす）")
+        else:
+            if not column["rows"]:
+                out("   窓の中で閉じた糸に、宣言にあって使わなかった媒体はありません")
+            for row in column["rows"]:
+                out(f"   {row['count']}  糸 {row['thread']}  {row['title'] or ''}  閉じた {row['closed_at'][:10]}  "
+                    f"使わなかった {'・'.join(row['media_declared_untried'])}"
+                    f"（使った {'・'.join(row['media_tried']) or 'なし'}）")
+            if column["more"]:
+                out(f"   ほか {column['more']} 本（--limit で増やす）")
+        out(f"   {column['next']}")
+    if payload["cannot_say"]:
+        out("読めなかったもの・言えないもの: " + "・".join(payload["cannot_say"]))
+
+
 def render_lint(payload, out=print) -> None:
     out(f"{payload['project']}  宣言 {payload['declarations']}・指摘 {len(payload['problems'])}・"
         f"未分類 {len(payload['untied'])}")
@@ -186,8 +253,12 @@ def register(sub) -> None:
              "show <project> <id> で 1 本の詳細、lint <project> で宣言の誤りと未分類の原稿")
     p.add_argument("words", nargs="+", metavar="target",
                    help="<project|account>／show <project> <id>／lint <project>／"
-                        "site-import <project> --file <json>／skill [--print]")
+                        "site-import <project> --file <json>／skill [--print]／"
+                        "seeds <project> [--days N] [--limit N]")
     p.add_argument("--file", default=None, help="site-import: hub の hub.site_visits/1 の JSON（1 サイト 1 ファイル）")
+    p.add_argument("--days", type=int, default=None,
+                   help="seeds: 窓の日数（既定 28・投稿の時刻と閉じた日で数える）")
+    p.add_argument("--limit", type=int, default=None, help="seeds: 列（媒体・サイト）ごとに並べる数（既定 5）")
     p.add_argument("--print", dest="print_skill", action="store_true", help="skill: skill thth-flow の全文を出す")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd)
@@ -245,12 +316,35 @@ def _site_import(words, args) -> int:
     return 0
 
 
+def _seeds(words, args) -> int:
+    from . import scenario_seeds
+    if len(words) != 2:
+        return _fail("usage: thth scenario seeds <project> [--days N] [--limit N]", args.json)
+    days = scenario_seeds.DEFAULT_DAYS if args.days is None else args.days
+    limit = scenario_seeds.DEFAULT_LIMIT if args.limit is None else args.limit
+    try:
+        payload = scenario_seeds.build(words[1], days=days, limit=limit)
+    except scenario_seeds.SeedsError as exc:
+        return _fail(exc.code, args.json)
+    except ValueError as exc:
+        return _fail(str(exc), args.json)
+    if args.json:
+        print(_dumps(payload, indent=2))
+    else:
+        render_seeds(payload)
+    return 0
+
+
 def cmd(args) -> int:
     words = list(args.words)
     if words == ["skill"]:
         return _skill(args)
     if words[0] == "site-import":
         return _site_import(words, args)
+    if words[0] == "seeds" and len(words) > 1:
+        return _seeds(words, args)
+    if args.days is not None or args.limit is not None:
+        return _fail("usage: --days と --limit は thth scenario seeds だけ", args.json)
     sub = words[0] if words[0] in SUBCOMMANDS and len(words) > 1 else None
     try:
         if sub == "show":
