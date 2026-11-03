@@ -408,10 +408,7 @@ def trigger_steps(configs, *, since, now):
             step = None
         if step is not None:
             steps.append(step)
-    try:
-        steps += _scenario_steps(configs, records, now=now)
-    except Exception:  # noqa: BLE001 — 糸の台帳が読めなくても他の候補は出す
-        pass
+    steps += _scenario_steps(configs, records, now=now)
     return steps
 
 
@@ -431,36 +428,55 @@ def _scenario_steps(configs, records, *, now):
     命令は `thth plaza post <account> --kind measure --from scenario <project> <id>`。project が持ち主の組に
     入っていなければ、組の登録の案内（`thth admin plaza owner set`・管理者）を添える。候補の列挙だけ。
     """
-    from . import plaza, scenario
-    posted = _posted_threads(records)
+    from . import scenario
+    try:
+        posted = _posted_threads(records)
+    except Exception:  # noqa: BLE001 — 置いた記録が読めなければ候補を出さない（重ねて出すよりよい）
+        return []
     by_project = {}
     for name, cfg in configs.items():
         project = cfg.get("project")
         if isinstance(project, str) and project:
             by_project.setdefault(project, []).append(name)
-    floor = now - datetime.timedelta(days=SCENARIO_WINDOW_DAYS)
     steps = []
     for project in sorted(by_project):
-        names = sorted(by_project[project])
-        ledger = scenario.load_ledger(project, names, now=now)
-        for decl in scenario.usable_declarations(ledger):
-            if decl.kind != "thread" or (project, decl.id) in posted:
-                continue
-            closed = [scenario._date_at(e["at"]) for e in decl.events if e["name"] == "closed"]
-            closed = max((at for at in closed if at is not None), default=None)
-            if closed is None or not (floor < closed <= now):
-                continue
-            account = names[0]
-            owner = plaza.owner_of(project)
-            title = scenario._plain(decl.fm.get("title"))
-            step = {"kind": "plaza", "candidate": "post_scenario", "account": account,
-                    "plaza_id": None, "title": scenario._head(title) if title else decl.id,
-                    "project": project, "thread": decl.id, "closed_at": jst.iso(closed),
-                    "owner_group": owner, "basis": TRIGGER_BASIS["post_scenario"],
-                    "command": (f"thth plaza post {account} --kind measure --from scenario {project} "
-                                f"{decl.id} --scope \"<媒体・企画の範囲>\" --by <名前>")}
-            if owner is None:
-                step["owner_hint"] = (f"thth admin plaza owner set <組の名前> {project} <同じ持ち主の project> "
-                                      "--by <名前>")
-            steps.append(step)
+        # project ごとに try（1 つの project の例外で他の project の候補を消さない・監査 段4 の 4）。
+        try:
+            steps += _project_scenario_steps(project, by_project[project], configs, posted, now=now)
+        except Exception:  # noqa: BLE001 — 糸の台帳が読めなくても他の候補は出す
+            continue
+    return steps
+
+
+def _project_scenario_steps(project, names, configs, posted, *, now):
+    from . import plaza, scenario
+    names = sorted(names)
+    # 宣言のファイルが 1 つも無い project は queue まで開かない（events と同じ門・監査 段4 の 4）。
+    if not scenario._any_declaration_file(names):
+        return []
+    ledger = scenario.load_ledger(project, names, now=now)
+    floor = now - datetime.timedelta(days=SCENARIO_WINDOW_DAYS)
+    # 置く口座は SNS の口座を先に（無ければ名前順の先頭）。
+    sns = [n for n in names if (configs.get(n) or {}).get("media") in scenario.SNS_MEDIA]
+    account = (sns or names)[0]
+    steps = []
+    for decl in scenario.usable_declarations(ledger):
+        if decl.kind != "thread" or (project, decl.id) in posted:
+            continue
+        closed = [scenario._date_at(e["at"]) for e in decl.events if e["name"] == "closed"]
+        closed = max((at for at in closed if at is not None), default=None)
+        if closed is None or not (floor < closed <= now):
+            continue
+        owner = plaza.owner_of(project)
+        title = scenario._plain(decl.fm.get("title"))
+        step = {"kind": "plaza", "candidate": "post_scenario", "account": account,
+                "plaza_id": None, "title": scenario._head(title) if title else decl.id,
+                "project": project, "thread": decl.id, "closed_at": jst.iso(closed),
+                "owner_group": owner, "basis": TRIGGER_BASIS["post_scenario"],
+                "command": (f"thth plaza post {account} --kind measure --from scenario {project} "
+                            f"{decl.id} --scope \"<媒体・企画の範囲>\" --by <名前>")}
+        if owner is None:
+            step["owner_hint"] = (f"thth admin plaza owner set <組の名前> {project} <同じ持ち主の project> "
+                                  "--by <名前>")
+        steps.append(step)
     return steps

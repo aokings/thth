@@ -147,6 +147,10 @@ REACTION_LABELS = {"views_24h": "views", "likes_24h": "likes", "replies_back_24h
 STAGE_KEYS = ("name", "label", "medium", "need", "done", "pending", "drafts", "conflict", "satisfied",
               "satisfied_by", "replies", "overdue", "replies_within_hours", "target")
 ADS_CANNOT = {"spend_minor": "ads_spend_not_recorded", "link_clicks": "ads_clicks_not_recorded"}
+# 原稿の台帳が読めないときの符丁（`scenario.load_ledger` の cannot_say）。このとき本数は 0 と言わない。
+LEDGER_UNREADABLE = ("queue_unreadable", "account_unreadable", "repo_unreadable")
+# 他の持ち主に見せてよい段の名（skill thth-flow の語彙）。それ以外は「その他」。
+OPEN_STAGE_NAMES = ("collect", "diary", "article", "announce", "warm", "promote", "selfbm", "boost")
 
 
 def _scenario_names(project_arg, *, account, project, trusted_accounts):
@@ -324,12 +328,17 @@ def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_a
               "timezone": "Asia/Tokyo"}
     cannot = sorted(set(status["cannot_say"]) | set(ledger.cannot_say) | set(reaction_cannot)
                     | ({visits["cannot_say"]} if visits["cannot_say"] else set()))
+    # 原稿の台帳が読めなかったら、反応と段の本数は「0」でなく言えない（監査 段4 の 3）。
+    unreadable = sorted(set(ledger.cannot_say) & set(LEDGER_UNREADABLE))
     numbers = {"thread": decl.id, "state": status["state"], "stage": status["stage"],
                "stages": stages, "reactions": reactions, "site_visits": visits, "ads": ads,
-               "media_tried": tried, "media_declared_untried": declared_untried}
-    observed = (any(isinstance(row.get("done"), int) and row["done"] > 0 for row in stages)
-                or any(row["covered_24h"] for row in reactions.values())
-                or visits["sessions"] is not None)
+               "media_tried": tried, "media_declared_untried": declared_untried,
+               "posts_cannot_say": unreadable[0] if unreadable else None}
+    # observed の印は、道具が自分の台帳から取った数があるときだけ（監査 段4 の 1）: 24h の実測が取れた投稿・
+    # 訪問の控えの数・広告の口座の記録で始めた広告。段の本数（人が書く出来事・原稿の status）は根拠にしない。
+    observed = (any(row["covered_24h"] for row in reactions.values())
+                or visits["sessions"] is not None
+                or (isinstance(ads["started"], int) and ads["started"] > 0))
     command = f"thth scenario show {found} {decl.id}"
     title = scenario._plain(decl.fm.get("title"))
     return {"source": SCENARIO_SOURCE, "target": decl.id, "project": found,
@@ -337,6 +346,40 @@ def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_a
             "at": jst.iso(now), "period": period,
             "numbers": numbers, "cannot_say": cannot[:CANNOT_SAY_MAX], "observed": bool(observed),
             "title": scenario._head(title) if title else None}
+
+
+def scenario_open_numbers(numbers):
+    """open の写し（他の持ち主に見える）の scenario の数（監査 段4 の 2）。数と媒体と状態だけ。
+
+    落とすもの: 糸の id・サイトのホスト名・段の名と target（既知の語彙の段は日本語の名、ほかは「その他」）・
+    現在の段の名。文字列は道具の符丁か媒体の名か、決めた日本語だけが残る。
+    """
+    from . import scenario
+    numbers = numbers or {}
+    stages = []
+    for row in numbers.get("stages") or []:
+        name = row.get("name")
+        out = {"label": scenario.STAGE_JA[name] if name in OPEN_STAGE_NAMES else "その他"}
+        for key in ("medium", "need", "done", "pending", "drafts", "satisfied", "replies", "overdue",
+                    "budget_minor", "currency"):
+            if key in row:
+                out[key] = row[key]
+        if isinstance(row.get("by_medium"), dict):
+            out["by_medium"] = row["by_medium"]
+        stages.append(out)
+    visits = numbers.get("site_visits") or {}
+    sites = [{key: site.get(key) for key in ("window", "sessions", "engaged_sessions", "by_medium",
+                                               "n_campaigns", "stale", "cannot_say")}
+             for site in visits.get("sites") or []]
+    stage = numbers.get("stage") or {}
+    return {"state": numbers.get("state"), "stage": {"index": stage.get("index"), "of": stage.get("of")},
+            "stages": stages, "reactions": numbers.get("reactions") or {},
+            "site_visits": {key: visits.get(key) for key in ("label", "source", "as_of", "sessions",
+                                                             "engaged_sessions", "cannot_say")}
+            | {"sites": sites, "n_sites": len(sites)},
+            "ads": numbers.get("ads") or {}, "media_tried": list(numbers.get("media_tried") or []),
+            "media_declared_untried": list(numbers.get("media_declared_untried") or []),
+            "posts_cannot_say": numbers.get("posts_cannot_say")}
 
 
 def _yen(value, currency):
@@ -371,16 +414,23 @@ def scenario_draft(entry):
             continue
         done = "—" if row.get("done") is None else row["done"]
         stage_parts.append(f"{row.get('label') or row['name']} {done}/{row.get('need')}")
-    lines.append("段（済み/要る）: " + ("・".join(stage_parts) or "—"))
+    unreadable = numbers.get("posts_cannot_say")
+    lines.append("段（済み/要る）: " + ("・".join(stage_parts) or "—")
+                 + (f"（原稿の台帳が読めない・{unreadable}。本数は読めた分だけ）" if unreadable else ""))
     if numbers["reactions"]:
         lines.append("反応（1 本ごとの 24h・thth after と同じ計算）:")
         for medium, row in numbers["reactions"].items():
             lines.append("  " + _reaction_line(medium, row))
+        if unreadable:
+            lines.append(f"  （原稿の台帳が読めない・{unreadable}。上は読めた原稿の分だけ）")
+    elif unreadable:
+        lines.append(f"反応: 言えない（{unreadable}）")
     else:
         lines.append("反応: SNS の投稿がまだ無い（0 本）")
     visits = numbers["site_visits"]
     if visits["sessions"] is not None:
-        windows = "・".join(f"{s['site']} {(s.get('window') or {}).get('from')}〜{(s.get('window') or {}).get('to')}"
+        windows = "・".join(f"{s.get('site') or 'サイト'} {(s.get('window') or {}).get('from')}〜"
+                            f"{(s.get('window') or {}).get('to')}"
                             for s in visits["sites"] if s.get("sessions") is not None)
         lines.append(f"本記事への訪問: {visits['sessions']}（engaged {visits['engaged_sessions'] if visits['engaged_sessions'] is not None else '—'}・"
                      f"{windows}・{visits['source']}）")
@@ -395,7 +445,8 @@ def scenario_draft(entry):
                      f"通しの予算 {_yen(ads['budget_minor'], ads['currency'])}・使った額 言えない"
                      f"（{ADS_CANNOT['spend_minor']}）・link_click 言えない（{ADS_CANNOT['link_clicks']}）")
     lines.append("使った媒体: " + ("・".join(numbers["media_tried"]) or "—")
-                 + ("／宣言したが 0 本: " + "・".join(numbers["media_declared_untried"])
+                 + (("／宣言したが読めた原稿では 0 本（言えない・" + unreadable + "）: " if unreadable
+                     else "／宣言したが 0 本: ") + "・".join(numbers["media_declared_untried"])
                     if numbers["media_declared_untried"] else ""))
     if entry["cannot_say"]:
         lines.append("言えないこと: " + "／".join(entry["cannot_say"]))

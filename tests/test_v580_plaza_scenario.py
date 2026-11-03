@@ -38,8 +38,10 @@ def closed(flow, isolated_account_factory, monkeypatch, tmp_path):  # noqa: F811
     _boost(name, "20261024T100000-a", "c1", story="111_222", lifetime=500)
     _op(name, "20261024T110000-b", {"op": "activate", "at": "2026-10-24T11:00:00+09:00", "result": "ok",
                                      "campaign_id": "c1", "amount_minor": 500, "activated": ["c1"]})
-    isolated_account_factory("kt-threads", project="kt", handle="kt_tea")
-    isolated_account_factory("kt-bsky", project="kt", media="bluesky", handle="kt.bsky.social")
+    from tests.conftest import init_real_repo
+    kt_repo = init_real_repo(tmp_path, "kt")     # 関東は別の repo（kp の糸の宣言を持たない）
+    isolated_account_factory("kt-threads", project="kt", handle="kt_tea", repo_dir=kt_repo)
+    isolated_account_factory("kt-bsky", project="kt", media="bluesky", handle="kt.bsky.social", repo_dir=kt_repo)
     calls = []
 
     def lookup(account):
@@ -151,6 +153,130 @@ def test_from_scenarioの断り(closed):
     with pytest.raises(plaza.PlazaError, match="^not_a_measure$"):
         _post(kind="finding")
     assert "from_scenario_not_found" in plaza.REASONS and "from_scenario_not_found" in plaza.NEXT
+
+
+# ------------------------------------------------------------------ 監査 段4 の直し
+
+EVT = """---
+thth_scenario: 1
+kind: thread
+id: evt-01
+title: 出来事だけの糸
+project: kp
+started: 2026-10-20
+---
+- article: site signal=article_published
+- himitsu_dan: threads need=1
+
+- 2026-10-21 article_published 公開した
+- 2026-10-27 closed 閉じた
+"""
+
+
+@pytest.fixture
+def evt(closed):
+    """人が書く出来事と、status: posted だけの原稿（実測なし）の糸。訪問も広告も無い。"""
+    from tests.test_v500_scenario import _sns
+    _write(os.path.join(closed["scen"], "evt-01.md"), EVT)
+    _write(os.path.join(closed["queue"], "th-evt-01.md"),
+           _sns("kp-threads", status="posted", publish_at="2026-10-22T08:00:00+09:00", thread="evt-01",
+                extra={"post_id": "333_444", "posted_at": "2026-10-22T08:00:02+09:00"}))
+    return closed
+
+
+def test_出来事とstatus_postedだけの糸はobservedにしない(evt):
+    result = _post(from_source=("scenario", PROJECT, "evt-01"))
+    record = plaza.STORE.get(result["plaza_id"])
+    numbers = record["tool_numbers"]
+    # 段の本数は付く（観測の欄に残す）が、印の根拠にはしない。
+    assert [s["done"] for s in numbers["numbers"]["stages"]] == [1, 1]
+    assert numbers["numbers"]["reactions"]["threads"]["covered_24h"] == 0
+    assert numbers["observed"] is False
+    assert result["evidence_level"] == "stated" and record["evidence_level"] == "stated"
+
+
+def test_訪問の控えが取れればobserved(evt, tmp_path):
+    site_visits.import_file(PROJECT, _visits(tmp_path, [_row("th-evt-01", 7, engaged=5)]), now=NOW)
+    result = _post(from_source=("scenario", PROJECT, "evt-01"))
+    assert result["evidence_level"] == "observed"
+    assert plaza.STORE.get(result["plaza_id"])["tool_numbers"]["numbers"]["site_visits"]["sessions"] == 7
+
+
+def test_openの写しに糸のidとサイトのホスト名と自由な段の名を出さない(evt, tmp_path):
+    site_visits.import_file(PROJECT, _visits(tmp_path, [_row("th-evt-01", 7, engaged=5)]), now=NOW)
+    plaza.set_membership("kp", joined=True, by="operator")
+    plaza.set_membership("kt", joined=True, by="operator")
+    preview = _post(from_source=("scenario", PROJECT, "evt-01"), visibility="open", title="出来事の糸")
+    assert preview["report_type"] == "plaza_open_preview"
+    result = _post(from_source=("scenario", PROJECT, "evt-01"), visibility="open", title="出来事の糸",
+                   confirm=preview["digest"])
+    shown = plaza.show(result["plaza_id"], plaza.Viewer({"kt-threads": "kt"}))
+    assert shown["view"] == "open"
+    text = json.dumps(shown["tool_numbers"], ensure_ascii=False)
+    assert "evt-01" not in text and "kopicha.org" not in text and "himitsu" not in text
+    stages = shown["tool_numbers"]["numbers"]["stages"]
+    assert [s["label"] for s in stages] == ["本記事", "その他"] and [s["done"] for s in stages] == [1, 1]
+    assert shown["tool_numbers"]["numbers"]["site_visits"]["sessions"] == 7
+    assert shown["tool_numbers"]["numbers"]["site_visits"]["n_sites"] == 1
+    assert "evt-01" not in (shown["how"] or "")
+    # 持ち主の側（原本）には今までどおり全部ある。
+    own = plaza.show(result["plaza_id"], plaza.Viewer({"kp-x": "kp"}))
+    assert own["tool_numbers"]["numbers"]["thread"] == "evt-01"
+
+
+def test_原稿の台帳が読めないとき反応を0本と言わない(closed, monkeypatch, capsys):
+    from thth import scenario
+    real = scenario.load_ledger
+
+    def broken(project, names, **kwargs):
+        ledger = real(project, names, **kwargs)
+        ledger.items = [item for item in ledger.items if item.thread != "flow-01"]
+        ledger.cannot_say.add("queue_unreadable")
+        return ledger
+    monkeypatch.setattr(scenario, "load_ledger", broken)
+    plaza.set_owner("masaru", ["kp", "kt"], by="operator")
+    record = plaza.STORE.get(_post()["plaza_id"])
+    assert record["tool_numbers"]["numbers"]["posts_cannot_say"] == "queue_unreadable"
+    assert "反応: 言えない（queue_unreadable）" in record["body"]
+    draft = record["body"].split("\n\n")[0]
+    assert "（0 本）" not in draft and "宣言したが 0 本" not in draft
+    assert "宣言したが読めた原稿では 0 本（言えない・queue_unreadable）" in draft
+    assert cli.main(["plaza", "digest", "kt"]) == 0
+    out = capsys.readouterr().out
+    assert "SNS 言えない（queue_unreadable）" in out and "SNS 0 本" not in out
+
+
+def test_observeの糸の候補は宣言が無いprojectの台帳を読まず_1つの例外で他を消さない(closed, monkeypatch):
+    from thth import scenario
+    read = []
+    real = scenario.load_ledger
+    monkeypatch.setattr(scenario, "load_ledger",
+                        lambda project, names, **kw: (read.append(project), real(project, names, **kw))[1])
+    configs = {"kp-threads": {"project": "kp", "media": "threads"},
+               "kt-threads": {"project": "kt", "media": "threads"}}
+    steps = [s for s in plaza_moments.trigger_steps(configs, since=NOW, now=NOW)
+             if s["candidate"] == "post_scenario"]
+    assert [s["project"] for s in steps] == ["kp"] and read == ["kp"]
+    real_steps = plaza_moments._project_scenario_steps
+
+    def flaky(project, *args, **kwargs):
+        if project == "aa":
+            raise RuntimeError("壊れた project")
+        return real_steps(project, *args, **kwargs)
+    monkeypatch.setattr(plaza_moments, "_project_scenario_steps", flaky)
+    configs["aa-threads"] = {"project": "aa", "media": "threads"}
+    steps = [s for s in plaza_moments.trigger_steps(configs, since=NOW, now=NOW)
+             if s["candidate"] == "post_scenario"]
+    assert [s["project"] for s in steps] == ["kp"]
+
+
+def test_CLIでaccountをfromの後ろに書いても飲み込まれない(closed, capsys):
+    rc = cli.main(["plaza", "post", "--from", "scenario", PROJECT, "flow-01", "kp-threads",
+                   "--scope", SCOPE, "--by", "k", "--json"])
+    result = json.loads(capsys.readouterr().out)
+    assert rc == 0 and result["account"] == "kp-threads" and result["from"] == "scenario"
+    rc = cli.main(["plaza", "post", "--from", "scenario", PROJECT, "flow-01", "--scope", SCOPE, "--by", "k"])
+    assert rc == 2 and "account が要ります" in capsys.readouterr().err
 
 
 # ------------------------------------------------------------------ observe の次の一手

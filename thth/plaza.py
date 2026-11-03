@@ -1850,6 +1850,8 @@ def _scenario_digest_row(record, level, numbers, trial_media, reader_media):
                       "reproduced": sorted(trial_media.get("reproduced", ())),
                       "not_reproduced": sorted(trial_media.get("not_reproduced", ()))},
             "posts_by_medium": {m: row.get("posts") for m, row in reactions.items()},
+            # 原稿の台帳が読めなかった糸は本数を 0 と言わない（監査 段4 の 3）。
+            "posts_cannot_say": body.get("posts_cannot_say"),
             "site_sessions": visits.get("sessions"),
             "site_cannot_say": visits.get("cannot_say") if visits.get("sessions") is None else None,
             "ads_started": ads.get("started"), "trials": trial_counts(record)}

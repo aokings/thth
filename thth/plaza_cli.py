@@ -282,7 +282,29 @@ def _from_source(args, now):
     raise plaza.PlazaError("invalid_from")
 
 
+def _recover_account(args):
+    """`thth plaza post --from after X <account>` の形: `--from` が飲んだ末尾の 1 つを account に戻す。
+
+    `--from` の引数の数は種類で決まる（scenario は 3・ほかは 2）。それより 1 つ多いときだけ戻す。
+    account がどこにも無ければ None（呼び出し側が usage で断る）。
+    """
+    if args.account is not None:
+        return args.account
+    values = list(args.from_tool or [])
+    if not values:
+        return None
+    expected = 3 if values[0] == "scenario" else 2
+    if len(values) == expected + 1:
+        args.from_tool = values[:expected]
+        return values[expected]
+    return None
+
+
 def cmd_post(args) -> int:
+    args.account = _recover_account(args)
+    if args.account is None:
+        print("usage: thth plaza post <account> …（account が要ります）", file=sys.stderr)
+        return 2
     if args.open and getattr(args, "owner", False):
         return _print_refusal(args, plaza.PlazaError("invalid_visibility"))
     try:
@@ -353,7 +375,10 @@ def render_digest(payload, out=print):
             f"・読む側の媒体: {'・'.join(payload.get('reader_media') or []) or '—'}")
     for row in rows:
         period = row.get("period") or {}
-        posts = "・".join(f"{m} {n} 本" for m, n in (row.get("posts_by_medium") or {}).items()) or "SNS 0 本"
+        posts = "・".join(f"{m} {n} 本" for m, n in (row.get("posts_by_medium") or {}).items())
+        if row.get("posts_cannot_say"):
+            posts = (posts + "・" if posts else "") + f"SNS 言えない（{row['posts_cannot_say']}）"
+        posts = posts or "SNS 0 本"
         visits = (f"訪問 {row['site_sessions']}" if row.get("site_sessions") is not None
                   else f"訪問 言えない（{row.get('site_cannot_say') or '—'}）")
         ads = "広告 —" if row.get("ads_started") is None else f"広告 始めた {row['ads_started']} 本"
@@ -443,7 +468,9 @@ def register(sub) -> None:
                     f"につき直近 24 時間で {plaza.DAILY_LIMIT} 件（置く＋返信）まで。measure は "
                     "--declaration（study-report の宣言 JSON・媒体ごとに 1 つ）を並べると、"
                     "道具が同じ計算で観測を付けます。")
-    poster.add_argument("account")
+    # `--from` は引数の数が種類で違う（scenario は 3・ほかは 2）ので nargs="+"。account を `--from …` の
+    # 後ろに書くと argparse は `--from` に飲ませるので、ここは省略可にして cmd_post で取り戻す（監査 段4 の 5）。
+    poster.add_argument("account", nargs="?", default=None)
     poster.add_argument("--kind", default=None, choices=plaza.KINDS,
                         help="measure・finding・question（必須。--from-doc・--from-report は finding・"
                              "--from study-report・--from scenario は measure になる）")
@@ -457,7 +484,7 @@ def register(sub) -> None:
                              "scenario <project> <糸の id>（5.8.0・糸 1 本の段ごとの本数・媒体ごとの反応・"
                              "本記事への訪問・広告の段）。置く時点で道具がその出力を作り直し、数字（分母・"
                              "期間・言えないこと）を観測の欄と本文の下書きに入れる（observed は道具の数字"
-                             "だけ・設計 3.8.0）")
+                             "だけ・設計 3.8.0）。account は --from の前でも直後でもよい")
     poster.add_argument("--from-window-days", type=int, default=None, dest="from_window_days",
                         help="--from analytics-report|after の期間（既定はその命令と同じ）")
     poster.add_argument("--from-doc", default=None, dest="from_doc",

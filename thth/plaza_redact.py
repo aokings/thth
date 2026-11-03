@@ -221,9 +221,16 @@ def attach_open_copy(record, *, trusted_accounts=None):
     if numbers:
         # 道具の数字（3.8.0 §C）: 集計の数字と期間はそのまま・言えないことの文は落とした写し。
         # account 名（target）と出し直しの命令は他の持ち主に見せない（how は写しで見える）。
+        from . import plaza_from
+        scenario = numbers.get("source") == plaza_from.SCENARIO_SOURCE
+        if scenario:
+            # 糸の結果（5.8.0）: 糸の id・サイトのホスト名・自由な段の名を他の持ち主に見せない（監査 段4 の 2）。
+            # 出し直しの命令も糸の id を含むので形だけにする。
+            copy["how"] = "thth scenario show <project> <糸の id>"
         copy["tool_numbers"] = {"source": numbers.get("source"), "medium": numbers.get("medium"),
                                 "at": numbers.get("at"), "period": numbers.get("period"),
-                                "numbers": numbers.get("numbers"),
+                                "numbers": (plaza_from.scenario_open_numbers(numbers.get("numbers"))
+                                            if scenario else numbers.get("numbers")),
                                 "cannot_say": [clean(line) for line in numbers.get("cannot_say") or []],
                                 "observed": numbers.get("observed")}
     copy["masked"] = total
