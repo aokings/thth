@@ -697,6 +697,26 @@ def _today_rows(name, now):
             "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": "publish_at_jst"}}
 
 
+def overdue_hours(row, now):
+    """`report.schedule` の 1 行が時刻を過ぎて出ていないなら、過ぎた時間（小数 1 桁）。そうでなければ None。
+
+    定義はここ 1 か所（`_overdue_rows`・dashboard の要対応 5.10.0 が使う）: `approved`・`post_id` 無し
+    （`report.schedule` が除く）・`publish_at` から `report.OVERDUE_HOURS` を超えた。
+    """
+    from . import report as report_mod
+    at = jst.parse(row.get("publish_at"))
+    if row.get("status") != "approved" or at is None:
+        return None
+    # reply_to_file が未解決の原稿は時刻超過に数えない（設計 3.2.0 §2）。
+    # 名前は `_waiting_rows()` が「返信待ち」として出す。
+    if row.get("reply_to_unresolved"):
+        return None
+    elapsed = (now - at).total_seconds() / 3600.0
+    if elapsed <= report_mod.OVERDUE_HOURS:
+        return None
+    return round(elapsed, 1)
+
+
 def _overdue_rows(name, now):
     """時刻を過ぎたのに出ていない原稿の**名前**（3.1.1）。
 
@@ -708,18 +728,11 @@ def _overdue_rows(name, now):
     from . import report as report_mod
     rows = []
     for row in report_mod.schedule(name, now=now):
-        at = jst.parse(row.get("publish_at"))
-        if row.get("status") != "approved" or at is None:
-            continue
-        # reply_to_file が未解決の原稿は時刻超過に数えない（設計 3.2.0 §2）。
-        # 名前は `_waiting_rows()` が「返信待ち」として出す。
-        if row.get("reply_to_unresolved"):
-            continue
-        elapsed = (now - at).total_seconds() / 3600.0
-        if elapsed <= report_mod.OVERDUE_HOURS:
+        elapsed = overdue_hours(row, now)
+        if elapsed is None:
             continue
         rows.append({"file": row["file"], "publish_at": row["publish_at"],
-                     "status": row["status"], "elapsed_hours": round(elapsed, 1),
+                     "status": row["status"], "elapsed_hours": elapsed,
                      "head": _preview(row.get("head"))})
     return {"n": len(rows), "limit": OVERDUE_LIMIT, "items": rows[:OVERDUE_LIMIT],
             "basis": "approved_unposted_over_overdue_hours"}
@@ -1468,8 +1481,11 @@ def _render_section(section, out) -> None:
                         "add_trial": f"追試の結果を足す（予定日 {step.get('trial_due')}）",
                         "post_week": f"広場に置く: 配分を変えた週が閉じた（{step.get('week_start')} の週）",
                         # 5.8.0（設計 効果測定と連動 §3 段 4）: 閉じた糸の結果を置く。
-                        "post_scenario": f"広場に置く: 糸「{step.get('title')}」を閉じた"
-                                         f"（{(step.get('closed_at') or '')[:10]}・効いたかを共通の知に）"}
+                        "post_scenario": (f"広場に置く: 糸「{step.get('title')}」を閉じた"
+                                          f"（{(step.get('closed_at') or '')[:10]}・効いたかを共通の知に）"
+                                          if step.get("closed_at") else
+                                          f"広場に置く: 糸「{step.get('title')}」の全部の段が済んだ"
+                                          f"（最後の動き {(step.get('done_at') or '')[:10]}・効いたかを共通の知に）")}
                 label = f"  {step['plaza_id']}  {step['title']}" if step.get("plaza_id") else ""
                 out(f"  {verb[step['candidate']]}  {step['account']}{label}")
                 if step.get("command"):

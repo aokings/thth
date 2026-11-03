@@ -11,6 +11,7 @@
      控えが無ければ列ごと `cannot_say: site_visits_not_imported`（0 と言わない）。
   3. よく見られた投稿: 24h の views。
   4. 閉じた糸の続き: 窓の中で閉じた糸の、宣言にあって使わなかった媒体（`plaza_from._tried_media` と同じ計算）。
+     5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）で、最後の動きが窓の中のものも入れる。
 
 規律（設計 §3 段 5）:
 
@@ -126,6 +127,15 @@ def _group_stat(values, posts, min_n):
             "p25": stat["p25"], "p75": stat["p75"], "comparable": stat["n"] >= min_n and stat["n"] > 0}
 
 
+def metric_available(metric, medium) -> bool:
+    """その媒体で投稿単位に取れる指標か（5.10.0）。views は `goals.REACH_METRICS` に views のある媒体だけ
+    （Bluesky・Mastodon は views を持たない）。取れない媒体は `below_min_n` でなく `metric_unavailable:<媒体>`。"""
+    from . import goals
+    if metric == "views_24h":
+        return "views" in goals.REACH_METRICS.get(medium, ("views",))
+    return True
+
+
 def _post_column(key, label, metric, basis, posts, cannot, *, limit, min_n, window):
     by_medium = {}
     for row in posts:
@@ -153,7 +163,10 @@ def _post_column(key, label, metric, basis, posts, cannot, *, limit, min_n, wind
         node["uncovered_24h"] = group["uncovered"]
         node["rows"] = ordered[:limit]
         node["more"] = max(0, len(ordered) - limit)
-        if not node["comparable"]:
+        if not metric_available(metric, medium):
+            node["metric_unavailable"] = True
+            codes.append(f"metric_unavailable:{medium}")
+        elif not node["comparable"]:
             codes.append(f"below_min_n:{medium}")
         out_media[medium] = node
     if not by_medium:
@@ -242,13 +255,21 @@ def _closed_column(ledger, since, now, *, limit):
             continue
         closed = [scenario_mod._date_at(e["at"]) for e in decl.events if e["name"] == "closed"]
         closed_at = max((c for c in closed if c is not None), default=None)
+        status = None
         if closed_at is None:
+            # 5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）も入れる。窓は最後の動き（`done.since`）で測る。
+            status = scenario_mod.thread_status(decl, ledger)
+            if status["state"] != "done":
+                continue
+            moment = jst.parse((status.get("done") or {}).get("since"))
+        else:
+            moment = closed_at
+        # 窓の判定は日の単位（閉じた日・済んだ日の 00:00 を窓の始まりの日と比べる）。
+        if moment is None or not _in_window(moment, datetime.datetime.combine(since.date(), datetime.time(),
+                                                                              tzinfo=jst.JST), now):
             continue
-        # 窓の判定は日の単位（閉じた日の 00:00 を窓の始まりの日と比べる）。
-        if not _in_window(closed_at, datetime.datetime.combine(since.date(), datetime.time(), tzinfo=jst.JST), now):
-            continue
-        status = scenario_mod.thread_status(decl, ledger)
-        if status["state"] != "closed":
+        status = status or scenario_mod.thread_status(decl, ledger)
+        if status["state"] not in ("closed", "done"):
             continue
         posts = {}
         for item in ledger.items:
@@ -269,14 +290,17 @@ def _closed_column(ledger, since, now, *, limit):
             continue
         title = scenario_mod._plain(decl.fm.get("title"))
         rows.append({"count": len(untried), "thread": decl.id, "title": scenario_mod._head(title) if title else None,
-                     "closed_at": jst.iso(closed_at), "media_declared_untried": untried, "media_tried": tried,
+                     "closed_at": jst.iso(closed_at) if closed_at else None,
+                     # 5.10.0（鍵は足すだけ）: closed か done か・done のときの最後の動き。
+                     "state": status["state"], "done_at": jst.iso(moment) if closed_at is None else None,
+                     "media_declared_untried": untried, "media_tried": tried,
                      "media_unknown": sorted(unknown)})
-    ordered = sorted(rows, key=lambda r: (r["closed_at"], r["thread"]), reverse=True)
+    ordered = sorted(rows, key=lambda r: (r["closed_at"] or r["done_at"], r["thread"]), reverse=True)
     ordered.sort(key=lambda r: r["count"], reverse=True)
     codes = sorted(cannot | ({"no_closed_thread_in_window"} if not rows else set()))
-    return {"key": "closed_threads", "label": "閉じた糸の続き", "metric": "media_declared_untried",
+    return {"key": "closed_threads", "label": "閉じた・済んだ糸の続き", "metric": "media_declared_untried",
             "measure": "宣言にあって使わなかった媒体（plaza の「試していない媒体」と同じ計算）",
-            "sort_basis": "使わなかった媒体の数の多い順・同じ数は閉じた日の新しい順",
+            "sort_basis": "使わなかった媒体の数の多い順・同じ数は閉じた日（済んだ糸は最後の動き）の新しい順",
             "rows": ordered[:limit], "more": max(0, len(ordered) - limit),
             "cannot_say": codes, "next": NEXT_LINE}
 

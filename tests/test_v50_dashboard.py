@@ -107,7 +107,9 @@ def test_要対応はdaysの大きい順だけで日数の無いものは後ろ(
     monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None, allowed_names=None: (data, None))
     rows = dashboard_cli.build(PROJECT, now=NOW)["attention"]
     assert [r["ref"] for r in rows[:3]] == ["sayama", "num-04-sencha", "wakocha"]
-    assert all(r["days"] is None for r in rows[3:])
+    # 5.10.0: 時刻を 2 時間過ぎた承認済みの原稿（見本の 05:00）が日数 0 で続き、日数の無いものは後ろ。
+    assert rows[3]["kind"] == "publish_overdue" and rows[3]["days"] == 0
+    assert all(r["days"] is None for r in rows[4:])
 
 
 def test_全メディアはCLIからも引ける(with_scenario, capsys):

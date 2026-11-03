@@ -117,6 +117,7 @@
         "since_from": "movement",
         "label": "本記事が未公開"
       },
+      "done": null,
       "events": [
         {
           "at": "2026-10-15",
@@ -221,6 +222,7 @@
       "last_movement_at": "2026-10-26T09:02:00+09:00",
       "idle_days": 2,
       "stalled": null,
+      "done": null,
       "events": [],
       "cannot_say": []
     }

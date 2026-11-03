@@ -78,6 +78,10 @@
   `stale_after_days` を越えて動いていない（配信の台帳が conflict の原稿があるときも）。`account` と `project` は
   project の名前、`ref` は糸の id、`stage`・`days`・`next`（名詞の列・本文なし）が付く。id は
   `"ev_" + sha256("thth.scenario/1|<project>|<id>|<stage>")[:24]`——同じ段で止まっているあいだは同じ id。
+- `scenario_done`（5.10.0 段 6・続いている状態）: キャンペーンの全段を満たした（糸の `state: done`）が、
+  `closed` の出来事はまだ無い。停滞（`scenario_stalled`）には倒さない。`ref` は糸の id、`stage`（最後の段）・
+  `days`（最後の動きからの日数）・`next`（closed を 1 行（任意）・広場に置く）が付く。id は
+  `"ev_" + sha256("thth.scenario/1|<project>|<id>|done")[:24]`。`closed` を書けば消える。
 - `series_low`（5.0 段 1・続いている状態）: シリーズ（型）の承認済みで未来の原稿が `stock_floor` を切った。
   `ref` は型の id、`approved_future`・`floor`・`next_slot` が付く。id は
   `"ev_" + sha256("thth.scenario/1|<project>|<id>|series_low")[:24]`。`schedule_thin`（口座全体の 1 日の本数）とは
@@ -149,6 +153,8 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          "not_after_passed",
          # 5.0 段 1（設計 §4.3）: キャンペーンが止まっている・シリーズの承認済みストックが目安を切った（続いている状態）。
          "scenario_stalled", "series_low",
+         # 5.10.0 段 6: キャンペーンの全段が済んだ（`closed` は無い・続いている状態・閉じるか広場に置く）。
+         "scenario_done",
          # 10/29 段 0（設計 MetaAPI 計画 C-2 の 1）: 鍵のデータに触れる期限が 14 日を切った・過ぎた（続いている状態）。
          "token_data_access_expiring",
          # Meta 計画 段 4（D-5・C-2 の 5）: 広告の口座の見張り（どれも続いている状態・`thth/ads/watch.py`）。
