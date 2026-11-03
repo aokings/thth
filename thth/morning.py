@@ -697,13 +697,24 @@ def _today_rows(name, now):
             "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": "publish_at_jst"}}
 
 
-def overdue_hours(row, now):
+def held_files(name, cfg, now) -> frozenset:
+    """承認済みなのに出られない原稿の名前（`_held_rows` と同じ `core.held_items_for_account`・5.10.0）。
+    はてなの `delivery_held` の出来事も同じ集合から作る。"""
+    from . import core
+    return frozenset(row["file"] for row in core.held_items_for_account(name, cfg, now=now))
+
+
+def overdue_hours(row, now, *, held=None):
     """`report.schedule` の 1 行が時刻を過ぎて出ていないなら、過ぎた時間（小数 1 桁）。そうでなければ None。
 
     定義はここ 1 か所（`_overdue_rows`・dashboard の要対応 5.10.0 が使う）: `approved`・`post_id` 無し
     （`report.schedule` が除く）・`publish_at` から `report.OVERDUE_HOURS` を超えた。
+    `held`（`held_files` の集合）を渡すと、出られない理由の分かっている原稿——held の原稿と、出さない期限を
+    過ぎた原稿（`expired`）——を除く（dashboard の要対応は held・期限切れを別の行で出すので重ねない）。
     """
     from . import report as report_mod
+    if held is not None and (row.get("expired") or row.get("file") in held):
+        return None
     at = jst.parse(row.get("publish_at"))
     if row.get("status") != "approved" or at is None:
         return None

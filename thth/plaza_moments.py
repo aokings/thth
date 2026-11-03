@@ -423,6 +423,16 @@ def _posted_threads(records):
     return found
 
 
+def posted_threads() -> set:
+    """広場にもう置いた糸 `{(project, 糸の id)}`（dashboard の要対応・5.10.0）。読めなければ空（今までどおり出す）。"""
+    from . import plaza
+    try:
+        records, _broken = plaza.load_all()
+        return _posted_threads(records)
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def _scenario_steps(configs, records, *, now):
     """閉じた糸（`closed` の出来事が `SCENARIO_WINDOW_DAYS` 日以内）で、まだ広場に置いていないもの（5.8.0）。
     5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）で、最後の動きが同じ窓の中のものも。
