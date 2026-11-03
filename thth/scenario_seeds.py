@@ -36,6 +36,8 @@ MAX_DAYS = 400
 MAX_LIMIT = 50
 NEXT_LINE = "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
 TIE_BREAK_POSTS = "同じ数は投稿の新しい順"
+# 訪問の列で原稿に結べなかった理由（`site_visits.tie` の符丁のうち原稿が決まらないもの・no_thread は原稿があるので並べる）。
+UNTIED_REASONS = ("not_a_campaign", "no_manuscript", "ambiguous")
 
 POST_COLUMNS = (
     ("replies", "返信の多かった投稿", "replies_back_24h",
@@ -71,6 +73,8 @@ def _own_posts(ledger, since, now):
     戻り値 `(行の列, 言えないこと)`。行は `{"item", "metrics"}`。反応は `after_cli.reaction_lookup`
     （`thth after` と同じ計算）の数だけを使う——他人の返信の本文と username はここに来ない。
     連投は先頭の投稿で数える（段 4 の反応と同じ分母）。
+    列の `posts` は「窓の中で反応の数を引けた本数」（実測が読めない・post_id が無い投稿は入らず `skipped_counts`）、
+    `n` はそのうち指標の値が取れた本数。窓の始まりちょうどの投稿は入る（`thth after` と同じ `since <= 投稿 <= 今`）。
     """
     from . import after_cli
     rows, cannot, lookups = [], {}, {}
@@ -187,11 +191,17 @@ def _visits_column(ledger, since, *, limit, min_n):
             site["cannot_say"] = "site_visits_unavailable"
             column["sites"].append(site)
             continue
-        by_path = {}
+        by_path, untied, untied_sessions, untied_unknown = {}, {}, 0, False
         for row in record["rows"]:
-            _thread, item, _reason = site_visits.tie(row.get("campaign"), index)
+            _thread, item, reason = site_visits.tie(row.get("campaign"), index)
             if item is None:
-                continue   # 原稿に結べない campaign は種にしない（名前も出さない）
+                # 原稿に結べない campaign は種にしない。名前は出さず、数だけ（`tie_rows` の untied_campaigns の形）。
+                untied.setdefault((row.get("campaign") or "").strip().lower(), reason)
+                if isinstance(row.get("sessions"), int):
+                    untied_sessions += row["sessions"]
+                else:
+                    untied_unknown = True
+                continue
             path = item.rel or item.file
             node = by_path.setdefault(path, {"path": path, "file": item.file, "thread": item.thread,
                                              "sessions": 0, "engaged_sessions": 0})
@@ -204,7 +214,10 @@ def _visits_column(ledger, since, *, limit, min_n):
         ranked.sort(key=lambda n: n["sessions"], reverse=True)
         site.update({"manuscripts": stat["posts"], "n": stat["n"], "min_n": min_n, "median": stat["median"],
                      "comparable": stat["comparable"], "rows": ranked[:limit],
-                     "more": max(0, len(ranked) - limit)})
+                     "more": max(0, len(ranked) - limit),
+                     "untied": {"campaigns": len(untied), "sessions": None if untied_unknown else untied_sessions,
+                                "by_reason": {r: sum(1 for v in untied.values() if v == r)
+                                              for r in UNTIED_REASONS}}})
         if not by_path:
             site["cannot_say"] = "no_tied_campaign"
         elif not stat["comparable"]:

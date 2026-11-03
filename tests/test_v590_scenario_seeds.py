@@ -301,3 +301,72 @@ def test_読めない実測は0と混ぜない(seeds, monkeypatch):
     assert payload["skipped_counts"] == {"measured_unreadable": 6}
     assert "measured_unreadable" in _column(payload, "views")["cannot_say"]
 
+
+# ------------------------------------------------------------------ 監査（Fable）のあとに足した柵
+
+SITE_KEYS = {"site", "window", "generated_at", "stale", "rows", "more", "cannot_say", "manuscripts", "n",
+             "min_n", "median", "comparable", "untied"}
+SITE_ROW_KEYS = {"path", "file", "thread", "sessions", "engaged_sessions"}
+
+
+def test_seedsだけはusageで断る(seeds, capsys):
+    assert cli.main(["scenario", "seeds", "--json"]) == 2
+    out = capsys.readouterr()
+    assert "usage: thth scenario seeds <project>" in out.err
+    assert json.loads(out.out)["cannot_say"][0].startswith("usage: thth scenario seeds")
+
+
+def test_訪問の列のサイトの節の鍵_結べないcampaignは数だけ_ambiguousの道(seeds, tmp_path, capsys):
+    # `queue-th-p1.md`（札なし）と `th-p1.md`（糸 seed-01）は、どちらも campaign `queue-th-p1` を名乗れる → ambiguous。
+    _write(os.path.join(seeds["queue"], "queue-th-p1.md"),
+           _sns("kp-threads", status="draft", publish_at="2026-11-02T07:00:00+09:00"))
+    path = _visits(tmp_path, [_row("th-p2", 60, engaged=20), _row("(organic)", 30),
+                              _row("nai-genkou", 5), _row("queue-th-p1", 7)])
+    site_visits.import_file(PROJECT, path, now=NOW)
+    site = _column(_build(), "visits")["sites"][0]
+    assert set(site) == SITE_KEYS
+    assert all(set(row) == SITE_ROW_KEYS for row in site["rows"])
+    assert [(r["path"], r["sessions"]) for r in site["rows"]] == [("docs/sns/queue/th-p2.md", 60)]
+    assert site["untied"] == {"campaigns": 3, "sessions": 42,
+                              "by_reason": {"not_a_campaign": 1, "no_manuscript": 1, "ambiguous": 1}}
+    text = json.dumps(site, ensure_ascii=False)
+    assert "nai-genkou" not in text and "queue-th-p1" not in text and "organic" not in text
+    assert cli.main(["scenario", "seeds", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "原稿に結べない campaign 3（訪問 42・名前は出さない）" in out
+    assert "--days より広くても控えを丸ごと使う" in out
+
+
+def test_取れなかった窓の控えはsite_visits_unavailable(seeds, tmp_path, capsys):
+    path = _visits(tmp_path, None, reason="quota_exceeded")
+    site_visits.import_file(PROJECT, path, now=NOW)
+    visits = _column(_build(), "visits")
+    assert visits["cannot_say"] == ["site_visits_unavailable"]
+    assert visits["sites"][0]["cannot_say"] == "site_visits_unavailable" and visits["sites"][0]["rows"] == []
+    assert cli.main(["scenario", "seeds", PROJECT]) == 0
+    assert "kopicha.org 2026-10-21〜2026-10-27: —（site_visits_unavailable）" in capsys.readouterr().out
+
+
+def test_新しい窓が取れなかったら前の窓の数にstaleと表示(seeds, tmp_path, capsys):
+    site_visits.import_file(PROJECT, _visits(tmp_path, [_row("th-p2", 60)], name="a.json"), now=NOW)
+    site_visits.import_file(PROJECT, _visits(tmp_path, None, reason="quota_exceeded", frm="2026-10-22",
+                                             to="2026-10-28", name="b.json"), now=NOW)
+    site = _column(_build(), "visits")["sites"][0]
+    assert site["stale"] is True and site["window"] == {"from": "2026-10-21", "to": "2026-10-27"}
+    assert [r["sessions"] for r in site["rows"]] == [60]
+    assert cli.main(["scenario", "seeds", PROJECT]) == 0
+    assert "kopicha.org 2026-10-21〜2026-10-27（新しい窓は取れなかった・前の窓の数）" in capsys.readouterr().out
+
+
+def test_ちょうど窓の始まりの投稿は入る_afterと揃う(seeds):
+    at = "2026-09-30T11:20:00+09:00"   # NOW − 28 日ちょうど
+    _write(os.path.join(seeds["queue"], "th-edge.md"),
+           _sns("kp-threads", status="posted", publish_at=at, extra={"post_id": "P1", "posted_at": at}))
+    threads = _column(_build(limit=10), "views")["by_medium"]["threads"]
+    assert threads["posts"] == 6 and "th-edge.md" in [r["file"] for r in threads["rows"]]
+    one_second_before = "2026-09-30T11:19:59+09:00"
+    _write(os.path.join(seeds["queue"], "th-edge.md"),
+           _sns("kp-threads", status="posted", publish_at=one_second_before,
+                extra={"post_id": "P1", "posted_at": one_second_before}))
+    assert _column(_build(), "views")["by_medium"]["threads"]["posts"] == 5
+

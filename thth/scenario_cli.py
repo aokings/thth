@@ -196,7 +196,7 @@ def render_seeds(payload, out=print) -> None:
             if not column["by_medium"]:
                 out("   窓の中の自分の投稿がありません")
             for medium, node in column["by_medium"].items():
-                out(f"   {medium}  {node['posts']} 本（数の取れた {node['n']}・24h 未採取 {node['uncovered_24h']}）・"
+                out(f"   {medium}  数を引けた {node['posts']} 本（値の取れた {node['n']}・24h 未採取 {node['uncovered_24h']}）・"
                     f"{_median_text(node)}")
                 for row in node["rows"]:
                     thread = f"  糸 {row['thread']}" if row["thread"] else ""
@@ -205,22 +205,29 @@ def render_seeds(payload, out=print) -> None:
                     out(f"     ほか {node['more']} 本（--limit で増やす）")
         elif column["key"] == "visits":
             if column.get("as_of"):
-                out(f"   {_when(column['as_of'])} 時点")
+                out(f"   {_when(column['as_of'])} 時点・GA4 の窓は hub が決める（--days より広くても控えを丸ごと使う）")
             if column["cannot_say"]:
                 out(f"   —（{'・'.join(column['cannot_say'])}）")
             for site in column["sites"]:
                 window_ = site.get("window") or {}
                 span = f"{window_.get('from')}〜{window_.get('to')}"
-                if site["cannot_say"] in ("outside_window", "site_visits_unavailable", "no_tied_campaign"):
+                stale = "（新しい窓は取れなかった・前の窓の数）" if site.get("stale") else ""
+                if site["cannot_say"] in ("outside_window", "site_visits_unavailable"):
                     out(f"   {site['site']} {span}: —（{site['cannot_say']}）")
                     continue
-                stale = "（新しい窓は取れなかった・前の窓の数）" if site.get("stale") else ""
-                out(f"   {site['site']} {span}{stale}  原稿 {site['manuscripts']}・{_median_text(site)}")
+                if site["cannot_say"] == "no_tied_campaign":
+                    out(f"   {site['site']} {span}{stale}: —（no_tied_campaign）")
+                else:
+                    out(f"   {site['site']} {span}{stale}  原稿 {site['manuscripts']}・{_median_text(site)}")
                 for row in site["rows"]:
                     thread = f"  糸 {row['thread']}" if row["thread"] else "  糸なし"
                     out(f"     {row['sessions']}  {row['path']}{thread}")
                 if site["more"]:
                     out(f"     ほか {site['more']} 本（--limit で増やす）")
+                untied = site.get("untied")
+                if untied and untied["campaigns"]:
+                    out(f"     原稿に結べない campaign {untied['campaigns']}（訪問 "
+                        f"{'—' if untied['sessions'] is None else untied['sessions']}・名前は出さない）")
         else:
             if not column["rows"]:
                 out("   窓の中で閉じた糸に、宣言にあって使わなかった媒体はありません")
@@ -341,7 +348,7 @@ def cmd(args) -> int:
         return _skill(args)
     if words[0] == "site-import":
         return _site_import(words, args)
-    if words[0] == "seeds" and len(words) > 1:
+    if words[0] == "seeds":
         return _seeds(words, args)
     if args.days is not None or args.limit is not None:
         return _fail("usage: --days と --limit は thth scenario seeds だけ", args.json)

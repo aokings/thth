@@ -154,7 +154,7 @@ All subcommands `thth --help` lists, one line each:
 - `study` — add a post to a local study declaration
 - `study-report` — link a declared study to your own post observations; no causal claims
 - `handoff-report` — local operations evidence for a session handoff
-- `plaza` — share what you tried and how it went across your accounts. Since 5.8.0 (draft) `plaza post <account> --kind measure --from scenario <project> <thread id>` attaches a closed campaign's results as tool-observed numbers (posts per stage, per-medium reactions computed like `after`, article visits or null with a reason, the ads stage without spend); `observe` suggests it when a campaign closes, and `plaza digest` lists each campaign result with the media not yet tried
+- `plaza` — share what you tried and how it went across your accounts. Since 5.8.0 `plaza post <account> --kind measure --from scenario <project> <thread id>` attaches a closed campaign's results as tool-observed numbers (posts per stage, per-medium reactions computed like `after`, article visits or null with a reason, the ads stage without spend); `observe` suggests it when a campaign closes, and `plaza digest` lists each campaign result with the media not yet tried
 - `map` — the topic map: the topics you chose, with your own numbers on them
 - `report` — file a bug or request inside the tool and read the replies
 - `forms` — vocabulary for post shapes
