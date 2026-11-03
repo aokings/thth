@@ -49,13 +49,16 @@ _DROP_KEYS = frozenset(("body", "text", "comment", "comments", "user", "username
 # 要対応に入れる、続いていない出来事の種類（起きた時刻から `EVENTS_SINCE` のあいだ）。
 _ATTENTION_POINT_KINDS = ("not_after_passed",)
 # 要対応の種類 → 指示文の角括弧の種類（無いものは口座）。
-_REF_KIND = {"scenario_stalled": "campaign", "series_low": "series", "not_after_passed": "draft",
+_REF_KIND = {"scenario_stalled": "campaign", "scenario_done": "campaign", "series_low": "series",
+             "not_after_passed": "draft", "publish_overdue": "draft",
              "delivery_held": "delivery", "delivery_behind": "delivery"}
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
 # 画面の言葉（型の THTH_MEDIUM・THTH_KIND と同じ）。中の名前・符丁は画面の文に出さない（B1）。
 MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
              "facebook": "Facebook", "instagram": "Instagram", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
 KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "untied_drafts": "未分類の下書き",
+           # 5.10.0 段 6: 済んだ糸（閉じるか広場に置く）・時刻を過ぎて出ていない原稿（morning と同じ定義）。
+           "scenario_done": "済んだ糸", "publish_overdue": "時刻を過ぎて未投稿",
            "unanswered_replies": "未返信", "schedule_low": "予約切れ間近", "schedule_thin": "予約が薄い",
            "not_after_passed": "期限切れ", "publish_held": "公開を停止中", "account_stopped": "口座が停止",
            "inflight_open": "公開の結果待ち", "delivery_held": "配信の保留", "delivery_behind": "記事の更新待ち",
@@ -218,6 +221,8 @@ def _scenario_node(project, now=None, allowed_names=None):
     node = {"available": True, "generated_at": payload.get("generated_at"),
             "n_campaigns": len(payload.get("threads") or []),
             "n_campaigns_stalled": sum(1 for t in payload.get("threads") or [] if t.get("state") == "stalled"),
+            # 5.10.0（鍵は足すだけ）: 全段が済んで closed の無い糸。
+            "n_campaigns_done": sum(1 for t in payload.get("threads") or [] if t.get("state") == "done"),
             "n_series": len(payload.get("series") or []),
             "untied": _clean(payload.get("untied")),
             "cannot_say": list(payload.get("cannot_say") or [])}
@@ -418,6 +423,14 @@ def _attention(project, events, summary, scenario, now, mediums=None, schedule=N
                     stalled.get("since"), stalled.get("days") if _int(stalled.get("days")) else None,
                     clip(next_text), "scenario", None,
                     stage=(thread.get("stage") or {}).get("name")))
+            elif thread.get("state") == "done" and ("scenario_done", thread.get("id")) not in refs:
+                done = thread.get("done") or {}
+                title, next_text = _done_text(thread, None)
+                rows.append(_attention_row(
+                    project, "scenario_done", thread.get("id"), None, clip(title),
+                    done.get("since"), done.get("days") if _int(done.get("days")) else None,
+                    clip(next_text), "scenario", None,
+                    stage=(thread.get("stage") or {}).get("name")))
         for series in scenario.get("series") or []:
             if (series.get("stock") or {}).get("low") and ("series_low", series.get("id")) not in refs:
                 title, next_text = _series_low_text(series, None)
@@ -429,6 +442,7 @@ def _attention(project, events, summary, scenario, now, mediums=None, schedule=N
             rows.append(_attention_row(project, "untied_drafts", "drafts", None, f"未分類の下書き {untied} 件",
                                        None, None, "キャンペーンかシリーズに振り分ける", "scenario", None,
                                        n=untied))
+    rows += _overdue_attention(project, rows, schedule, mediums, now)
     for name, row in ((summary or {}).get("by_account") or {}).items():
         n = (row.get("unanswered_replies") or {}).get("n")
         if _int(n) and n > 0:
@@ -437,6 +451,26 @@ def _attention(project, events, summary, scenario, now, mediums=None, schedule=N
                                        None, None, None, "summary", None, n=n))
     rows.sort(key=lambda r: (-(r["days"] if r["days"] is not None else -1), r["kind"], str(r["ref"])))
     return rows
+
+
+def _overdue_attention(project, rows, schedule, mediums, now):
+    """時刻を過ぎて出ていない原稿（5.10.0 段 6）。定義は `morning.overdue_hours`（morning の `overdue_items` と
+    同じ・ここで数え直さない）。出さない期限を過ぎた原稿（`not_after_passed` の行がある）は重ねて出さない。"""
+    from . import morning
+    expired = {(row["account"], row["ref"]) for row in rows if row["kind"] == "not_after_passed"}
+    out = []
+    for item in schedule or []:
+        elapsed = morning.overdue_hours(item, now)
+        if elapsed is None or (item.get("account"), item.get("file")) in expired:
+            continue
+        account = item.get("account")
+        head = item.get("head") or f"{_medium_ja(mediums.get(account))} の原稿"
+        out.append(_attention_row(project, "publish_overdue", item.get("file"), account,
+                                  clip(f"{head} — 時刻を過ぎて出ていない（{_md_hm(item.get('publish_at'))} の予定）"),
+                                  item.get("publish_at"), _days_since(item.get("publish_at"), now),
+                                  "出ない理由を確かめる（口座の止まり・公開の結果待ち・承認）", "schedule", None,
+                                  elapsed_hours=elapsed))
+    return out
 
 
 def _medium_ja(medium) -> str:
@@ -473,6 +507,15 @@ def _stalled_text(thread, event):
     return f"{name} — {label}", _label_of(thread.get("next")) or _label_of(event.get("next"))
 
 
+def _done_text(thread, event):
+    """済んだ糸の行（5.10.0）: 題は段 1 の `title`＋「全部の段が済んだ」。次の一手は閉じる（任意）か広場に置く。"""
+    thread = thread or {}
+    event = event or {}
+    name = thread.get("title") or event.get("title") or "名前の無いキャンペーン"
+    label = (thread.get("done") or {}).get("label") or event.get("label") or "全部の段が済んだ（閉じるか広場に置く）"
+    return f"{name} — {label}", "閉じるなら closed を 1 行（任意）・結果を広場に置く"
+
+
 STALLED_FALLBACK = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
                     "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている"}
 
@@ -499,6 +542,8 @@ def _event_text(event, mediums, threads, series_by_id, heads):
     medium = _medium_ja(mediums.get(event.get("account")))
     if kind == "scenario_stalled":
         return _stalled_text(threads.get(ref), event)
+    if kind == "scenario_done":
+        return _done_text(threads.get(ref), event)
     if kind == "series_low":
         return _series_low_text(series_by_id.get(ref), event)
     if kind == "schedule_low":
@@ -557,6 +602,18 @@ def _attention_actions(project, kind, ref, account, extra):
                                   "本記事を公開した。URL は私が伝える（無ければ書かない）。"
                                   "糸のファイルに出来事を 1 行足して、次のステップを見せてください。"))
         return acts
+    if kind == "scenario_done":
+        return [action("広場に置く", project, "campaign", ref,
+                       "このキャンペーンの結果を広場に置く案を見せてください（thth plaza post --from scenario・"
+                       "範囲は私が決めます）。"),
+                action("閉じる", project, "campaign", ref,
+                       "このキャンペーンを閉じます。糸のファイルに closed を 1 行足してください。"),
+                action("開く", project, "campaign", ref, "キャンペーンのダッシュボードを開いてください"
+                       f"（thth dashboard {project} campaign {ref} --json）。")]
+    if kind == "publish_overdue":
+        return [action("中身を見る", project, "draft", ref,
+                       f"（口座 {account}）時刻を過ぎて出ていない原稿の中身と状態、出ない理由を見せてください。"
+                       "出し直すかは私が決めます。")]
     if kind == "series_low":
         at = extra.get("next_slot")
         return [action("下書き", project, "series", ref,
@@ -1041,9 +1098,14 @@ def _campaign_actions(project, thread):
         acts.append(action("押し出す候補", project, "campaign", ident,
                            "有機の告知の 48〜72 時間の反応を並べてください（skill thth-flow・thth-ads）。"
                            "広告で押し出す 1 本は私が選びます。"))
-    if stage == "warm":
+    current = next((s for s in thread.get("stages") or [] if isinstance(s, dict) and s.get("name") == stage), {})
+    if stage == "warm" or current.get("replies_within_hours") is not None:
         acts.append(action("返信を見る", project, "campaign", ident,
                            "告知への返信と、返していないものを見せてください。"))
+    if thread.get("state") == "done":
+        acts.append(action("広場に置く", project, "campaign", ident,
+                           "このキャンペーンの結果を広場に置く案を見せてください（thth plaza post --from scenario・"
+                           "範囲は私が決めます）。"))
     acts.append(action("成果を見る", project, "campaign", ident,
                        "このキャンペーンの投稿の成果（インプレッション・反応・クリック）を見せてください。"))
     if thread.get("state") != "closed":

@@ -23,6 +23,7 @@ THTH の出力が「次はこれ」と言う前に、まずこの型を読む。
 
 - 段は窓口が選ぶ。全部は要らない。上から順に満たす形で、THTH は読んで数えるだけ（原稿を書かない・段を進めない・選ばない）。
 - 段の名は自由（`[a-z][a-z0-9_]` 32 字まで）。`collect`（リサーチ）・`diary`（仮説）・`article`（本記事）・`announce`（SNS 告知）・`promote`（告知）・`selfbm`（セルクマ）・`boost`（広告）・`warm`（エンゲージ）は画面に日本語の名が出る（`stages[].label`・表示は `promote（告知） 1/3`）。ほかの名は「n 段目」。
+- 返信を数えたい段は `replies_within_hours=` を書く（名は自由・例 `- engage: threads,x replies_within_hours=48`）。書いた段は投稿の本数でなく返信を数える（5.10.0）。`warm` は書かなくても 24 時間で数える。全段を満たした糸は `done`（停滞にならない）。区切るなら `closed` を 1 行（任意）、結果は広場に置く。
 - 媒体として書けるのは 10 個: `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`・`facebook`・`instagram`・`ads`（5.7.0）。
 - はてブの段は `target=own`（自分の記事だけ・セルクマ）か `target=external`（他人のページだけ）で分けて数える。書かなければ今までどおり両方を数え、`stages[].by_target`（`{"own": n, "external": n}`）に内訳が出る。`target=own` の段は、タグ（既定は糸の id）が付いたものに加えて、糸のはてなブログの配信 id を `--delivery` で付けた自分の記事のブックマークも数える。
 - `ads` の段は広告の口座の記録（`thth ads boost`・`thth ads activate` の記録）を読むだけ。始めた（activate が通った）広告が `done`、PAUSED で作っただけの広告が `pending`。糸に結ぶのは、押し出した元の投稿の id が糸の原稿の `post_id` か、広告の印の `utm_campaign` が糸の原稿の名前のもの。`budget_minor` は始めた広告の通しの予算の和（最小単位の整数・分母は `done`）。**使った額は持たない**（`spend_minor: null`・`ads_spend_not_recorded`）——使った額とクリックは `thth ads insights` で見る。project に広告の口座が無ければ `done: null`・`ads_account_missing`。

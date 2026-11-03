@@ -245,16 +245,18 @@
     },
     {
       "key": "closed_threads",
-      "label": "閉じた糸の続き",
+      "label": "閉じた・済んだ糸の続き",
       "metric": "media_declared_untried",
       "measure": "宣言にあって使わなかった媒体（plaza の「試していない媒体」と同じ計算）",
-      "sort_basis": "使わなかった媒体の数の多い順・同じ数は閉じた日の新しい順",
+      "sort_basis": "使わなかった媒体の数の多い順・同じ数は閉じた日（済んだ糸は最後の動き）の新しい順",
       "rows": [
         {
           "count": 1,
           "thread": "seed-01",
           "title": "種の見本",
           "closed_at": "2026-10-25T00:00:00+09:00",
+          "state": "closed",
+          "done_at": null,
           "media_declared_untried": [
             "x"
           ],

@@ -37,7 +37,8 @@ SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook", "instagram")
 MEDIA = ("hatena_bookmark", "hatenablog", "site") + SNS_MEDIA + ("ads",)
 # はてブの段の `target=`（5.7.0）: `own` は自分の記事（配信の台帳の記事・セルクマ）、`external` は他人のページ。
 BOOKMARK_TARGETS = ("own", "external")
-STATES = ("active", "stalled", "closed")
+# `done`（5.10.0・段 6）: 全段を満たしたが `closed` の出来事は無い。停滞に倒さない（済んだ糸を雑音にしない）。
+STATES = ("active", "stalled", "done", "closed")
 DEFAULT_STALE_AFTER_DAYS = 7
 DEFAULT_STOCK_FLOOR = 2
 MATERIAL_FLOOR = 2
@@ -164,13 +165,20 @@ def _parse_stage(name, rest, problems):
         problems.append({"code": "stage_option_invalid", "detail": f"{name}: signal= は site の段だけ"})
     if media == ["site"] and stage["signal"] is None:
         stage["signal"] = DEFAULT_SIGNAL
-    if name == "warm":
+    # 返信を数える段（5.10.0・段 6）: 名でなく印で決める。`replies_within_hours=` を書いた段は名が何でも
+    # （例 `engage`）返信を数える。`warm` は印が無くても今までどおり既定の時間で数える。
+    if name == "warm" or stage["replies_within_hours"] is not None:
         if any(m not in SNS_MEDIA for m in media):
-            problems.append({"code": "stage_medium_unknown", "detail": "warm: SNS の媒体だけ"})
+            problems.append({"code": "stage_medium_unknown", "detail": f"{name}: 返信を数える段は SNS の媒体だけ"})
             return None
         if stage["replies_within_hours"] is None:
             stage["replies_within_hours"] = DEFAULT_REPLIES_WITHIN_HOURS
     return stage
+
+
+def counts_replies(stage) -> bool:
+    """返信を数える段か（宣言の段・`thread_status` の `stages[]` の行のどちらでも）。印は `replies_within_hours`。"""
+    return isinstance(stage, dict) and stage.get("replies_within_hours") is not None
 
 
 def parse_declaration(text: str, rel: str) -> Declaration | None:
@@ -728,7 +736,7 @@ def thread_status(decl, ledger) -> dict:
     for position, stage in enumerate(decl.stages, start=1):
         medium = stage["media"][0] if len(stage["media"]) == 1 else list(stage["media"])
         row = {"name": stage["name"], "medium": medium, "label": stage_ja(stage["name"], position)}
-        if stage["name"] == "warm":
+        if counts_replies(stage):
             row["replies_within_hours"] = stage["replies_within_hours"]
             try:
                 replies, overdue, warm_times = _warm(stage, items, ledger)
@@ -809,7 +817,7 @@ def thread_status(decl, ledger) -> dict:
         stage_pos = {"name": stages[-1]["name"] if stages else None, "index": of, "of": of}
     else:
         stage_pos = {"name": stages[index]["name"], "index": index + 1, "of": of}
-    next_items = [] if closed else _next(decl, stages, index)
+    next_items = [] if closed else _next(decl, stages, index, ledger.project)
     last = max(times, default=None)
     # 停滞の起点: 最後の動き → `started` → 宣言のファイルの更新時刻（どれも無い糸が永遠に停滞しないように）。
     if last is not None:
@@ -821,10 +829,16 @@ def thread_status(decl, ledger) -> dict:
     idle_days = int((now - basis).total_seconds() // 86400) if basis is not None and basis <= now else None
     stale = _int(decl.fm.get("stale_after_days"), minimum=1) or DEFAULT_STALE_AFTER_DAYS
     pending_now = index is not None and bool(stages[index].get("pending"))
+    # 全段を満たした（段が 1 つ以上ある）糸は `done`（5.10.0）。動きが止まっても停滞に倒さない。
+    # 配信の台帳が conflict の原稿があるときだけは、確かめることがあるので今までどおり停滞。
+    finished = index is None and bool(stages)
     if closed:
         state = "closed"
-    elif conflict or (not pending_now and basis is not None
-                      and now - basis > datetime.timedelta(days=stale)):
+    elif conflict:
+        state = "stalled"
+    elif finished:
+        state = "done"
+    elif not pending_now and basis is not None and now - basis > datetime.timedelta(days=stale):
         state = "stalled"
     else:
         state = "active"
@@ -832,9 +846,15 @@ def thread_status(decl, ledger) -> dict:
     if state == "stalled":
         stalled = {"days": idle_days, "stale_after_days": stale,
                    "since": jst.iso(basis) if basis is not None else None, "since_from": basis_from}
-        stalled["label"] = stalled_label(stage_pos["name"], stage_pos["index"] if index is not None else None)
+        stalled["label"] = stalled_label(stage_pos["name"], stage_pos["index"] if index is not None else None,
+                                         replies=index is not None and counts_replies(stages[index]))
         if conflict:
             stalled["reason"] = "delivery_conflict"
+    # 済んだ糸（5.10.0・鍵は足すだけ）: 最後の動き（無ければ起点）と、そこからの日数。
+    done = None
+    if state == "done":
+        done = {"since": jst.iso(basis) if basis is not None else None, "since_from": basis_from,
+                "days": idle_days, "label": DONE_LABEL}
     title = _plain(decl.fm.get("title"))
     goal = _plain(decl.fm.get("goal_text"))
     return {
@@ -845,6 +865,7 @@ def thread_status(decl, ledger) -> dict:
         "last_movement_at": jst.iso(last) if last is not None else None,
         "idle_days": idle_days,
         "stalled": stalled,
+        "done": done,
         "events": [dict(e) for e in decl.events],
         "cannot_say": sorted(set(cannot)),
     }
@@ -857,6 +878,7 @@ STAGE_JA = {"collect": "リサーチ", "diary": "仮説", "article": "本記事"
 MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
              "facebook": "Facebook", "instagram": "Instagram", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト",
              "ads": "広告"}
+DONE_LABEL = "全部の段が済んだ（閉じるか広場に置く）"
 STALLED_JA = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
               "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている",
               "promote": "告知が未投稿", "selfbm": "セルクマが未了", "boost": "広告が始まっていない"}
@@ -869,7 +891,9 @@ def stage_ja(name, index=None) -> str:
     return f"{index} 段目" if index else "途中の段"
 
 
-def stalled_label(name, index=None) -> str:
+def stalled_label(name, index=None, replies=False) -> str:
+    if name not in STALLED_JA and replies:
+        return f"{stage_ja(name, index)}の返信の対応が止まっている"
     return STALLED_JA.get(name) or f"{stage_ja(name, index)}で止まっている"
 
 
@@ -877,17 +901,25 @@ def _media_ja(media) -> str:
     return "・".join(MEDIUM_JA.get(m, "SNS") for m in media)
 
 
-def _next(decl, stages, index):
+def _next(decl, stages, index, project=None):
     """現在の段で足りないもの（**名詞で**・本文は書かない）。`what` は今までどおり、`label` は画面の言葉。"""
     if index is None:
-        return [{"stage": stages[-1]["name"] if stages else None, "kind": "close",
-                 "what": "closed を糸のファイルに 1 行（全段を満たした）",
-                 "label": "全部の段が済んだ（終えるなら記録する）"}]
+        last = stages[-1]["name"] if stages else None
+        out = [{"stage": last, "kind": "close",
+                "what": "closed を糸のファイルに 1 行（任意・期間の区切り）",
+                "label": "全部の段が済んだ（区切るなら closed を 1 行・任意）"}]
+        if stages:
+            project = project or _plain(decl.fm.get("project")) or "<project>"
+            out.append({"stage": last, "kind": "plaza",
+                        "what": (f"thth plaza post <口座> --kind measure --from scenario {project} {decl.id} "
+                                 "--scope \"<媒体・企画の範囲>\" --by <名前>"),
+                        "label": "結果を広場に置く（thth plaza post --from scenario）"})
+        return out
     row = stages[index]
     name = row["name"]
     ja = stage_ja(name, index + 1)
     out = []
-    if name == "warm":
+    if counts_replies(row):
         if row["replies"] is None:
             return [{"stage": name, "kind": "cannot_say", "what": "返信の台帳が読めない",
                      "label": "返信の台帳が読めない"}]
@@ -1147,7 +1179,7 @@ def _item_row(item, ledger):
 def _stage_items(stage, decl, items, ledger):
     """段 1 つの成果物（段 2 のダッシュボードの「成果物」）。本文・他人の本文・URL は入れない。"""
     media = stage["media"]
-    if stage["name"] == "warm":
+    if counts_replies(stage):
         return []
     if media == ["site"]:
         return [{"kind": "event", "name": e["name"], "at": e["at"], "head": e.get("head")}
@@ -1329,13 +1361,19 @@ def stalled_event_id(project, ident, stage) -> str:
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
+def done_event_id(project, ident) -> str:
+    """`scenario_done`（5.10.0）の id。同じ糸が済んでいるあいだは同じ id。"""
+    raw = f"{EVENT_PREFIX}|{project}|{ident}|done"
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def series_low_event_id(project, ident) -> str:
     raw = f"{EVENT_PREFIX}|{project}|{ident}|series_low"
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def events_for(project, names, *, now, make_event) -> tuple:
-    """`scenario_stalled`・`series_low`（どちらも続いている状態）。`(出来事, 読めなかった符丁)`。
+    """`scenario_stalled`・`scenario_done`（5.10.0）・`series_low`（どれも続いている状態）。`(出来事, 読めなかった符丁)`。
 
     宣言が 1 つも無ければ何も読まずに空を返す（宣言を持たない口座の events は今までと同じ）。
     """
@@ -1347,6 +1385,14 @@ def events_for(project, names, *, now, make_event) -> tuple:
     payload = build(project, now=now, ledger=ledger)
     out = []
     for row in payload["threads"]:
+        if row["state"] == "done":
+            done = row["done"] or {}
+            out.append(make_event("scenario_done", project, row["id"],
+                                  f"キャンペーン {row['id']} は全部の段が済んだ（closed を 1 行・任意／広場に置く）",
+                                  done_event_id(project, row["id"]),
+                                  stage=row["stage"]["name"], days=done.get("days"), next=row["next"],
+                                  project=project, title=row["title"], label=done.get("label")))
+            continue
         if row["state"] != "stalled":
             continue
         stage = row["stage"]["name"]

@@ -308,7 +308,8 @@ TRIGGER_BASIS = {
     "post_result": "own_measure_until_passed_since_last_observe",
     "add_trial": "own_finding_trial_due_passed_without_own_trial_after_it",
     "post_week": "closed_week_since_last_observe_goal_share_shift_ge_0.2",
-    "post_scenario": "thread_closed_within_30d_not_yet_posted_with_from_scenario",
+    # 5.10.0: `closed` に加えて `done`（全段が済んだ・closed 無し）の糸も。done は最後の動きが窓の中。
+    "post_scenario": "thread_closed_or_done_within_30d_not_yet_posted_with_from_scenario",
 }
 # 閉じた糸を「広場に置く」に出す窓（日）。置けば消える。
 SCENARIO_WINDOW_DAYS = 30
@@ -424,6 +425,7 @@ def _posted_threads(records):
 
 def _scenario_steps(configs, records, *, now):
     """閉じた糸（`closed` の出来事が `SCENARIO_WINDOW_DAYS` 日以内）で、まだ広場に置いていないもの（5.8.0）。
+    5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）で、最後の動きが同じ窓の中のものも。
 
     命令は `thth plaza post <account> --kind measure --from scenario <project> <id>`。project が持ち主の組に
     入っていなければ、組の登録の案内（`thth admin plaza owner set`・管理者）を添える。候補の列挙だけ。
@@ -465,13 +467,24 @@ def _project_scenario_steps(project, names, configs, posted, *, now):
             continue
         closed = [scenario._date_at(e["at"]) for e in decl.events if e["name"] == "closed"]
         closed = max((at for at in closed if at is not None), default=None)
-        if closed is None or not (floor < closed <= now):
+        done_at = None
+        if closed is None:
+            # 5.10.0: 閉じていなくても全段が済んだ糸（`done`）は置く候補。窓は最後の動き（`done.since`）で測る。
+            status = scenario.thread_status(decl, ledger)
+            if status["state"] != "done":
+                continue
+            done_at = jst.parse((status.get("done") or {}).get("since"))
+            if done_at is None or not (floor < done_at <= now):
+                continue
+        elif not (floor < closed <= now):
             continue
         owner = plaza.owner_of(project)
         title = scenario._plain(decl.fm.get("title"))
         step = {"kind": "plaza", "candidate": "post_scenario", "account": account,
                 "plaza_id": None, "title": scenario._head(title) if title else decl.id,
-                "project": project, "thread": decl.id, "closed_at": jst.iso(closed),
+                "project": project, "thread": decl.id, "closed_at": jst.iso(closed) if closed else None,
+                # 5.10.0（鍵は足すだけ）: 糸の状態（closed か done）と、done のときの最後の動き。
+                "state": "closed" if closed else "done", "done_at": jst.iso(done_at) if done_at else None,
                 "owner_group": owner, "basis": TRIGGER_BASIS["post_scenario"],
                 "command": (f"thth plaza post {account} --kind measure --from scenario {project} "
                             f"{decl.id} --scope \"<媒体・企画の範囲>\" --by <名前>")}

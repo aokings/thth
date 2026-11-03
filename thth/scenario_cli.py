@@ -32,10 +32,10 @@ def _stage_name(row) -> str:
 
 def _stage_cell(row) -> str:
     name = _stage_name(row)
-    if row["name"] == "warm":
+    if row.get("replies_within_hours") is not None:   # 返信を数える段（名でなく印・5.10.0）
         if row.get("replies") is None:
             return f"{name} —（読めない）"
-        return f"{name} 返信 {row['replies']}・越えた {row['overdue']}"
+        return f"{name} 返信 {row['replies']}・越えた {row['overdue']}" + (" ✓" if row.get("satisfied") else "")
     mark = " ✓" if row["satisfied"] else ""
     if row.get("done") is None:
         return f"{name} —（読めない）"
@@ -96,7 +96,7 @@ def render(payload, out=print) -> None:
         out("  宣言がありません（docs/sns/scenarios/<id>.md に thth_scenario: 1 で書く）")
     for row in payload["threads"]:
         stage = row["stage"]
-        state = {"active": "", "closed": "  終わり",
+        state = {"active": "", "closed": "  終わり", "done": "  済んだ（閉じるか広場に置く）",
                  "stalled": f"  停滞 {row['stalled']['days']} 日" if row["stalled"] and row["stalled"]["days"] is not None
                  else "  停滞"}[row["state"]]
         current = next((s for s in row["stages"] if s["name"] == stage["name"]), {"name": stage["name"]})
@@ -196,6 +196,9 @@ def render_seeds(payload, out=print) -> None:
             if not column["by_medium"]:
                 out("   窓の中の自分の投稿がありません")
             for medium, node in column["by_medium"].items():
+                if node.get("metric_unavailable"):
+                    out(f"   {medium}  この媒体では {column['metric']} を取れない（metric_unavailable）")
+                    continue
                 out(f"   {medium}  数を引けた {node['posts']} 本（値の取れた {node['n']}・24h 未採取 {node['uncovered_24h']}）・"
                     f"{_median_text(node)}")
                 for row in node["rows"]:
@@ -230,9 +233,11 @@ def render_seeds(payload, out=print) -> None:
                         f"{'—' if untied['sessions'] is None else untied['sessions']}・名前は出さない）")
         else:
             if not column["rows"]:
-                out("   窓の中で閉じた糸に、宣言にあって使わなかった媒体はありません")
+                out("   窓の中で閉じた・済んだ糸に、宣言にあって使わなかった媒体はありません")
             for row in column["rows"]:
-                out(f"   {row['count']}  糸 {row['thread']}  {row['title'] or ''}  閉じた {row['closed_at'][:10]}  "
+                when = (f"閉じた {row['closed_at'][:10]}" if row.get("closed_at")
+                        else f"済んだ（最後の動き {(row.get('done_at') or '')[:10]}）")
+                out(f"   {row['count']}  糸 {row['thread']}  {row['title'] or ''}  {when}  "
                     f"使わなかった {'・'.join(row['media_declared_untried'])}"
                     f"（使った {'・'.join(row['media_tried']) or 'なし'}）")
             if column["more"]:
