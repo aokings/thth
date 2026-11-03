@@ -760,7 +760,7 @@ def register_admin(commands) -> None:
     unhider.add_argument("--by", default=None, help="誰が戻したか（必須）")
     unhider.add_argument("--json", action="store_true")
     unhider.set_defaults(func=cmd_admin_unhide)
-    lister =operations.add_parser("list", help="全部の書き込み（非表示も含む）")
+    lister = operations.add_parser("list", help="全部の書き込み（非表示も含む）")
     lister.add_argument("--all", action="store_true", help="全部（既定も全部）")
     lister.add_argument("--json", action="store_true")
     lister.set_defaults(func=cmd_admin_list)

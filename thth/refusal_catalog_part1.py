@@ -103,7 +103,7 @@ ENTRIES = {
     "admin_draft_credential_missing": {
         "kind": "refusal",
         "why": "その招待の口座に、下書きを通す資格情報の 1 件がまだありません",
-        "fix": "thth worker を --credentials 付きで動かすと次の巡で足されます（thth admin invite list で確かめる）",
+        "fix": None,   # 正本は説明の辞書（fix_dict が優先する）
         "command": "thth admin invite list",
         "no_better": "internal",
         "doors": ("cli",),
@@ -111,7 +111,7 @@ ENTRIES = {
     "admin_draft_invalid_draft": {
         "kind": "refusal",
         "why": "--draft の値か本文のファイルが、下書きとして読めませんでした",
-        "fix": "--draft には draft_id（64 桁）か、その口座の queue の原稿のパスを渡してください",
+        "fix": None,   # 正本は説明の辞書（fix_dict が優先する）
         "command": "thth admin draft put <口座> --body-file <ファイル> --by <名前>",
         "better": "本文は先に thth lint で通しておくと、口座の側で断られずに置けます",
         "doors": ("cli",),
@@ -119,7 +119,7 @@ ENTRIES = {
     "admin_draft_invite_account_only": {
         "kind": "refusal",
         "why": "この口は招待で用意した口座（inv-…）専用で、その口座ではありません",
-        "fix": "運営者自身の口座は、これまでどおり thth approve か MCP の道で出してください",
+        "fix": None,   # 正本は説明の辞書（fix_dict が優先する）
         "command": "thth approve <ファイル>",
         "better": "招待の口座なら、この口でそのまま下書きを置けるので受け渡しが早くなります",
         "doors": ("cli",),
@@ -231,7 +231,7 @@ ENTRIES = {
     "already_hidden": {
         "kind": "refusal",
         "why": "その広場の書き込みは、既に非表示になっています",
-        "fix": "隠し直す必要はありません。戻すときは、id と理由を添えて管理者に頼んでください",
+        "fix": None,   # 正本は plaza.NEXT（fix_dict が優先する）
         "command": "thth admin plaza unhide <id> --reason <理由> --by <名前>",
         "better": "中身を直したいときは、thth plaza post --preview で見てから新しく置くと、置き直しが 1 回で済みます",
         "doors": ("cli", "mcp", "remote"),
@@ -239,10 +239,21 @@ ENTRIES = {
     "not_hidden": {
         "kind": "refusal",
         "why": "その広場の書き込みは非表示ではないので、戻すものがありません",
-        "fix": "状態を確かめてください。隠すときは hide です",
+        # 通す直し方の正本は plaza.NEXT（fix_dict が優先する・ここに文を書くと使われない写しになる）。
+        "fix": None,
         "command": "thth admin plaza show <id>",
         "better": "戻す前に show で hidden の欄を見ておくと、id の取り違えに気づけます",
         "doors": ("cli",),
+        "since": "5.11.0",
+    },
+    "outside_period": {
+        "kind": "cannot_say",
+        # why はダッシュボードの THTH_REASON（DASHBOARD_REASON_JA）から引く。期間の外の数は糸の訪問に足さない。
+        "why": None,
+        "fix": "糸の期間の日の控え（hub の日ごとの控え）を thth scenario site-import で入れると、その日の数で言えます",
+        "command": "thth scenario site-import <project> --file <json>",
+        "better": "日ごとの控えが期間の毎日にそろうと、窓の幅に左右されず、糸の一生どおりの数になります",
+        "doors": ("cli", "mcp", "dashboard"),
         "since": "5.11.0",
     },
     "already_queued": {

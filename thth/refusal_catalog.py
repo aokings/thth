@@ -131,6 +131,7 @@ DASHBOARD_REASON_JA = {
     "no_tied_campaign": "このキャンペーンの原稿の印（UTM）の訪問が無い",
     "windows_differ": "サイトごとに窓が違うので足さない",
     "sessions_partly_unknown": "一部の訪問の数が無い",
+    "outside_period": "訪問の窓が糸の期間に重ならない",
     "ads_account_missing": "広告の口座が無い",
     "ads_spend_not_recorded": "使った額は thth ads insights で見る",
 }

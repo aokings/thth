@@ -307,7 +307,7 @@ def as_of(project):
 #     一部の日だけ差し替えると二重に足すか欠けを隠すことになる）。日ごとの控えが期間に 1 つも無いサイトは、
 #     今までどおり幅のある窓の最新を読む（`window_basis: latest_window`）。
 
-LAG_DAYS = 2
+LAG_DAYS = 2   # hub 側の同じ定数は media-hub `hub/ga4visits.py` の `LAG_DAYS`（揃えて変える）
 BASIS_THREAD_DAILY = "thread_period_daily"
 BASIS_SEEDS_DAILY = "seeds_days_daily"
 BASIS_RECENT_DAILY = "recent_days_daily"
@@ -326,7 +326,7 @@ def _stamp(record):
 
 
 def daily_index(records) -> tuple:
-    """日ごとの控え → `({site: {日: 控え}}, {site: 落とした重複の数})`。同じ日は `generated_at` の新しい 1 つ。"""
+    """日ごとの控え → `({site: {日: 控え}}, {site: {日: 落とした重複の数}})`。同じ日は `generated_at` の新しい 1 つ。"""
     by_site, dropped = {}, {}
     for record in records:
         if not is_daily(record):
@@ -334,7 +334,8 @@ def daily_index(records) -> tuple:
         site, day = record.get("site"), record["window"]["to"]
         days = by_site.setdefault(site, {})
         if day in days:
-            dropped[site] = dropped.get(site, 0) + 1
+            per_day = dropped.setdefault(site, {})
+            per_day[day] = per_day.get(day, 0) + 1
             if _stamp(record) <= _stamp(days[day]):
                 continue
         days[day] = record
@@ -346,15 +347,25 @@ def last_due_day(now) -> datetime.date:
     return jst.to_jst(now).date() - datetime.timedelta(days=LAG_DAYS)
 
 
-def daily_span(days, start, end, now, key="rows") -> dict:
-    """`start`〜`end`（日・両端を含む）の日ごとの控え。`records` は数の取れた日の控え（日の順）。"""
+def daily_span(days, start, end, now, key="rows", dropped=None) -> dict:
+    """`start`〜`end`（日・両端を含む）の日ごとの控え。`records` は数の取れた日の控え（日の順）。
+
+    期間が `MAX_PERIOD_DAYS` 日を越えるときは終わりから `MAX_PERIOD_DAYS` 日に切り、黙って減らさず
+    `period_truncated: true` と切る前の日数 `days_before_truncation` を添える（監査 2-b）。
+    `dropped`（`{日: 落とした重複の数}`）を渡すと、数える日のうちの重複を `duplicates_dropped` に足す（監査 2-c）。
+    """
     due = last_due_day(now)
-    used, missing, pending, unavailable, total = [], 0, 0, 0, 0
+    used, missing, pending, unavailable, total, duplicates = [], 0, 0, 0, 0, 0
+    truncated = None
     if start is not None and end is not None and start <= end:
-        start = max(start, end - datetime.timedelta(days=MAX_PERIOD_DAYS - 1))
+        full = (end - start).days + 1
+        if full > MAX_PERIOD_DAYS:
+            truncated = full
+            start = end - datetime.timedelta(days=MAX_PERIOD_DAYS - 1)
         day = start
         while day <= end:
             total += 1
+            duplicates += (dropped or {}).get(day.isoformat(), 0)
             record = days.get(day.isoformat())
             if record is not None:
                 if record.get(key) is None:
@@ -366,8 +377,11 @@ def daily_span(days, start, end, now, key="rows") -> dict:
             else:
                 missing += 1
             day += datetime.timedelta(days=1)
-    return {"records": used, "days_in_period": total, "days_covered": len(used), "days_missing": missing,
-            "days_pending": pending, "days_unavailable": unavailable}
+    span = {"records": used, "days_in_period": total, "days_covered": len(used), "days_missing": missing,
+            "days_pending": pending, "days_unavailable": unavailable, "duplicates_dropped": duplicates}
+    if truncated is not None:
+        span.update({"period_truncated": True, "days_before_truncation": truncated})
+    return span
 
 
 def _overlaps(record, start, end) -> bool:
@@ -393,17 +407,30 @@ def plan_sites(records, start, end, now, key="rows") -> list:
     latest_wide = {r.get("site"): r for r in _latest_wide([r for rs in wide_by_site.values() for r in rs])}
     out = []
     for site in sorted(set(daily) | set(wide_by_site), key=lambda s: s or ""):
-        span = daily_span(daily.get(site, {}), start, end, now, key)
+        span = daily_span(daily.get(site, {}), start, end, now, key, dropped.get(site))
         has_daily = (span["days_covered"] + span["days_unavailable"]) > 0
         if has_daily or site not in latest_wide:
             mixed = sum(1 for r in wide_by_site.get(site, []) if _overlaps(r, start, end))
             out.append({"site": site, "mode": "daily", "span": span, "record": None,
                         "mixed_windows": {"wide_ignored": mixed} if mixed and has_daily else None,
-                        "duplicates_dropped": dropped.get(site, 0)})
+                        "duplicates_dropped": span["duplicates_dropped"]})
         else:
+            # 数える日に日ごとの控えが無いので、期間の中の重複も無い（期間の外の重複は数えない）。
             out.append({"site": site, "mode": "wide", "span": None, "record": latest_wide[site],
-                        "mixed_windows": None, "duplicates_dropped": dropped.get(site, 0)})
+                        "mixed_windows": None, "duplicates_dropped": 0})
     return out
+
+
+def wide_fit(record, start, end) -> str:
+    """幅のある窓と期間の重なり（監査 2-a）: `"inside"`（期間の中に収まる）・`"exceeds"`（重なるが期間を
+    はみ出す）・`"outside"`（重ならない）・`"unknown"`（期間の始まりか窓が読めない・今までどおり足す）。"""
+    window = record.get("window") or {}
+    lo, hi = _day(window.get("from")), _day(window.get("to"))
+    if start is None or end is None or lo is None or hi is None:
+        return "unknown"
+    if hi < start or lo > end:
+        return "outside"
+    return "exceeds" if lo < start or hi > end else "inside"
 
 
 def thread_period(ledger, thread_id, status=None) -> dict:
@@ -446,8 +473,15 @@ def _day(value):
 
 
 def _span_keys(span) -> dict:
-    return {k: span[k] for k in ("days_in_period", "days_covered", "days_missing", "days_pending",
-                                 "days_unavailable")}
+    """出力に載せる日の数。切ったとき（`period_truncated`）と重複を落としたとき（`duplicates_dropped`・0 なら
+    出さない）だけ、その鍵を足す（監査 2-b・2-c）。"""
+    out = {k: span[k] for k in ("days_in_period", "days_covered", "days_missing", "days_pending",
+                                "days_unavailable")}
+    if span.get("period_truncated"):
+        out.update({"period_truncated": True, "days_before_truncation": span["days_before_truncation"]})
+    if span.get("duplicates_dropped"):
+        out["duplicates_dropped"] = span["duplicates_dropped"]
+    return out
 
 
 def campaign_keys(rel) -> set:
@@ -771,6 +805,15 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None, *, perio
                 "sessions": None, "engaged_sessions": None, "by_medium": {}, "campaigns": [],
                 "rows_total": None, "untied_campaigns": None, "cannot_say": None}
         bases.add(BASIS_LATEST)
+        fit = wide_fit(record, start, end)
+        if fit == "outside":
+            # 監査 2-a: 窓が糸の期間に重ならない。期間の外の数を糸の訪問として足さない。
+            site["cannot_say"] = "outside_period"
+            block["sites"].append(site)
+            continue
+        if fit == "exceeds":
+            # 重なるが期間をはみ出す。幅のある窓は日に割れないので足したうえで、はみ出しを言う。
+            site["window_exceeds_period"] = True
         if record.get("newer_unavailable"):
             # 新しい窓は取れなかった。数はその前の取れた窓のもの（注記して添える）。
             site["stale"] = True
@@ -787,6 +830,8 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None, *, perio
         if _fill_site(site, tied["by_thread"].get(thread_id) or []):
             totals.append(site)
             windows.add((site["window"] or {}).get("from", "") + "/" + (site["window"] or {}).get("to", ""))
+            if site.get("window_exceeds_period"):
+                block.setdefault("window_exceeds_period", []).append(record.get("site"))
         block["sites"].append(site)
     block["window_basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
     block["period"] = dict(period)
@@ -794,7 +839,7 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None, *, perio
         codes = {s["cannot_say"] for s in block["sites"]}
         if codes == {"site_visits_unavailable"}:
             block["cannot_say"] = "site_visits_unavailable"
-        elif codes in ({"no_daily_in_period"}, {"thread_period_unknown"}):
+        elif codes in ({"no_daily_in_period"}, {"thread_period_unknown"}, {"outside_period"}):
             block["cannot_say"] = next(iter(codes))
         else:
             block["cannot_say"] = "no_tied_campaign"

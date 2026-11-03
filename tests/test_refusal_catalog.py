@@ -99,6 +99,15 @@ def test_目録のfixは既存の辞書の文と食い違わない():
     assert wrong == []
 
 
+def test_説明の辞書がある符丁は部にfixの文を書かない():
+    """5.11.0 段 8 監査: `fix_dict` が優先するので、部に書いた `fix` の文は使われず、食い違っても気づけない。
+    説明の辞書（`FIX_SOURCES`）に文がある符丁は、部の `fix` を None にする（正本は辞書の 1 か所）。"""
+    texts = rc.fix_texts()
+    dead = sorted(code for part in rc.PARTS for code, entry in part.ENTRIES.items()
+                  if code in texts and entry.get("fix") is not None)
+    assert dead == []
+
+
 def test_目録のwhyは安全装置の文と食い違わない():
     for code, entry in rc.CATALOG.items():
         why = rc.guard_why(code)

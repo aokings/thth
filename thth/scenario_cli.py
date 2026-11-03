@@ -64,9 +64,13 @@ def visits_lines(block) -> list:
         lines = [f"{head}: —（{block.get('cannot_say')}）"]
     for site in block.get("sites") or []:
         window = site.get("window") or {}
-        span = f"{window.get('from')}〜{window.get('to')}"
+        # 監査 2-g: 糸の始まりが決められないとき None と出さない。
+        span = f"{window.get('from') or '始まり不明'}〜{window.get('to') or '終わり不明'}"
         if site.get("cannot_say") == "site_visits_unavailable":
             lines.append(f"   {site['site']} {span}: —（取れなかった・{site.get('unknown_reason')}）")
+            continue
+        if site.get("cannot_say") == "outside_period":
+            lines.append(f"   {site['site']} {span}: —（outside_period・窓が糸の期間に重ならないので足していない）")
             continue
         media = "・".join(f"{k} {v}" for k, v in sorted((site.get("by_medium") or {}).items()))
         count = site.get("sessions")
@@ -78,6 +82,12 @@ def visits_lines(block) -> list:
                          f"（欠け {site.get('days_missing')}・まだ来ない {site.get('days_pending')}"
                          + (f"・取れなかった {site['days_unavailable']}" if site.get("days_unavailable") else "")
                          + "）")
+        if site.get("period_truncated"):
+            lines.append(f"      期間 {site.get('days_before_truncation')} 日のうち、終わりから {site.get('days_in_period')} 日だけ足した")
+        if site.get("duplicates_dropped"):
+            lines.append(f"      同じ日の控えの重複 {site['duplicates_dropped']} は新しい方だけ使った")
+        if site.get("window_exceeds_period"):
+            lines.append("      窓が糸の期間をはみ出している（幅のある窓は日に割れないので、窓の数をそのまま足した）")
         if site.get("mixed_windows"):
             lines.append(f"      幅のある窓の控え {site['mixed_windows'].get('wide_ignored')} は足していない（日ごとを使った）")
         newer = site.get("newer_unavailable")

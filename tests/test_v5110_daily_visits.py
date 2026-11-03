@@ -229,6 +229,108 @@ def test_show_dashboard_plazaは糸の期間の数を出す(flow, tmp_path, caps
     assert "日ごとに足した日 2/9（欠け 5・まだ来ない 2）" in capsys.readouterr().out
 
 
+# ---- 段 8 の監査（Fable）の直し ----
+
+FLOW03 = """---
+thth_scenario: 1
+kind: thread
+id: flow-03
+title: とても長い糸
+project: kp
+started: 2024-01-01
+---
+- promote: threads need=5
+"""
+
+FLOW04 = """---
+thth_scenario: 1
+kind: thread
+id: flow-04
+title: 始まりの分からない糸
+project: kp
+---
+- promote: threads need=1
+"""
+
+
+def _flow02(flow):
+    _write(os.path.join(flow["scen"], "flow-02.md"), FLOW02)
+    _write(os.path.join(flow["queue"], "th-flow-02.md"),
+           _sns("kp-threads", status="posted", publish_at="2026-10-22T07:00:00+09:00", thread="flow-02"))
+
+
+def test_監査2a_期間の外の幅のある窓は足さずoutside_period(flow, tmp_path, capsys):
+    # 閉じた糸（10-21〜10-23）に日ごとの控えが無く、期間の後の 7 日の窓（10-24〜10-27）だけがある。
+    _flow02(flow)
+    _import(_visits(tmp_path, [_row("th-flow-02", 40)], frm="2026-10-24", to="2026-10-27"))
+    block = _show("flow-02")
+    assert block["period"]["from"] == "2026-10-21" and block["period"]["to"] == "2026-10-23"
+    assert block["sessions"] is None, "期間の外の窓の数を糸の訪問に足さない"
+    assert block["cannot_say"] == "outside_period"
+    site = _site(block, "kopicha.org")
+    assert site["cannot_say"] == "outside_period" and site["sessions"] is None and site["campaigns"] == []
+    assert cli.main(["scenario", "show", PROJECT, "flow-02"]) == 0
+    assert "outside_period" in capsys.readouterr().out
+
+
+def test_監査2a_期間をはみ出す窓は足してwindow_exceeds_period(flow, tmp_path):
+    # 窓 10-20〜10-26 は期間 10-21〜10-23 に重なるが、両側にはみ出す。幅のある窓は日に割れないので足して言う。
+    _flow02(flow)
+    _import(_visits(tmp_path, [_row("th-flow-02", 6)], frm="2026-10-20", to="2026-10-26"))
+    block = _show("flow-02")
+    assert block["sessions"] == 6 and block["cannot_say"] is None
+    assert _site(block, "kopicha.org")["window_exceeds_period"] is True
+    assert block["window_exceeds_period"] == ["kopicha.org"]
+    # 期間の中に収まる窓には付けない。
+    _import(_visits(tmp_path, [_row("th-flow-01", 6)], frm="2026-10-21", to="2026-10-27", name="in.json"))
+    one = _show()
+    assert "window_exceeds_period" not in _site(one, "kopicha.org") and "window_exceeds_period" not in one
+
+
+def test_監査2b_800日を越える期間はperiod_truncatedと切る前の日数(flow, tmp_path):
+    import datetime
+    _write(os.path.join(flow["scen"], "flow-03.md"), FLOW03)
+    _write(os.path.join(flow["queue"], "th-flow-03.md"),
+           _sns("kp-threads", status="posted", publish_at="2026-10-22T07:00:00+09:00", thread="flow-03"))
+    _import(_hub_day(tmp_path, "2026-10-22", [_row("th-flow-03", 3)]))
+    block = _show("flow-03")
+    assert (block["period"]["from"], block["period"]["to"]) == ("2024-01-01", "2026-10-28")
+    site = _site(block)
+    full = (datetime.date(2026, 10, 28) - datetime.date(2024, 1, 1)).days + 1
+    assert full > site_visits.MAX_PERIOD_DAYS
+    assert site["days_in_period"] == site_visits.MAX_PERIOD_DAYS
+    assert site["period_truncated"] is True and site["days_before_truncation"] == full
+    # 800 日に収まる糸には付けない。
+    _import(_hub_day(tmp_path, "2026-10-21", [_row("th-flow-01", 1)]))
+    assert "period_truncated" not in _site(_show())
+
+
+def test_監査2c_同じ日の重複を落とした数を出す(flow, tmp_path):
+    _import(_hub_day(tmp_path, "2026-10-24", [_row("th-flow-01", 4)],
+                     referrers=[{"host": "t.co", "sessions": 1}]))
+    assert "duplicates_dropped" not in _site(_show()), "落としていなければ出さない"
+    _place("a-copy_2026-10-24.json", _hub_day(tmp_path, "2026-10-24", [_row("th-flow-01", 9)],
+                                               referrers=[{"host": "t.co", "sessions": 2}],
+                                               generated="2026-10-28T09:00:00+09:00", name="again.json"))
+    assert _site(_show())["duplicates_dropped"] == 1
+    assert _site(dashboard_cli.build(PROJECT, now=NOW)["site_referrers"])["duplicates_dropped"] == 1
+    column = next(c for c in scenario_seeds.build(PROJECT, days=7, now=NOW)["columns"] if c["key"] == "visits")
+    assert column["sites"][0]["duplicates_dropped"] == 1
+    # 数える期間の外の日の重複は数えない（seeds の --days 1 の窓は 10-27〜）。
+    column = next(c for c in scenario_seeds.build(PROJECT, days=1, now=NOW)["columns"] if c["key"] == "visits")
+    assert "duplicates_dropped" not in column["sites"][0]
+
+
+def test_監査2g_始まりの分からない糸はNoneと出さない(flow, tmp_path, capsys):
+    _write(os.path.join(flow["scen"], "flow-04.md"), FLOW04)
+    _import(_hub_day(tmp_path, "2026-10-24", [_row("th-flow-01", 4)]))
+    block = _show("flow-04")
+    assert block["period"]["from"] is None and block["cannot_say"] == "thread_period_unknown"
+    assert cli.main(["scenario", "show", PROJECT, "flow-04"]) == 0
+    out = capsys.readouterr().out
+    assert "始まり不明〜2026-10-28" in out and "None〜" not in out
+
+
 def test_hubの日ごとの1ファイルをsite_importで受け取る_ファイル名は日付で1日1つ(flow, tmp_path, capsys):
     path = _hub_day(tmp_path, "2026-10-26", [_row("th-flow-01", 2)],
                     referrers=[{"host": "threads", "sessions": 2}])
