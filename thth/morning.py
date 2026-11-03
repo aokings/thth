@@ -1466,11 +1466,16 @@ def _render_section(section, out) -> None:
                         # 3.8.0 §D1・§D2: 置くきっかけ（下書きの命令つき）。
                         "post_result": f"広場に置く: 期間が終わった施策の結果（期間 {step.get('until')}）",
                         "add_trial": f"追試の結果を足す（予定日 {step.get('trial_due')}）",
-                        "post_week": f"広場に置く: 配分を変えた週が閉じた（{step.get('week_start')} の週）"}
+                        "post_week": f"広場に置く: 配分を変えた週が閉じた（{step.get('week_start')} の週）",
+                        # 5.8.0（設計 効果測定と連動 §3 段 4）: 閉じた糸の結果を置く。
+                        "post_scenario": f"広場に置く: 糸「{step.get('title')}」を閉じた"
+                                         f"（{(step.get('closed_at') or '')[:10]}・効いたかを共通の知に）"}
                 label = f"  {step['plaza_id']}  {step['title']}" if step.get("plaza_id") else ""
                 out(f"  {verb[step['candidate']]}  {step['account']}{label}")
                 if step.get("command"):
                     out(f"    {step['command']}")
+                if step.get("owner_hint"):
+                    out(f"    持ち主の組がまだ無い（別の project から読めない）。管理者が: {step['owner_hint']}")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return

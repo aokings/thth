@@ -423,7 +423,7 @@ _PLAZA_SHAPES = {
     'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
                     'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
                     'goal', 'visibility', 'trial_due', 'from_tool', 'from_account',
-                    'from_window_days', 'from_doc', 'from_report'},
+                    'from_window_days', 'from_doc', 'from_report', 'from_project', 'from_thread'},
                    {'account'}),
     'plaza_list': ({'project', 'open'}, set()),
     'plaza_show': ({'plaza_id'}, {'plaza_id'}),
@@ -478,10 +478,20 @@ def _plaza_from(request):
     if request.get('from_report'):
         return ('report', request['from_report'])
     tool = request.get('from_tool')
+    scenario_keys = request.get('from_project') is not None or request.get('from_thread') is not None
     if tool is None:
-        if request.get('from_account') is not None or request.get('from_window_days') is not None:
+        if (request.get('from_account') is not None or request.get('from_window_days') is not None
+                or scenario_keys):
             raise ReportServiceError("invalid_from")
         return None
+    if tool == 'scenario':
+        # 5.8.0（設計 効果測定と連動 §3 段 4）: CLI の `--from scenario <project> <糸の id>` と同じ引数。
+        if (not request.get('from_project') or not request.get('from_thread')
+                or request.get('from_account') is not None or request.get('from_window_days') is not None):
+            raise ReportServiceError("invalid_from")
+        return ('scenario', request['from_project'], request['from_thread'])
+    if scenario_keys:
+        raise ReportServiceError("invalid_from")
     if tool == 'study-report':
         declarations = request.get('declarations') or []
         if not declarations or request.get('from_account') is not None:

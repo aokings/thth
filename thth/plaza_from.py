@@ -137,6 +137,271 @@ def numbers_draft(entry):
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------ 糸 1 本の結果（5.8.0 段 4）
+
+SCENARIO_SOURCE = "scenario"
+# 反応を測る媒体（SNS だけ。はてなブログ・はてブ・サイト・広告は段の本数と訪問・広告の欄で見る）。
+REACTION_METRICS = ("views_24h", "likes_24h", "replies_back_24h")
+REACTION_LABELS = {"views_24h": "views", "likes_24h": "likes", "replies_back_24h": "返ってきた返信"}
+# 段の行から観測に写す鍵（数と状態だけ。原稿の名前・題・タグの中身・本文は写さない）。
+STAGE_KEYS = ("name", "label", "medium", "need", "done", "pending", "drafts", "conflict", "satisfied",
+              "satisfied_by", "replies", "overdue", "replies_within_hours", "target")
+ADS_CANNOT = {"spend_minor": "ads_spend_not_recorded", "link_clicks": "ads_clicks_not_recorded"}
+
+
+def _scenario_names(project_arg, *, account, project, trusted_accounts):
+    """`--from scenario <project> <id>` の project は置く account と同じ project だけ。読む口座の名前。"""
+    from . import scenario
+    if not accounts.name_is_safe(project_arg):
+        raise _error("invalid_from")
+    try:
+        found, names = scenario.resolve(project_arg)
+    except (accounts.AccountError, OSError, ValueError, TypeError):
+        raise _error("from_unavailable") from None
+    if not names or found != project or not project:
+        raise _error("from_out_of_scope")
+    if trusted_accounts is not None:
+        names = [name for name in names if trusted_accounts.get(name) == project]
+        if account not in names:
+            raise _error("from_out_of_scope")
+    return found, names
+
+
+def _stat_block(values, total, min_n):
+    """1 つの指標: 取れた本数（n）・合計・中央値（n が min_n 未満なら言わない＝after と同じ規約）。"""
+    from . import after_cli
+    stat = after_cli._stat_median_only(values, min_n=min_n)
+    return {"n": len(values), "of": total, "sum": sum(values) if values else None,
+            "median": stat["median"]}
+
+
+def _reactions(items, min_n):
+    """糸の SNS の投稿の反応（媒体ごと）。1 本の数は `thth after` と同じ計算（`after_cli.reaction_metrics`:
+    24h の刻みの実測・返信は返信の台帳の他者の数）。連投は先頭の投稿で数える（段の本数と同じ分母）。"""
+    from . import after_cli, scenario
+    by_medium, cannot = {}, set()
+    lookups = {}
+    for item in items:
+        if item.medium not in scenario.SNS_MEDIA or not scenario._is_posted(item):
+            continue
+        row = by_medium.setdefault(item.medium, {"posts": 0, "covered": 0,
+                                                 "values": {key: [] for key in REACTION_METRICS}})
+        row["posts"] += 1
+        post_id = next((pid for pid in item.post_ids if isinstance(pid, str) and pid), None)
+        if post_id is None:
+            cannot.add("post_id_missing")
+            continue
+        if item.account not in lookups:
+            try:
+                lookups[item.account] = after_cli.reaction_lookup(item.account)
+            except Exception:  # noqa: BLE001 — 読めない実測は数えない（0 と混ぜない）
+                lookups[item.account] = None
+                cannot.add("measured_unreadable")
+        lookup = lookups[item.account]
+        if lookup is None:
+            continue
+        try:
+            metrics = lookup(post_id)
+        except Exception:  # noqa: BLE001
+            cannot.add("measured_unreadable")
+            continue
+        if metrics.get("covered"):
+            row["covered"] += 1
+        for key in REACTION_METRICS:
+            value = metrics.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                row["values"][key].append(value)
+    out = {}
+    for medium in sorted(by_medium):
+        row = by_medium[medium]
+        out[medium] = {"posts": row["posts"], "covered_24h": row["covered"], "min_n": min_n,
+                       **{key: _stat_block(row["values"][key], row["posts"], min_n)
+                          for key in REACTION_METRICS}}
+        if row["covered"] < row["posts"]:
+            cannot.add("measured_24h_missing")
+    return out, sorted(cannot)
+
+
+def _visits_block(block):
+    """`site_visits.thread_block` から数と窓だけ（campaign の名前・着地の頁は写さない）。"""
+    sites = []
+    for site in block.get("sites") or []:
+        sites.append({"site": site.get("site"), "window": site.get("window"),
+                      "generated_at": site.get("generated_at"),
+                      "sessions": site.get("sessions"), "engaged_sessions": site.get("engaged_sessions"),
+                      "by_medium": dict(site.get("by_medium") or {}),
+                      "n_campaigns": len({c.get("campaign") for c in site.get("campaigns") or []}),
+                      "stale": bool(site.get("stale")), "cannot_say": site.get("cannot_say")})
+    return {"label": block.get("label"), "source": block.get("source"), "as_of": block.get("as_of"),
+            "sessions": block.get("sessions"), "engaged_sessions": block.get("engaged_sessions"),
+            "sites": sites, "cannot_say": block.get("cannot_say")}
+
+
+def _ads_block(stages):
+    """広告の段（boost・媒体 ads）。使った額と link_click は記録に無いので null と理由。Meta は呼ばない。"""
+    row = next((s for s in stages if s.get("medium") == "ads"), None)
+    if row is None:
+        return {"declared": False, "started": None, "paused": None, "budget_minor": None, "currency": None,
+                "spend_minor": None, "link_clicks": None,
+                "cannot_say": {"started": "no_ads_stage", **ADS_CANNOT}}
+    reasons = dict(ADS_CANNOT)
+    if row.get("done") is None:
+        reasons["started"] = "ads_account_missing"
+    return {"declared": True, "started": row.get("done"), "paused": row.get("pending"),
+            "budget_minor": row.get("budget_minor"), "currency": row.get("currency"),
+            "spend_minor": None, "link_clicks": None, "cannot_say": reasons}
+
+
+def _tried_media(stages, reactions):
+    """この糸で実際に使った媒体（段の本数が 1 本以上・SNS は媒体ごと）と、宣言したのに 0 本の媒体。"""
+    tried, declared = set(), set()
+    for row in stages:
+        medium = row.get("medium")
+        media = medium if isinstance(medium, list) else [medium]
+        for m in media:
+            if m in (None, "site"):
+                continue
+            declared.add(m)
+            if isinstance(row.get("by_medium"), dict):
+                if (row["by_medium"].get(m) or {}).get("done"):
+                    tried.add(m)
+            elif row.get("done"):
+                tried.add(m)
+    tried |= {m for m, row in reactions.items() if row["posts"]}
+    return sorted(tried), sorted(declared - tried)
+
+
+def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_accounts=None):
+    """`--from scenario <project> <糸の id>`: 糸 1 本の結果を道具が観測として付ける（設計 効果測定と連動 §3 段 4）。
+
+    付けるもの（数と状態だけ・人や LLM の本文は読まない）:
+      - 段ごとの本数（`thth scenario` と同じ計算）。
+      - 媒体ごとの反応（`thth after` と同じ 1 本の計算・分母は糸のその媒体の投稿の本数）。
+      - 本記事への訪問（5.7.0 の site_visits の控え。無ければ null と `site_visits_not_imported`）。
+      - 広告の段（始めた本数・通しの予算。使った額と link_click は記録に無いので null と理由）。
+    他人の本文・username・原稿の名前と題は写さない。
+    """
+    from . import after_cli, scenario, site_visits
+    if not isinstance(thread_id, str) or not scenario.ID_RE.fullmatch(thread_id):
+        raise _error("invalid_from")
+    from . import plaza
+    found, names = _scenario_names(project_arg, account=account, project=project,
+                                   trusted_accounts=trusted_accounts)
+    try:
+        ledger = scenario.load_ledger(found, names, now=now)
+        decl = next((d for d in scenario.usable_declarations(ledger) if d.id == thread_id), None)
+        if decl is None or decl.kind != "thread":
+            raise _error("from_scenario_not_found")
+        status = scenario.thread_status(decl, ledger)
+        items = [item for item in ledger.items if item.thread == decl.id]
+        min_n = after_cli.DEFAULT_MIN_N
+        reactions, reaction_cannot = _reactions(items, min_n)
+        visits = _visits_block(site_visits.thread_block(found, ledger, decl.id))
+    except plaza.PlazaError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, accounts.AccountError):
+        raise _error("from_unavailable") from None
+    stages = [{key: row[key] for key in STAGE_KEYS if key in row} for row in status["stages"]]
+    for out, row in zip(stages, status["stages"]):
+        if isinstance(row.get("by_medium"), dict):
+            out["by_medium"] = {m: {"done": v.get("done"), "pending": v.get("pending")}
+                                for m, v in row["by_medium"].items()}
+        if row.get("medium") == "ads":
+            out["budget_minor"], out["currency"] = row.get("budget_minor"), row.get("currency")
+    ads = _ads_block(status["stages"])
+    tried, declared_untried = _tried_media(status["stages"], reactions)
+    # 窓: 糸の始まり（`started`・無ければ最初の出来事か投稿）から、閉じた日（無ければ今）まで。
+    started = scenario._date_at(scenario._plain(decl.fm.get("started")))
+    if started is None:
+        moments = [scenario._date_at(e["at"]) for e in decl.events] + [
+            item.posted_at for item in items if item.posted_at is not None]
+        started = min((m for m in moments if m is not None), default=None)
+    closed_at = max((scenario._date_at(e["at"]) for e in decl.events if e["name"] == "closed"
+                     and scenario._date_at(e["at"]) is not None), default=None)
+    period = {"start": jst.iso(started) if started else None,
+              "end": jst.iso(closed_at) if closed_at else jst.iso(now),
+              "basis": "thread_started_to_closed" if closed_at else "thread_started_to_now",
+              "timezone": "Asia/Tokyo"}
+    cannot = sorted(set(status["cannot_say"]) | set(ledger.cannot_say) | set(reaction_cannot)
+                    | ({visits["cannot_say"]} if visits["cannot_say"] else set()))
+    numbers = {"thread": decl.id, "state": status["state"], "stage": status["stage"],
+               "stages": stages, "reactions": reactions, "site_visits": visits, "ads": ads,
+               "media_tried": tried, "media_declared_untried": declared_untried}
+    observed = (any(isinstance(row.get("done"), int) and row["done"] > 0 for row in stages)
+                or any(row["covered_24h"] for row in reactions.values())
+                or visits["sessions"] is not None)
+    command = f"thth scenario show {found} {decl.id}"
+    title = scenario._plain(decl.fm.get("title"))
+    return {"source": SCENARIO_SOURCE, "target": decl.id, "project": found,
+            "medium": (ledger.accounts.get(account) or {}).get("media"), "command": command,
+            "at": jst.iso(now), "period": period,
+            "numbers": numbers, "cannot_say": cannot[:CANNOT_SAY_MAX], "observed": bool(observed),
+            "title": scenario._head(title) if title else None}
+
+
+def _yen(value, currency):
+    return "—" if value is None else f"{value} {currency or ''}".rstrip()
+
+
+def _reaction_line(medium, row):
+    parts = []
+    for key in REACTION_METRICS:
+        block = row[key]
+        if not block["n"]:
+            parts.append(f"{REACTION_LABELS[key]} 取れない")
+            continue
+        median = (f"中央値 {block['median']}" if block["median"] is not None
+                  else f"中央値は言えない（n<{row['min_n']}）")
+        parts.append(f"{REACTION_LABELS[key]} 計 {block['sum']}（{block['n']}/{block['of']} 本・{median}）")
+    return f"{medium} {row['posts']} 本（24h 取れた {row['covered_24h']}）: " + "・".join(parts)
+
+
+def scenario_draft(entry):
+    """`scenario_numbers` の下書き（本文の先頭・数字は観測の欄と同じもの）。"""
+    numbers, period = entry["numbers"], entry["period"]
+    lines = [DRAFT_HEAD,
+             f"出し直し: {entry['command']}（{entry['at']}）",
+             f"期間: {period.get('start') or '—'} 〜 {period.get('end')}（{period.get('basis')}）・"
+             f"糸の状態 {numbers['state']}"]
+    stage_parts = []
+    for row in numbers["stages"]:
+        if "replies" in row:
+            stage_parts.append(f"{row.get('label') or row['name']} 返信 "
+                               f"{'—' if row['replies'] is None else row['replies']}")
+            continue
+        done = "—" if row.get("done") is None else row["done"]
+        stage_parts.append(f"{row.get('label') or row['name']} {done}/{row.get('need')}")
+    lines.append("段（済み/要る）: " + ("・".join(stage_parts) or "—"))
+    if numbers["reactions"]:
+        lines.append("反応（1 本ごとの 24h・thth after と同じ計算）:")
+        for medium, row in numbers["reactions"].items():
+            lines.append("  " + _reaction_line(medium, row))
+    else:
+        lines.append("反応: SNS の投稿がまだ無い（0 本）")
+    visits = numbers["site_visits"]
+    if visits["sessions"] is not None:
+        windows = "・".join(f"{s['site']} {(s.get('window') or {}).get('from')}〜{(s.get('window') or {}).get('to')}"
+                            for s in visits["sites"] if s.get("sessions") is not None)
+        lines.append(f"本記事への訪問: {visits['sessions']}（engaged {visits['engaged_sessions'] if visits['engaged_sessions'] is not None else '—'}・"
+                     f"{windows}・{visits['source']}）")
+    else:
+        lines.append(f"本記事への訪問: 言えない（{visits['cannot_say']}）")
+    ads = numbers["ads"]
+    if not ads["declared"]:
+        lines.append("広告: 段が無い（no_ads_stage）")
+    else:
+        started = "言えない（ads_account_missing）" if ads["started"] is None else f"{ads['started']} 本"
+        lines.append(f"広告: 始めた {started}・止めたまま {'—' if ads['paused'] is None else ads['paused']}・"
+                     f"通しの予算 {_yen(ads['budget_minor'], ads['currency'])}・使った額 言えない"
+                     f"（{ADS_CANNOT['spend_minor']}）・link_click 言えない（{ADS_CANNOT['link_clicks']}）")
+    lines.append("使った媒体: " + ("・".join(numbers["media_tried"]) or "—")
+                 + ("／宣言したが 0 本: " + "・".join(numbers["media_declared_untried"])
+                    if numbers["media_declared_untried"] else ""))
+    if entry["cannot_say"]:
+        lines.append("言えないこと: " + "／".join(entry["cannot_say"]))
+    return "\n".join(lines)
+
+
 def study_draft(observation, command):
     """`--from study-report` の下書き（3.4.0 の観測の列から・同じ数字）。"""
     lines = [DRAFT_HEAD, f"出し直し: {command}（{observation['at']}）"]

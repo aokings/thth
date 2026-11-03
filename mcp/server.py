@@ -1141,7 +1141,7 @@ PLAZA_TOOLS = [
                     "従前どおり project（設計 3.8.1）。他の持ち主に見せる open は人が CLI の二段確認"
                     "で行う・この口には無い）。"
                     "evidence_level の observed は道具だけが付ける。from_tool（analytics-report・after・"
-                    "study-report）・from_doc・from_report で、道具がその出力を置く時点で作り直して"
+                    "study-report・scenario）・from_doc・from_report で、道具がその出力を置く時点で作り直して"
                     "数字を観測の欄と本文の下書きに入れる（body は任意の解釈）",
      "inputSchema": {"type": "object", "properties": {
          "account": {"type": "string"},
@@ -1163,10 +1163,14 @@ PLAZA_TOOLS = [
                         "description": "project か owner（持ち主の組・管理者が組を登録したときだけ）。"
                                        "省略時は project が組に入っていれば owner・入っていなければ project"},
          "trial_due": {"type": "string", "description": "finding の追試の予定日（2026-10-08 か timezone 付きの時刻）"},
-         "from_tool": {"type": "string", "enum": ["analytics-report", "after", "study-report"],
+         "from_tool": {"type": "string", "enum": ["analytics-report", "after", "study-report", "scenario"],
                        "description": "道具の出力から置く（analytics-report・after は from_account・"
-                                      "study-report は declarations の 1 つ目）"},
+                                      "study-report は declarations の 1 つ目・scenario は from_project と "
+                                      "from_thread〔糸 1 本の段ごとの本数・媒体ごとの反応・本記事への訪問・"
+                                      "広告の段を道具が観測として付ける・measure になる〕）"},
          "from_account": {"type": "string", "description": "from_tool の account（同じ持ち主）"},
+         "from_project": {"type": "string", "description": "from_tool scenario の project（置く account と同じ project）"},
+         "from_thread": {"type": "string", "description": "from_tool scenario の糸の id（kind: thread）"},
          "from_window_days": {"type": "integer"},
          "from_doc": {"type": "string", "description": "repo の中の md の相対パス（finding として・commit 済みのもの）"},
          "from_report": {"type": "string", "description": "自分の project の閉じた報告の report_id（tool_tip として）"}},

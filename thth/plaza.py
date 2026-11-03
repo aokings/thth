@@ -109,6 +109,8 @@ REASONS = frozenset((
     "invalid_from", "from_unavailable", "from_out_of_scope", "from_is_finding",
     "invalid_from_doc", "from_doc_outside_repo", "from_doc_not_committed",
     "from_report_not_found", "from_report_open", "from_report_no_reply",
+    # 糸 1 本の結果（5.8.0・設計 効果測定と連動 §3 段 4）。
+    "from_scenario_not_found",
     # 追試の予定日（設計 3.8.0 §D2）。
     "invalid_trial_due",
     # open にする二段確認（masaru 裁定 09-23）。
@@ -166,9 +168,11 @@ NEXT = {
     "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
                     "どれかです（無ければ付けない）",
     "invalid_from": "--from は analytics-report・after・study-report のどれかと引数（account か宣言の"
-                    "ファイル）です。--from-doc・--from-report とは一緒に使えません",
+                    "ファイル）、または scenario <project> <糸の id> です。--from-doc・--from-report "
+                    "とは一緒に使えません",
     "from_unavailable": "--from の出力を道具が作れませんでした（その命令を単独で打って確かめてください）",
-    "from_out_of_scope": "--from の account が、置く account と同じ持ち主（project）ではありません",
+    "from_out_of_scope": "--from の account・project が、置く account と同じ持ち主（project）ではありません",
+    "from_scenario_not_found": "その id の糸（kind: thread）がありません（thth scenario <project> で一覧）",
     "from_is_finding": "--from-doc と --from-report は気づき（finding）として置きます（--kind は付けないか finding）",
     "invalid_from_doc": "--from-doc は repo の中の md（通常のファイル・1 MiB まで・UTF-8）です",
     "from_doc_outside_repo": "--from-doc の文書が、置く account の repo の外です",
@@ -789,6 +793,20 @@ def _resolve_from(from_source, *, account, kind, title, body, kind_detail, how, 
         found.update(body=plaza_from.compose(plaza_from.numbers_draft(numbers), body),
                      how=how or numbers["command"], tool_numbers=numbers,
                      source={"kind": name, "command": numbers["command"]})
+    elif name == "scenario" and len(from_source) == 3:
+        # 5.8.0（設計 効果測定と連動 §3 段 4）: 糸 1 本の結果。施策（measure）として置く。
+        if kind is not None and kind != "measure":
+            raise PlazaError("not_a_measure")
+        numbers = plaza_from.scenario_numbers(from_source[1], from_source[2], account=account,
+                                              project=project, now=now,
+                                              trusted_accounts=trusted_accounts)
+        thread_title = numbers.pop("title", None)
+        found.update(kind="measure",
+                     title=title or f"糸「{thread_title or numbers['target']}」の結果",
+                     body=plaza_from.compose(plaza_from.scenario_draft(numbers), body),
+                     how=how or numbers["command"], tool_numbers=numbers,
+                     source={"kind": name, "command": numbers["command"],
+                             "project": numbers["project"], "thread": numbers["target"]})
     elif name == "study-report" and len(from_source) == 3:
         if kind is not None and kind != "measure":
             raise PlazaError("not_a_measure")
@@ -924,7 +942,8 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     """広場に 1 件置く。`plaza_id` を返す。
 
     `from_source`（設計 3.8.0 §C・`thth/plaza_from.py`）: `("analytics-report"|"after", account,
-    window_days)`・`("study-report", 宣言, 出し直しの命令)`・`("doc", path)`・`("report", id)`。
+    window_days)`・`("study-report", 宣言, 出し直しの命令)`・`("doc", path)`・`("report", id)`・
+    `("scenario", project, 糸の id)`（5.8.0・糸 1 本の結果・measure になる）。
     道具がその出力を置く時点で作り直し、数字は `tool_numbers`（観測の欄）へ・下書きは本文の
     先頭へ入れる。**人や LLM の本文（`body`）の数字は observed にしない。**
 
@@ -1750,6 +1769,8 @@ def digest(viewer, *, target=None, basis="project"):
     records, _broken = load_all()
     joined = members()
     items, candidates, with_trials = [], 0, 0
+    scenario_rows = []
+    reader_media = _reader_media(viewer)
     for record in records:
         if record["kind"] not in ("finding", "measure") or record.get("hidden"):
             continue
@@ -1763,6 +1784,9 @@ def digest(viewer, *, target=None, basis="project"):
                 media[row["result"]].add(row.get("medium") or "unknown")
         if any(media.values()):
             with_trials += 1
+        numbers = record.get("tool_numbers") or {}
+        if numbers.get("source") == "scenario":
+            scenario_rows.append(_scenario_digest_row(record, level, numbers, media, reader_media))
         counted, count_basis = _digest_media(record, media["reproduced"])
         if len(counted) < DIGEST_MIN_MEDIA:
             continue
@@ -1778,11 +1802,57 @@ def digest(viewer, *, target=None, basis="project"):
                       "n_trial_media": len(media["reproduced"])})
     items.sort(key=lambda item: (item["n_media_counted"], item["at"], item["plaza_id"]),
                reverse=True)
+    scenario_rows.sort(key=lambda row: (row["at"], row["plaza_id"]), reverse=True)
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_digest", "target": target,
             "basis": basis, "min_media": DIGEST_MIN_MEDIA, "n": len(items), "items": items,
             "denominator": candidates, "n_with_trials": with_trials,
             "rule": "at_least_2_reproduced_media_origin_counts_only_if_observed_"
-                    "not_reproduced_listed_alongside"}
+                    "not_reproduced_listed_alongside",
+            # 5.8.0（設計 効果測定と連動 §3 段 4）: 糸 1 本の結果。2 媒体の数え方とは別に、全部並べる
+            # （分母は読める施策・気づきと同じ）。「試していない媒体」は読む側の媒体のうち糸で使っていないもの。
+            "scenario_results": scenario_rows, "n_scenario_results": len(scenario_rows),
+            "reader_media": sorted(reader_media),
+            "scenario_rule": "every_scenario_measure_listed_not_tried_is_reader_media_minus_thread_media_"
+                             "plus_declared_zero_minus_trial_media"}
+
+
+def _reader_media(viewer):
+    """読む側（digest の対象）の account の媒体の集合。読めない台帳は飛ばす。"""
+    found = set()
+    for name in sorted(viewer.by_account):
+        try:
+            medium = accounts.load_account(name).get("media")
+        except accounts.AccountError:
+            continue
+        if isinstance(medium, str) and medium:
+            found.add(medium)
+    return found
+
+
+def _scenario_digest_row(record, level, numbers, trial_media, reader_media):
+    """digest の糸 1 本（題・数え方・媒体だけ。本文は出さない）。"""
+    body = numbers.get("numbers") or {}
+    tried = set(body.get("media_tried") or [])
+    declared_untried = set(body.get("media_declared_untried") or [])
+    trial_any = set().union(*trial_media.values()) if trial_media else set()
+    not_tried = ((reader_media - tried) | declared_untried) - trial_any
+    visits = body.get("site_visits") or {}
+    ads = body.get("ads") or {}
+    reactions = body.get("reactions") or {}
+    title = (record.get("open_copy") or {}).get("title") if level == "open" else record["title"]
+    return {"plaza_id": record["plaza_id"], "at": record["at"], "title": title,
+            "owner": owner_label(record.get("project"), record.get("account")),
+            "medium": record.get("medium"), "view": level,
+            "evidence_level": evidence_level_of(record), "how": record.get("how"),
+            "scope_note": record.get("scope_note"), "thread_state": body.get("state"),
+            "period": numbers.get("period"),
+            "media": {"tried": sorted(tried), "not_tried": sorted(not_tried),
+                      "reproduced": sorted(trial_media.get("reproduced", ())),
+                      "not_reproduced": sorted(trial_media.get("not_reproduced", ()))},
+            "posts_by_medium": {m: row.get("posts") for m, row in reactions.items()},
+            "site_sessions": visits.get("sessions"),
+            "site_cannot_say": visits.get("cannot_say") if visits.get("sessions") is None else None,
+            "ads_started": ads.get("started"), "trials": trial_counts(record)}
 
 
 # ---------------------------------------------------------- observe に載せる

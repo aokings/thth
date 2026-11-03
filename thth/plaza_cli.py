@@ -125,7 +125,8 @@ def render_post(payload, out=print):
     if observation is None:
         why = {"not_a_measure": "施策ではないので道具は数字を付けていません",
                "no_declaration": "宣言が無いので道具は数字を付けていません"}
-        out(f"[{plaza_observe.LABEL}] なし（{why.get(payload.get('observation_reason'), '—')}）")
+        if not payload.get("tool_numbers"):
+            out(f"[{plaza_observe.LABEL}] なし（{why.get(payload.get('observation_reason'), '—')}）")
     else:
         latest = observation["latest"]
         out(f"[{plaza_observe.LABEL}] 最新 {latest['at']}（{latest['trigger']}）"
@@ -142,8 +143,10 @@ def render_post(payload, out=print):
     if numbers:
         out(f"[{plaza_observe.LABEL}] {numbers.get('source')}（{numbers.get('at')}）")
         from . import plaza_from
-        for line in plaza_from.numbers_draft({**numbers,
-                                              "command": numbers.get("command") or "—"}).splitlines()[2:]:
+        draft = (plaza_from.scenario_draft if numbers.get("source") == plaza_from.SCENARIO_SOURCE
+                 else plaza_from.numbers_draft)
+        for line in draft({**numbers, "command": numbers.get("command") or "—",
+                           "cannot_say": numbers.get("cannot_say") or []}).splitlines()[2:]:
             out(f"  {line}")
     source = payload.get("source")
     if source and source.get("kind") == "doc":
@@ -261,6 +264,13 @@ def _from_source(args, now):
         if args.from_window_days is not None:
             raise plaza.PlazaError("invalid_from")
         return None
+    if args.from_tool[0] == "scenario":
+        # `--from scenario <project> <糸の id>`（5.8.0・設計 効果測定と連動 §3 段 4）。
+        if len(args.from_tool) != 3 or args.from_window_days is not None:
+            raise plaza.PlazaError("invalid_from")
+        return tuple(args.from_tool)
+    if len(args.from_tool) != 2:
+        raise plaza.PlazaError("invalid_from")
     kind, value = args.from_tool
     if kind == "study-report":
         if args.from_window_days is not None:
@@ -337,6 +347,24 @@ def render_digest(payload, out=print):
         out(f"  数え方: {basis}（{item['n_media_counted']} 媒体）")
         out(f"  範囲: {item.get('scope_note') or '—'}"
             + (f"  出し直し: {item['how']}" if item.get("how") else ""))
+    rows = payload.get("scenario_results") or []
+    if rows:
+        out(f"糸の結果（効いたか・道具の観測つき）{len(rows)} 件／読める施策・気づき {payload['denominator']} 件のうち"
+            f"・読む側の媒体: {'・'.join(payload.get('reader_media') or []) or '—'}")
+    for row in rows:
+        period = row.get("period") or {}
+        posts = "・".join(f"{m} {n} 本" for m, n in (row.get("posts_by_medium") or {}).items()) or "SNS 0 本"
+        visits = (f"訪問 {row['site_sessions']}" if row.get("site_sessions") is not None
+                  else f"訪問 言えない（{row.get('site_cannot_say') or '—'}）")
+        ads = "広告 —" if row.get("ads_started") is None else f"広告 始めた {row['ads_started']} 本"
+        out(f"- {row['plaza_id']}  {row['title']}（{row['owner']}・糸 {row.get('thread_state') or '—'}・"
+            f"{period.get('start') or '—'} 〜 {period.get('end') or '—'}）")
+        out(f"  {posts}・{visits}・{ads}")
+        media, trials = row["media"], row["trials"]
+        out(f"  使った媒体: {'・'.join(media['tried']) or '—'} ／ 試していない媒体: "
+            f"{'・'.join(media['not_tried']) or '—'} ／ 再現した: {'・'.join(media['reproduced']) or '—'}"
+            f" ／ 再現しなかった: {'・'.join(media['not_reproduced']) or '—'}（追試 {trials['denominator']} 件）")
+        out(f"  出し直し: {row.get('how') or '—'}")
 
 
 def cmd_digest(args) -> int:
@@ -418,16 +446,18 @@ def register(sub) -> None:
     poster.add_argument("account")
     poster.add_argument("--kind", default=None, choices=plaza.KINDS,
                         help="measure・finding・question（必須。--from-doc・--from-report は finding・"
-                             "--from study-report は measure になる）")
+                             "--from study-report・--from scenario は measure になる）")
     poster.add_argument("--title", default=None,
                         help="題（必須。--from-doc は文書の見出し・--from-report は報告の題が既定）")
     poster.add_argument("--body-file", default=None, dest="body_file",
                         help="本文のファイル（VM 側のパス。`-` は標準入力。--from… のときは任意で、"
                              "道具の下書きの下に足す解釈）")
-    poster.add_argument("--from", nargs=2, default=None, dest="from_tool", metavar=("KIND", "ARG"),
-                        help="analytics-report <account>・after <account>・study-report <宣言のファイル>。"
-                             "置く時点で道具がその出力を作り直し、数字（分母・期間・言えないこと）を"
-                             "観測の欄と本文の下書きに入れる（observed は道具の数字だけ・設計 3.8.0）")
+    poster.add_argument("--from", nargs="+", default=None, dest="from_tool", metavar="KIND ARG",
+                        help="analytics-report <account>・after <account>・study-report <宣言のファイル>・"
+                             "scenario <project> <糸の id>（5.8.0・糸 1 本の段ごとの本数・媒体ごとの反応・"
+                             "本記事への訪問・広告の段）。置く時点で道具がその出力を作り直し、数字（分母・"
+                             "期間・言えないこと）を観測の欄と本文の下書きに入れる（observed は道具の数字"
+                             "だけ・設計 3.8.0）")
     poster.add_argument("--from-window-days", type=int, default=None, dest="from_window_days",
                         help="--from analytics-report|after の期間（既定はその命令と同じ）")
     poster.add_argument("--from-doc", default=None, dest="from_doc",

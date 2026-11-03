@@ -308,7 +308,10 @@ TRIGGER_BASIS = {
     "post_result": "own_measure_until_passed_since_last_observe",
     "add_trial": "own_finding_trial_due_passed_without_own_trial_after_it",
     "post_week": "closed_week_since_last_observe_goal_share_shift_ge_0.2",
+    "post_scenario": "thread_closed_within_30d_not_yet_posted_with_from_scenario",
 }
+# 閉じた糸を「広場に置く」に出す窓（日）。置けば消える。
+SCENARIO_WINDOW_DAYS = 30
 
 
 def _share(posts):
@@ -404,5 +407,60 @@ def trigger_steps(configs, *, since, now):
         except Exception:  # noqa: BLE001 — 週の表が読めなくても他の候補は出す
             step = None
         if step is not None:
+            steps.append(step)
+    try:
+        steps += _scenario_steps(configs, records, now=now)
+    except Exception:  # noqa: BLE001 — 糸の台帳が読めなくても他の候補は出す
+        pass
+    return steps
+
+
+def _posted_threads(records):
+    """広場にもう置いた糸（`--from scenario` の出所）: `{(project, 糸の id)}`。非表示も置いたに数える。"""
+    found = set()
+    for record in records:
+        source = record.get("source") or {}
+        if source.get("kind") == "scenario" and source.get("project") and source.get("thread"):
+            found.add((source["project"], source["thread"]))
+    return found
+
+
+def _scenario_steps(configs, records, *, now):
+    """閉じた糸（`closed` の出来事が `SCENARIO_WINDOW_DAYS` 日以内）で、まだ広場に置いていないもの（5.8.0）。
+
+    命令は `thth plaza post <account> --kind measure --from scenario <project> <id>`。project が持ち主の組に
+    入っていなければ、組の登録の案内（`thth admin plaza owner set`・管理者）を添える。候補の列挙だけ。
+    """
+    from . import plaza, scenario
+    posted = _posted_threads(records)
+    by_project = {}
+    for name, cfg in configs.items():
+        project = cfg.get("project")
+        if isinstance(project, str) and project:
+            by_project.setdefault(project, []).append(name)
+    floor = now - datetime.timedelta(days=SCENARIO_WINDOW_DAYS)
+    steps = []
+    for project in sorted(by_project):
+        names = sorted(by_project[project])
+        ledger = scenario.load_ledger(project, names, now=now)
+        for decl in scenario.usable_declarations(ledger):
+            if decl.kind != "thread" or (project, decl.id) in posted:
+                continue
+            closed = [scenario._date_at(e["at"]) for e in decl.events if e["name"] == "closed"]
+            closed = max((at for at in closed if at is not None), default=None)
+            if closed is None or not (floor < closed <= now):
+                continue
+            account = names[0]
+            owner = plaza.owner_of(project)
+            title = scenario._plain(decl.fm.get("title"))
+            step = {"kind": "plaza", "candidate": "post_scenario", "account": account,
+                    "plaza_id": None, "title": scenario._head(title) if title else decl.id,
+                    "project": project, "thread": decl.id, "closed_at": jst.iso(closed),
+                    "owner_group": owner, "basis": TRIGGER_BASIS["post_scenario"],
+                    "command": (f"thth plaza post {account} --kind measure --from scenario {project} "
+                                f"{decl.id} --scope \"<媒体・企画の範囲>\" --by <名前>")}
+            if owner is None:
+                step["owner_hint"] = (f"thth admin plaza owner set <組の名前> {project} <同じ持ち主の project> "
+                                      "--by <名前>")
             steps.append(step)
     return steps
