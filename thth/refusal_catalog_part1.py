@@ -231,9 +231,19 @@ ENTRIES = {
     "already_hidden": {
         "kind": "refusal",
         "why": "その広場の書き込みは、既に非表示になっています",
-        "fix": None,
-        "no_better": "terminal",
+        "fix": "隠し直す必要はありません。戻すときは、id と理由を添えて管理者に頼んでください",
+        "command": "thth admin plaza unhide <id> --reason <理由> --by <名前>",
+        "better": "中身を直したいときは、thth plaza post --preview で見てから新しく置くと、置き直しが 1 回で済みます",
         "doors": ("cli", "mcp", "remote"),
+    },
+    "not_hidden": {
+        "kind": "refusal",
+        "why": "その広場の書き込みは非表示ではないので、戻すものがありません",
+        "fix": "状態を確かめてください。隠すときは hide です",
+        "command": "thth admin plaza show <id>",
+        "better": "戻す前に show で hidden の欄を見ておくと、id の取り違えに気づけます",
+        "doors": ("cli",),
+        "since": "5.11.0",
     },
     "already_queued": {
         "kind": "refusal",
