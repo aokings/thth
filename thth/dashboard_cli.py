@@ -808,10 +808,10 @@ def _kpi(attention, pending, schedule, summary, previous, now):
             "impressions_7d": _impressions(summary, previous)}
 
 
-def _site_referrers(project):
+def _site_referrers(project, now=None):
     from . import site_visits
     try:
-        return site_visits.referrers_block(project)
+        return site_visits.referrers_block(project, now=now)
     except Exception:  # noqa: BLE001 — 控えが読めなくても dashboard は止めない
         return {"label": site_visits.REFERRERS_LABEL, "source": site_visits.SOURCE, "as_of": None,
                 "sites": [], "cannot_say": "site_visits_unreadable"}
@@ -839,7 +839,7 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
         "series": [_series_row(project, s) for s in (scenario or {}).get("series") or []],
         "calendar": _calendar(project, schedule, events, scenario, mediums, now),
         # 5.11.0 段 7: サイトへの参照元（GA4・hub 経由）。サイトの数として出し、糸には結ばない（host と数だけ）。
-        "site_referrers": _site_referrers(project),
+        "site_referrers": _site_referrers(project, now),
         "actions": [action("次のキャンペーン候補", project, None, None,
                            "反応の多かった問いや告知から、次のキャンペーンの候補を並べてください。選ぶのは私です。")],
         "cannot_say": sorted(cannot_say),
@@ -1332,7 +1332,10 @@ def render(payload, out=print) -> None:
                     continue
                 out(f"    {site.get('site')} {span}: " + "・".join(
                     f"{r['host']} {_n(r['sessions'])}" for r in site["referrers"])
-                    + (f"・ほか {site['more']}" if site.get("more") else ""))
+                    + (f"・ほか {site['more']}" if site.get("more") else "")
+                    # 5.11.0 段 8: 日ごとの控えを足したときは欠けた日を言う（0 と混ぜない）。
+                    + (f"（日ごと {site['days_covered']}/{site['days_in_period']} 日・欠け {site['days_missing']}）"
+                       if "days_in_period" in site else ""))
     else:
         node = payload.get(level) or {}
         if not node:

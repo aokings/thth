@@ -239,8 +239,14 @@ def _visits_block(block):
                       "by_medium": dict(site.get("by_medium") or {}),
                       "n_campaigns": len({c.get("campaign") for c in site.get("campaigns") or []}),
                       "stale": bool(site.get("stale")), "cannot_say": site.get("cannot_say")})
+        # 5.11.0 段 8（鍵は足すだけ）: 窓の決め方と、日ごとに足したときの日の数。
+        sites[-1]["window_basis"] = site.get("window_basis")
+        for key in ("days_in_period", "days_covered", "days_missing", "days_pending", "days_unavailable"):
+            if key in site:
+                sites[-1][key] = site[key]
     return {"label": block.get("label"), "source": block.get("source"), "as_of": block.get("as_of"),
             "sessions": block.get("sessions"), "engaged_sessions": block.get("engaged_sessions"),
+            "window_basis": block.get("window_basis"), "period": block.get("period"),
             "sites": sites, "cannot_say": block.get("cannot_say")}
 
 
@@ -303,7 +309,7 @@ def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_a
         items = [item for item in ledger.items if item.thread == decl.id]
         min_n = after_cli.DEFAULT_MIN_N
         reactions, reaction_cannot = _reactions(items, min_n)
-        visits = _visits_block(site_visits.thread_block(found, ledger, decl.id))
+        visits = _visits_block(site_visits.thread_block(found, ledger, decl.id, status=status))
         # 5.11.0 段 7: Threads のリンクのクリック（THTH の実測・72h）。訪問とは別の欄（数と分母と理由だけ）。
         from . import thread_clicks
         clicks = thread_clicks.thread_block(ledger, decl.id, with_posts=False)
@@ -379,12 +385,15 @@ def scenario_open_numbers(numbers):
     visits = numbers.get("site_visits") or {}
     sites = [{key: site.get(key) for key in ("window", "sessions", "engaged_sessions", "by_medium",
                                                "n_campaigns", "stale", "cannot_say")}
+             # 5.11.0 段 8: 窓の決め方と、日ごとに足したときの欠けた日・まだ来ない日（数と符丁だけ）。
+             | {key: site[key] for key in ("window_basis", "days_missing", "days_pending") if key in site}
              for site in visits.get("sites") or []]
     stage = numbers.get("stage") or {}
     return {"state": numbers.get("state"), "stage": {"index": stage.get("index"), "of": stage.get("of")},
             "stages": stages, "reactions": numbers.get("reactions") or {},
             "site_visits": {key: visits.get(key) for key in ("label", "source", "as_of", "sessions",
                                                              "engaged_sessions", "cannot_say")}
+            | ({"window_basis": visits["window_basis"]} if visits.get("window_basis") else {})
             | {"sites": sites, "n_sites": len(sites)},
             "ads": numbers.get("ads") or {},
             # 5.11.0 段 7: Threads のクリック（数・分母・理由の符丁・媒体の名だけ。原稿の名前と post_id は持たない）。

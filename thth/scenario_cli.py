@@ -72,6 +72,14 @@ def visits_lines(block) -> list:
         count = site.get("sessions")
         lines.append(f"   {site['site']} {span}: {'—' if count is None else count}"
                      + (f"（{media}）" if media else "") + (f"（{site['cannot_say']}）" if site.get("cannot_say") else ""))
+        if "days_in_period" in site:
+            # 5.11.0 段 8: 日ごとの控えを糸の期間で足した。欠けた日は 0 と混ぜず日の数で言う。
+            lines.append(f"      日ごとに足した日 {site.get('days_covered')}/{site.get('days_in_period')}"
+                         f"（欠け {site.get('days_missing')}・まだ来ない {site.get('days_pending')}"
+                         + (f"・取れなかった {site['days_unavailable']}" if site.get("days_unavailable") else "")
+                         + "）")
+        if site.get("mixed_windows"):
+            lines.append(f"      幅のある窓の控え {site['mixed_windows'].get('wide_ignored')} は足していない（日ごとを使った）")
         newer = site.get("newer_unavailable")
         if newer:
             nw = newer.get("window") or {}
