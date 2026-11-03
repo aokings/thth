@@ -183,7 +183,7 @@ def test_要対応に済んだ糸と時刻を過ぎた原稿(world):
 def test_広場の候補とseedsの列4にdoneの糸が入る(world, monkeypatch):
     _write(os.path.join(world["scen"], "done-01.md"), DONE_THREAD)
     _posted(world, "th-done.md", thread="done-01", post_id="D1", at="2026-10-15T07:00:00+09:00")
-    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account: lambda post_id: {"covered": False})
+    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account, **kw: lambda post_id: {"covered": False})
     configs = {"kp-threads": {"project": "kp", "media": "threads"}, "kp-x": {"project": "kp", "media": "x"}}
     steps = [s for s in plaza_moments.trigger_steps(configs, since=NOW - datetime.timedelta(days=1), now=NOW)
              if s["candidate"] == "post_scenario"]
@@ -204,7 +204,7 @@ def test_媒体で取れない数はmetric_unavailable(world, isolated_account_f
     isolated_account_factory("kp-bsky", project=PROJECT, media="bluesky", handle="kp.bsky.social")
     _posted(world, "bs-1.md", thread=None, post_id="at://b1", at="2026-10-25T07:00:00+09:00",
             account="kp-bsky", media="bluesky")
-    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account: lambda post_id: {
+    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account, **kw: lambda post_id: {
         "views_24h": None, "likes_24h": 2, "replies_back_24h": 1, "covered": True})
     payload = scenario_seeds.build(PROJECT, now=NOW)
     views = next(c for c in payload["columns"] if c["key"] == "views")
@@ -281,7 +281,7 @@ def test_期限切れとheldの原稿はpublish_overdueに出ない(world):
 def test_広場に置いたdoneの糸は要対応と候補から消える(world, monkeypatch):
     _write(os.path.join(world["scen"], "done-01.md"), DONE_THREAD)
     _posted(world, "th-done.md", thread="done-01", post_id="D1", at="2026-10-15T07:00:00+09:00")
-    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account: lambda post_id: {"covered": False})
+    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account, **kw: lambda post_id: {"covered": False})
     configs = {"kp-threads": {"project": "kp", "media": "threads"}, "kp-x": {"project": "kp", "media": "x"}}
 
     def candidates():

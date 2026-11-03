@@ -149,6 +149,9 @@ STAGE_KEYS = ("name", "label", "medium", "need", "done", "pending", "drafts", "c
 ADS_CANNOT = {"spend_minor": "ads_spend_not_recorded", "link_clicks": "ads_clicks_not_recorded"}
 # 原稿の台帳が読めないときの符丁（`scenario.load_ledger` の cannot_say）。このとき本数は 0 と言わない。
 LEDGER_UNREADABLE = ("queue_unreadable", "account_unreadable", "repo_unreadable")
+# open の写しに残す Threads のクリックの鍵（5.11.0 段 7・数と分母と符丁だけ）。
+CLICKS_OPEN_KEYS = ("label", "source", "medium", "basis", "window", "clicks_72h", "n", "of", "reasons",
+                    "other_media", "cannot_say")
 # 他の持ち主に見せてよい段の名（skill thth-flow の語彙）。それ以外は「その他」。
 OPEN_STAGE_NAMES = ("collect", "diary", "article", "announce", "warm", "promote", "selfbm", "boost")
 
@@ -301,6 +304,9 @@ def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_a
         min_n = after_cli.DEFAULT_MIN_N
         reactions, reaction_cannot = _reactions(items, min_n)
         visits = _visits_block(site_visits.thread_block(found, ledger, decl.id))
+        # 5.11.0 段 7: Threads のリンクのクリック（THTH の実測・72h）。訪問とは別の欄（数と分母と理由だけ）。
+        from . import thread_clicks
+        clicks = thread_clicks.thread_block(ledger, decl.id, with_posts=False)
     except plaza.PlazaError:
         raise
     except (OSError, ValueError, TypeError, KeyError, accounts.AccountError):
@@ -332,13 +338,16 @@ def scenario_numbers(project_arg, thread_id, *, account, project, now, trusted_a
     unreadable = sorted(set(ledger.cannot_say) & set(LEDGER_UNREADABLE))
     numbers = {"thread": decl.id, "state": status["state"], "stage": status["stage"],
                "stages": stages, "reactions": reactions, "site_visits": visits, "ads": ads,
+               "threads_clicks": clicks,
                "media_tried": tried, "media_declared_untried": declared_untried,
                "posts_cannot_say": unreadable[0] if unreadable else None}
     # observed の印は、道具が自分の台帳から取った数があるときだけ（監査 段4 の 1）: 24h の実測が取れた投稿・
-    # 訪問の控えの数・広告の口座の記録で始めた広告。段の本数（人が書く出来事・原稿の status）は根拠にしない。
+    # 訪問の控えの数・広告の口座の記録で始めた広告・言えた Threads のクリック（5.11.0）。段の本数（人が書く
+    # 出来事・原稿の status）は根拠にしない。
     observed = (any(row["covered_24h"] for row in reactions.values())
                 or visits["sessions"] is not None
-                or (isinstance(ads["started"], int) and ads["started"] > 0))
+                or (isinstance(ads["started"], int) and ads["started"] > 0)
+                or clicks["n"] > 0)
     command = f"thth scenario show {found} {decl.id}"
     title = scenario._plain(decl.fm.get("title"))
     return {"source": SCENARIO_SOURCE, "target": decl.id, "project": found,
@@ -377,7 +386,11 @@ def scenario_open_numbers(numbers):
             "site_visits": {key: visits.get(key) for key in ("label", "source", "as_of", "sessions",
                                                              "engaged_sessions", "cannot_say")}
             | {"sites": sites, "n_sites": len(sites)},
-            "ads": numbers.get("ads") or {}, "media_tried": list(numbers.get("media_tried") or []),
+            "ads": numbers.get("ads") or {},
+            # 5.11.0 段 7: Threads のクリック（数・分母・理由の符丁・媒体の名だけ。原稿の名前と post_id は持たない）。
+            **({"threads_clicks": {key: (numbers["threads_clicks"] or {}).get(key) for key in CLICKS_OPEN_KEYS}}
+               if "threads_clicks" in numbers else {}),
+            "media_tried": list(numbers.get("media_tried") or []),
             "media_declared_untried": list(numbers.get("media_declared_untried") or []),
             "posts_cannot_say": numbers.get("posts_cannot_say")}
 
@@ -436,6 +449,17 @@ def scenario_draft(entry):
                      f"{windows}・{visits['source']}）")
     else:
         lines.append(f"本記事への訪問: 言えない（{visits['cannot_say']}）")
+    clicks = numbers.get("threads_clicks")
+    if clicks is not None:
+        # 5.11.0 段 7: 訪問（GA4）とは別の欄。足さない。
+        total = "言えない" if clicks.get("clicks_72h") is None else str(clicks["clicks_72h"])
+        reasons = "・".join(f"{k} {v}" for k, v in (clicks.get("reasons") or {}).items())
+        others = "・".join(f"{m} —（{node.get('cannot_say')}:{m}）"
+                           for m, node in (clicks.get("other_media") or {}).items())
+        lines.append(f"Threads のリンクのクリック（THTH の実測・72h・訪問とは別）: {total}"
+                     f"（言える {clicks.get('n')}/{clicks.get('of')} 本"
+                     + (f"・言えない {reasons}" if reasons else "") + "）"
+                     + (f"・{others}" if others else ""))
     ads = numbers["ads"]
     if not ads["declared"]:
         lines.append("広告: 段が無い（no_ads_stage）")

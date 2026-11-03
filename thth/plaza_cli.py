@@ -1,6 +1,7 @@
 """施策の広場の CLI（設計 3.4.0 §4）。口の中身は `thth/plaza.py` に閉じる。
 
-利用者: `thth plaza post|list|show|reply|update|digest`。管理者: `thth admin plaza
+利用者: `thth plaza post|list|show|reply|update|digest|hide`（hide は置いた本人の口・5.11.0）。
+`post --preview` は範囲を問わず置く中身を見せるだけ（何も書かない・5.11.0）。管理者: `thth admin plaza
 join|leave|hide|list|show|owner`。
 
 **CLI でも読む側を名指しする**（`show`・`reply`・`update` の `--as`）。VM の CLI は
@@ -187,6 +188,37 @@ def render_preview(result, again, out=print):
     else:
         out("一段目: まだ open にしていません。他の持ち主には次のとおり見えます（道具が他人の情報を"
             f"落とした後・伏せた数 {view['masked']}）")
+    _render_view(view, out)
+    out(f"digest: {result['digest']}")
+    out(f"二段目: 読み直して良ければ、同じ命令に --confirm {result['digest']} を足して打ってください"
+        f"（{again}）")
+
+
+def render_post_preview(result, out=print):
+    """`thth plaza post … --preview`（5.11.0 段 7）: 置く中身を見せるだけ（何も書いていない）。"""
+    view = result["view"]
+    scope = result["scope"]
+    default = (f"（組 {result['visibility_default']} の既定）" if result.get("visibility_default")
+               else "（既定）" if scope == "project" else "")
+    out(f"下見: まだ置いていません（--preview・何も書いていません）。置くと範囲 {scope}{default} に"
+        "次のとおり置かれます")
+    if scope == "open":
+        out(f"  他の持ち主には次のとおり見えます（道具が他人の情報を落とした後・伏せた数 {view['masked']}）")
+    _render_view(view, out)
+    numbers = view.get("tool_numbers")
+    if numbers:
+        out(f"  [{plaza_observe.LABEL}] 道具の数字 {numbers.get('source') or '—'}（{numbers.get('at') or '—'}）"
+            "・下書きは本文の先頭")
+    if result.get("digest"):
+        out(f"digest: {result['digest']}")
+        out(f"置くなら: 読み直して良ければ、同じ命令から --preview を外し、--confirm {result['digest']} "
+            "を足して打ってください（open の二段目）")
+    else:
+        out("置くなら: 読み直して良ければ、同じ命令から --preview を外して打ってください")
+
+
+def _render_view(view, out):
+    """見える 1 件の中身（open の写しか、置く本人の原本）。"""
     out(f"  名義: {view['owner']}（{view.get('medium') or '—'}）  種類: {plaza.KIND_LABELS[view['kind']]}"
         f"  印: {plaza.EVIDENCE_LABELS[view['evidence_level']]}")
     out(f"  題: {view['title']}")
@@ -210,9 +242,6 @@ def render_preview(result, again, out=print):
         for row in column.get("posts") or []:
             if row.get("preview") or row.get("permalink"):
                 out(f"    自分の投稿: {row.get('preview') or '—'}  {row.get('permalink') or ''}".rstrip())
-    out(f"digest: {result['digest']}")
-    out(f"二段目: 読み直して良ければ、同じ命令に --confirm {result['digest']} を足して打ってください"
-        f"（{again}）")
 
 
 def render_reply_preview(result, out=print):
@@ -242,6 +271,8 @@ def _emit_preview(args, result, again):
         print(json.dumps(result, ensure_ascii=False))
     elif result["report_type"] == "plaza_reply_open_preview":
         render_reply_preview(result)
+    elif result["report_type"] == "plaza_post_preview":
+        render_post_preview(result)
     else:
         render_preview(result, again)
     from . import refusals
@@ -322,10 +353,12 @@ def cmd_post(args) -> int:
                                         "owner" if getattr(args, "owner", False) else None),
                             via="cli", now=now,
                             confirm=args.confirm, goal=getattr(args, "goal", None),
-                            trial_due=getattr(args, "trial_due", None))
+                            trial_due=getattr(args, "trial_due", None),
+                            preview=bool(getattr(args, "preview", False)))
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
-    if result["report_type"] == "plaza_open_preview":
+    if result["report_type"] in ("plaza_open_preview", "plaza_post_preview"):
+        # 5.11.0 段 7: `--preview` は範囲を問わず open の一段目と同じ道（何も書かない・rc 1）。
         return _emit_preview(args, result, "thth plaza post … --open")
 
     def render(result):
@@ -449,6 +482,16 @@ def cmd_update(args) -> int:
         f"観測 {r['n_observations']} 回）"))
 
 
+def cmd_hide(args) -> int:
+    """`thth plaza hide <id> --as <account> --reason … --by …`（5.11.0 段 7・置いた本人の口）。"""
+    try:
+        result = plaza.hide(args.plaza_id, by=args.by, reason=args.reason, via="cli",
+                            account=args.viewer)
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(f"非表示にしました: {r['plaza_id']}（置いた本人として）"))
+
+
 def register(sub) -> None:
     parser = sub.add_parser(
         "plaza",
@@ -526,6 +569,10 @@ def register(sub) -> None:
                              "設計 3.8.0）")
     poster.add_argument("--confirm", default=None,
                         help="--open の二段目: 一段目が出した digest")
+    poster.add_argument("--preview", action="store_true",
+                        help="置く前に見る（5.11.0）: 範囲を問わず、本文・観測の欄・下書き・範囲の既定まで"
+                             "作って表示するだけで何も書かない（重複と上限も確かめる）。まずこれを打ち、"
+                             "読み直して良ければ --preview を外して打つ")
     poster.add_argument("--by", default=None, help="誰が置いたか（必須）")
     poster.add_argument("--json", action="store_true")
     poster.set_defaults(func=cmd_post)
@@ -586,6 +633,18 @@ def register(sub) -> None:
     updater.add_argument("--by", default=None, help="誰が更新したか（必須）")
     updater.add_argument("--json", action="store_true")
     updater.set_defaults(func=cmd_update)
+
+    hider = operations.add_parser(
+        "hide", help="自分の持ち主が置いた 1 件を隠す（理由つき・変更ログ・管理者の非表示と同じ隠し方）",
+        description="置いた本人（同じ project の account）が自分の 1 件を非表示にする（5.11.0）。"
+                    "他の持ち主の id は無い id と同じく断ります。戻すのは管理者に頼んでください。")
+    hider.add_argument("plaza_id")
+    hider.add_argument("--as", required=True, dest="viewer", metavar="account",
+                       help="隠す account（その 1 件を置いた持ち主＝同じ project の account）")
+    hider.add_argument("--reason", required=True, help="隠す理由（変更ログに残る）")
+    hider.add_argument("--by", default=None, help="誰が隠したか（必須）")
+    hider.add_argument("--json", action="store_true")
+    hider.set_defaults(func=cmd_hide)
 
 
 # ------------------------------------------------------------------ 管理者

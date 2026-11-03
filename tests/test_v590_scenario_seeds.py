@@ -91,7 +91,7 @@ def seeds(kp, monkeypatch):  # noqa: F811
            _sns("kp-threads", status="draft", publish_at="2026-11-02T07:00:00+09:00"))
     calls = []
 
-    def lookup(account):
+    def lookup(account, **kw):
         calls.append(account)
         return lambda post_id: dict(METRICS.get(post_id) or {"covered": False})
     monkeypatch.setattr(after_cli, "reaction_lookup", lookup)
@@ -112,7 +112,8 @@ def _column(payload, key):
 
 def test_4つの列を数の多い順に並べる_媒体ごと(seeds):
     payload = _build()
-    assert [c["key"] for c in payload["columns"]] == ["replies", "visits", "views", "closed_threads"]
+    # 5.11.0 段 7: クリックの列（Threads・72h）が訪問の列の次に入った（訪問とは別の列）。
+    assert [c["key"] for c in payload["columns"]] == ["replies", "visits", "clicks", "views", "closed_threads"]
     assert payload["report_type"] == "scenario_seeds" and payload["schema"] == "thth.scenario/1"
     assert payload["skill"]["name"] == "thth-flow"
     replies = _column(payload, "replies")
@@ -249,7 +250,7 @@ def test_先頭はskillで各列の末尾に種にするならの1行(seeds, cap
     assert cli.main(["scenario", "seeds", PROJECT]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("skill: 流れの型は skill thth-flow")
-    assert sum(1 for line in lines if line.strip() == scenario_seeds.NEXT_LINE) == 4
+    assert sum(1 for line in lines if line.strip() == scenario_seeds.NEXT_LINE) == 5   # 5.11.0: クリックの列
     payload = _build()
     assert all(c["next"] == scenario_seeds.NEXT_LINE for c in payload["columns"])
     assert all(c["sort_basis"] for c in payload["columns"])
@@ -293,7 +294,7 @@ def test_読むだけ_何も書かない(seeds, thth_root):
 
 
 def test_読めない実測は0と混ぜない(seeds, monkeypatch):
-    def broken(account):
+    def broken(account, **kw):
         raise OSError("measured")
     monkeypatch.setattr(after_cli, "reaction_lookup", broken)
     payload = _build()

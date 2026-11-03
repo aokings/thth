@@ -1173,7 +1173,10 @@ PLAZA_TOOLS = [
          "from_thread": {"type": "string", "description": "from_tool scenario の糸の id（kind: thread）"},
          "from_window_days": {"type": "integer"},
          "from_doc": {"type": "string", "description": "repo の中の md の相対パス（finding として・commit 済みのもの）"},
-         "from_report": {"type": "string", "description": "自分の project の閉じた報告の report_id（tool_tip として）"}},
+         "from_report": {"type": "string", "description": "自分の project の閉じた報告の report_id（tool_tip として）"},
+         "preview": {"type": "boolean",
+                     "description": "置く前に見る（5.11.0）: true なら本文・観測の欄・下書き・範囲の既定まで作って返すだけで"
+                                    "何も書かない（重複と上限も確かめる）。まず true で読み、良ければ外して置く"}},
          "required": ["account", "scope"], "additionalProperties": False}},
     {"name": "thth_plaza_list",
      "description": "広場の一覧（既定は自分の持ち主の書き込み・open: true は open の広場）。次を決める前に"

@@ -808,6 +808,15 @@ def _kpi(attention, pending, schedule, summary, previous, now):
             "impressions_7d": _impressions(summary, previous)}
 
 
+def _site_referrers(project):
+    from . import site_visits
+    try:
+        return site_visits.referrers_block(project)
+    except Exception:  # noqa: BLE001 — 控えが読めなくても dashboard は止めない
+        return {"label": site_visits.REFERRERS_LABEL, "source": site_visits.SOURCE, "as_of": None,
+                "sites": [], "cannot_say": "site_visits_unreadable"}
+
+
 def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
     now = now if now is not None else jst.now_jst()
     names = _accounts_of(project, allowed_names)
@@ -829,6 +838,8 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
         "campaigns": [_campaign_row(project, t) for t in (scenario or {}).get("threads") or []],
         "series": [_series_row(project, s) for s in (scenario or {}).get("series") or []],
         "calendar": _calendar(project, schedule, events, scenario, mediums, now),
+        # 5.11.0 段 7: サイトへの参照元（GA4・hub 経由）。サイトの数として出し、糸には結ばない（host と数だけ）。
+        "site_referrers": _site_referrers(project),
         "actions": [action("次のキャンペーン候補", project, None, None,
                            "反応の多かった問いや告知から、次のキャンペーンの候補を並べてください。選ぶのは私です。")],
         "cannot_say": sorted(cannot_say),
@@ -1064,6 +1075,13 @@ def _campaign_detail(project, thread, events, now, allowed_names=None):
         outcomes["cannot_say"]["article_visits"] = "needs_scenario_show"
     elif visits.get("sessions") is None:
         outcomes["cannot_say"]["article_visits"] = visits.get("cannot_say")
+    # 5.11.0 段 7: Threads のリンクのクリック（THTH の実測・72h）。訪問（GA4）とは別の欄で、足さない。
+    clicks = _clean((show or {}).get("threads_clicks")) if show is not None else None
+    outcomes["threads_clicks"] = clicks
+    if clicks is None:
+        outcomes["cannot_say"]["threads_clicks"] = "needs_scenario_show"
+    elif clicks.get("clicks_72h") is None:
+        outcomes["cannot_say"]["threads_clicks"] = (clicks.get("cannot_say") or ["no_attributable_post"])[0]
     if show is None:
         outcomes["cannot_say"].update(impressions="needs_scenario_show", bookmarks_received="needs_scenario_show",
                                       per_episode="needs_scenario_show")
@@ -1303,6 +1321,18 @@ def render(payload, out=print) -> None:
             stock = row.get("stock") or {}
             out(f"  シリーズ {row['id']} {row.get('title') or ''}  ストック {_n(stock.get('approved_future'))}"
                 f"／目安 {_n(stock.get('floor'))}")
+        refs = payload.get("site_referrers") or {}
+        if refs.get("sites"):
+            out(f"  {refs.get('label')}")
+            for site in refs["sites"]:
+                window = site.get("window") or {}
+                span = f"{window.get('from')}〜{window.get('to')}"
+                if site.get("cannot_say") and not site.get("referrers"):
+                    out(f"    {site.get('site')} {span}: —（{site['cannot_say']}）")
+                    continue
+                out(f"    {site.get('site')} {span}: " + "・".join(
+                    f"{r['host']} {_n(r['sessions'])}" for r in site["referrers"])
+                    + (f"・ほか {site['more']}" if site.get("more") else ""))
     else:
         node = payload.get(level) or {}
         if not node:
@@ -1310,11 +1340,13 @@ def render(payload, out=print) -> None:
         else:
             out(f"  {node.get('id')} {node.get('title') or ''}")
             if level == "campaign":
-                from .scenario_cli import _stage_cell, visits_lines
+                from .scenario_cli import _stage_cell, clicks_lines, visits_lines
                 steps = [s for s in node.get("steps") or [] if isinstance(s, dict) and s.get("name")]
                 if steps:
                     out("  段: " + "  ".join(_stage_cell(s) for s in steps))
                 for line in visits_lines((node.get("outcomes") or {}).get("article_visits")):
+                    out("  " + line)
+                for line in clicks_lines((node.get("outcomes") or {}).get("threads_clicks")):
                     out("  " + line)
             for act in node.get("actions") or []:
                 out(f"  押すと: {act['prompt']}")

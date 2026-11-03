@@ -112,6 +112,8 @@ COMMANDS += ['ads boost', 'ads activate', 'ads extend', 'ads pause', 'ads stop',
 COMMANDS += ['ads watch', 'ads resume']
 # 5.6.3: 出す前の見積もり（読むだけ）と、広告の手順の skill の場所と全文。
 COMMANDS += ['ads estimate', 'ads skill']
+# 5.11.0 段 7: 置いた本人が自分の 1 件を隠す口。
+COMMANDS += ['plaza hide']
 
 
 def test_json_table_covers_every_parser():

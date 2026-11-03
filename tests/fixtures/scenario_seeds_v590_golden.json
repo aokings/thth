@@ -48,6 +48,7 @@
           "p25": 2,
           "p75": 3,
           "comparable": true,
+          "nonzero": 4,
           "uncovered_24h": 0,
           "rows": [
             {
@@ -101,6 +102,7 @@
           "p25": null,
           "p75": null,
           "comparable": false,
+          "nonzero": 1,
           "uncovered_24h": 0,
           "rows": [
             {
@@ -134,6 +136,55 @@
       "sites": [],
       "cannot_say": [
         "site_visits_not_imported"
+      ],
+      "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
+    },
+    {
+      "key": "clicks",
+      "label": "クリックの多かった告知（Threads・72h）",
+      "metric": "clicks_72h",
+      "measure": "Threads のリンクのクリック（THTH の実測・投稿から 72h）",
+      "source": "threads_clicks_by_url",
+      "basis": "unique_url_72h",
+      "window_note": "日次の粒度なので、72 時間は投稿日（JST）を含む 3 暦日の和（投稿の時刻によって 72 時間より短くも長くもなる）",
+      "separate_from": "site_visits（GA4・hub 経由）とは別の欄・足さない",
+      "denominator": "クリックを言える本数（n）／窓の中の自分の Threads の本数（posts）",
+      "sort_basis": "clicks_72h の多い順・同じ数は投稿の新しい順・Threads だけ（ほかの媒体は投稿ごとのクリックが無い）",
+      "window": {
+        "days": 28,
+        "start": "2026-09-30T11:20:00+09:00",
+        "end": "2026-10-28T11:20:00+09:00",
+        "basis": "posted_at",
+        "timezone": "Asia/Tokyo"
+      },
+      "by_medium": {
+        "threads": {
+          "posts": 5,
+          "n": 0,
+          "min_n": 5,
+          "median": null,
+          "p25": null,
+          "p75": null,
+          "comparable": false,
+          "rows": [],
+          "more": 0,
+          "reasons": {
+            "link_unrecorded": 5
+          }
+        },
+        "x": {
+          "posts": 1,
+          "n": 0,
+          "clicks_72h": null,
+          "clicks_unavailable": true,
+          "cannot_say": "per_post_clicks_unavailable",
+          "rows": [],
+          "more": 0
+        }
+      },
+      "cannot_say": [
+        "below_min_n:threads",
+        "per_post_clicks_unavailable:x"
       ],
       "next": "種にするなら: 糸の宣言を書く（skill thth-flow の『糸を始める』）"
     },

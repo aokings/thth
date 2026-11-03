@@ -423,7 +423,8 @@ _PLAZA_SHAPES = {
     'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
                     'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
                     'goal', 'visibility', 'trial_due', 'from_tool', 'from_account',
-                    'from_window_days', 'from_doc', 'from_report', 'from_project', 'from_thread'},
+                    'from_window_days', 'from_doc', 'from_report', 'from_project', 'from_thread',
+                    'preview'},
                    {'account'}),
     'plaza_list': ({'project', 'open'}, set()),
     'plaza_show': ({'plaza_id'}, {'plaza_id'}),
@@ -434,7 +435,7 @@ _PLAZA_SHAPES = {
     'plaza_digest': ({'target'}, set()),
 }
 # `open` は MCP の口に無い（open にするのは人の CLI の二段確認だけ・masaru 裁定 09-23）。
-_PLAZA_BOOLS = {'open', 'refresh'}
+_PLAZA_BOOLS = {'open', 'refresh', 'preview'}
 
 
 def _plaza_error(error):
@@ -572,7 +573,9 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                     # （組に入っていれば owner・設計 3.8.1）。project 明示ならそれに従う。
                     visibility=request.get('visibility'), via='mcp',
                     project=context.allowed_accounts[account], medium=cfg.get('media'),
-                    trusted_accounts=active)
+                    trusted_accounts=active,
+                    # 5.11.0 段 7: 置く前に見る（何も書かない・本文と観測の欄と下書きと範囲の既定を返す）。
+                    preview=bool(request.get('preview')))
             if operation == 'plaza_reply':
                 return plaza.reply(request['plaza_id'], account=account, kind=request['kind'],
                                    text=request.get('text'), measure_id=request.get('measure_id'),

@@ -350,6 +350,88 @@ def tie_rows(record, items) -> dict:
                 "campaigns_total": len(tied_campaigns) + len(untied)}}
 
 
+# 5.11.0 段 7: サイトへの参照元（`referrers`）を project の dashboard にサイトの数として（糸には結ばない）。
+REFERRERS_LABEL = "サイトへの参照元（GA4・hub 経由・サイトの数・糸には結ばない）"
+REFERRERS_MAX = 20
+_HOST_RE = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
+
+
+def referrer_host(raw):
+    """参照元の値をホスト名だけに整える（scheme・`user@`・path・`?`・`#`・port を落とす・小文字）。
+    ホスト名の形に合わなければ None（捨てて数だけ数える）。"""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    elif text.startswith("//"):
+        text = text[2:]
+    for mark in ("/", "?", "#", "\\"):
+        text = text.split(mark, 1)[0]
+    text = text.rsplit("@", 1)[-1]
+    if text.startswith("["):
+        return None   # IP の文字列（IPv6）はホスト名として出さない
+    text = text.split(":", 1)[0].rstrip(".")
+    if not text or not _HOST_RE.fullmatch(text):
+        return None
+    return text
+
+
+def referrers_block(project, records=None, cannot=None) -> dict:
+    """project の「サイトへの参照元」: サイトごとに host と sessions だけ（本文・URL の path・username は持たない）。
+
+    同じ host に整った行は足す。形の合わない値（`(direct)`・空・path だけ等）は捨てて、行数と sessions だけ
+    `dropped` に数える。取れなかった窓は `cannot_say: referrers_unavailable`（0 と混ぜない）。
+    """
+    if records is None:
+        records, cannot = load(project)
+    cannot = set(cannot or ())
+    block = {"label": REFERRERS_LABEL, "source": SOURCE, "as_of": None, "sites": [], "cannot_say": None}
+    if not records:
+        block["cannot_say"] = "site_visits_unreadable" if cannot else "site_visits_not_imported"
+        return block
+    block["as_of"] = max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
+    for record in records:
+        site = {"site": record.get("site"), "window": record.get("window"),
+                "generated_at": record.get("generated_at"), "referrers": [],
+                "dropped": {"rows": 0, "sessions": 0}, "stale": bool(record.get("newer_unavailable")),
+                "cannot_say": None}
+        refs = record.get("referrers")
+        if refs is None:
+            site["cannot_say"] = "referrers_unavailable"
+            block["sites"].append(site)
+            continue
+        by_host, unknown = {}, False
+        for row in refs:
+            if not isinstance(row, dict):
+                site["dropped"]["rows"] += 1
+                continue
+            host = referrer_host(row.get("host"))
+            sessions = row.get("sessions")
+            count = sessions if isinstance(sessions, int) and not isinstance(sessions, bool) else None
+            if host is None:
+                site["dropped"]["rows"] += 1
+                if count is None:
+                    unknown = True
+                else:
+                    site["dropped"]["sessions"] += count
+                continue
+            node = by_host.setdefault(host, {"host": host, "sessions": 0})
+            node["sessions"] = None if count is None or node["sessions"] is None else node["sessions"] + count
+        if unknown:
+            site["dropped"]["sessions"] = None
+        ranked = sorted(by_host.values(), key=lambda n: n["host"])
+        ranked.sort(key=lambda n: -1 if n["sessions"] is None else n["sessions"], reverse=True)
+        site["referrers"] = ranked[:REFERRERS_MAX]
+        site["more"] = max(0, len(ranked) - REFERRERS_MAX)
+        if not ranked:
+            site["cannot_say"] = "no_referrers"
+        block["sites"].append(site)
+    if cannot:
+        block["read_problems"] = sorted(cannot)
+    return block
+
+
 def _sum(rows, key):
     values = [r.get(key) for r in rows]
     if not values or any(not isinstance(v, int) for v in values):

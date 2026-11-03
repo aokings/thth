@@ -87,6 +87,28 @@ def visits_lines(block) -> list:
     return lines
 
 
+def clicks_lines(block) -> list:
+    """「Threads のリンクのクリック（THTH の実測・72h）」の数行（show と dashboard campaign で同じ・5.11.0）。
+    訪問（GA4）とは別の欄。分母は「言える本数／糸の Threads の本数」。"""
+    if not block:
+        return []
+    total = block.get("clicks_72h")
+    head = (f"{block.get('label') or 'Threads のリンクのクリック'}: "
+            + ("—" if total is None else str(total))
+            + f"（言える {block.get('n')}/{block.get('of')} 本・訪問とは別の欄）")
+    lines = [head]
+    reasons = "・".join(f"{k} {v}" for k, v in (block.get("reasons") or {}).items())
+    if reasons:
+        lines.append(f"   言えない本数: {reasons}")
+    for row in block.get("posts") or []:
+        value = "—" if row.get("clicks_72h") is None else row["clicks_72h"]
+        lines.append(f"   {_when(row.get('posted_at'))}  {row.get('account')}  {value}"
+                     + (f"（{row['cannot_say']}）" if row.get("cannot_say") else "") + f"  {row.get('file')}")
+    for medium, node in (block.get("other_media") or {}).items():
+        lines.append(f"   {medium} {node.get('posts')} 本: —（{node.get('cannot_say')}:{medium}）")
+    return lines
+
+
 def render(payload, out=print) -> None:
     if payload.get("skill"):
         out(skill_line(payload))
@@ -131,7 +153,7 @@ def render(payload, out=print) -> None:
 
 
 def seeds_line(project) -> str:
-    return (f"次の糸の種: thth scenario seeds {project}（返信・訪問・views の多い順と閉じた糸の続き・"
+    return (f"次の糸の種: thth scenario seeds {project}（返信・訪問・クリック・views の多い順と閉じた糸の続き・"
             "読むだけ・選ぶのは窓口）")
 
 
@@ -148,6 +170,8 @@ def render_show(payload, out=print) -> None:
         for e in body["events"]:
             out(f"   {e['at']}  {e['name']}  {e['head']}")
     for line in visits_lines(payload.get("site_visits")):
+        out(line)
+    for line in clicks_lines(payload.get("threads_clicks")):
         out(line)
     out(f"原稿 {len(payload['items'])} 本:")
     for row in payload["items"]:
@@ -199,8 +223,27 @@ def render_seeds(payload, out=print) -> None:
                 if node.get("metric_unavailable"):
                     out(f"   {medium}  この媒体では {column['metric']} を取れない（metric_unavailable）")
                     continue
+                nonzero = (f"・1 件以上あった {node['nonzero']}/{node['n']} 本" if "nonzero" in node else "")
                 out(f"   {medium}  数を引けた {node['posts']} 本（値の取れた {node['n']}・24h 未採取 {node['uncovered_24h']}）・"
-                    f"{_median_text(node)}")
+                    f"{_median_text(node)}{nonzero}")
+                for row in node["rows"]:
+                    thread = f"  糸 {row['thread']}" if row["thread"] else ""
+                    source = "（返信の台帳から）" if row.get("replies_source") == "ledger" else ""
+                    out(f"     {row['count']}{source}  {_when(row['posted_at'])}  {row['file']}{thread}  「{row['head'] or ''}」")
+                if node["more"]:
+                    out(f"     ほか {node['more']} 本（--limit で増やす）")
+        elif column["key"] == "clicks":
+            out(f"   訪問（GA4）とは別の列・分母は {column['denominator']}")
+            if not column["by_medium"]:
+                out("   窓の中の自分の投稿がありません")
+            for medium, node in column["by_medium"].items():
+                if node.get("clicks_unavailable"):
+                    out(f"   {medium} {node['posts']} 本  投稿ごとのクリックを取れない"
+                        f"（per_post_clicks_unavailable:{medium}）")
+                    continue
+                reasons = "・".join(f"{k} {v}" for k, v in (node.get("reasons") or {}).items())
+                out(f"   {medium}  言える {node['n']}/{node['posts']} 本・{_median_text(node)}"
+                    + (f"・言えない {reasons}" if reasons else ""))
                 for row in node["rows"]:
                     thread = f"  糸 {row['thread']}" if row["thread"] else ""
                     out(f"     {row['count']}  {_when(row['posted_at'])}  {row['file']}{thread}  「{row['head'] or ''}」")

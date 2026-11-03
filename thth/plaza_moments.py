@@ -410,6 +410,11 @@ def trigger_steps(configs, *, since, now):
         if step is not None:
             steps.append(step)
     steps += _scenario_steps(configs, records, now=now)
+    for step in steps:
+        # 5.11.0 段 7「置く前に見る」: 置く命令には、まず打つ下見の命令（同じ命令に --preview）を添える。
+        command = step.get("command") or ""
+        if command.startswith("thth plaza post "):
+            step["preview_command"] = command + " --preview"
     return steps
 
 

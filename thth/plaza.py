@@ -162,7 +162,7 @@ NEXT = {
     "invalid_trial_due": "--trial-due は気づき（finding）にだけ付けられ、2026-10-08 か "
                          "2026-10-08T09:00:00+09:00 のような日付・時刻です",
     "nothing_to_update": "--refresh・--verdict・--visibility のどれかを付けてください",
-    "plaza_hidden": "管理者が非表示にした書き込みです。返信・更新はできません",
+    "plaza_hidden": "非表示の書き込みです（管理者か、置いた本人が隠しました）。返信・更新はできません",
     "already_hidden": "既に非表示です",
     "invalid_min_n": "--min-n は 1 以上の整数です",
     "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
@@ -938,8 +938,12 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility=None, via="cli", project=None, medium=None,
          now=None, trusted_accounts=None, confirm=None, goal=None, from_source=None,
-         trial_due=None):
+         trial_due=None, preview=False):
     """広場に 1 件置く。`plaza_id` を返す。
+
+    `preview=True`（5.11.0 段 7・設計 効果測定と連動 §7.2「置く前に見る」）: 範囲を問わず、本文・
+    観測の欄・下書き・範囲の既定まで作って `plaza_post_preview` を返す。**何も書かない**（置き場・
+    変更ログ・`.lock` のどれにも触れない）。重複と上限はロックを取らずに読んで確かめる。
 
     `from_source`（設計 3.8.0 §C・`thth/plaza_from.py`）: `("analytics-report"|"after", account,
     window_days)`・`("study-report", 宣言, 出し直しの命令)`・`("doc", path)`・`("report", id)`・
@@ -1074,19 +1078,20 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
         plaza_redact.attach_open_copy(record, trusted_accounts=trusted_accounts)
-        preview = _open_gate(record, confirm)
-        if preview is not None:
-            return preview
+        if not preview:
+            gate = _open_gate(record, confirm)
+            if gate is not None:
+                return gate
     digest = _digest(title, body)
+    if preview:
+        # 5.11.0 段 7「置く前に見る」: 何も書かない。重複と上限はロックを取らずに読むだけで確かめる
+        # （`STORE.load()`・置き場が無くても作らない・`.lock` も作らない）。
+        records, _broken = STORE.load()
+        _check_room(records, account, now, digest)
+        return _post_preview(record, default_owner)
     with STORE.locked() as directory:
         records, _broken = STORE.load_all(directory)
-        # 重複は**同じ account の中だけ**で見る（他の持ち主の id を返さない）。
-        for row in records:
-            if (row.get("account") == account and now - jst.parse(row["at"]) < WINDOW
-                    and _digest(row["title"], row["body"]) == digest):
-                raise PlazaError("duplicate_post", plaza_id=row["plaza_id"])
-        if _events_by(records, account, now) >= DAILY_LIMIT:
-            raise PlazaError("plaza_rate_limited")
+        _check_room(records, account, now, digest)
         record["plaza_id"] = _new_id(now, directory)
         STORE.create(directory, record, lambda _record: admin_log.append(
             "plaza_posted", account, {"media": medium}, by=by, via=via,
@@ -1099,6 +1104,55 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
             "from": (source or {}).get("kind"), "tool_version": __version__,
             # 明示せずに組の既定で owner にしたときだけ組の名前（設計 3.8.1）。
             "visibility_default": default_owner}
+
+
+def _check_room(records, account, now, digest):
+    """重複（同じ account の中だけ・他の持ち主の id を返さない）と 24 時間の件数の上限。"""
+    for row in records:
+        if (row.get("account") == account and now - jst.parse(row["at"]) < WINDOW
+                and _digest(row["title"], row["body"]) == digest):
+            raise PlazaError("duplicate_post", plaza_id=row["plaza_id"])
+    if _events_by(records, account, now) >= DAILY_LIMIT:
+        raise PlazaError("plaza_rate_limited")
+
+
+def own_view(record):
+    """置く本人に見える 1 件（原本・`open_view` と同じ欄）。`--preview` の表示に使う。"""
+    from . import plaza_observe
+    history = record.get("observations") or []
+    return {"kind": record["kind"], "kind_detail": record.get("kind_detail"),
+            "evidence_level": evidence_level_of(record),
+            "owner": record.get("account") or owner_label(record.get("project"), record.get("account")),
+            "medium": record.get("medium"),
+            **{key: record.get(key) for key in ("title", "body", "hypothesis", "change", "scope_note",
+                                                "how", "goal", "until", "trial_due")},
+            "verdict": None,
+            "observation": plaza_observe._columns(history[-1], "own") if history else None,
+            "masked": 0,
+            **({"tool_numbers": record.get("tool_numbers")} if record.get("tool_numbers") else {})}
+
+
+def _post_preview(record, default_owner):
+    """`thth plaza post … --preview`（5.11.0 段 7）: 置く中身を全部作って見せるだけ。何も書かない。
+
+    範囲を問わず同じ形。open なら他の持ち主に見える写し（`open_view`）と二段目の digest も
+    （open の一段目と同じ中身）。project・owner は置く本人に見える原本（`own_view`）。
+    """
+    scope = record["scope"]
+    out = {"schema_version": SCHEMA_VERSION, "report_type": "plaza_post_preview",
+           "preview": True, "posted": False, "plaza_id": None,
+           "account": record.get("account"), "project": record.get("project"),
+           "kind": record["kind"], "scope": scope, "evidence_level": record["evidence_level"],
+           # 明示せずに組の既定で owner にしたときだけ組の名前（設計 3.8.1・置いたときと同じ）。
+           "visibility_default": default_owner,
+           "from": (record.get("source") or {}).get("kind"),
+           "observed": bool(record.get("observations")) or bool(record.get("tool_numbers")),
+           "view": open_view(record) if scope == "open" else own_view(record),
+           "digest": None}
+    if scope == "open":
+        out["digest"] = open_digest(record)
+        out["visible_to_other_owners"] = out["view"]
+    return out
 
 
 # ------------------------------------------------------------------ 読む
@@ -1598,11 +1652,21 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
 
 # ---------------------------------------------------------------- 管理者
 
-def hide(plaza_id, *, by, reason, via="cli", now=None):
-    """問題のある書き込みを非表示にする（理由つき・変更ログ `plaza_hidden`）。"""
+def hide(plaza_id, *, by, reason, via="cli", now=None, account=None):
+    """問題のある書き込みを非表示にする（理由つき・変更ログ `plaza_hidden`）。
+
+    `account`（5.11.0 段 7・`thth plaza hide <id> --as <account>`）: 置いた本人が自分の 1 件を隠す口。
+    隠し方は管理者と同じ（`hidden` に時刻・誰・理由）。ロックの中で `viewer_for_target(account)` が
+    その 1 件を持つ（同じ project）ことを確かめ、他の持ち主の id は無い id と同じ `plaza_not_found`。
+    """
     by = poster(by)
     if via not in VIAS:
         raise PlazaError("invalid_post")
+    viewer = None
+    if account is not None:
+        viewer = viewer_for_target(account)
+        if account not in viewer.accounts:
+            raise PlazaError("invalid_account")
     if not (isinstance(reason, str) and reason.strip()):
         raise PlazaError("reason_required")
     reason = _text(reason, REASON_MAX)
@@ -1610,14 +1674,22 @@ def hide(plaza_id, *, by, reason, via="cli", now=None):
     at = jst.iso(now or jst.now_jst())
 
     def change(record):
+        if viewer is not None and not viewer.owns(record.get("project"), record.get("account")):
+            # 他の持ち主の 1 件は、無い id と同じ断り（あるかどうかも言わない）。
+            raise PlazaError("plaza_not_found")
         if record.get("hidden"):
             raise PlazaError("already_hidden")
         record["hidden"] = {"at": at, "by": by, "reason": reason}
+        if viewer is not None:
+            record["hidden"]["by_poster"] = True
         record["updated_at"] = at
 
+    diff = {"hidden": ["absent", "present"]}
+    if viewer is not None:
+        diff["hidden_by"] = [None, "poster"]
     record = STORE.update(plaza_id, change, lambda record: admin_log.append(
-        "plaza_hidden", record.get("account") or record.get("project") or "plaza",
-        {"media": record.get("medium")}, by=by, via=via, diff={"hidden": ["absent", "present"]}))
+        "plaza_hidden", account or record.get("account") or record.get("project") or "plaza",
+        {"media": record.get("medium")}, by=by, via=via, diff=diff))
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_hidden",
             "plaza_id": record["plaza_id"], "hidden": record["hidden"]}
 

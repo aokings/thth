@@ -1499,6 +1499,9 @@ def _render_section(section, out) -> None:
                                           f"（最後の動き {(step.get('done_at') or '')[:10]}・効いたかを共通の知に）")}
                 label = f"  {step['plaza_id']}  {step['title']}" if step.get("plaza_id") else ""
                 out(f"  {verb[step['candidate']]}  {step['account']}{label}")
+                if step.get("preview_command"):
+                    # 5.11.0 段 7: まず --preview で中身を見る（何も書かない）→ 良ければ下の命令で置く。
+                    out(f"    まず見る（何も書かない）: {step['preview_command']}")
                 if step.get("command"):
                     out(f"    {step['command']}")
                 if step.get("owner_hint"):

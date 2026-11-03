@@ -346,6 +346,7 @@
       ],
       "cannot_say": {
         "blog_pv": "blog_pv_not_collected",
+        "threads_clicks": "no_attributable_post",
         "impressions": "not_measured_yet",
         "bookmarks_received": "no_deliveries"
       },
@@ -396,6 +397,40 @@
           }
         ],
         "cannot_say": null
+      },
+      "threads_clicks": {
+        "label": "Threads のリンクのクリック（THTH の実測・投稿から 72h）",
+        "source": "threads_clicks_by_url",
+        "medium": "threads",
+        "basis": "unique_url_72h",
+        "window": "post_day_plus_2",
+        "window_note": "日次の粒度なので、72 時間は投稿日（JST）を含む 3 暦日の和（投稿の時刻によって 72 時間より短くも長くもなる）",
+        "separate_from": "site_visits（GA4・hub 経由）とは別の欄・足さない",
+        "clicks_72h": null,
+        "n": 0,
+        "of": 1,
+        "denominator": "クリックを言える本数（n）／糸の Threads の本数（of）",
+        "reasons": {
+          "link_unrecorded": 1
+        },
+        "other_media": {},
+        "cannot_say": [
+          "no_attributable_post"
+        ],
+        "posts": [
+          {
+            "file": "th-flow-01.md",
+            "account": "kp-threads",
+            "posted_at": "2026-10-22T07:00:03+09:00",
+            "clicks_72h": null,
+            "window_days": [
+              "2026-10-22",
+              "2026-10-23",
+              "2026-10-24"
+            ],
+            "cannot_say": "link_unrecorded"
+          }
+        ]
       }
     },
     "deliveries": []

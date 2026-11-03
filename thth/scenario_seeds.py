@@ -10,6 +10,10 @@
   2. 訪問の多かった告知: 5.7.0 の `site_visits` の控えで、原稿に結べた campaign の sessions。
      控えが無ければ列ごと `cannot_say: site_visits_not_imported`（0 と言わない）。
   3. よく見られた投稿: 24h の views。
+  2b. クリックの多かった告知（Threads・72h・5.11.0 段 7）: 自分の Threads の投稿ごとのリンクのクリック
+     （`thread_clicks`・`click_attribution` と同じ計算）。訪問の列とは別の列で足さない。Threads 以外は
+     `per_post_clicks_unavailable:<媒体>`。返信の列の群には `nonzero`（1 件以上あった本数）、返信の数の
+     出所が台帳の行には `replies_source: ledger`。
   4. 閉じた糸の続き: 窓の中で閉じた糸の、宣言にあって使わなかった媒体（`plaza_from._tried_media` と同じ計算）。
      5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）で、最後の動きが窓の中のものも入れる。
 
@@ -97,7 +101,8 @@ def _own_posts(ledger, since, now):
             continue
         if item.account not in lookups:
             try:
-                lookups[item.account] = after_cli.reaction_lookup(item.account)
+                # 5.11.0 段 7: 返信の数の出所（24h の刻みか台帳か）も受け取る（`replies_source`）。
+                lookups[item.account] = after_cli.reaction_lookup(item.account, with_source=True)
             except Exception:  # noqa: BLE001 — 読めない実測は数えない（0 と混ぜない）
                 lookups[item.account] = None
         lookup = lookups[item.account]
@@ -150,16 +155,23 @@ def _post_column(key, label, metric, basis, posts, cannot, *, limit, min_n, wind
         group["values"].append(value)
         if value <= 0:
             continue   # 0 は種として並べない（数には入れる）
-        group["rows"].append({"count": value, "medium": item.medium, "account": item.account,
-                              "file": item.file, "thread": item.thread, "head": item.head,
-                              "posted_at": jst.iso(item.posted_at),
-                              "covered_24h": bool(row["metrics"].get("covered"))})
+        entry = {"count": value, "medium": item.medium, "account": item.account,
+                 "file": item.file, "thread": item.thread, "head": item.head,
+                 "posted_at": jst.iso(item.posted_at),
+                 "covered_24h": bool(row["metrics"].get("covered"))}
+        if metric == "replies_back_24h" and row["metrics"].get("replies_source") == "ledger":
+            # 5.11.0 段 7: 返信の数が 24h の刻みでなく返信の台帳から数えたもの（時刻の窓が違う）。
+            entry["replies_source"] = "ledger"
+        group["rows"].append(entry)
     out_media, codes = {}, sorted(cannot)
     for medium in sorted(by_medium):
         group = by_medium[medium]
         ordered = sorted(group["rows"], key=lambda r: r["posted_at"], reverse=True)
         ordered.sort(key=lambda r: r["count"], reverse=True)
         node = _group_stat(group["values"], group["posts"], min_n)
+        if metric == "replies_back_24h":
+            # 5.11.0 段 7: 1 件以上あった本数／値の取れた本数（n が小さくても数として言う）。
+            node["nonzero"] = sum(1 for v in group["values"] if v >= 1)
         node["uncovered_24h"] = group["uncovered"]
         node["rows"] = ordered[:limit]
         node["more"] = max(0, len(ordered) - limit)
@@ -245,6 +257,56 @@ def _visits_column(ledger, since, *, limit, min_n):
     return column
 
 
+# ------------------------------------------------------------------ クリック（5.11.0 段 7）
+
+def _clicks_column(ledger, since, now, *, limit, min_n, window):
+    """クリックの多かった告知（Threads・72h）: 窓の中の自分の Threads の投稿の、投稿ごとのリンクのクリック。
+
+    1 本の数は `thread_clicks`（`click_attribution` の 1 か所）。訪問（GA4）の列とは別の列で、足さない。
+    言えない投稿は理由ごとの本数。Threads 以外の媒体は `null` と `per_post_clicks_unavailable:<媒体>`。
+    """
+    from . import thread_clicks
+    items = [item for item in ledger.items
+             if item.medium in scenario_mod.SNS_MEDIA and scenario_mod._is_posted(item)
+             and _in_window(item.posted_at, since, now)]
+    clicks = thread_clicks.Clicks(ledger, now)
+    extra = thread_clicks._extra(items)
+    rows = [clicks.row(item, extra) for item in items]
+    summary = thread_clicks.summarize(rows)
+    by_medium, codes = {}, []
+    threads = [r for r in rows if r["medium"] == thread_clicks.MEDIUM]
+    heads = {(item.account, item.file): item.head for item in items}
+    if threads:
+        values = [r["clicks_72h"] for r in threads if r["clicks_72h"] is not None]
+        node = _group_stat(values, len(threads), min_n)
+        ranked = [{"count": r["clicks_72h"], "medium": r["medium"], "account": r["account"], "file": r["file"],
+                   "thread": r["thread"], "head": heads.get((r["account"], r["file"])),
+                   "posted_at": r["posted_at"]}
+                  for r in threads if r["clicks_72h"]]
+        ranked.sort(key=lambda r: r["posted_at"] or "", reverse=True)
+        ranked.sort(key=lambda r: r["count"], reverse=True)
+        node.update({"rows": ranked[:limit], "more": max(0, len(ranked) - limit),
+                     "reasons": summary["reasons"]})
+        by_medium[thread_clicks.MEDIUM] = node
+        if not node["comparable"]:
+            codes.append(f"below_min_n:{thread_clicks.MEDIUM}")
+    for medium, other in summary["other_media"].items():
+        by_medium[medium] = {"posts": other["posts"], "n": 0, "clicks_72h": None,
+                             "clicks_unavailable": True, "cannot_say": other["cannot_say"], "rows": [], "more": 0}
+        codes.append(thread_clicks.unavailable_code(medium))
+    if not items:
+        codes.append("no_posts_in_window")
+    elif not threads:
+        codes.append("no_threads_posts")
+    return {"key": "clicks", "label": "クリックの多かった告知（Threads・72h）", "metric": "clicks_72h",
+            "measure": thread_clicks.LABEL, "source": thread_clicks.SOURCE, "basis": summary["basis"],
+            "window_note": summary["window_note"], "separate_from": thread_clicks.SEPARATE_FROM,
+            "denominator": "クリックを言える本数（n）／窓の中の自分の Threads の本数（posts）",
+            "sort_basis": f"clicks_72h の多い順・{TIE_BREAK_POSTS}・Threads だけ（ほかの媒体は投稿ごとのクリックが無い）",
+            "window": window, "by_medium": dict(sorted(by_medium.items())),
+            "cannot_say": sorted(set(codes)), "next": NEXT_LINE}
+
+
 # ------------------------------------------------------------------ 閉じた糸（列 4）
 
 def _closed_column(ledger, since, now, *, limit):
@@ -323,8 +385,10 @@ def build(target, *, days=DEFAULT_DAYS, limit=DEFAULT_LIMIT, now=None, allowed_n
     by_key = {key: _post_column(key, label, metric, basis, posts, post_cannot, limit=limit, min_n=min_n,
                                 window=window)
               for key, label, metric, basis in POST_COLUMNS}
-    columns = [by_key["replies"], _visits_column(ledger, since, limit=limit, min_n=min_n), by_key["views"],
-               _closed_column(ledger, since, now, limit=limit)]
+    columns = [by_key["replies"], _visits_column(ledger, since, limit=limit, min_n=min_n),
+               # 5.11.0 段 7: Threads のリンクのクリック（訪問の列とは別の列・混ぜない）。
+               _clicks_column(ledger, since, now, limit=limit, min_n=min_n, window=window),
+               by_key["views"], _closed_column(ledger, since, now, limit=limit)]
     cannot = set(ledger.cannot_say)
     for column in columns:
         cannot |= {code for code in column["cannot_say"] if ":" not in code}

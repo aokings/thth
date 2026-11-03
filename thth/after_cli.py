@@ -209,17 +209,28 @@ def reaction_metrics(account_name: str, measured_by_post: dict, post_id: str | N
            "replies_back_24h": replies_back_24h, "covered": covered}
 
 
-def reaction_lookup(account_name: str):
+def reaction_lookup(account_name: str, *, with_source: bool = False):
     """`account_name` の実測を 1 回読み、`post_id → reaction_metrics()` の
     関数を返す（`thread_read`・`where_cli` の `you_and_them.last_reaction`
     （T3-2）向けの便利口。実測を読むのも反応を組み立てるのも、どちらも
     `after_cli` の中の 1 か所だけで行う）。
+
+    `with_source=True`（5.11.0 段 7・seeds）: 返す辞書に `replies_source` を足す——返信の数が
+    24h の刻みの実測なら `measured_24h`、返信の台帳から数えたなら `ledger`、無ければ None。
+    既定（False）の形は変えない（`who_cli` などの出力は今までどおり）。
     """
     measured_result = measured_mod.load(account_name)
     measured_by_post = {p["post_id"]: p for p in measured_result["posts"]}
 
     def _for(post_id):
-        return reaction_metrics(account_name, measured_by_post, post_id)
+        metrics = reaction_metrics(account_name, measured_by_post, post_id)
+        if with_source:
+            measured_metrics, covered = _measured_24h_metrics(measured_by_post.get(post_id))
+            from_measured = covered and measured_metrics.get("replies") is not None
+            metrics = dict(metrics, replies_source=(
+                "measured_24h" if from_measured
+                else "ledger" if metrics.get("replies_back_24h") is not None else None))
+        return metrics
 
     return _for
 
