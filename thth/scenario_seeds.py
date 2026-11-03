@@ -9,6 +9,8 @@
      `after_cli.reaction_lookup`）。
   2. 訪問の多かった告知: 5.7.0 の `site_visits` の控えで、原稿に結べた campaign の sessions。
      控えが無ければ列ごと `cannot_say: site_visits_not_imported`（0 と言わない）。
+     5.11.0 段 8: 日ごとの控え（hub の 1 日 1 ファイル）のあるサイトは `--days` の窓の日を足す
+     （`window_basis: seeds_days_daily`・`days_missing`・`days_pending`）。
   3. よく見られた投稿: 24h の views。
   2b. クリックの多かった告知（Threads・72h・5.11.0 段 7）: 自分の Threads の投稿ごとのリンクのクリック
      （`thread_clicks`・`click_attribution` と同じ計算）。訪問の列とは別の列で足さない。Threads 以外は
@@ -190,34 +192,57 @@ def _post_column(key, label, metric, basis, posts, cannot, *, limit, min_n, wind
 
 # ------------------------------------------------------------------ 訪問（列 2）
 
-def _visits_column(ledger, since, *, limit, min_n):
+def _visits_column(ledger, since, now=None, *, limit, min_n):
     from . import site_visits
+    now = now if now is not None else ledger.now
     column = {"key": "visits", "label": "訪問の多かった告知", "metric": "sessions",
               "measure": site_visits.LABEL, "source": site_visits.SOURCE,
               "sort_basis": "sessions の多い順・同じ数は原稿のパスの順・サイトごと（窓の違うサイトは混ぜない）",
-              "window_basis": "GA4 の窓（hub が決める）が --days の窓と重なる控えだけ",
+              # 5.11.0 段 8: 日ごとの控えのあるサイトは --days の窓の日を足す（サイトごとの `window_basis`）。
+              "window_basis": "日ごとの控えは --days の窓の日を足す（seeds_days_daily）・幅のある窓は --days の窓と"
+                              "重なる最新の控えだけ（latest_window）",
               "as_of": None, "sites": [], "cannot_say": [], "next": NEXT_LINE}
-    records, cannot = site_visits.load(ledger.project)
+    records, cannot = site_visits.read_all(ledger.project)
     if not records:
         column["cannot_say"] = ["site_visits_unreadable" if cannot else "site_visits_not_imported"]
         return column
     column["as_of"] = max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
     index = site_visits._index(ledger.items)
     since_day = since.date().isoformat()
-    for record in records:
-        window = record.get("window") or {}
-        site = {"site": record.get("site"), "window": window, "generated_at": record.get("generated_at"),
-                "stale": bool(record.get("newer_unavailable")), "rows": [], "more": 0, "cannot_say": None}
-        if (window.get("to") or "") < since_day:
-            site["cannot_say"] = "outside_window"
-            column["sites"].append(site)
-            continue
-        if record.get("rows") is None:
-            site["cannot_say"] = "site_visits_unavailable"
-            column["sites"].append(site)
-            continue
+    start, end = since.date(), jst.to_jst(now).date()
+    for plan in site_visits.plan_sites(records, start, end, now):
+        if plan["mode"] == "daily":
+            span = plan["span"]
+            used = span["records"]
+            site = {"site": plan["site"], "window": {"from": start.isoformat(), "to": end.isoformat()},
+                    "window_basis": site_visits.BASIS_SEEDS_DAILY, **site_visits._span_keys(span),
+                    "generated_at": max((r.get("generated_at") for r in used if r.get("generated_at")),
+                                        default=None),
+                    "stale": False, "rows": [], "more": 0, "cannot_say": None}
+            if plan["mixed_windows"]:
+                site["mixed_windows"] = plan["mixed_windows"]
+            if not used:
+                site["cannot_say"] = "site_visits_unavailable" if span["days_unavailable"] else "outside_window"
+                column["sites"].append(site)
+                continue
+            rows_in = [row for r in used for row in r["rows"]]
+        else:
+            record = plan["record"]
+            window = record.get("window") or {}
+            site = {"site": record.get("site"), "window": window, "window_basis": site_visits.BASIS_LATEST,
+                    "generated_at": record.get("generated_at"),
+                    "stale": bool(record.get("newer_unavailable")), "rows": [], "more": 0, "cannot_say": None}
+            if (window.get("to") or "") < since_day:
+                site["cannot_say"] = "outside_window"
+                column["sites"].append(site)
+                continue
+            if record.get("rows") is None:
+                site["cannot_say"] = "site_visits_unavailable"
+                column["sites"].append(site)
+                continue
+            rows_in = record["rows"]
         by_path, untied, untied_sessions, untied_unknown = {}, {}, 0, False
-        for row in record["rows"]:
+        for row in rows_in:
             _thread, item, reason = site_visits.tie(row.get("campaign"), index)
             if item is None:
                 # 原稿に結べない campaign は種にしない。名前は出さず、数だけ（`tie_rows` の untied_campaigns の形）。
@@ -385,7 +410,7 @@ def build(target, *, days=DEFAULT_DAYS, limit=DEFAULT_LIMIT, now=None, allowed_n
     by_key = {key: _post_column(key, label, metric, basis, posts, post_cannot, limit=limit, min_n=min_n,
                                 window=window)
               for key, label, metric, basis in POST_COLUMNS}
-    columns = [by_key["replies"], _visits_column(ledger, since, limit=limit, min_n=min_n),
+    columns = [by_key["replies"], _visits_column(ledger, since, now, limit=limit, min_n=min_n),
                # 5.11.0 段 7: Threads のリンクのクリック（訪問の列とは別の列・混ぜない）。
                _clicks_column(ledger, since, now, limit=limit, min_n=min_n, window=window),
                by_key["views"], _closed_column(ledger, since, now, limit=limit)]

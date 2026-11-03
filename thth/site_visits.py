@@ -22,6 +22,10 @@
 ```
 
 本文・個人の値は無い。控えるのは上の鍵だけ（ほかの鍵は捨てる・`landing_page` は `?` と `#` から後を落とす）。
+
+5.11.0 段 8（設計 §7.4・masaru 11/03）: hub は日ごとの窓（`window.from == window.to`・終わり D-2）を
+1 サイト 1 日 1 ファイルで送る（media-hub `scripts/ga4.py site-visits --days 1 --lag 2 --out-dir`）。schema は
+同じ。THTH は日ごとの控えを糸の期間（seeds は `--days` の窓）に重なる日だけ足す（「日ごとの控え」の節）。
 """
 from __future__ import annotations
 
@@ -222,13 +226,8 @@ def import_file(target, path, *, now=None) -> dict:
 
 # ------------------------------------------------------------------ 読む
 
-def load(project) -> tuple:
-    """控えのうちサイトごとに、数の取れた最新の窓（`window.to`・同じなら `generated_at`）。`(記録の列, 符丁の集合)`。
-
-    監査 N-3（11/03）: 最新の窓が「取れなかった窓」（rows が null）でも、前の取れた窓の数を隠さない。
-    取れた控えがあればそれを返し、それより新しい取れなかった窓を `newer_unavailable`（窓・generated_at・
-    理由）として添える（数は前の窓のもの・0 と混ぜない）。取れた控えが 1 つも無ければ最新の取れなかった窓。
-    """
+def read_all(project) -> tuple:
+    """控えを全部読む（日ごとも幅のある窓も）。`(記録の列, 符丁の集合)`。読めない控えは `site_visits_unreadable`。"""
     cannot = set()
     try:
         directory = store_dir(project)
@@ -237,7 +236,7 @@ def load(project) -> tuple:
         return [], cannot
     except OSError:
         return [], {"site_visits_unreadable"}
-    latest, good = {}, {}
+    out = []
     for entry in entries:
         try:
             with open(os.path.join(directory, entry), encoding="utf-8") as f:
@@ -248,6 +247,19 @@ def load(project) -> tuple:
         if not isinstance(record, dict) or record.get("schema") != STORE_SCHEMA:
             cannot.add("site_visits_unreadable")
             continue
+        out.append(record)
+    return out, cannot
+
+
+def _latest_wide(records) -> list:
+    """幅のある窓の控え（5.7.0 の形）のうちサイトごとに、数の取れた最新の窓（`window.to`・同じなら `generated_at`）。
+
+    監査 N-3（11/03）: 最新の窓が「取れなかった窓」（rows が null）でも、前の取れた窓の数を隠さない。
+    取れた控えがあればそれを返し、それより新しい取れなかった窓を `newer_unavailable`（窓・generated_at・
+    理由）として添える（数は前の窓のもの・0 と混ぜない）。取れた控えが 1 つも無ければ最新の取れなかった窓。
+    """
+    latest, good = {}, {}
+    for record in records:
         key = (record.get("window") or {}).get("to") or "", record.get("generated_at") or ""
         site = record.get("site")
         if site not in latest or key > latest[site][0]:
@@ -264,15 +276,178 @@ def load(project) -> tuple:
             out.append(shown)
         else:
             out.append(record)
-    return out, cannot
+    return out
+
+
+def load(project) -> tuple:
+    """幅のある窓の控えのうちサイトごとの最新（`_latest_wide`）。`(記録の列, 符丁の集合)`。
+
+    5.11.0 段 8: 日ごとの控え（`window.from == window.to`）はここに入れない（`daily_index` で日ごとに足す）。
+    """
+    records, cannot = read_all(project)
+    return _latest_wide([r for r in records if not is_daily(r)]), cannot
 
 
 def as_of(project):
-    """いちばん新しい控えの `generated_at`（無ければ None）。"""
-    records, _ = load(project)
-    stamps = [r.get("generated_at") for r in records] + [
-        (r.get("newer_unavailable") or {}).get("generated_at") for r in records]
-    return max((s for s in stamps if s), default=None)
+    """いちばん新しい控えの `generated_at`（日ごとの控えも入れる・無ければ None）。"""
+    records, _ = read_all(project)
+    return max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
+
+
+# ------------------------------------------------------------------ 日ごとの控え（5.11.0 段 8）
+#
+# hub は日ごとの窓（終わり D-2）を 1 サイト 1 日 1 ファイルで送る（設計 §7.4・masaru 11/03）。THTH は
+# 糸の期間（seeds は `--days` の窓）に重なる日の控えだけを**足す**。
+#
+#   - 同じサイトの同じ日の控えが複数あれば、`generated_at` の新しい 1 つだけ（二重に足さない）。
+#   - 期間のうち控えの無い日は `days_missing`（数だけ・0 と混ぜない）。D-2 より後の日は「まだ来ない日」として
+#     `days_pending` に分ける。取れなかった日（rows が null）は `days_unavailable`。
+#   - 幅のある窓（7 日など・5.7.0 の形）との混ざり: 期間に重なる日ごとの控えが 1 つでもあるサイトは日ごとだけを
+#     足し、期間に重なる幅のある控えは使わず `mixed_windows` に数を言う（幅のある窓は日に割れないので、
+#     一部の日だけ差し替えると二重に足すか欠けを隠すことになる）。日ごとの控えが期間に 1 つも無いサイトは、
+#     今までどおり幅のある窓の最新を読む（`window_basis: latest_window`）。
+
+LAG_DAYS = 2
+BASIS_THREAD_DAILY = "thread_period_daily"
+BASIS_SEEDS_DAILY = "seeds_days_daily"
+BASIS_RECENT_DAILY = "recent_days_daily"
+BASIS_LATEST = "latest_window"
+REFERRERS_DAYS = 28
+MAX_PERIOD_DAYS = 800
+
+
+def is_daily(record) -> bool:
+    window = record.get("window") or {}
+    return bool(window.get("from")) and window.get("from") == window.get("to")
+
+
+def _stamp(record):
+    return record.get("generated_at") or "", record.get("imported_at") or ""
+
+
+def daily_index(records) -> tuple:
+    """日ごとの控え → `({site: {日: 控え}}, {site: 落とした重複の数})`。同じ日は `generated_at` の新しい 1 つ。"""
+    by_site, dropped = {}, {}
+    for record in records:
+        if not is_daily(record):
+            continue
+        site, day = record.get("site"), record["window"]["to"]
+        days = by_site.setdefault(site, {})
+        if day in days:
+            dropped[site] = dropped.get(site, 0) + 1
+            if _stamp(record) <= _stamp(days[day]):
+                continue
+        days[day] = record
+    return by_site, dropped
+
+
+def last_due_day(now) -> datetime.date:
+    """hub が送ってくるはずの最後の日（D-2）。これより後の日は「まだ来ない日」。"""
+    return jst.to_jst(now).date() - datetime.timedelta(days=LAG_DAYS)
+
+
+def daily_span(days, start, end, now, key="rows") -> dict:
+    """`start`〜`end`（日・両端を含む）の日ごとの控え。`records` は数の取れた日の控え（日の順）。"""
+    due = last_due_day(now)
+    used, missing, pending, unavailable, total = [], 0, 0, 0, 0
+    if start is not None and end is not None and start <= end:
+        start = max(start, end - datetime.timedelta(days=MAX_PERIOD_DAYS - 1))
+        day = start
+        while day <= end:
+            total += 1
+            record = days.get(day.isoformat())
+            if record is not None:
+                if record.get(key) is None:
+                    unavailable += 1
+                else:
+                    used.append(record)
+            elif day > due:
+                pending += 1
+            else:
+                missing += 1
+            day += datetime.timedelta(days=1)
+    return {"records": used, "days_in_period": total, "days_covered": len(used), "days_missing": missing,
+            "days_pending": pending, "days_unavailable": unavailable}
+
+
+def _overlaps(record, start, end) -> bool:
+    window = record.get("window") or {}
+    try:
+        lo, hi = datetime.date.fromisoformat(window.get("from")), datetime.date.fromisoformat(window.get("to"))
+    except (TypeError, ValueError):
+        return False
+    return start is not None and end is not None and lo <= end and hi >= start
+
+
+def plan_sites(records, start, end, now, key="rows") -> list:
+    """サイトごとに、日ごとに足すか（`daily`）幅のある窓の最新を読むか（`wide`）を決める。
+
+    戻り値の 1 行: `{"site", "mode": "daily"|"wide", "span"（daily のとき）, "record"（wide のとき）,
+    "mixed_windows"（期間に重なるのに使わなかった幅のある控えの数・0 なら None）, "duplicates_dropped"}`。
+    """
+    daily, dropped = daily_index(records)
+    wide_by_site = {}
+    for record in records:
+        if not is_daily(record):
+            wide_by_site.setdefault(record.get("site"), []).append(record)
+    latest_wide = {r.get("site"): r for r in _latest_wide([r for rs in wide_by_site.values() for r in rs])}
+    out = []
+    for site in sorted(set(daily) | set(wide_by_site), key=lambda s: s or ""):
+        span = daily_span(daily.get(site, {}), start, end, now, key)
+        has_daily = (span["days_covered"] + span["days_unavailable"]) > 0
+        if has_daily or site not in latest_wide:
+            mixed = sum(1 for r in wide_by_site.get(site, []) if _overlaps(r, start, end))
+            out.append({"site": site, "mode": "daily", "span": span, "record": None,
+                        "mixed_windows": {"wide_ignored": mixed} if mixed and has_daily else None,
+                        "duplicates_dropped": dropped.get(site, 0)})
+        else:
+            out.append({"site": site, "mode": "wide", "span": None, "record": latest_wide[site],
+                        "mixed_windows": None, "duplicates_dropped": dropped.get(site, 0)})
+    return out
+
+
+def thread_period(ledger, thread_id, status=None) -> dict:
+    """糸の期間（日）: `started`（無ければ最初の動き＝宣言の出来事と糸の原稿の出た時刻の早い方）から、
+    閉じた日（`closed`）か済んだ日（`done` の最後の動き）、どちらでもなければ今日まで。"""
+    from . import scenario
+    today = jst.to_jst(ledger.now).date()
+    decl = next((d for d in scenario.usable_declarations(ledger) if d.id == thread_id and d.kind == "thread"), None)
+    period = {"from": None, "to": today.isoformat(), "from_basis": None, "to_basis": "today"}
+    if decl is None:
+        return period
+    started = scenario._date_at(scenario._plain(decl.fm.get("started")))
+    if started is not None:
+        period.update({"from": started.date().isoformat(), "from_basis": "started"})
+    else:
+        moments = [scenario._date_at(e.get("at")) for e in decl.events]
+        for item in ledger.items:
+            if item.thread == thread_id and scenario._is_posted(item):
+                moments.append(item.posted_at or item.publish_at)
+        moments = [m for m in moments if m is not None and m <= ledger.now]
+        if moments:
+            period.update({"from": jst.to_jst(min(moments)).date().isoformat(), "from_basis": "first_movement"})
+    closed = [scenario._date_at(e.get("at")) for e in decl.events if e.get("name") == "closed"]
+    closed = [c for c in closed if c is not None and c <= ledger.now]
+    if closed:
+        period.update({"to": max(closed).date().isoformat(), "to_basis": "closed"})
+        return period
+    status = status if status is not None else scenario.thread_status(decl, ledger)
+    since = jst.parse((status.get("done") or {}).get("since")) if status.get("state") == "done" else None
+    if since is not None:
+        period.update({"to": jst.to_jst(since).date().isoformat(), "to_basis": "done"})
+    return period
+
+
+def _day(value):
+    try:
+        return datetime.date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _span_keys(span) -> dict:
+    return {k: span[k] for k in ("days_in_period", "days_covered", "days_missing", "days_pending",
+                                 "days_unavailable")}
 
 
 def campaign_keys(rel) -> set:
@@ -384,6 +559,8 @@ def referrers_block(project, records=None, cannot=None) -> dict:
 
     同じ host に整った行は足す。形の合わない値（`(direct)`・空・path だけ等）は捨てて、行数と sessions だけ
     `dropped` に数える。取れなかった窓は `cannot_say: referrers_unavailable`（0 と混ぜない）。
+
+    5.11.0 段 8: 日ごとの控えを足すのは呼ぶ側（`site_referrers`）。ここは渡された控えを 1 つずつ読むだけ。
     """
     if records is None:
         records, cannot = load(project)
@@ -436,6 +613,48 @@ def referrers_block(project, records=None, cannot=None) -> dict:
     return block
 
 
+def site_referrers(project, *, now=None) -> dict:
+    """dashboard の「サイトへの参照元」（5.11.0 段 8）。日ごとの足し算はここで組み、`referrers_block` に渡す。
+
+    日ごとの控えのあるサイトは、ここ `REFERRERS_DAYS` 日（終わりは D-2・それより新しい日の控えがあればその日）の
+    日ごとの控えの `referrers` を 1 つの控えにつないで渡す（host ごとの足し算は `referrers_block` がする・
+    `window_basis: recent_days_daily`・`days_missing` など）。日ごとの控えが無いサイトは今までどおり幅のある窓の
+    最新（`window_basis: latest_window`）。
+    """
+    now = now if now is not None else jst.now_jst()
+    records, cannot = read_all(project)
+    if not records:
+        return referrers_block(project, [], cannot)
+    daily, _dropped = daily_index(records)
+    latest_day = max((_day(d) for days in daily.values() for d in days), default=None)
+    end = max(d for d in (last_due_day(now), latest_day) if d is not None)
+    start = end - datetime.timedelta(days=REFERRERS_DAYS - 1)
+    plans = plan_sites(records, start, end, now, key="referrers")
+    joined = []
+    for plan in plans:
+        if plan["mode"] == "wide":
+            joined.append(plan["record"])
+            continue
+        used = plan["span"]["records"]
+        joined.append({"site": plan["site"], "window": {"from": start.isoformat(), "to": end.isoformat()},
+                       "generated_at": max((r.get("generated_at") for r in used if r.get("generated_at")),
+                                           default=None),
+                       "referrers": [row for r in used for row in r["referrers"]] if used else None})
+    block = referrers_block(project, joined, cannot)
+    for plan, site in zip(plans, block["sites"]):
+        if plan["mode"] == "wide":
+            site["window_basis"] = BASIS_LATEST
+            continue
+        span = plan["span"]
+        site["window_basis"] = BASIS_RECENT_DAILY
+        site.update(_span_keys(span))
+        if plan["mixed_windows"]:
+            site["mixed_windows"] = plan["mixed_windows"]
+        if not span["records"] and not span["days_unavailable"]:
+            site["cannot_say"] = "no_daily_in_window"   # 日ごとの控えはあるが、この窓には 1 日も無い
+    return block
+
+
 def _sum(rows, key):
     values = [r.get(key) for r in rows]
     if not values or any(not isinstance(v, int) for v in values):
@@ -443,10 +662,64 @@ def _sum(rows, key):
     return sum(values)
 
 
-def thread_block(project, ledger, thread_id, records=None, cannot=None) -> dict:
-    """糸 1 本の「本記事への訪問」。控えが無ければ `cannot_say: site_visits_not_imported`（0 と混ぜない）。"""
+CAMPAIGN_KEYS = ("campaign", "file", "source", "medium", "sessions", "engaged_sessions", "avg_duration_s",
+                 "landing_page")
+
+
+def _merge_campaigns(rows) -> list:
+    """日ごとの行を、同じ campaign・原稿・source・medium・着地の頁ごとに足す（平均の滞在は sessions で重みづけ・
+    重みの取れない行があれば null）。"""
+    merged = {}
+    for r in rows:
+        key = ((r.get("campaign") or "").strip().lower(), r.get("file"), r.get("source"), r.get("medium"),
+               r.get("landing_page"))
+        node = merged.setdefault(key, {"rows": [], "first": r})
+        node["rows"].append(r)
+    out = []
+    for node in merged.values():
+        group = node["rows"]
+        row = {k: node["first"].get(k) for k in CAMPAIGN_KEYS}
+        row["sessions"] = _sum(group, "sessions")
+        row["engaged_sessions"] = _sum(group, "engaged_sessions")
+        weights = [(r.get("avg_duration_s"), r.get("sessions")) for r in group]
+        if len(group) == 1:
+            row["avg_duration_s"] = group[0].get("avg_duration_s")
+        elif all(isinstance(a, (int, float)) and isinstance(s, int) for a, s in weights) and row["sessions"]:
+            row["avg_duration_s"] = round(sum(a * s for a, s in weights) / row["sessions"], 1)
+        else:
+            row["avg_duration_s"] = None
+        out.append(row)
+    return out
+
+
+def _fill_site(site, rows, *, merge=False):
+    """糸に結べた行から、サイトの sessions・engaged・媒体ごと・campaign の列を埋める。足せたら True。"""
+    picked = _merge_campaigns(rows) if merge else [{k: r.get(k) for k in CAMPAIGN_KEYS} for r in rows]
+    site["campaigns"] = sorted(picked, key=lambda r: (r.get("file") or "", r.get("source") or "",
+                                                      r.get("medium") or ""))
+    if not rows:
+        site["cannot_say"] = "no_tied_campaign"
+        return False
+    site["sessions"] = _sum(rows, "sessions")
+    site["engaged_sessions"] = _sum(rows, "engaged_sessions")
+    if site["sessions"] is None:
+        site["cannot_say"] = "sessions_partly_unknown"
+    for r in rows:
+        medium = (r.get("medium") or "(none)").strip().lower() or "(none)"
+        if isinstance(r.get("sessions"), int):
+            site["by_medium"][medium] = site["by_medium"].get(medium, 0) + r["sessions"]
+    return True
+
+
+def thread_block(project, ledger, thread_id, records=None, cannot=None, *, period=None, status=None) -> dict:
+    """糸 1 本の「本記事への訪問」。控えが無ければ `cannot_say: site_visits_not_imported`（0 と混ぜない）。
+
+    5.11.0 段 8: 日ごとの控えのあるサイトは、糸の期間（`thread_period`）に重なる日の控えを足す
+    （`window_basis: thread_period_daily`）。日ごとの控えが期間に無いサイトは今までどおり幅のある窓の最新
+    （`window_basis: latest_window`）。`records` は `read_all` の形（全部の控え）。
+    """
     if records is None:
-        records, cannot = load(project)
+        records, cannot = read_all(project)
     cannot = set(cannot or ())
     block = {"label": LABEL, "source": SOURCE, "as_of": None, "sessions": None, "engaged_sessions": None,
              "sites": [], "cannot_say": None}
@@ -454,12 +727,50 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None) -> dict:
         block["cannot_say"] = "site_visits_unreadable" if cannot else "site_visits_not_imported"
         return block
     block["as_of"] = max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
-    totals, windows = [], set()
-    for record in records:
-        site = {"site": record.get("site"), "window": record.get("window"),
+    period = period if period is not None else thread_period(ledger, thread_id, status)
+    start, end = _day(period.get("from")), _day(period.get("to"))
+    totals, windows, bases = [], set(), set()
+    for plan in plan_sites(records, start, end, ledger.now):
+        if plan["mode"] == "daily":
+            span = plan["span"]
+            used = span["records"]
+            site = {"site": plan["site"], "window": {"from": period.get("from"), "to": period.get("to")},
+                    "window_basis": BASIS_THREAD_DAILY, **_span_keys(span),
+                    "generated_at": max((r.get("generated_at") for r in used if r.get("generated_at")), default=None),
+                    "imported_at": max((r.get("imported_at") for r in used if r.get("imported_at")), default=None),
+                    "sessions": None, "engaged_sessions": None, "by_medium": {}, "campaigns": [],
+                    "rows_total": None, "untied_campaigns": None, "cannot_say": None}
+            bases.add(BASIS_THREAD_DAILY)
+            if plan["mixed_windows"]:
+                site["mixed_windows"] = plan["mixed_windows"]
+                block.setdefault("mixed_windows", []).append(plan["site"])
+            if not used:
+                if start is None:
+                    site["cannot_say"] = "thread_period_unknown"
+                elif span["days_unavailable"]:
+                    site["cannot_say"] = "site_visits_unavailable"
+                    site["unknown_reason"] = "daily_unavailable"
+                else:
+                    site["cannot_say"] = "no_daily_in_period"
+                block["sites"].append(site)
+                continue
+            merged = {"rows": [row for r in used for row in r["rows"]]}
+            tied = tie_rows(merged, ledger.items)
+            site["rows_total"] = len(merged["rows"])
+            site["untied_campaigns"] = tied["untied_campaigns"]
+            if _fill_site(site, tied["by_thread"].get(thread_id) or [], merge=True):
+                totals.append(site)
+                windows.add(f"daily:{period.get('from')}/{period.get('to')}")
+                if span["days_missing"] or span["days_unavailable"]:
+                    block.setdefault("partial_sites", []).append(plan["site"])
+            block["sites"].append(site)
+            continue
+        record = plan["record"]
+        site = {"site": record.get("site"), "window": record.get("window"), "window_basis": BASIS_LATEST,
                 "generated_at": record.get("generated_at"), "imported_at": record.get("imported_at"),
                 "sessions": None, "engaged_sessions": None, "by_medium": {}, "campaigns": [],
                 "rows_total": None, "untied_campaigns": None, "cannot_say": None}
+        bases.add(BASIS_LATEST)
         if record.get("newer_unavailable"):
             # 新しい窓は取れなかった。数はその前の取れた窓のもの（注記して添える）。
             site["stale"] = True
@@ -471,30 +782,22 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None) -> dict:
             block["sites"].append(site)
             continue
         tied = tie_rows(record, ledger.items)
-        rows = tied["by_thread"].get(thread_id) or []
         site["rows_total"] = len(record["rows"])
         site["untied_campaigns"] = tied["untied_campaigns"]
-        site["campaigns"] = [{k: r.get(k) for k in ("campaign", "file", "source", "medium", "sessions",
-                                                      "engaged_sessions", "avg_duration_s", "landing_page")}
-                             for r in sorted(rows, key=lambda r: (r.get("file") or "", r.get("source") or "",
-                                                                    r.get("medium") or ""))]
-        if not rows:
-            site["cannot_say"] = "no_tied_campaign"
-        else:
-            site["sessions"] = _sum(rows, "sessions")
-            site["engaged_sessions"] = _sum(rows, "engaged_sessions")
-            if site["sessions"] is None:
-                site["cannot_say"] = "sessions_partly_unknown"
-            for r in rows:
-                medium = (r.get("medium") or "(none)").strip().lower() or "(none)"
-                if isinstance(r.get("sessions"), int):
-                    site["by_medium"][medium] = site["by_medium"].get(medium, 0) + r["sessions"]
+        if _fill_site(site, tied["by_thread"].get(thread_id) or []):
             totals.append(site)
             windows.add((site["window"] or {}).get("from", "") + "/" + (site["window"] or {}).get("to", ""))
         block["sites"].append(site)
+    block["window_basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
+    block["period"] = dict(period)
     if not totals:
-        unavailable = all(s["cannot_say"] == "site_visits_unavailable" for s in block["sites"])
-        block["cannot_say"] = "site_visits_unavailable" if unavailable else "no_tied_campaign"
+        codes = {s["cannot_say"] for s in block["sites"]}
+        if codes == {"site_visits_unavailable"}:
+            block["cannot_say"] = "site_visits_unavailable"
+        elif codes in ({"no_daily_in_period"}, {"thread_period_unknown"}):
+            block["cannot_say"] = next(iter(codes))
+        else:
+            block["cannot_say"] = "no_tied_campaign"
     elif len(windows) > 1:
         block["cannot_say"] = "windows_differ"   # 窓の違うサイトは足さない（サイトごとに見る）
     elif any(s["sessions"] is None for s in totals):

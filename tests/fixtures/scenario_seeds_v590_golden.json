@@ -131,7 +131,7 @@
       "measure": "本記事への訪問（GA4・hub 経由）",
       "source": "ga4_via_hub",
       "sort_basis": "sessions の多い順・同じ数は原稿のパスの順・サイトごと（窓の違うサイトは混ぜない）",
-      "window_basis": "GA4 の窓（hub が決める）が --days の窓と重なる控えだけ",
+      "window_basis": "日ごとの控えは --days の窓の日を足す（seeds_days_daily）・幅のある窓は --days の窓と重なる最新の控えだけ（latest_window）",
       "as_of": null,
       "sites": [],
       "cannot_say": [

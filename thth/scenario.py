@@ -1267,7 +1267,8 @@ def show(target, ident, *, now=None, allowed_names=None) -> dict:
     if key == "thread":
         # 5.7.0 段 3: 本記事への訪問（GA4・hub 経由）。控えが無ければ `site_visits_not_imported`。
         from . import site_visits
-        payload["site_visits"] = site_visits.thread_block(ledger.project, ledger, decl.id)
+        # 5.11.0 段 8: 日ごとの控えは糸の期間（started → closed か done・無ければ今日）に重なる日を足す。
+        payload["site_visits"] = site_visits.thread_block(ledger.project, ledger, decl.id, status=body)
         # 5.11.0 段 7: Threads のリンクのクリック（THTH の実測・72h）。訪問（GA4）とは別の欄で、混ぜない。
         from . import thread_clicks
         payload["threads_clicks"] = thread_clicks.thread_block(ledger, decl.id)

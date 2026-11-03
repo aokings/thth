@@ -306,7 +306,8 @@ def test_読めない実測は0と混ぜない(seeds, monkeypatch):
 # ------------------------------------------------------------------ 監査（Fable）のあとに足した柵
 
 SITE_KEYS = {"site", "window", "generated_at", "stale", "rows", "more", "cannot_say", "manuscripts", "n",
-             "min_n", "median", "comparable", "untied"}
+             "min_n", "median", "comparable", "untied",
+             "window_basis"}   # 5.11.0 段 8: 窓の決め方（幅のある窓は latest_window）
 SITE_ROW_KEYS = {"path", "file", "thread", "sessions", "engaged_sessions"}
 
 
