@@ -433,7 +433,8 @@ def _sync_for_lookup(items, account=None, wait=0) -> tuple:
                          "（--wait <秒> で空くのを待てます）")
             continue
         try:
-            synced, sync_err, _sha = writeback_mod.sync_repo(root)
+            # パスを探し直すだけの取り込み（lint からも来る）なので push しない。
+            synced, sync_err, _sha = writeback_mod.sync_repo_no_push(root)
         finally:
             repo_lock.release()
         if not synced:
@@ -924,7 +925,9 @@ def cmd_approve(args) -> int:
         return 1
 
     try:
-        synced, sync_err, synced_sha = writeback_mod.sync_repo(repo_dir)
+        # 1 段目（digest を出すだけ）は下見なので、手元の書き戻しの commit を載せ直さない（push しない）。
+        sync = writeback_mod.sync_repo if args.confirm else writeback_mod.sync_repo_no_push
+        synced, sync_err, synced_sha = sync(repo_dir)
         if not synced:
             print(f"repo を同期できないので承認しません: {sync_err}", file=sys.stderr)
             return 1

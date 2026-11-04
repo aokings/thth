@@ -819,8 +819,10 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # レビュー第 3 巡 P1）: 唯一の例外は repo_dir が存在しないこと（`masaru-threads`
     # の `repos/_none` のような send 専用アカウント）。それ以外は git repo として
     # 同期の成功を確認できて初めて成功扱いになる（`writeback.sync_repo()` の
-    # docstring 参照）。
-    synced, sync_err, synced_sha = writeback.sync_repo(account_cfg.get("repo_dir"))
+    # docstring 参照）。dry-run は手元の書き戻しの commit を載せ直さない（push しない・
+    # `writeback.sync_repo_no_push()`）。
+    sync = writeback.sync_repo if production else writeback.sync_repo_no_push
+    synced, sync_err, synced_sha = sync(account_cfg.get("repo_dir"))
     if not synced:
         msg = f"利用者 repo の同期に失敗しました（投稿しません）: {sync_err}"
         log(msg)

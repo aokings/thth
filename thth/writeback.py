@@ -381,6 +381,11 @@ def push_pending(repo_dir: str) -> dict:
     `@{u}` を数え、**ahead があって behind が 0（早送りで押せる）ときだけ** push する。
     behind があれば押さない——rebase もしない（手元の commit の並びを道具が黙って
     書き換えない）。戻り値 `{"pushed", "count", "subjects", "ahead", "behind", "error"}`。
+
+    ここは**人の commit も押す口**（`--by` で名乗った人が押す）なので、並びは書き換えない。
+    並びを書き換えて載せ直すのは、未 push の並びが**すべて道具自身の書き戻し**だと
+    確かめられたときの `sync_repo()` だけ（2026-11-04）。人の commit は、どちらの口でも
+    道具が書き換えない。
     """
     out = {"pushed": False, "count": 0, "subjects": [], "ahead": None, "behind": None,
            "error": None}
@@ -396,7 +401,9 @@ def push_pending(repo_dir: str) -> dict:
     out["ahead"], out["behind"] = int(parts[0]), int(parts[1])
     if out["behind"]:
         out["error"] = (f"upstream に {out['behind']} commit 遅れているので押しません"
-                        "（rebase はしません。手元の commit と upstream のどちらを残すかは人が決めます）")
+                        "（rebase はしません。手元の commit と upstream のどちらを残すかは人が決めます）。"
+                        "手元が THTH の書き戻しの commit だけなら、--push-pending を外した"
+                        " thth pull <口座> が upstream の上に載せ直して push します")
         return out
     if not out["ahead"]:
         return out
@@ -658,6 +665,26 @@ def push_committed(repo_dir: str, *, validate=None) -> tuple:
     # 人や前の実行が残した rebase は、こちらで abort しない（その途中の作業を消す）。
     if _rebase_in_progress(repo_dir):
         return False, REBASE_IN_PROGRESS.format(repo=repo_dir)
+    try:
+        ok, last_err = _rebase_and_push(repo_dir, validate=validate)
+    except PushValidationFailed:
+        # 照合で止めた commit に印を付ける（4.x・2026-11-04）。`sync_repo()` は書き戻しの
+        # commit を載せ直して push するが、**この commit だけは載せ直さない**——載せ直すと
+        # 照合を飛ばして押すことになる。
+        _hold_head(repo_dir)
+        raise
+    if ok:
+        return True, ""
+    msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
+    return False, msg
+
+
+def _rebase_and_push(repo_dir: str, *, validate=None) -> tuple:
+    """`fetch origin` → `rebase --autostash @{u}` → push を 2 回まで。`(ok, 最後の stderr)`。
+
+    stage の区別は前後で保つ（`save_index`・`restore_index`）。`validate` が False なら
+    `PushValidationFailed`。`push_committed()` と `sync_repo()` の載せ直しが使う。
+    """
     saved_tree, staged_paths = save_index(repo_dir)
     before_pull = _run_git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
 
@@ -693,9 +720,16 @@ def push_committed(repo_dir: str, *, validate=None) -> tuple:
             last_err = push.stderr
     finally:
         restore_index(repo_dir, saved_tree, staged_paths, since=before_pull)
+    return False, last_err
 
-    msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
-    return False, msg
+
+# 照合（`validate`）で push を止めた commit の印。手元だけの ref で、push しない（`git push` は
+# 枝だけを送る）。印の commit が手元の未 push の並びに居る間、`sync_repo()` は載せ直さない。
+HELD_REF = "refs/thth/push-held"
+
+
+def _hold_head(repo_dir: str) -> None:
+    _run_git(repo_dir, ["update-ref", HELD_REF, "HEAD"])
 
 
 def _rebase_in_progress(repo_dir: str) -> bool:
@@ -796,15 +830,40 @@ def sync_repo(repo_dir: str) -> tuple:
     `error="repo_sync_failed"` になり、**adapter.publish() は一度も呼ばれない**。
 
     `thth send`（同席の様態）は queue を読まないのでこの関数を呼ばない。
+
+    **手元に残った THTH 自身の書き戻しの commit は載せ直して push する**（2026-11-04・
+    関東の口座）。書き戻しの push が落ちて commit が手元に残る（ahead）間に origin が
+    進む（behind）と、早送りできず、`thth inflight resolve`・`thth pull`・投稿が全部
+    ここで止まって道具が自分で解けなかった。未 push の並びが**すべて**道具の書き戻しで
+    （`_own_writeback_files()`）、upstream の変更と同じファイルに重ならないときだけ、
+    `_rebase_and_push()` で upstream の上に載せ直して push し、そのあと今までどおり
+    `HEAD == @{u}` を確かめて通す。人の commit が 1 本でも混ざれば書き換えない
+    （`push_pending()` の「手元の commit の並びを道具が黙って書き換えない」はそのまま）。
+    **呼び出し側が repo のロックを握っている前提。** 読むだけ・下見の経路（dry-run の
+    投稿・承認の 1 段目・パスの探し直し）は push しない `sync_repo_no_push()` を呼ぶ。
     """
+    return _sync(repo_dir, push=True)
+
+
+def sync_repo_no_push(repo_dir: str) -> tuple:
+    """`sync_repo()` と同じ同期で、手元の書き戻しの commit を載せ直さない（push しない）。
+
+    dry-run の投稿・承認の 1 段目（digest を出すだけ）・パスの探し直しが使う。下見で
+    origin を書き換えない。載せ直せる commit が残っていれば、断りの理由で
+    `thth pull <口座>` を案内する。
+    """
+    return _sync(repo_dir, push=False)
+
+
+def _sync(repo_dir: str, *, push: bool) -> tuple:
     if not repo_dir or not os.path.isdir(repo_dir):
         # 唯一の例外。queue を読む先そのものが無いので、どのみち公開されない。
         return True, "", None
 
-    return _confirm_synced(repo_dir)
+    return _confirm_synced(repo_dir, push=push)
 
 
-def _confirm_synced(repo_dir: str) -> tuple:
+def _confirm_synced(repo_dir: str, *, push: bool = True) -> tuple:
     """`repo_dir` が存在する前提で、同期の成功を積極的に確認する。
 
     確認できたステップだけを通す（数え上げ式の逆）。どのステップであれ
@@ -835,14 +894,21 @@ def _confirm_synced(repo_dir: str) -> tuple:
     # 誰が書いても読まない。ff できないとき（枝分かれ・作業ツリーの衝突）は従前
     # どおりここで断る。
     merge = _run_git(repo_dir, ["merge", "--ff-only", "@{u}"])
+    stuck = stuck_short = None
     if merge.returncode != 0:
-        return False, ("git merge --ff-only @{u} に失敗しました（upstream に早送りで"
-                        "追いつけません）: " + redact_mod.redact(merge.stderr)), None
+        stuck_short = "git merge --ff-only @{u} に失敗しました（upstream に早送りで追いつけません）"
+        stuck = stuck_short + ": " + redact_mod.redact(merge.stderr)
+    elif not _head_is_upstream(repo_dir):
+        # merge --ff-only が exit 0 を返しただけでなく、HEAD が実際に upstream に追いついた
+        # ことを直接見る（HEAD が upstream より先にいると、merge は何もせずに 0 を返す）。
+        stuck = stuck_short = "取り込みの後、HEAD が upstream に追いついたことを確認できませんでした"
+    if stuck:
+        # 手元に未 push の commit があれば、道具の書き戻しだけかを見て載せ直す（docstring）。
+        settled, note = _settle_ahead(repo_dir, push=push)
+        if not settled:
+            return False, (f"{stuck_short}。{note}" if note else stuck), None
 
-    # 最終確認: merge --ff-only が exit 0 を返しただけでなく、HEAD が実際に
-    # upstream に追いついたことを直接見る（「エラーが出なかった」ではなく
-    # 「成功したと確認できた」で通すため。HEAD が upstream より先にいると、
-    # merge は何もせずに 0 を返す）。
+    # 最終確認（「エラーが出なかった」ではなく「成功したと確認できた」で通す）。
     head = _run_git(repo_dir, ["rev-parse", "HEAD"])
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
     if (head.returncode != 0 or upstream.returncode != 0
@@ -852,3 +918,210 @@ def _confirm_synced(repo_dir: str) -> tuple:
     # **確かめた OID をそのまま返す**（外部レビュー第 5 巡 P1）。呼び出し側は
     # これを持ち回り、queue の照合先に使う。HEAD を引き直させない。
     return True, "", head.stdout.strip()
+
+
+def _head_is_upstream(repo_dir: str) -> bool:
+    head = _run_git(repo_dir, ["rev-parse", "HEAD"])
+    upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
+    return (head.returncode == 0 and upstream.returncode == 0
+            and head.stdout.strip() == upstream.stdout.strip())
+
+
+# 道具が自分で積む書き戻しの commit の形（`commit_and_push()` の呼び出し側の message）。
+# **題だけでは決めない**: 題の形に加えて、触ったファイルの形も合うものだけを道具の commit と
+# みなす（`_own_writeback_files()`）。形が合わないもの・ここに無い形はすべて人の commit。
+# 呼び出し側の message を変えたら、ここと `tests/test_sync_replays_own_writeback.py` の見本も直す
+# （直さなければ人の commit として扱われ、今までどおり止まるだけ）。
+_OWN_FRONT_MATTER = (  # 原稿 1 本の front-matter だけを書き換える
+    re.compile(r"thth: \S+ (?P<name>[^/]+) を投稿（post_id .+）"),   # core・inflight_resolve
+    re.compile(r"thth: \S+ (?P<name>[^/]+) をはてなブログへ（.+）"),  # hatena_publish
+    re.compile(r"THTH: (?P<rel>.+) の \d+ 段目を公開（.+）"),         # threadthrow
+    re.compile(r"取り下げ: (?P<name>[^/]+) post_id .+（.+）"),        # retract_cli
+)
+_OWN_NEW_FILE = (  # 新しい原稿を 1 本置く
+    re.compile(r"burst の順番待ち: (?P<name>[^/]+)（\S+）"),          # burst_queue
+)
+_OWN_DATA = (  # 採取の台帳（`data/` の下）を N 本
+    re.compile(r"(?:収集|返信の取り直し): (?P<count>\d+) ファイル（\S+）"),  # collect
+    re.compile(r"反応の採取: (?P<count>\d+) 配信（\S+）"),                   # hatena_reactions
+)
+_OWN_MANAGED = (  # 道具だけが書く clone（`managed_repo`）の原稿と添付
+    re.compile(r"(?:draft|media) by=.+ via=.+"),                       # server_writes・media_uploads
+    re.compile(r"media gc by=.+"),                                     # media_uploads
+)
+# `incident.py` の「thth: record account incident state」は入れない。あちらは自分の commit の
+# OID を控えて自分で押し直すので、載せ直して OID が変わると控えと合わなくなる。
+
+
+def _body_after_front_matter(blob: bytes):
+    lines = blob.split(b"\n")
+    if not lines or lines[0].strip() != b"---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == b"---":
+            return b"\n".join(lines[i + 1:])
+    return None
+
+
+def _own_writeback_files(repo_dir: str, sha: str, parents: list):
+    """`sha` が道具の書き戻しの commit なら、触ったパスの集合。人の commit（見分けられない
+    ものを含む）なら None。"""
+    if len(parents) != 1:
+        return None  # merge（と根の commit）は道具が積まない
+    body = _run_git(repo_dir, ["log", "-1", "--format=%B", sha])
+    if body.returncode != 0:
+        return None
+    subject = body.stdout.strip()
+    if not subject or "\n" in subject:
+        return None
+    listed = _run_git(repo_dir, ["diff-tree", "--no-commit-id", "-r", "-z", "--name-status", sha])
+    if listed.returncode != 0:
+        return None
+    fields = listed.stdout.split("\0")
+    changes = [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2) if fields[i]]
+    if not changes:
+        return None
+    paths = {path for _status, path in changes}
+
+    for pattern in _OWN_FRONT_MATTER:
+        hit = pattern.fullmatch(subject)
+        if hit is None:
+            continue
+        if len(changes) != 1 or changes[0][0] != "M":
+            return None
+        path = changes[0][1]
+        if hit.groupdict().get("rel") is not None:
+            if hit["rel"].replace(os.sep, "/") != path:
+                return None
+        elif os.path.basename(path) != hit["name"]:
+            return None
+        before = _run_git_bytes(repo_dir, ["cat-file", "blob", f"{parents[0]}:{path}"])
+        after = _run_git_bytes(repo_dir, ["cat-file", "blob", f"{sha}:{path}"])
+        if before.returncode != 0 or after.returncode != 0:
+            return None
+        old, new = _body_after_front_matter(before.stdout), _body_after_front_matter(after.stdout)
+        # 本文（front-matter の後ろ）に 1 バイトでも触れていれば道具の書き戻しではない。
+        return paths if old is not None and old == new else None
+    for pattern in _OWN_NEW_FILE:
+        hit = pattern.fullmatch(subject)
+        if hit is None:
+            continue
+        ok = len(changes) == 1 and changes[0][0] == "A" and os.path.basename(changes[0][1]) == hit["name"]
+        return paths if ok else None
+    for pattern in _OWN_DATA:
+        hit = pattern.fullmatch(subject)
+        if hit is None:
+            continue
+        ok = (int(hit["count"]) == len(changes)
+              and all(status in ("A", "M") and path.startswith("data/") for status, path in changes))
+        return paths if ok else None
+    from . import managed_repo
+    if managed_repo.account_for(repo_dir) is not None:
+        if any(pattern.fullmatch(subject) for pattern in _OWN_MANAGED):
+            return paths
+    return None
+
+
+def _changed_names(repo_dir: str, args: list):
+    out = _run_git(repo_dir, ["diff", "--name-only", "-z", *args])
+    if out.returncode != 0:
+        return None
+    return {name for name in out.stdout.split("\0") if name}
+
+
+def _ahead_rows(repo_dir: str):
+    listed = _run_git(repo_dir, ["rev-list", "--reverse", "--parents", "@{u}..HEAD"])
+    if listed.returncode != 0:
+        return None
+    return [line.split() for line in listed.stdout.splitlines() if line.strip()]
+
+
+def _classify(repo_dir: str, rows: list) -> tuple:
+    """`(触ったパスの集合, None)` か、人の commit が混ざれば `(None, (短い OID, 題))`。"""
+    touched = set()
+    for sha, *parents in rows:
+        files = _own_writeback_files(repo_dir, sha, parents)
+        if files is None:
+            subject = _run_git(repo_dir, ["log", "-1", "--format=%s", sha]).stdout.strip()
+            return None, (sha[:7], subject)
+        touched |= files
+    return touched, None
+
+
+def _settle_ahead(repo_dir: str, *, push: bool) -> tuple:
+    """手元の未 push の commit を、道具の書き戻しだけなら upstream の上に載せ直して push する。
+
+    戻り値 `(載せ直して push できたか, 断りの理由)`。理由は「どうすれば通るか」で終わる
+    （`docs/原則_前向きな断り.md`）。未 push の commit が無い（遅れているだけで早送りに失敗
+    した等）なら `(False, "")`——呼び出し側は従前の理由をそのまま出す。**断るときは手元を
+    元のままにする**（ぶつかった rebase は abort・動いた HEAD は戻す・stage の区別は
+    `_rebase_and_push()` が保つ）。
+    """
+    if _rebase_in_progress(repo_dir):
+        return False, REBASE_IN_PROGRESS.format(repo=repo_dir)
+    rows = _ahead_rows(repo_dir)
+    if not rows:
+        return False, ""
+    touched, human = _classify(repo_dir, rows)
+    if human is not None:
+        return False, (f"手元に upstream へ届いていない commit が {len(rows)} 本あり、THTH の書き戻し"
+                       f"ではないもの（{human[0]} {redact_mod.redact(human[1])[:60]}）が混ざっているので、"
+                       f"道具では並びを書き換えません。git -C {repo_dir} log --stat @{{u}}..HEAD で見て、"
+                       "残すなら手で rebase して push、要らなければ外してから、もう一度打ってください")
+    held = _run_git(repo_dir, ["rev-parse", "--verify", "-q", HELD_REF]).stdout.strip()
+    if held and any(sha == held for sha, *_ in rows):
+        return False, (f"手元の commit {held[:7]} は、取り込みのあとの照合（送った本文と一致するか）で"
+                       f"push を止めたものなので載せ直しません。git -C {repo_dir} show {held[:7]} で"
+                       "中身を確かめ、正しければ手で push してから、もう一度打ってください")
+    base = _run_git(repo_dir, ["merge-base", "HEAD", "@{u}"]).stdout.strip()
+    upstream_changed = _changed_names(repo_dir, [base, "@{u}"]) if base else None
+    dirty = _changed_names(repo_dir, ["HEAD"])
+    if upstream_changed is None or dirty is None:
+        return False, (f"upstream で変わったファイルを数えられません。git -C {repo_dir} status で"
+                       "枝と upstream を確かめてから、もう一度打ってください")
+    overlap = sorted(touched & upstream_changed)
+    if overlap:
+        return False, (f"手元の書き戻しの commit と upstream が同じファイル（{'・'.join(overlap[:3])}）を"
+                       f"変えているので、道具では載せ直しません。git -C {repo_dir} log -p @{{u}}..HEAD と"
+                       f" git -C {repo_dir} log -p HEAD..@{{u}} を見比べ、残す方を決めて手で rebase して"
+                       "から、もう一度打ってください")
+    in_the_way = sorted(dirty & upstream_changed)
+    if in_the_way:
+        return False, (f"作業ツリーの変更（{'・'.join(in_the_way[:3])}）が upstream の変更と重なるので"
+                       "載せ直しません。その変更を commit するか退けてから、もう一度打ってください")
+    if not push:
+        return False, (f"手元に THTH の書き戻しの commit が {len(rows)} 本、upstream へ届かないまま"
+                       "残っています。この経路は下見なので push しません。"
+                       "thth pull <口座> で upstream の上に載せ直して push できます")
+
+    before = _run_git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
+
+    def still_safe() -> bool:
+        # 取り込みの再試行は fetch し直すので、載せた直後にもう一度見る（その間に upstream が
+        # 同じファイルを変えた・人が commit を足した、を押さない）。
+        again = _ahead_rows(repo_dir)
+        if again is None or len(again) != len(rows):
+            return False
+        now_touched, now_human = _classify(repo_dir, again)
+        old_base = _run_git(repo_dir, ["merge-base", before, "@{u}"]).stdout.strip()
+        moved = _changed_names(repo_dir, [old_base, "@{u}"]) if old_base else None
+        return now_human is None and now_touched == touched and moved is not None and not (touched & moved)
+
+    try:
+        ok, last_err = _rebase_and_push(repo_dir, validate=still_safe)
+        reason = redact_mod.redact(last_err).strip()
+    except PushValidationFailed:
+        ok, reason = False, "載せ直している間に upstream か手元の並びが変わりました"
+    if ok:
+        return True, ""
+    if _run_git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip() != before:
+        # 載せ直したが押せなかった。HEAD を元の commit に戻す（中身は同じ・作業ツリーの変更は残す）。
+        # 戻せなければ照合で止めたのと同じ印を付け、次の同期が黙って押さないようにする。
+        # `reset --keep` は index を戻すので、stage の区別は前後で控えて戻す（重なりは上で断り済み）。
+        saved_tree, staged_paths = save_index(repo_dir)
+        if _run_git(repo_dir, ["reset", "-q", "--keep", before]).returncode != 0:
+            _hold_head(repo_dir)
+        restore_index(repo_dir, saved_tree, staged_paths)
+    return False, (f"手元の書き戻しの commit（{len(rows)} 本）を upstream の上に載せて push できません"
+                   f"でした（手元は元のままです）: {reason[:300]}。origin に届くようになってから、"
+                   "もう一度打ってください（thth pull <口座> で載せ直せます）")
