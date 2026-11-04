@@ -115,7 +115,7 @@ def window_slot(times, count, minutes, now) -> datetime.datetime:
 
 
 def _hit(used, adds, count, next_at=None, **extra):
-    out = {"hit": used + adds > count, "used": used, "count": count, "next_at": next_at}
+    out = {"hit": used + adds > count, "used": used, "adds": adds, "count": count, "next_at": next_at}
     out.update(extra)
     return out
 
@@ -274,6 +274,8 @@ def finding(rule, value) -> dict:
         "purpose": rule["purpose"],
         "scope": rule["scope"],
         "used": value.get("used"),
+        # 足す件数（`_hit` の `adds`）。慣らしの符丁の選び（`shared_app.mark_ramp`）が同じ物差しで見る。
+        "adds": value.get("adds"),
         "count": value.get("count", rule.get("count")),
         "window": rule.get("window"),
         "next_at": value.get("next_at"),
