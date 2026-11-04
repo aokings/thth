@@ -153,7 +153,9 @@ def run_for_account(account_name: str, *, adapter_factory, now=None, log=print,
     except lock_mod.LockBusy:
         return []
     try:
-        ok, _err, tree_sha = writeback_mod.sync_repo(repo_dir)
+        # dry-run は手元の書き戻しの commit を載せ直さない（push しない）。
+        sync = writeback_mod.sync_repo if production else writeback_mod.sync_repo_no_push
+        ok, _err, tree_sha = sync(repo_dir)
         if not ok:
             return []
         rels = due_bundles(account_cfg, now=now, tree_sha=tree_sha)
@@ -242,7 +244,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         if hold_row is not None:
             return StepResult("stopped", None, publish_hold_mod.message(account_name, hold_row))
 
-    ok, err, tree_sha = writeback_mod.sync_repo(repo_dir)
+    sync = writeback_mod.sync_repo if production else writeback_mod.sync_repo_no_push
+    ok, err, tree_sha = sync(repo_dir)
     if not ok:
         return StepResult("skipped", None, f"同期できません: {err}")
 

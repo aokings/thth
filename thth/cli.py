@@ -433,7 +433,8 @@ def _sync_for_lookup(items, account=None, wait=0) -> tuple:
                          "（--wait <秒> で空くのを待てます）")
             continue
         try:
-            synced, sync_err, _sha = writeback_mod.sync_repo(root)
+            # パスを探し直すだけの取り込み（lint からも来る）なので push しない。
+            synced, sync_err, _sha = writeback_mod.sync_repo_no_push(root)
         finally:
             repo_lock.release()
         if not synced:
@@ -924,7 +925,9 @@ def cmd_approve(args) -> int:
         return 1
 
     try:
-        synced, sync_err, synced_sha = writeback_mod.sync_repo(repo_dir)
+        # 1 段目（digest を出すだけ）は下見なので、手元の書き戻しの commit を載せ直さない（push しない）。
+        sync = writeback_mod.sync_repo if args.confirm else writeback_mod.sync_repo_no_push
+        synced, sync_err, synced_sha = sync(repo_dir)
         if not synced:
             print(f"repo を同期できないので承認しません: {sync_err}", file=sys.stderr)
             return 1
@@ -3800,6 +3803,10 @@ def cmd_pull(args) -> int:
     （T8-2・`writeback.behind_remote()`）で pull しない——その案内
     （「`thth pull <account>` か `thth approve` で取り込まれます」）から
     誘導される、明示の取り込み口がここ。
+
+    取り込みは早送りだけ。ただし手元に **THTH 自身の書き戻しの commit** が upstream へ
+    届かないまま残っていれば、`sync_repo()` が upstream の上に載せ直して **push しうる**
+    （2026-11-04）。人の commit は書き換えず、押すなら `--push-pending --by`。
 
     `--project` なら台帳の project が一致する account の repo をまとめて
     取り込む。**同じ repo を 2 回引かない**（repo_dir で重複排除してから
