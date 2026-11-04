@@ -3,7 +3,9 @@
 読むだけの口（`queue`・`schedule`・`board`。T8-2）は遅れを**言うだけ**で
 pull しない。この道具は、その案内から誘導される**明示の**取り込み口——
 `writeback.sync_repo()` を呼ぶだけで、`thth approve` が既に通しているのと
-同じ関数・同じ repo ロックを使う。
+同じ関数・同じ repo ロックを使う。取り込みは早送りだけだが、手元に THTH 自身の
+書き戻しの commit が残っていれば、upstream の上に載せ直して push しうる（2026-11-04・
+`tests/test_sync_replays_own_writeback.py`）。人の commit は書き換えない。
 """
 from __future__ import annotations
 

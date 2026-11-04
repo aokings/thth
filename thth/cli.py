@@ -3804,6 +3804,10 @@ def cmd_pull(args) -> int:
     （「`thth pull <account>` か `thth approve` で取り込まれます」）から
     誘導される、明示の取り込み口がここ。
 
+    取り込みは早送りだけ。ただし手元に **THTH 自身の書き戻しの commit** が upstream へ
+    届かないまま残っていれば、`sync_repo()` が upstream の上に載せ直して **push しうる**
+    （2026-11-04）。人の commit は書き換えず、押すなら `--push-pending --by`。
+
     `--project` なら台帳の project が一致する account の repo をまとめて
     取り込む。**同じ repo を 2 回引かない**（repo_dir で重複排除してから
     1 回だけ `sync_repo()` を呼ぶ）。

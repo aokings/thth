@@ -932,12 +932,24 @@ def _head_is_upstream(repo_dir: str) -> bool:
 # みなす（`_own_writeback_files()`）。形が合わないもの・ここに無い形はすべて人の commit。
 # 呼び出し側の message を変えたら、ここと `tests/test_sync_replays_own_writeback.py` の見本も直す
 # （直さなければ人の commit として扱われ、今までどおり止まるだけ）。
-_OWN_FRONT_MATTER = (  # 原稿 1 本の front-matter だけを書き換える
-    re.compile(r"thth: \S+ (?P<name>[^/]+) を投稿（post_id .+）"),   # core・inflight_resolve
-    re.compile(r"thth: \S+ (?P<name>[^/]+) をはてなブログへ（.+）"),  # hatena_publish
-    re.compile(r"THTH: (?P<rel>.+) の \d+ 段目を公開（.+）"),         # threadthrow
-    re.compile(r"取り下げ: (?P<name>[^/]+) post_id .+（.+）"),        # retract_cli
+# 原稿 1 本の front-matter だけを書き換える。(題, 書く top-level の鍵, 書く `posts:` の段の鍵,
+# 書いたあとの値の確かめ)。鍵は呼び出し側が実際に書くものだけ——**ほかの欄が 1 つでも変わって
+# いれば人の commit**（題を真似て `status` だけ手で変えた commit を載せ直さない・11/05 Fable）。
+_POSTED = frozenset({"status", "post_id", "posted_at", "reply_to_resolved"})
+_OWN_FRONT_MATTER = (
+    (re.compile(r"thth: \S+ (?P<name>[^/]+) を投稿（post_id (?P<pid>[^・）]+)(?:・inflight を解いて記録)?）"),
+     _POSTED, frozenset(), "posted"),                                    # core・inflight_resolve
+    (re.compile(r"thth: \S+ (?P<name>[^/]+) をはてなブログへ（.+）"),
+     _POSTED | {"url"}, frozenset(), "posted"),                          # hatena_publish
+    (re.compile(r"THTH: (?P<rel>.+) の \d+ 段目を公開（(?P<pid>.+)）"),
+     frozenset(), frozenset({"post_id", "posted_at", "reply_to", "run_id", "bundle_sha", "text_sha256"}),
+     "segment"),                                                         # threadthrow（bundle.set_post_fields）
+    (re.compile(r"取り下げ: (?P<name>[^/]+) post_id .+（.+）"),
+     frozenset({"retracted_at", "retracted_by", "retract_reason", "retracted_via", "retracted_credential"}),
+     frozenset(), "retracted"),                                          # retract_cli
 )
+# `incident.py` が積む障害記録の commit の題（載せ直さない・断りの文を言い分ける）。
+INCIDENT_SUBJECT = "thth: record account incident state"
 _OWN_NEW_FILE = (  # 新しい原稿を 1 本置く
     re.compile(r"burst の順番待ち: (?P<name>[^/]+)（\S+）"),          # burst_queue
 )
@@ -953,14 +965,41 @@ _OWN_MANAGED = (  # 道具だけが書く clone（`managed_repo`）の原稿と�
 # OID を控えて自分で押し直すので、載せ直して OID が変わると控えと合わなくなる。
 
 
-def _body_after_front_matter(blob: bytes):
+def _split_blob(blob: bytes):
+    """`(front-matter の行の list, 本文のバイト列)`。front-matter が無ければ None。"""
     lines = blob.split(b"\n")
     if not lines or lines[0].strip() != b"---":
         return None
     for i in range(1, len(lines)):
         if lines[i].strip() == b"---":
-            return b"\n".join(lines[i + 1:])
+            return lines[1:i], b"\n".join(lines[i + 1:])
     return None
+
+
+def _line_key(line: bytes) -> str:
+    text = line.decode("utf-8", "replace").strip()
+    if text.startswith("- "):
+        text = text[2:]
+    return text.split(":", 1)[0].strip() if ":" in text else ""
+
+
+def _without_tool_keys(lines: list, top: frozenset, nested: frozenset) -> list:
+    """道具が書く鍵の行を除いた front-matter（残りが前後で同じなら、ほかの欄に触れていない）。"""
+    out = []
+    for line in lines:
+        indented = line[:1] in (b" ", b"\t")
+        if _line_key(line) in (nested if indented else top):
+            continue
+        out.append(line)
+    return out
+
+
+def _fm_value(lines: list, key: str, *, nested: bool = False) -> list:
+    values = []
+    for line in lines:
+        if (line[:1] in (b" ", b"\t")) == nested and _line_key(line) == key:
+            values.append(line.decode("utf-8", "replace").split(":", 1)[1].strip().strip("'\""))
+    return values
 
 
 def _own_writeback_files(repo_dir: str, sha: str, parents: list):
@@ -983,7 +1022,7 @@ def _own_writeback_files(repo_dir: str, sha: str, parents: list):
         return None
     paths = {path for _status, path in changes}
 
-    for pattern in _OWN_FRONT_MATTER:
+    for pattern, top_keys, nested_keys, wrote in _OWN_FRONT_MATTER:
         hit = pattern.fullmatch(subject)
         if hit is None:
             continue
@@ -999,9 +1038,23 @@ def _own_writeback_files(repo_dir: str, sha: str, parents: list):
         after = _run_git_bytes(repo_dir, ["cat-file", "blob", f"{sha}:{path}"])
         if before.returncode != 0 or after.returncode != 0:
             return None
-        old, new = _body_after_front_matter(before.stdout), _body_after_front_matter(after.stdout)
+        old, new = _split_blob(before.stdout), _split_blob(after.stdout)
         # 本文（front-matter の後ろ）に 1 バイトでも触れていれば道具の書き戻しではない。
-        return paths if old is not None and old == new else None
+        if old is None or new is None or old[1] != new[1]:
+            return None
+        # front-matter も、道具が書く鍵の行のほかは前後で同じでなければならない。
+        if _without_tool_keys(old[0], top_keys, nested_keys) != _without_tool_keys(new[0], top_keys, nested_keys):
+            return None
+        # 書いたあとの値も道具の書き戻しの形（投稿なら posted で、post_id が題と同じ）。
+        fm, pid = new[0], hit.groupdict().get("pid")
+        if wrote == "posted":
+            ok = (_fm_value(fm, "status") == ["posted"] and len(_fm_value(fm, "post_id")) == 1
+                  and _fm_value(fm, "post_id")[0] and (pid is None or _fm_value(fm, "post_id") == [pid]))
+        elif wrote == "segment":
+            ok = pid in _fm_value(fm, "post_id", nested=True)
+        else:
+            ok = len(_fm_value(fm, "retracted_at")) == 1 and bool(_fm_value(fm, "retracted_at")[0])
+        return paths if ok else None
     for pattern in _OWN_NEW_FILE:
         hit = pattern.fullmatch(subject)
         if hit is None:
@@ -1063,6 +1116,11 @@ def _settle_ahead(repo_dir: str, *, push: bool) -> tuple:
     if not rows:
         return False, ""
     touched, human = _classify(repo_dir, rows)
+    if human is not None and human[1] == INCIDENT_SUBJECT:
+        return False, (f"手元に THTH の障害記録の commit（{human[0]}）が upstream へ届かないまま残っています。"
+                       "障害記録は自分の commit の OID を控えて押し直すので、同期では載せ直しません。"
+                       f"git -C {repo_dir} show --stat {human[0]} で中身を確かめ、git -C {repo_dir} pull"
+                       f" --rebase のあと git -C {repo_dir} push で手で押してから、もう一度打ってください")
     if human is not None:
         return False, (f"手元に upstream へ届いていない commit が {len(rows)} 本あり、THTH の書き戻し"
                        f"ではないもの（{human[0]} {redact_mod.redact(human[1])[:60]}）が混ざっているので、"

@@ -313,17 +313,78 @@ def test_dry_runの投稿は書き戻しのcommitをpushしない(pair, isolated
 
 # ------------------------------------------------------------ 見分け方の見本
 
-@pytest.mark.parametrize("subject", [
-    "thth: kanto-x a.md を投稿（post_id 111）",
-    "thth: kanto-x a.md を投稿（post_id 111・inflight を解いて記録）",
-    "thth: kanto-blog a.md をはてなブログへ（d-1）",
-    "THTH: docs/sns/queue/a.md の 2 段目を公開（111）",
-    "取り下げ: a.md post_id 111（masaru）",
+def _commit_fields(pair, message, fields):
+    writeback.set_front_matter_fields(os.path.join(pair["work"], REL), fields)
+    assert writeback.commit_local(pair["work"], rel_path=REL, message=message)[0]
+    sha = _head(pair["work"])
+    return sha, run_git(pair["work"], ["rev-parse", f"{sha}^"]).stdout.strip()
+
+
+def _commit_segment(pair, message):
+    """束の原稿（`posts:` の段）に、段の公開と同じ書き方（`bundle.set_post_fields`）で書く。"""
+    from thth import bundle
+    path = Path(pair["work"]) / REL
+    text = path.read_text(encoding="utf-8").replace(
+        "\n---\n", "\nposts:\n  - index: 1\n  - index: 2\n---\n", 1)
+    path.write_text(text, encoding="utf-8")
+    run_git(pair["work"], ["commit", "-q", "-am", "束にする（人）"])
+    path.write_text(bundle.set_post_fields(text, 2, {"post_id": "111", "posted_at": "2026-09-09T10:00:30+09:00",
+                                                     "run_id": "r1"}), encoding="utf-8")
+    assert writeback.commit_local(pair["work"], rel_path=REL, message=message)[0]
+    sha = _head(pair["work"])
+    return sha, run_git(pair["work"], ["rev-parse", f"{sha}^"]).stdout.strip()
+
+
+POSTED = {"status": "posted", "post_id": "111", "posted_at": "2026-09-09T10:00:30+09:00"}
+
+
+@pytest.mark.parametrize("subject, write", [
+    ("thth: kanto-x a.md を投稿（post_id 111）", POSTED),
+    ("thth: kanto-x a.md を投稿（post_id 111・inflight を解いて記録）", dict(POSTED, reply_to_resolved="9")),
+    ("thth: kanto-blog a.md をはてなブログへ（d-1）", dict(POSTED, url="https://example.invalid/e/1")),
+    ("THTH: docs/sns/queue/a.md の 2 段目を公開（111）", "segment"),
+    ("取り下げ: a.md post_id 111（masaru）",
+     {"retracted_at": "2026-09-09T11:00:00+09:00", "retracted_by": "masaru", "retract_reason": "誤字"}),
 ])
-def test_front_matterだけを書き換える書き戻しの題は道具のcommit(pair, subject):
-    sha = _own_commit(pair, message=subject)
-    parent = run_git(pair["work"], ["rev-parse", f"{sha}^"]).stdout.strip()
+def test_front_matterだけを書き換える書き戻しの題は道具のcommit(pair, subject, write):
+    sha, parent = (_commit_segment(pair, subject) if write == "segment"
+                   else _commit_fields(pair, subject, write))
     assert writeback._own_writeback_files(pair["work"], sha, [parent]) == {REL}
+
+
+@pytest.mark.parametrize("write", [
+    {"status": "draft"},                                     # status だけ手で変えた（題だけ真似た）
+    {"status": "posted"},                                    # posted にしたが post_id が無い
+    dict(POSTED, post_id="222"),                             # 題の post_id と違う
+    dict(POSTED, approved_by="masaru"),                      # 道具が書かない欄にも触れた
+])
+def test_題を真似ても道具の書かない欄や値なら人のcommit(pair, write):
+    """11/05 Fable の再現: 人が front-matter の status だけ手で変え、題を投稿の形にした commit。"""
+    sha, parent = _commit_fields(pair, OWN, write)
+    assert writeback._own_writeback_files(pair["work"], sha, [parent]) is None
+
+
+def test_題を真似てstatusだけ手で変えたcommitは載せ直さない(pair):
+    _commit_fields(pair, OWN, {"status": "draft"})
+    head_before = _head(pair["work"])
+    origin_before = _advance_seed(pair)
+
+    ok, err, _sha = writeback.sync_repo(pair["work"])
+
+    assert not ok and "THTH の書き戻しではないもの" in err
+    _assert_untouched(pair, head_before, origin_before)
+
+
+def test_障害記録のcommitは言い分けて断る(pair):
+    _commit_fields(pair, writeback.INCIDENT_SUBJECT, {"thth_run_state": "fail"})
+    head_before = _head(pair["work"])
+    origin_before = _advance_seed(pair)
+
+    ok, err, _sha = writeback.sync_repo(pair["work"])
+
+    assert not ok and "THTH の障害記録の commit" in err and "書き戻しではないもの" not in err
+    assert err.endswith("もう一度打ってください")
+    _assert_untouched(pair, head_before, origin_before)
 
 
 @pytest.mark.parametrize("subject", [
