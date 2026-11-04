@@ -1,5 +1,6 @@
 import {boundedBody,fields,opaque,fail} from './person.js';
-import {STATE_PATTERN,digest,reply} from './relay.js';
+// Meta が呼ぶ受け口なので、断りに目録の 3 つを足さない答え（replyPlain）で返す。
+import {STATE_PATTERN,digest,replyPlain as reply} from './relay.js';
 export const RETENTION=30*24*60*60*1000;
 export const deletionStub=env=>env.DELETION_INBOX.getByName('pending-receipts-v1');
 export async function deletionRequest(request,env,url){

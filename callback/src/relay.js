@@ -17,7 +17,12 @@ export function explain(status, body) {
   return out;
 }
 export function reply(status, body = {error: "relay_unavailable"}) {
-  return Response.json(explain(status, body), {status, headers: {...HEADERS,
+  return replyPlain(status, explain(status, body));
+}
+// 3 つを足さない答え。Meta が呼ぶデータ削除の受け口（`deletion.js`）は、審査で見られる答えを 1 バイトも変えない
+// （`tests/test_site.py` の見本の柵）。
+export function replyPlain(status, body = {error: "relay_unavailable"}) {
+  return Response.json(body, {status, headers: {...HEADERS,
     ...(status === 429 ? {"retry-after": "2"} : {})}});
 }
 export async function digest(value) {
