@@ -46,6 +46,10 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     "callback": ("callback/*",),
     "privacy_terms": ("callback/public/privacy/*", "callback/public/terms/*", "tools/build_site.py"),
     "approval": ("thth/approval.py", "thth/approval_ledger.py", "thth/approve_pending.py"),
+    # 外の LLM と thth.me の鍵が入る口（11/04 に足した: 段 B が両方の断りの出力を変えたのに、表に無くて
+    # 監査が要らないと判断されたため）。
+    "mcp": ("mcp/server.py",),
+    "remote": ("thth/remote.py",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。
