@@ -10,6 +10,9 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {canonical} from '../src/person.js';
+import {REFUSALS} from '../src/refusal-catalog.js';
+// 断りの答えは {error} に目録の 3 つ（why・fix・better）が足される（src/relay.js の explain）。
+const refusal=code=>({error:code,...REFUSALS[code]});
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(value){logs.push(String(value));}}
@@ -22,7 +25,7 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-api-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
+  const files=['test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/refusal-catalog.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey,API_HOLD_MS:String(HOLD)},
@@ -65,17 +68,17 @@ test('the key must be in the table the VM pushed; unknown, missing and expired k
   const p=await person(),name=account(),value=bearer(),stale=bearer();
   assert.equal((await api('send_request',null,{account:name,body:'x'})).status,401);
   const unknown=await api('send_request',value,{account:name,body:'x'});
-  assert.equal(unknown.status,401);assert.deepEqual(await unknown.json(),{error:'invalid_key'});
+  assert.equal(unknown.status,401);assert.deepEqual(await unknown.json(),refusal('invalid_key'));
   assert.equal(unknown.headers.get('cache-control'),'no-store');assert.equal(unknown.headers.get('referrer-policy'),'no-referrer');
   await sync(p,[keyRow(value,name),keyRow(stale,name,later(-60_000))]);
   const expired=await api('send_request',stale,{account:name,body:'x'});
-  assert.equal(expired.status,401);assert.deepEqual(await expired.json(),{error:'key_expired'});
+  assert.equal(expired.status,401);assert.deepEqual(await expired.json(),refusal('key_expired'));
   // 鍵は口座に結びつく: 別の口座には使えない。
-  assert.deepEqual(await(await api('send_request',value,{account:account(),body:'x'})).json(),{error:'invalid_key'});
+  assert.deepEqual(await(await api('send_request',value,{account:account(),body:'x'})).json(),refusal('invalid_key'));
   assert.ok(!(await control('account',name)).some(([k])=>k.startsWith('request:')));
   // 取り消し・発行し直しは次の sync で揃う（表から外れた鍵は断る）。
   await sync(p,[]);
-  assert.deepEqual(await(await api('send_request',value,{account:name,body:'x'})).json(),{error:'invalid_key'});
+  assert.deepEqual(await(await api('send_request',value,{account:name,body:'x'})).json(),refusal('invalid_key'));
 });
 
 test('one key may serve several accounts of the same person; a duplicated row is refused',async()=>{
@@ -151,12 +154,12 @@ test('eight pending requests per account; the key limit is 60 a minute',async()=
   await control('account',name,{clock:null});
   const all=await Promise.all(Array.from({length:9},(_,n)=>api('draft_list',value,{account:name,n})));
   const codes=all.map(r=>r.status).sort();assert.deepEqual(codes,[...Array(8).fill(202),429]);
-  const refused=all.find(r=>r.status===429);assert.deepEqual(await refused.json(),{error:'too_many_requests'});
+  const refused=all.find(r=>r.status===429);assert.deepEqual(await refused.json(),refusal('too_many_requests'));
   const limited=bearer(),other=account();await sync(p,[keyRow(value,name),keyRow(limited,other)]);
   const statuses=[];
   for(let n=0;n<61;n++)statuses.push((await result(opaque()+'.'+other,limited)).status);
   assert.deepEqual(statuses.slice(0,60),Array(60).fill(404));
-  const last=await result(opaque()+'.'+other,limited);assert.equal(last.status,429);assert.deepEqual(await last.json(),{error:'rate_limited'});
+  const last=await result(opaque()+'.'+other,limited);assert.equal(last.status,429);assert.deepEqual(await last.json(),refusal('rate_limited'));
   assert.equal(last.headers.get('retry-after'),'2');
 });
 
@@ -182,7 +185,7 @@ test('a 3.13.0 VM sync has no keys: the answer has no requests, the key table is
   const p=await person(),name=account(),value=bearer();
   const old=await signed('activity',p,'sync',{accounts:[],completed:[]});assert.equal(old.status,200);
   assert.deepEqual(await old.json(),{status:'synced',actions:[]});
-  assert.deepEqual(await(await api('draft_list',value,{account:name})).json(),{error:'invalid_key'});
+  assert.deepEqual(await(await api('draft_list',value,{account:name})).json(),refusal('invalid_key'));
   await sync(p,[keyRow(value,name)]);
   assert.equal((await signed('activity',p,'sync',{accounts:[],completed:[]})).status,200);
   assert.equal((await api('draft_list',value,{account:name})).status,202,'an old-shape sync does not clear the table');
@@ -201,4 +204,19 @@ test('wrangler.jsonc: API_KEY_LIMIT is 60 a minute on its own namespace and /api
   assert.equal(new Set(config.ratelimits.map(r=>r.namespace_id)).size,config.ratelimits.length);
   assert.ok(config.assets.run_worker_first.includes('/api/*'));
   assert.equal(config.observability.enabled,false);
+});
+
+// 前向きな断り: Worker が自分で断る答えにだけ目録の 3 つを足す。VM の JSON（断りの符丁を持っていても）はそのまま渡す。
+test('a Worker refusal carries why, fix and better from the catalog; the VM answer passes through byte for byte',async()=>{
+  const p=await person(),name=account(),value=bearer();
+  const refused=await api('draft_list',value,{account:name});assert.equal(refused.status,401);
+  const body=await refused.json();
+  assert.deepEqual(Object.keys(body),['error','why','fix','better']);
+  assert.deepEqual(body,refusal('invalid_key'));
+  await sync(p,[keyRow(value,name)]);
+  const vm={error:'invalid_key',reason:'vm_side',why:'VM の文'};
+  const pending=api('draft_list',value,{account:name});
+  await answer(p,[keyRow(value,name)],()=>vm);
+  const done=await pending;assert.equal(done.status,200);
+  assert.equal(await done.text(),JSON.stringify(vm));
 });

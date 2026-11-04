@@ -11,6 +11,9 @@ import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {canonical} from '../src/person.js';
 import {CODE_ALPHABET} from '../src/login.js';
+import {REFUSALS} from '../src/refusal-catalog.js';
+// 断りの答えは {error} に目録の 3 つ（why・fix・better）が足される（src/relay.js の explain）。
+const refusal=code=>({error:code,...REFUSALS[code]});
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(value){logs.push(String(value));}}
@@ -22,7 +25,7 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-login-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
+  const files=['test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/refusal-catalog.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey},
@@ -180,7 +183,7 @@ test('same-origin form POST only, closed fields, and the rate limits: poll 60 a 
   assert.equal((await allow(code,{account:p.id,secret:p.secret},{'content-type':'application/json'})).status,403);
   const statuses=[];for(let n=0;n<60;n++)statuses.push((await poll(code,token)).status);
   assert.deepEqual(statuses,Array(60).fill(202));
-  const limited=await poll(code,token);assert.equal(limited.status,429);assert.deepEqual(await limited.json(),{error:'rate_limited'});
+  const limited=await poll(code,token);assert.equal(limited.status,429);assert.deepEqual(await limited.json(),refusal('rate_limited'));
   const ip=opaque(),pages=[];for(let n=0;n<121;n++)pages.push((await page(code,ip)).status);
   assert.deepEqual(pages.slice(0,120),Array(120).fill(200));assert.equal(pages[120],429);
 });

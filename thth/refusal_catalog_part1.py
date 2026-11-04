@@ -749,8 +749,12 @@ ENTRIES = {
         "why": "添付の削除のやり直しを thth.me に頼めなかったか、一部の添付がまだ消せない状態です",
         "fix": "少し置いて、thth admin media cleanup-retry <口座> --by <名前> をもう一度打ってください",
         "command": "thth admin media cleanup-retry <口座> --by <名前>",
+        "fix_by_door": {
+            "worker": {"why": "添付の削除のやり直しに使う控えが、thth.me でいま読めませんでした。",
+                       "text": "少し置いて、VM で `thth admin media cleanup-retry` をもう一度打ってください", "command": None},
+        },
         "no_better": "internal",
-        "doors": ("cli",),
+        "doors": ("cli", "worker"),
     },
     "clicks_by_url_not_collected_yet": {
         "kind": "cannot_say",

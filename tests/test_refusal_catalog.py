@@ -130,8 +130,10 @@ def test_項目の形():
 
 def test_retiredの無い符丁が消えたら赤(source_codes):
     assert len(rc.CATALOG) >= CATALOG_FLOOR, "目録の項目を消した（消すなら retired を立てて残す）"
+    # Worker の source（`callback/src`）の符丁も source に数える（`tools/render_refusals.py` の棚卸し）。
+    worker_codes = set(_render_refusals().worker_codes())
     gone = sorted(code for code, entry in rc.CATALOG.items()
-                  if not entry["retired"] and code not in source_codes)
+                  if not entry["retired"] and code not in source_codes | worker_codes)
     assert gone == [], f"ソースから消えた符丁（互換のため retired を立てる）: {gone}"
 
 
@@ -318,13 +320,35 @@ def test_目録のwhyは安全装置の文と食い違わない():
             assert why in core.guard_refusal_message("<口座>", rc._Refused(code)), code
 
 
+def _render_refusals():
+    spec = importlib.util.spec_from_file_location("render_refusals", ROOT / "tools" / "render_refusals.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_ダッシュボードのTHTH_REASONは目録と一致する():
+    """④ 4 本の `THTH_REASON` は `tools/render_refusals.py` が目録から作った表と一字も違わない。"""
+    render = _render_refusals()
+    expected = render.outputs()
     for path in DASHBOARDS:
-        html = path.read_text(encoding="utf-8")
-        body = re.search(r"const THTH_REASON=\{(.*?)\};", html).group(1)
-        assert dict(re.findall(r'(\w+):"([^"]*)"', body)) == rc.DASHBOARD_REASON_JA, path.name
+        assert path.read_text(encoding="utf-8") == expected[path], (
+            f"{path.name} の THTH_REASON が目録と食い違う（python3 tools/render_refusals.py で作り直す）")
+        body = re.search(r"const THTH_REASON=\{(.*?)\};", path.read_text(encoding="utf-8")).group(1)
+        assert dict(re.findall(r'(\w+):"([^"]*)"', body)) == rc.dashboard_view(), path.name
     for code, why in rc.DASHBOARD_REASON_JA.items():
         assert rc.CATALOG[code]["why"] == why, code
+    assert set(rc.dashboard_view()) == set(rc.DASHBOARD_REASON_JA)
+
+
+def test_ダッシュボードの表の生成は表の1行だけを変える():
+    render = _render_refusals()
+    for path in DASHBOARDS:
+        html = path.read_text(encoding="utf-8")
+        broken = html.replace('no_link:"リンクが無い"', 'no_link:"リンクがない"')
+        assert broken != html
+        fixed = render.render_dashboard(broken)
+        assert fixed == html, path.name
 
 
 def _last_sentence(text: str) -> str:

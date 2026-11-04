@@ -1,11 +1,23 @@
 // No request-scoped secrets are kept in module state or diagnostic messages.
+import {REFUSALS} from "./refusal-catalog.js";
 export const STATE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const HASH_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_CODE_BYTES = 4096;
 const HEADERS = {"cache-control": "no-store", "referrer-policy": "no-referrer"};
 
+// 前向きな断り（設計「監査と審査の機械化と前向きな断り」§3）: 断りの答え（4xx・5xx の {error: 符丁}）に、目録の
+// 3 つ（why・fix・better）を足す。今ある鍵は消さず名も変えず、同じ名の鍵があれば上書きしない。目録に無い符丁と、
+// 断らない答え（2xx・VM の JSON をそのまま渡すもの）には何も足さない。文は静的（穴を埋めない）。
+export const REFUSAL_KEYS = ["why", "fix", "better"];
+export function explain(status, body) {
+  if (!(status >= 400) || body === null || typeof body !== "object" || Array.isArray(body) ||
+      typeof body.error !== "string" || !Object.hasOwn(REFUSALS, body.error)) return body;
+  const found = REFUSALS[body.error], out = {...body};
+  for (const key of REFUSAL_KEYS) if (!Object.hasOwn(out, key)) out[key] = found[key];
+  return out;
+}
 export function reply(status, body = {error: "relay_unavailable"}) {
-  return Response.json(body, {status, headers: {...HEADERS,
+  return Response.json(explain(status, body), {status, headers: {...HEADERS,
     ...(status === 429 ? {"retry-after": "2"} : {})}});
 }
 export async function digest(value) {
