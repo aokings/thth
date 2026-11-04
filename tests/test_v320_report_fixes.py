@@ -60,7 +60,7 @@ def test_他のprojectの報告には書き足せない(tmp_path, monkeypatch):
     report_inbox.close(closed_theirs["report_id"], by="impl", reason="fixed", version="3.1.2")
     for report_id in (theirs["report_id"], closed_theirs["report_id"], "r20260909-00000000"):
         denied = server.call_tool("thth_report_add", {"report_id": report_id, "text": "足す"})
-        assert denied["isError"] and _text(denied) == "report_not_found", report_id
+        assert denied["isError"] and _text(denied).splitlines()[0] == "report_not_found", report_id
     assert report_inbox.show(theirs["report_id"])["replies"] == []
 
 
@@ -69,7 +69,7 @@ def test_閉じた報告には書き足せない(tmp_path, monkeypatch):
     filed = _mcp_file(server)
     report_inbox.close(filed["report_id"], by="impl", reason="fixed", version="3.1.2")
     denied = server.call_tool("thth_report_add", {"report_id": filed["report_id"], "text": "足す"})
-    assert denied["isError"] and _text(denied) == "report_closed"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "report_closed"
 
 
 @pytest.mark.parametrize("text,reason", [
@@ -81,7 +81,7 @@ def test_追記の断りは返事と同じ規律(tmp_path, monkeypatch, text, re
     _root, server = _tenant(tmp_path, monkeypatch)
     filed = _mcp_file(server)
     denied = server.call_tool("thth_report_add", {"report_id": filed["report_id"], "text": text})
-    assert denied["isError"] and _text(denied) == reason
+    assert denied["isError"] and _text(denied).splitlines()[0] == reason
     assert "AbCdEf0123456789xyz0" not in json.dumps(denied, ensure_ascii=False)
 
 
@@ -89,7 +89,7 @@ def test_actorの無いcredentialは追記もby_required(tmp_path, monkeypatch):
     _root, server = _tenant(tmp_path, monkeypatch, actor=None)
     filed = report_inbox.file_report("first", kind="bug", title="題", body="本文", by="x")
     denied = server.call_tool("thth_report_add", {"report_id": filed["report_id"], "text": "足す"})
-    assert denied["isError"] and _text(denied) == "by_required"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "by_required"
 
 
 def test_CLIのreport_addは標準入力から足せる(two_projects, tmp_path, capsys, monkeypatch):

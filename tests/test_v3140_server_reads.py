@@ -318,8 +318,9 @@ def test_mcpから呼べて断りは符丁(env, media, collector, monkeypatch):
     server = _mcp(env, monkeypatch)
     ok = server.call_tool('thth_posts', {'account': 'alpha', 'limit': 2})
     assert not ok.get('isError') and len(json.loads(ok['content'][0]['text'])['posts']) == 2
-    assert server.call_tool('thth_posts', {'account': 'beta'})['content'][0]['text'] == 'scope_unavailable'
-    assert server.call_tool('thth_posts', {'account': 'alpha', 'limit': '2'})['content'][0]['text'] == 'invalid_request'
+    assert server.call_tool('thth_posts', {'account': 'beta'})['content'][0]['text'].splitlines()[0] == 'scope_unavailable'
+    assert server.call_tool('thth_posts', {'account': 'alpha', 'limit': '2'})['content'][0]['text'].splitlines()[0] \
+        == 'invalid_request'
     assert not server.call_tool('thth_collect', {'account': 'alpha'}).get('isError')
     again = server.call_tool('thth_collect', {'account': 'alpha'})
     assert again['isError'] and again['content'][0]['text'].startswith('collect_too_soon: next_at=')

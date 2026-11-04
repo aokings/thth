@@ -246,6 +246,6 @@ def test_世間の層はprojectの外に出ない_openの参加者にも(tmp_pat
     plaza.set_membership("other", joined=True, by="admin")
     for target in ("kopicha", "first"):
         denied = server.call_tool("thth_map_show", {"project": target})
-        assert denied["isError"] and _text(denied) == "scope_unavailable", target
+        assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable", target
     # 管理者の CLI（VM の運用者）は project を名指しして読める。
     assert map_view.show("kopicha")["nodes"][0]["world"]["by_medium"]["threads"]["latest"]["n"] == 8

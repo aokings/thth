@@ -4088,13 +4088,25 @@ def cmd_send(args) -> int:
             return result.exit_code
         code = read_coordination.invoke(args,'send',send)
         result = outcome.get('result')
+        # 安全装置の断り（段 B）: 目録の 3 つを足す。1 行目は安全装置の文のまま（それがなぜ）。
+        from . import refusal
+        guard_code = result.error if (code and result is not None and result.action == "guard") else None
+        guard_values = {"account": args.account, "next_at": getattr(result, "next_at", None),
+                        "reason": getattr(result, "reason", None)}
         if as_json and result is not None:
-            _print_json({"account": args.account, "mode": result.mode, "action": result.action,
-                         "post_id": result.post_id, "permalink": result.url, "digest": result.digest,
-                         "error": result.error,
-                         # burst の順番待ちに並べた返信（3.25.0）: 出す時刻と原稿。
-                         **({"publish_at": result.publish_at, "file": result.file}
-                            if result.action == "queued" else {})})
+            body = {"account": args.account, "mode": result.mode, "action": result.action,
+                    "post_id": result.post_id, "permalink": result.url, "digest": result.digest,
+                    "error": result.error,
+                    # burst の順番待ちに並べた返信（3.25.0）: 出す時刻と原稿。
+                    **({"publish_at": result.publish_at, "file": result.file}
+                       if result.action == "queued" else {})}
+            if guard_code:
+                refusal.add_fields(body, guard_code, **guard_values)
+            _print_json(body)
+        if guard_code and not as_json:
+            for line in refusal.tail(guard_code, result.message, **guard_values):
+                if not line.startswith(refusal.WHY):
+                    log(line)
         if code and result is not None:
             lines = media_delivery_mod.refusal_lines(result)
             # inflight で止まったなら「確かめてから消す」を必ず 1 行足す。

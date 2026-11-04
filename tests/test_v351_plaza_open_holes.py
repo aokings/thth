@@ -206,7 +206,7 @@ def test_b_MCPからopenへの返信は受けない(tmp_path, monkeypatch):
                         confirm=preview["digest"])
     denied = server.call_tool("thth_plaza_reply", {"plaza_id": theirs["plaza_id"], "account": "first",
                                                    "kind": "comment", "text": "同感です"})
-    assert denied["isError"] and _text(denied) == "open_requires_cli"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "open_requires_cli"
     assert plaza.STORE.get(theirs["plaza_id"])["replies"] == []
     # project 範囲の自分の 1 件には MCP から一段で返せる。
     mine = json.loads(_text(server.call_tool("thth_plaza_post", {

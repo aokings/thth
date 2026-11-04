@@ -99,7 +99,7 @@ def test_doctor_static_warning_still_respects_live_exclusive_leave(env,monkeypat
         raise accounts.AccountLeaving('account_leaving')
     monkeypatch.setattr(leave_gate,'check_busy',busy)
     assert cli.main(['doctor','alpha','--json'])==2
-    assert json.loads(capsys.readouterr().out)=={'error':'account_leaving','cannot_say':['account_leaving']}
+    assert {k: v for k, v in json.loads(capsys.readouterr().out).items() if k not in ('why', 'fix', 'better', 'next_at')}=={'error':'account_leaving','cannot_say':['account_leaving']}
     assert snapshot(env)==before
 
 
@@ -120,5 +120,5 @@ def test_doctor_static_mode_with_real_other_process_exclusive(env,capsys):
     with exclusive():
         (env/'repos').chmod(0o775);before=snapshot(env)
         assert cli.main(['doctor','alpha','--json'])==2
-        assert json.loads(capsys.readouterr().out)=={'error':'account_leaving','cannot_say':['account_leaving']}
+        assert {k: v for k, v in json.loads(capsys.readouterr().out).items() if k not in ('why', 'fix', 'better', 'next_at')}=={'error':'account_leaving','cannot_say':['account_leaving']}
         assert snapshot(env)==before

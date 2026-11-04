@@ -184,4 +184,4 @@ def test_MCPのthth_report_timelineはcredentialの範囲だけ(tmp_path, monkey
     assert mine in _text(result) and theirs not in _text(result)
     assert payload["summary"]["n_reports"] == 1
     refused = server.call_tool("thth_report_timeline", {"since": "x"})
-    assert refused.get("isError") and _text(refused) == "invalid_since"
+    assert refused.get("isError") and _text(refused).splitlines()[0] == "invalid_since"

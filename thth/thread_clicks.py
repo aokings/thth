@@ -127,14 +127,35 @@ def summarize(rows) -> dict:
     elif not said:
         cannot.insert(0, "no_attributable_post")
     from . import click_attribution
-    return {"label": LABEL, "source": SOURCE, "medium": MEDIUM, "basis": click_attribution.BASIS,
-            "window": click_attribution.WINDOW, "window_note": click_attribution.WINDOW_NOTE,
-            "separate_from": SEPARATE_FROM,
-            "clicks_72h": sum(said) if said else None, "n": len(said), "of": len(threads),
-            "denominator": DENOMINATOR,
-            "reasons": dict(sorted(reasons.items())),
-            "other_media": dict(sorted(others.items())),
-            "cannot_say": cannot}
+    block = {"label": LABEL, "source": SOURCE, "medium": MEDIUM, "basis": click_attribution.BASIS,
+             "window": click_attribution.WINDOW, "window_note": click_attribution.WINDOW_NOTE,
+             "separate_from": SEPARATE_FROM,
+             "clicks_72h": sum(said) if said else None, "n": len(said), "of": len(threads),
+             "denominator": DENOMINATOR,
+             "reasons": dict(sorted(reasons.items())),
+             "other_media": dict(sorted(others.items())),
+             "cannot_say": cannot}
+    block.update(explain(list(reasons) + cannot))
+    return block
+
+
+def explain(codes) -> dict:
+    """言えない理由の 3 つ（段 B・`thth/refusal.py`）。`{"why": {符丁: 文}, "fix": {…}, "better": {…}}`。
+
+    この欄の「口」は欄そのもの: `--json`（と、それをそのまま描く会話のダッシュボード）はこの 3 つの対応表、
+    文（`scenario_cli.clicks_lines`）は同じ表から行を作る。言えない理由が無ければ鍵を足さない（黙る）。
+    `per_post_clicks_unavailable:<媒体>` は媒体を外した符丁で引く。"""
+    from . import refusal
+    out = {"why": {}, "fix": {}, "better": {}}
+    for code in codes:
+        base = str(code).split(":", 1)[0]
+        found = refusal.parts(base)
+        if found is None or base in out["why"]:
+            continue
+        out["why"][base] = found["why"]
+        out["fix"][base] = found["fix"]
+        out["better"][base] = found["better"]
+    return out if out["why"] else {}
 
 
 def thread_block(ledger, thread_id, *, with_posts=True) -> dict:

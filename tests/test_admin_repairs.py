@@ -255,4 +255,4 @@ def test_unknown_event_rejected_before_log_io_http_mcp(credentials, monkeypatch,
         execute_report(creds[0][3], {'operation': 'admin_log', 'event': event})
     monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(path)); monkeypatch.setenv('THTH_REPORT_TOKEN', token)
     result = _load_server_module().call_tool('thth_admin_log', {'event': event})
-    assert result['isError'] and result['content'][0]['text'] == 'invalid_options'
+    assert result['isError'] and result['content'][0]['text'].splitlines()[0] == 'invalid_options'

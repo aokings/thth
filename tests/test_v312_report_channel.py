@@ -237,7 +237,7 @@ def user_server(tmp_path, monkeypatch):
 def test_MCPの断りは2つ目のtextに受け口_成功には載せない(user_server):
     _root, _path, _value, server = user_server
     denied = server.call_tool("thth_morning", {"target": "other"})
-    assert denied["isError"] and denied["content"][0]["text"] == "scope_unavailable"
+    assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "scope_unavailable"
     assert denied["content"][1] == {"type": "text", "text": CHANNEL_LINE}
     ok = server.call_tool("thth_report_list", {})
     assert not ok.get("isError") and len(ok["content"]) == 1

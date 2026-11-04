@@ -53,6 +53,7 @@ raise SystemExit(cli.main(json.loads(sys.argv[1])))
                                 capture_output=True, text=True, timeout=3)
     assert result.returncode == 2 and __import__('tests.conftest').conftest.is_refusal(result.stderr, 'account_leaving')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
     if operation == 'replies':
-        assert json.loads(result.stdout) == {'error': 'account_leaving', 'cannot_say': ['account_leaving']}
+        assert {k: v for k, v in json.loads(result.stdout).items() if k not in ('why', 'fix', 'better', 'next_at')} \
+            == {'error': 'account_leaving', 'cannot_say': ['account_leaving']}
     assert not marker.exists()
     assert not (env['root'] / 'state/alpha/sent').exists()

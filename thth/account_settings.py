@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 from . import accounts, admin_log, secrets_fs
@@ -390,10 +389,10 @@ def status(account, *, now=None, table=False) -> dict:
 # --------------------------------------------------------------------------
 
 def _fail(reason, *, json_output=False):
-    print(reason, file=sys.stderr)
-    if json_output:
-        print(json.dumps({"error": reason}, ensure_ascii=False))
-    return 2
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(None, refusal.code_of(reason), line=reason, payload={"error": reason}, rc=2, both=True,
+                        as_json=json_output, dump=lambda value: print(json.dumps(value, ensure_ascii=False)))
 
 
 def _pairs(rest):

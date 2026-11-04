@@ -23,7 +23,6 @@ id・join_policy・member_count・name）。なので送る前には分からず
 from __future__ import annotations
 
 import json
-import sys
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
@@ -51,12 +50,11 @@ def register(sub) -> None:
 
 
 def _fail(args, rc: int, code: str, message: str, **extra) -> int:
-    if getattr(args, "json", False):
-        print(json.dumps({"ok": False, "error": code, "message": message, **extra},
-                         ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(message if message.startswith(code) else f"{code}: {message}", file=sys.stderr)
-    return rc
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, code, line=message if message.startswith(code) else f"{code}: {message}",
+                        payload={"ok": False, "error": code, "message": message, **extra}, rc=rc,
+                        dump=lambda value: print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)))
 
 
 def _record(account, *, n, status, error):

@@ -62,6 +62,10 @@ class ThrowResult:
     api_diagnostic: dict | None = None
     # burst の順番待ちに並べた返信の出す時刻（`action == "queued"`・3.25.0）。
     publish_at: str | None = None
+    # 安全装置の断り（`action == "guard"`）の次に出せる時刻（段 B・`--json` の `next_at` と通すにはの穴）。
+    next_at: str | None = None
+    # その断りの静的な詳細（`GuardRefused.reason`・`burst`・`reply_daily` など。なぜの文の分岐を選ぶ）。
+    reason: str | None = None
 
 
 def _link_urls_kwargs(manifest) -> dict:
@@ -1866,7 +1870,8 @@ def _queue_burst_reply(account_name, account_cfg, state_dir, run_id, mode, *, no
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                     status="error", error=str(daily))
-        return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg, digest=digest, error=str(daily))
+        return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg, digest=digest, error=str(daily),
+                           next_at=getattr(daily, "next_at", None), reason=getattr(daily, "reason", None))
     except (OSError, ValueError) as exc:
         msg = guard_refusal_message(account_name, refused) + f"（順番待ちに並べられませんでした: {exc}）"
         log(msg)
@@ -2189,7 +2194,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                             status="error", error=str(refused))
                 return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg,
-                                   digest=digest, error=str(refused))
+                                   digest=digest, error=str(refused), next_at=getattr(refused, "next_at", None),
+                                   reason=getattr(refused, "reason", None))
 
         bound_token = before_execute(account_cfg) if before_execute is not None else None
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None,

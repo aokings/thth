@@ -156,14 +156,15 @@ def test_mcpのthth_settingsは締める向きだけ(env, monkeypatch):
     for key, value in (("daily_max_posts", "5"), ("burst_count", "3"),
                        ("burst_minutes", "10"), ("hold_minutes", "0"), ("min_interval_hours", "1")):
         denied = server.call_tool("thth_settings", {"account": "alpha", "key": key, "value": value})
-        assert denied["isError"] and denied["content"][0]["text"] == "settings_loosen_requires_owner", (key, denied)
+        assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "settings_loosen_requires_owner", \
+            (key, denied)
     assert read_ledger(env) == cfg
     rows, _ = admin_log.read(event="settings_set")
     assert rows and all(row["via"] == "mcp" and row["by"] == "person" for row in rows)
     # 変えられるのは安全装置の数値だけ（3.13.0: approval も無い）。
     for key in ("approval", "stopped", "production", "scheduled", "quiet_hours", "handle"):
         denied = server.call_tool("thth_settings", {"account": "alpha", "key": key, "value": "0"})
-        assert denied["content"][0]["text"] == "invalid_setting"
+        assert denied["content"][0]["text"].splitlines()[0] == "invalid_setting"
     assert server.call_tool("thth_settings", {"account": "beta"})["isError"]
     assert server.call_tool("thth_settings", {"account": "beta", "key": "approval", "value": "all"})["isError"]
 

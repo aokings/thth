@@ -230,7 +230,7 @@ def test_4e_fetchは今の行を添えて台帳は1バイトも変わらない_S
 def test_4e_MCPと遠くの道はfetchを受けない(article, key):
     server = _mcp_server()
     out = server.call_tool("thth_article_reactions", {"account": ACCOUNT, "article": ARTICLE, "fetch": True})
-    assert out["isError"] is True and out["content"][0]["text"] == "invalid_request"
+    assert out["isError"] is True and out["content"][0]["text"].splitlines()[0] == "invalid_request"
     tool = next(t for t in server.SERVER_TOOLS if t["name"] == "thth_article_reactions")
     assert "fetch" not in tool["inputSchema"]["properties"]
     assert _refused(key({ACCOUNT: "lane-a"}), operation="article_reactions", article=ARTICLE,

@@ -373,7 +373,7 @@ def test_401_は符丁と次の一手(worker, capsys, code):
     rc, out, err = run(capsys, "posts", ACCOUNT, "--json")
     assert rc == 2 and err.startswith(code)
     assert "/activity" in err and "thth login" in err
-    assert json.loads(out) == {"error": code}
+    assert {k: v for k, v in json.loads(out).items() if k not in ("why", "fix", "better", "next_at")} == {"error": code}
 
 
 def test_429_は_retry_after_を待って_1_回だけやり直す(worker, capsys, monkeypatch):
@@ -418,7 +418,8 @@ def test_安全装置の断りは符丁と_JST_の時刻(worker, capsys):
     rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "早すぎ", "--json")
     assert rc == 1
     assert err.splitlines()[0] == "too_soon（次は 2026-09-26 12:00 JST から）"
-    assert json.loads(out) == {"error": "too_soon", "next_at": "2026-09-26T03:00:00+00:00"}
+    assert {k: v for k, v in json.loads(out).items() if k not in ("why", "fix", "better")} \
+        == {"error": "too_soon", "next_at": "2026-09-26T03:00:00+00:00"}
     worker.push(200, {"error": "account_stopped", "reason": "burst"})
     rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "止まった")
     assert rc == 1 and err.startswith("account_stopped: burst") and "/activity" in err

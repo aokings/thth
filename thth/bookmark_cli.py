@@ -182,8 +182,11 @@ def _with_gate(args, payload: dict) -> dict:
 
 
 def _refuse(args, code, message, rc=2, **extra) -> int:
-    return _out(args, {"ok": False, "error": code, "message": message, **extra}, rc, [f"{code}: {message}"],
-                err=True)
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, code, line=f"{code}: {message}",
+                        payload={"ok": False, "error": code, "message": message, **extra}, rc=rc,
+                        dump=lambda value: print(json.dumps(value, ensure_ascii=False, indent=2)))
 
 
 _MESSAGES = refusal_catalog.fix_view("bookmark_cli._MESSAGES")

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
 
 from . import accounts, admin_log, secrets_fs
 
@@ -64,10 +63,10 @@ def set_words(account: str, words, *, by: str, via: str = "cli") -> dict:
 
 
 def _fail(args, reason: str) -> int:
-    print(reason, file=sys.stderr)
-    if getattr(args, "json", False):
-        print(json.dumps({"cannot_say": [reason]}, ensure_ascii=False))
-    return 2
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, reason, line=reason, payload={"cannot_say": [reason]}, rc=2, both=True,
+                        dump=lambda value: print(json.dumps(value, ensure_ascii=False)))
 
 
 def cmd_set(args) -> int:

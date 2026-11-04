@@ -94,13 +94,13 @@ def test_誰が書いたかは要求の欄から作れない(tmp_path, monkeypat
     _root, server = _tenant(tmp_path, monkeypatch)
     for field in ("by", "actor", "project", "operation", "visibility"):
         denied = _post(server, **{field: "evil"})
-        assert denied["isError"] and _text(denied) == "invalid_request"
+        assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
 
 
 def test_actorの無いcredentialはby_required(tmp_path, monkeypatch):
     root, server = _tenant(tmp_path, monkeypatch, actor=None)
     denied = _post(server)
-    assert denied["isError"] and _text(denied) == "by_required"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "by_required"
     assert not list((root / "state").glob("_plaza/p*.json"))
 
 
@@ -108,7 +108,7 @@ def test_credentialの外のaccountには書けない(tmp_path, monkeypatch):
     root, server = _tenant(tmp_path, monkeypatch)
     for account in ("second", "nobody"):
         denied = _post(server, account=account)
-        assert denied["isError"] and _text(denied) == "scope_unavailable"
+        assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable"
     assert not list((root / "state").glob("_plaza/p*.json"))
 
 
@@ -123,14 +123,14 @@ def test_他の持ち主のproject範囲は読めない(tmp_path, monkeypatch):
     assert [row["plaza_id"] for row in listed["posts"]] == [ours["plaza_id"]]
     assert "OTHER-TITLE" not in out and listed["unreadable"] is None
     denied = server.call_tool("thth_plaza_show", {"plaza_id": theirs["plaza_id"]})
-    assert denied["isError"] and _text(denied) == "plaza_not_found"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "plaza_not_found"
     missing = server.call_tool("thth_plaza_show", {"plaza_id": "p20260909-00000000"})
-    assert missing["isError"] and _text(missing) == "plaza_not_found"
+    assert missing["isError"] and _text(missing).splitlines()[0] == "plaza_not_found"
     denied = server.call_tool("thth_plaza_reply", {"plaza_id": theirs["plaza_id"], "account": "first",
                                                    "kind": "agree"})
-    assert denied["isError"] and _text(denied) == "plaza_not_found"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "plaza_not_found"
     denied = server.call_tool("thth_plaza_list", {"project": "other"})
-    assert denied["isError"] and _text(denied) == "scope_unavailable"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable"
 
 
 def test_MCPにはopenにする口が無い_読むのは参加した持ち主どうし(tmp_path, monkeypatch):
@@ -145,11 +145,11 @@ def test_MCPにはopenにする口が無い_読むのは参加した持ち主ど
     plaza.set_membership("kopicha", joined=True, by="operator")
     plaza.set_membership("other", joined=True, by="operator")
     denied = _post(server, open=True)
-    assert denied["isError"] and _text(denied) == "invalid_request"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
     mine = json.loads(_text(_post(server)))
     denied = server.call_tool("thth_plaza_update", {"plaza_id": mine["plaza_id"], "account": "first",
                                                     "visibility": "open"})
-    assert denied["isError"] and _text(denied) == "open_requires_cli"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "open_requires_cli"
     assert plaza.STORE.get(mine["plaza_id"])["scope"] == "project"
     preview = plaza.post("second", kind="finding", title="other の公開", body="夜が伸びる",
                          scope_note="other の夜", by="other-person", visibility="open")
@@ -185,7 +185,7 @@ def test_MCPにはopenにする口が無い_読むのは参加した持ち主ど
 def test_断りは静的な符丁だけ(tmp_path, monkeypatch, overrides, reason):
     _root, server = _tenant(tmp_path, monkeypatch)
     denied = _post(server, **overrides)
-    assert denied["isError"] and _text(denied) == reason
+    assert denied["isError"] and _text(denied).splitlines()[0] == reason
     assert "AbCdEf0123456789xyz0" not in json.dumps(denied, ensure_ascii=False)
 
 
@@ -203,7 +203,7 @@ def test_重複は既存のidを返す(tmp_path, monkeypatch):
     _root, server = _tenant(tmp_path, monkeypatch)
     first = json.loads(_text(_post(server)))
     again = _post(server)
-    assert again["isError"] and _text(again) == "duplicate_post: " + first["plaza_id"]
+    assert again["isError"] and _text(again).splitlines()[0] == "duplicate_post: " + first["plaza_id"]
 
 
 def test_管理者の口(tmp_path, monkeypatch):
@@ -225,7 +225,7 @@ def test_管理者の口(tmp_path, monkeypatch):
     shown = json.loads(_text(server.call_tool("thth_admin_plaza_show", {"plaza_id": posted["plaza_id"]})))
     assert shown["body"] == "b"
     denied = server.call_tool("thth_admin_plaza_join", {"project": "other"})
-    assert denied["isError"] and _text(denied) == "invalid_request"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
     assert json.loads(_text(server.call_tool("thth_admin_plaza_leave",
                                              {"project": "other", "by": "operator"})))["joined"] is False
 

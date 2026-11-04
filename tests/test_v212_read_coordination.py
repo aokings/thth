@@ -18,6 +18,12 @@ from tests.test_mcp import _load_server_module
 NO_WAIT=5
 
 
+def _kept(payload):
+    """段 B で足した鍵（why・fix・better・next_at）を除いた、今までの鍵。"""
+    from thth import refusal
+    return {k: v for k, v in payload.items() if k not in refusal.JSON_KEYS}
+
+
 @contextlib.contextmanager
 def exclusive(name='alpha',stopped=False):
     code="""import sys
@@ -65,7 +71,7 @@ def test_cli_reads_do_not_wait_or_call_core_when_leave_holds_exclusive(env,conte
     with exclusive():
         start=time.monotonic();rc=cli.main(command);elapsed=time.monotonic()-start
     captured=capsys.readouterr();assert rc==2 and elapsed<NO_WAIT
-    assert json.loads(captured.out)=={'error':'account_leaving','cannot_say':['account_leaving']}
+    assert _kept(json.loads(captured.out))=={'error':'account_leaving','cannot_say':['account_leaving']}
     assert __import__('tests.conftest').conftest.is_refusal(captured.err, 'account_leaving')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
 
 
@@ -110,7 +116,7 @@ def test_pure_reports_take_lease_and_preserve_nonempty_success(env,content,monke
     with exclusive():
         start=time.monotonic()
         if via=='mcp':
-            denied=call();assert denied.get('isError') and denied['content'][0]['text']=='account_leaving'
+            denied=call();assert denied.get('isError') and denied['content'][0]['text'].splitlines()[0]=='account_leaving'
         else:
             with pytest.raises(service.ReportServiceError,match='^account_leaving$'):call()
         assert time.monotonic()-start<NO_WAIT

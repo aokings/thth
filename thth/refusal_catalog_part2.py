@@ -501,7 +501,8 @@ ENTRIES = {
     "invalid_request": {
         "kind": "refusal",
         "why": "要求の形が受け付ける形と違います（知らない鍵・足りない鍵・型・- で始まる値など）。",
-        "fix": "道具の説明（schema）にある鍵だけを正しい型で渡し、必須の鍵を足す。key と value は両方そろえる",
+        "fix": ("受け付ける形に直して、もう一度送ってください（CLI は thth <命令> --help の形、"
+                "MCP は道具の説明（schema）にある鍵だけを正しい型で。key と value は両方そろえる）"),
         "better": "書く道具の前に読むだけの道具か dry-run で形を確かめると、往復が減ります",
         "doors": ("cli", "mcp", "remote"),
     },

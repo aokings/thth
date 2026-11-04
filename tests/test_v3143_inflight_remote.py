@@ -125,4 +125,4 @@ def test_publication_unconfirmedの断りに次の一手が付く(worker, capsys
     worker.push(200, {'error': 'publication_unconfirmed', 'reason': 'inflight'})
     rc, out, err = run(capsys, 'send', ACCOUNT, '--text', 'こんにちは')
     assert rc == 1 and err.startswith('publication_unconfirmed: inflight')
-    assert 'thth inflight <口座>' in err and 'resolve' in err
+    assert f'thth inflight {ACCOUNT}' in err and 'resolve' in err

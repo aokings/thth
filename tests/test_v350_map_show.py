@@ -129,5 +129,5 @@ def test_サーバ型はcredentialのprojectだけ(tmp_path, monkeypatch):
     assert by_account["project"] == "kopicha"
     for target in ("other", "second", "nobody"):
         denied = server.call_tool("thth_map_show", {"project": target})
-        assert denied["isError"] and _text(denied) == "scope_unavailable", target
+        assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable", target
     assert "他の持ち主の話題" not in json.dumps(payload, ensure_ascii=False)

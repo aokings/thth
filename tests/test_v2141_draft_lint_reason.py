@@ -84,4 +84,4 @@ def test_http_and_mcp_both_hand_the_reason_back(env, monkeypatch):
     arguments = _request('本文に #語 を入れる'); arguments.pop('operation')
     result = module.server_call('thth_draft_put', arguments)
     assert result['isError']
-    assert result['content'][0]['text'] == 'invalid_draft: hashtags_disabled_by_ledger'
+    assert result['content'][0]['text'].splitlines()[0] == 'invalid_draft: hashtags_disabled_by_ledger'

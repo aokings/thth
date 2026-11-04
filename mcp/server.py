@@ -1383,7 +1383,7 @@ def local_tools() -> list:
 def remote_call(name, arguments) -> dict:
     """遠くの道の道具: 引数の形だけ見て `thth … --json` を呼ぶ（断りは CLI の 1 語と次の一手）。"""
     def refused(text):
-        return {"content": [{"type": "text", "text": text}], "isError": True}
+        return {"content": [{"type": "text", "text": _refusal_text(text)}], "isError": True}
     tool = next(tool for tool in REMOTE_TOOLS if tool["name"] == name)
     schema = tool["inputSchema"]
     if arguments is None:
@@ -1443,10 +1443,12 @@ def server_call(name, arguments):
     from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS, DRAFT_REASONS
     context=authenticated_context()
 
-    def failure(value):
+    def failure(value, next_at=None, about=None, reason=None):
         # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
+        # 1 つ目の text の 1 行目（符丁）はそのまま、2 行目から目録の 3 つ（段 B・`thth/refusal.py`）。
         account, code = _remember_refusal(context, name, arguments, value)
-        return {'content':[{'type':'text','text':value},_channel_note(account, code)],'isError':True}
+        text = _refusal_text(value, account=account, next_at=next_at, about=about, reason=reason)
+        return {'content':[{'type':'text','text':text},_channel_note(account, code)],'isError':True}
     if context is None: return failure('unauthorized')
     tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
     if tool is None: return failure('unsupported_operation')
@@ -1516,10 +1518,10 @@ def server_call(name, arguments):
                 text+=': '+exc.reason+': 持ち主が戻すまで公開・削除・予約はできません'
             elif isinstance(getattr(exc,'next_at',None),str):
                 text+=': next_at='+exc.next_at
-            return failure(text)
+            return failure(text, next_at=getattr(exc,'next_at',None), reason=getattr(exc,'reason',None))
         if str(exc)=='collect_too_soon' and isinstance(getattr(exc,'next_at',None),str):
             # 読む口の採取の間隔（設計 3.14.0 §3.2）: 次に採れる時刻を添える。
-            return failure('collect_too_soon: next_at='+exc.next_at)
+            return failure('collect_too_soon: next_at='+exc.next_at, next_at=exc.next_at)
         if str(exc)=='upstream_unavailable':
             # 媒体の返した短い理由（秘密・URL・path は落としてある）か静的な理由。
             detail=getattr(exc,'reason',None)
@@ -1531,7 +1533,9 @@ def server_call(name, arguments):
         if str(exc)=='invalid_draft':
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
-            return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
+            detail=detail if detail in DRAFT_REASONS else 'validation_failed'
+            from thth import refusal
+            return failure('invalid_draft: '+detail, about=refusal.focus('invalid_draft', detail))
         from thth.report_inbox import REASONS as REPORT_REASONS
         if str(exc)=='duplicate_report' and getattr(exc,'report_id',None):
             # 既存の id は同じ account の報告だけ（重複の検査がそう絞っている）。
@@ -1548,6 +1552,24 @@ def server_call(name, arguments):
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
+
+
+def _refusal_text(value, *, account=None, next_at=None, about=None, reason=None):
+    """断りの text（1 行目は `value` のまま）に、目録の 3 つの行を足す（段 B・CLI の文と同じ行）。
+
+    口座は credential が許した名前だけ（`_remember_refusal` が確かめたもの）。足せなければ `value` のまま。"""
+    try:
+        from thth import refusal
+        values = {}
+        if isinstance(account, str):
+            values['account'] = account
+        if isinstance(next_at, str):
+            values['next_at'] = next_at
+        if isinstance(reason, str):
+            values['reason'] = reason  # 3 つが見るのは安全装置の静的な詳細だけ（`refusal.parts`）
+        return refusal.mcp_text(value, code=about, **values)
+    except Exception:  # noqa: BLE001 — 足す行は付け足し。断りそのものを壊さない
+        return value
 
 
 def _stopped_note(context, arguments):
@@ -1647,7 +1669,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
         except (ValueError, TypeError, ReportServiceError) as error:
             reason = "invalid_options" if str(error) == "invalid_options" else "invalid_request"
-            return {"content": [{"type": "text", "text": reason}, _channel_note()], "isError": True}
+            return {"content": [{"type": "text", "text": _refusal_text(reason)}, _channel_note()], "isError": True}
     if name == "thth_lint":
         proc = run_cli(["lint", arguments["file"], "--json"])
         text = proc.stdout
@@ -1815,11 +1837,11 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         # 4.0 S5: CLI（`thth article diff`・`thth conflict`）を `--json` で呼ぶだけ。
         for key in ("account", "delivery"):
             if isinstance(arguments.get(key), str) and arguments[key].startswith("-"):
-                return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
+                return {"content": [{"type": "text", "text": _refusal_text("invalid_request")}, _channel_note()], "isError": True}
         if name == "thth_article_reactions" and (set(arguments) - {"account", "article", "delivery", "comments"}
                                                   or not isinstance(arguments.get("article"), str)):
             # `fetch` などは受けない（読む口から媒体を呼ばない・§5.4）。
-            return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
+            return {"content": [{"type": "text", "text": _refusal_text("invalid_request")}, _channel_note()], "isError": True}
         if name == "thth_article_reactions":
             # 読む口から媒体を呼ばない（--fetch は渡さない・§5.4）。
             args = ["article", "reactions", arguments["account"], "--article=" + arguments["article"],

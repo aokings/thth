@@ -124,6 +124,17 @@ def clicks_lines(block) -> list:
                      + (f"（{row['cannot_say']}）" if row.get("cannot_say") else "") + f"  {row.get('file')}")
     for medium, node in (block.get("other_media") or {}).items():
         lines.append(f"   {medium} {node.get('posts')} 本: —（{node.get('cannot_say')}:{medium}）")
+    # 言えない理由の 3 つ（段 B）: `--json` の対応表（`thread_clicks.explain`）と同じ文を行にする。
+    from . import refusal
+    whys = block.get("why") if isinstance(block.get("why"), dict) else {}
+    fixes = block.get("fix") if isinstance(block.get("fix"), dict) else {}
+    betters = block.get("better") if isinstance(block.get("better"), dict) else {}
+    for code, why in whys.items():
+        lines.append(f"   {code}: {why}")
+        if fixes.get(code):
+            lines.append(f"     {refusal.FIX}{fixes[code]}")
+        if betters.get(code):
+            lines.append(f"     {refusal.BETTER}{betters[code]}")
     return lines
 
 
@@ -343,10 +354,10 @@ def _dumps(payload, **kwargs) -> str:
 
 
 def _fail(code, as_json) -> int:
-    print(code, file=sys.stderr)
-    if as_json:
-        print(_dumps({"schema": scenario_mod.SCHEMA, "cannot_say": [code]}))
-    return 2
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(None, code, line=code, payload={"schema": scenario_mod.SCHEMA, "cannot_say": [code]}, rc=2,
+                        both=True, as_json=as_json, dump=lambda value: print(_dumps(value)))
 
 
 def _skill(args) -> int:

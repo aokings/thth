@@ -555,6 +555,10 @@ def is_refusal(err: str, code: str) -> bool:
     account は命令と台帳しだいで `<account>` のままになるので、ここでは形と符丁だけ見る。
     """
     lines = err.strip().splitlines()
-    return (len(lines) == 2 and lines[0] == code
-            and lines[1].startswith("report_channel: thth report file ")
-            and f'--title "{code} で断られた"' in lines[1])
+    # 段 B（前向きな断り）: 1 行目の符丁と最後の報告の行の間に、目録の 3 つ（なぜ・通すには・もっと良く）の行。
+    # 目録の口（`thth/refusal.py`）にまだ寄せていない口は、今までどおり間に何も無い。
+    from thth import refusal
+    return (len(lines) >= 2 and lines[0] == code
+            and lines[1:-1] in ([], refusal.tail(code, lines[0]))
+            and lines[-1].startswith("report_channel: thth report file ")
+            and f'--title "{code} で断られた"' in lines[-1])

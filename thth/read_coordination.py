@@ -2,7 +2,6 @@
 import contextlib
 import json
 from pathlib import Path
-import sys
 from . import accounts, leave_gate
 
 READS = frozenset(('account','posts','replies','measured','threads','topics','forms',
@@ -68,9 +67,11 @@ def names(args, command):
 
 
 def refusal(args, reason):
-    print(reason,file=sys.stderr)
-    if getattr(args,'json',False) or getattr(args,'as_json',False):print(json.dumps({'error':reason,'cannot_say':[reason]}))
-    return 2
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal as refusal_mod
+    return refusal_mod.emit(args, reason, line=reason, payload={'error':reason,'cannot_say':[reason]}, rc=2, both=True,
+                            as_json=bool(getattr(args,'json',False) or getattr(args,'as_json',False)),
+                            dump=lambda value: print(json.dumps(value)))
 
 
 def invoke(args, command, call=None):

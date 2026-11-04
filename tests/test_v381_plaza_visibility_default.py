@@ -97,4 +97,4 @@ def test_MCPのvisibility省略は組次第_明示すれば従う(tmp_path, monk
 
     # open は MCP の口に無い（既定にもならない・従前どおり）。
     denied = _post(server, title="open は無い", visibility="open")
-    assert denied["isError"] and _text(denied) == "open_requires_cli"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "open_requires_cli"

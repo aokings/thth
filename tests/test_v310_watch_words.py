@@ -153,11 +153,11 @@ def test_MCPの管理口は範囲内のaccountだけ入れ替える(admin_creden
     # credential の外の account と受け取れない語は断る（台帳は変わらない）。
     denied = server.call_tool("thth_admin_watch_set",
                               {"account": "ghost", "words": WORDS, "by": "masaru"})
-    assert denied["isError"] and denied["content"][0]["text"] == "scope_unavailable"
+    assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "scope_unavailable"
     too_many = server.call_tool("thth_admin_watch_set",
                                 {"account": "first", "words": ["1", "2", "3", "4", "5", "6"],
                                  "by": "masaru"})
-    assert too_many["isError"] and too_many["content"][0]["text"] == "invalid_options"
+    assert too_many["isError"] and too_many["content"][0]["text"].splitlines()[0] == "invalid_options"
     assert accounts.watch_words(accounts.load_account("first")) == WORDS
     assert "watch_words" not in json.loads(
         (admin_credentials / "accounts" / "second.json").read_text())

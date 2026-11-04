@@ -295,9 +295,9 @@ def test_サーバ型mcpから枝とwhereとwhoを呼べる(env, thread, monkeyp
     bad = server.call_tool("thread_read", {"account": "alpha", "post_id": ROOT_ID, "max_messages": 5000})
     assert bad["isError"] and bad["content"][0]["text"].startswith("invalid_request: ")
     assert server.call_tool("where_to_appear", {"account": "alpha", "project": "alpha",
-                                                "words": ["x"]})["content"][0]["text"] == "invalid_request"
+                                                "words": ["x"]})["content"][0]["text"].splitlines()[0] == "invalid_request"
     assert server.call_tool("thread_read", {"account": "beta", "post_id": ROOT_ID})["content"][0]["text"] \
-        == "scope_unavailable"
+        .splitlines()[0] == "scope_unavailable"
 
 
 # --------------------------------------------------------------------------

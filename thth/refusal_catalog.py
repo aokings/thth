@@ -282,15 +282,30 @@ def fix_texts() -> dict[str, list[tuple[str, str]]]:
     return found
 
 
-def guard_why(code: str) -> str | None:
-    """`core.guard_refusal_message` の文から、なぜの部分を引く（分岐に無い符丁は None）。"""
+# 安全装置の断りの静的な詳細（`GuardRefused.reason`）のうち、なぜの文を変えるもの（`guard_why(code, reason)`）。
+# 止めた理由（`guard.STOP_REASONS`）・返信だけの日の上限・ブックマークの連投の窓。どれもコードに書いた静的な語。
+GUARD_DETAIL_WORDS = ("burst", "owner", "reply_daily", "bookmark_burst")
+
+
+def guard_why(code: str, reason: str | None = None, account: str = _GUARD_ACCOUNT) -> str | None:
+    """`core.guard_refusal_message` の文から、なぜの部分を引く（分岐に無い符丁は None）。
+
+    `reason` は `GUARD_DETAIL_WORDS` の語だけ渡す（それ以外は無いものとして引く）。目録の `why` は reason 無しの文。
+    `account` は口座の穴の形（`SLOTS["account"]`）を通った名前だけ（通らなければ型のまま）。安全装置の 1 行と
+    同じ字面にするため、穴埋めでなく安全装置の文に口座を渡して作る。"""
     from . import core
-    line = core.guard_refusal_message(_GUARD_ACCOUNT, _Refused(code))
+    if account != _GUARD_ACCOUNT and not (isinstance(account, str) and SLOTS["account"][1].fullmatch(account)):
+        account = _GUARD_ACCOUNT
+    refused = _Refused(code)
+    if reason in GUARD_DETAIL_WORDS:
+        refused.reason = reason
+    line = core.guard_refusal_message(account, refused)
     if _GUARD_MARK not in line:
         return None
     why = line.split(_GUARD_MARK, 1)[1]
-    if why.endswith(_GUARD_TAIL):
-        why = why[: -len(_GUARD_TAIL)]
+    tail = _GUARD_TAIL.replace(_GUARD_ACCOUNT, account)
+    if why.endswith(tail):
+        why = why[: -len(tail)]
     if why == code:  # 分岐に無い符丁は符丁そのものが返る
         return None
     return why
@@ -357,25 +372,27 @@ SLOTS = {
 }
 
 
+def fill_slots(text, **values):
+    """型の穴（`SLOTS`）に、形の検査を通った値だけを入れる。通らない値・知らない穴は型のまま。"""
+    if not text:
+        return text
+    for key, value in values.items():
+        slot = SLOTS.get(key)
+        if slot is None or not isinstance(value, str) or not slot[1].fullmatch(value):
+            continue
+        text = text.replace(slot[0], value)
+    return text
+
+
 def render(code: str, **values) -> dict:
     """符丁の 3 つを、検査を通った値だけ穴に入れて返す。通らない値・知らない穴は入れない（型のまま）。
 
     返す形: `{"code", "why", "fix", "command", "better"}`。符丁が目録に無ければ KeyError。
     """
     entry = _catalog()[code]
-    filled = {}
-    for key, value in values.items():
-        slot = SLOTS.get(key)
-        if slot is None or not isinstance(value, str) or not slot[1].fullmatch(value):
-            continue
-        filled[slot[0]] = value
 
     def fill(text):
-        if not text:
-            return text
-        for placeholder, value in filled.items():
-            text = text.replace(placeholder, value)
-        return text
+        return fill_slots(text, **values)
 
     return {"code": code, "why": fill(entry["why"]), "fix": fill(entry["fix"]["text"]),
             "command": fill(entry["fix"]["command"]), "better": fill(entry["better"])}

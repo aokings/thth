@@ -88,8 +88,9 @@ ACCOUNT_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\Z")
 
 
 def _fail(code, message=None) -> int:
-    print(code + (f": {message}" if message else ""), file=sys.stderr)
-    return 2
+    # 1 行目はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(None, code, line=code + (f": {message}" if message else ""), rc=2, as_json=False)
 
 
 def cmd_login(args) -> int:
@@ -367,22 +368,33 @@ def jst_text(value):
         return value
 
 
-def refuse(exc, *, as_json=False) -> int:
-    """断りを出す。stderr に `符丁[: 理由][（次は …）]` と次の一手、`--json` なら stdout に JSON。"""
+def refuse(exc, *, as_json=False, account=None) -> int:
+    """断りを出す。stderr に `符丁[: 理由][（次は …）]` と 2 行目から（なぜ・通すには・もっと良く）、
+    `--json` なら stdout に JSON（今の鍵に `why`・`fix`・`better`・`next_at` を足す）。
+
+    3 つは目録の口（`refusal.emit`・段 B）が作る。目録に無い符丁は今までどおり「次の一歩」の 1 行。
+    """
+    from . import refusal
     line = exc.code + (f": {exc.reason}" if exc.reason else "")
     if exc.next_at:
         line += f"（次は {jst_text(exc.next_at)} から）"
-    print(line, file=sys.stderr)
-    if exc.code in NEXT:
-        print("次の一歩: " + NEXT[exc.code], file=sys.stderr)
-    if as_json:
-        payload = {"error": exc.code}
-        if exc.reason:
-            payload["reason"] = exc.reason
-        if exc.next_at:
-            payload["next_at"] = exc.next_at
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return exc.rc
+    payload = {"error": exc.code}
+    if exc.reason:
+        payload["reason"] = exc.reason
+    if exc.next_at:
+        payload["next_at"] = exc.next_at
+    if refusal.parts(exc.code) is None:
+        print(line, file=sys.stderr)
+        if exc.code in NEXT:
+            print("次の一歩: " + NEXT[exc.code], file=sys.stderr)
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return exc.rc
+    values = {"account": account} if isinstance(account, str) else {}
+    if isinstance(exc.reason, str):
+        values["reason"] = exc.reason  # 3 つが見るのは安全装置の静的な詳細だけ（`refusal.parts`）
+    return refusal.emit(None, exc.code, line=line, payload=payload, next_at=exc.next_at, rc=exc.rc,
+                        both=True, about=refusal.focus(exc.code, exc.reason), as_json=bool(as_json), **values)
 
 
 # --------------------------------------------------------------------------
@@ -473,7 +485,7 @@ def route(args, command):
     try:
         return run(args, account)
     except RemoteError as exc:
-        return refuse(exc, as_json=as_json)
+        return refuse(exc, as_json=as_json, account=account)
 
 
 def refuse_flag(argv):

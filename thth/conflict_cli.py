@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 from . import accounts as accounts_mod
 from . import hatena_entry
@@ -41,11 +40,10 @@ def _print(payload) -> None:
 
 
 def _fail(args, rc, code, message) -> int:
-    if args.json:
-        _print({"ok": False, "error": code, "message": message})
-    else:
-        print(f"{code}: {message}", file=sys.stderr)
-    return rc
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, code, line=f"{code}: {message}",
+                        payload={"ok": False, "error": code, "message": message}, rc=rc, dump=_print)
 
 
 def _parse_rest(rest):

@@ -425,6 +425,18 @@
         "cannot_say": [
           "no_attributable_post"
         ],
+        "why": {
+          "link_unrecorded": "リンク先が記録に無い",
+          "no_attributable_post": "クリックを言える投稿が無い"
+        },
+        "fix": {
+          "link_unrecorded": "リンクのある投稿を THTH から出すと、リンク先が控えられてクリックを言えるようになります",
+          "no_attributable_post": "クリックを数えたい原稿は本文にリンクを入れ、リンク先を投稿ごとに分けて THTH から出してください"
+        },
+        "better": {
+          "link_unrecorded": "リンク先を投稿ごとに分けると、同じ先を使う投稿と混ざらずに数えられます",
+          "no_attributable_post": "リンクに UTM を付けると、クリックのあとの訪問まで原稿に結べます"
+        },
         "posts": [
           {
             "file": "th-flow-01.md",

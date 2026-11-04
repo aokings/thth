@@ -421,4 +421,4 @@ def test_サーバ型では許された範囲だけ読み栞は進めない(tmp_
     assert "server_mode_read_only" in payload["cannot_say"]
     assert not (root / "state" / "first" / "handoff_cursor.json").exists()
     denied = server.call_tool("thth_morning", {"target": "other"})
-    assert denied["isError"] and denied["content"][0]["text"] == "scope_unavailable"
+    assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "scope_unavailable"

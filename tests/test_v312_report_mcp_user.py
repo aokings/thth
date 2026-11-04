@@ -83,13 +83,13 @@ def test_誰が置いたかは要求の欄から作れない(tmp_path, monkeypat
     _root, server = _tenant(tmp_path, monkeypatch)
     for field in ("by", "reporter", "actor", "project", "operation"):
         denied = _file(server, **{field: "evil"})
-        assert denied["isError"] and _text(denied) == "invalid_request"
+        assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
 
 
 def test_actorの無いcredentialはby_required(tmp_path, monkeypatch):
     root, server = _tenant(tmp_path, monkeypatch, actor=None)
     denied = _file(server)
-    assert denied["isError"] and _text(denied) == "by_required"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "by_required"
     assert not list((root / "state").glob("_reports/r*.json"))
 
 
@@ -102,7 +102,7 @@ def test_credentialの外のaccountには置けない(tmp_path, monkeypatch):
     root, server = _tenant(tmp_path, monkeypatch)
     for account in ("second", "third", "nobody"):
         denied = _file(server, account=account)
-        assert denied["isError"] and _text(denied) == "scope_unavailable"
+        assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable"
     assert not list((root / "state").glob("_reports/r*.json"))
 
 
@@ -115,9 +115,9 @@ def test_他のprojectの報告は読めない(tmp_path, monkeypatch):
     assert [row["report_id"] for row in listed["reports"]] == [ours["report_id"]]
     assert listed["denominator"] == 1 and listed["unreadable"] is None
     denied = server.call_tool("thth_report_show", {"report_id": theirs["report_id"]})
-    assert denied["isError"] and _text(denied) == "report_not_found"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "report_not_found"
     missing = server.call_tool("thth_report_show", {"report_id": "r20260909-00000000"})
-    assert missing["isError"] and _text(missing) == "report_not_found"
+    assert missing["isError"] and _text(missing).splitlines()[0] == "report_not_found"
     shown = json.loads(_text(server.call_tool("thth_report_show", {"report_id": ours["report_id"]})))
     assert shown["body"] == "要望"
 
@@ -131,7 +131,7 @@ def test_他のprojectの報告は読めない(tmp_path, monkeypatch):
 def test_断りは静的な符丁だけ(tmp_path, monkeypatch, overrides, reason):
     _root, server = _tenant(tmp_path, monkeypatch)
     denied = _file(server, **overrides)
-    assert denied["isError"] and _text(denied) == reason
+    assert denied["isError"] and _text(denied).splitlines()[0] == reason
     assert "AbCdEf0123456789xyz0" not in json.dumps(denied, ensure_ascii=False)
 
 
@@ -139,7 +139,7 @@ def test_重複は既存のidを返す(tmp_path, monkeypatch):
     _root, server = _tenant(tmp_path, monkeypatch)
     first = json.loads(_text(_file(server)))
     denied = _file(server)
-    assert denied["isError"] and _text(denied) == "duplicate_report: " + first["report_id"]
+    assert denied["isError"] and _text(denied).splitlines()[0] == "duplicate_report: " + first["report_id"]
 
 
 def test_admin_scopeと手元のstdioには利用者の口を出さない(tmp_path, monkeypatch):
@@ -147,7 +147,7 @@ def test_admin_scopeと手元のstdioには利用者の口を出さない(tmp_pa
     names = {tool["name"] for tool in server.server_tools(server.authenticated_context())}
     assert not names & {"thth_report_file", "thth_report_list", "thth_report_show"}
     denied = _file(server)
-    assert denied["isError"] and _text(denied) == "unsupported_operation"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "unsupported_operation"
     for key in ("THTH_REPORT_CREDENTIALS", "THTH_REPORT_TOKEN"):
         monkeypatch.delenv(key)
     assert "thth_report_file" not in {tool["name"] for tool in server.TOOLS}

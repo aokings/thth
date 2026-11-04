@@ -325,7 +325,7 @@ def test_mcpのthth_settingsをkeyだけで呼んでも落ちない(monkeypatch)
     for arguments in ({"account": "inv-demo-abc", "key": "daily_max_posts"},
                       {"account": "inv-demo-abc", "value": "3"}):
         result = server.remote_call("thth_settings", arguments)
-        assert result["isError"] is True and result["content"][0]["text"] == "invalid_request"
+        assert result["isError"] is True and result["content"][0]["text"].splitlines()[0] == "invalid_request"
 
 
 def test_blueskyのsinceは時刻として比べる():

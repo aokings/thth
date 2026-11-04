@@ -31,26 +31,26 @@ def test_管理者の口で組を登録して解く(tmp_path, monkeypatch):
     assert listed["owners"] == {"masaru": ["kopicha", "other"]}
     denied = server.call_tool("thth_admin_plaza_owner_set", {"owner": "masaru", "projects": "kopicha",
                                                              "by": "operator"})
-    assert denied["isError"] and _text(denied) == "invalid_request"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
     denied = server.call_tool("thth_admin_plaza_owner_set", {"owner": "masaru", "projects": ["kopicha"]})
-    assert denied["isError"] and _text(denied) == "invalid_request"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"
     undone = server.call_tool("thth_admin_plaza_owner_unset", {"owner": "masaru", "by": "operator"})
     assert json.loads(_text(undone))["report_type"] == "plaza_owner_unset"
     missing = server.call_tool("thth_admin_plaza_owner_unset", {"owner": "masaru", "by": "operator"})
-    assert missing["isError"] and _text(missing) == "plaza_owner_not_found"
+    assert missing["isError"] and _text(missing).splitlines()[0] == "plaza_owner_not_found"
 
 
 def test_利用者はownerに置けて組の相手が読める_openは無い(tmp_path, monkeypatch):
     _root, server = _tenant(tmp_path, monkeypatch)
     refused = _post(server, visibility="owner")
-    assert refused["isError"] and _text(refused) == "plaza_owner_unregistered"
+    assert refused["isError"] and _text(refused).splitlines()[0] == "plaza_owner_unregistered"
     plaza.set_owner("masaru", ["kopicha", "other"], by="operator")
     posted = json.loads(_text(_post(server, visibility="owner", title="組に見せる")))
     assert posted["scope"] == "owner"
     shown = plaza.show(posted["plaza_id"], plaza.Viewer({"second": "other"}))
     assert shown["view"] == "owner"
     denied = _post(server, visibility="open", title="open は無い")
-    assert denied["isError"] and _text(denied) == "open_requires_cli"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "open_requires_cli"
     tools = {t["name"]: t for t in server.server_tools(server.authenticated_context())}
     assert tools["thth_plaza_post"]["inputSchema"]["properties"]["visibility"]["enum"] == [
         "project", "owner"]
@@ -71,12 +71,12 @@ def test_fromの口_observedは道具の数字だけ(tmp_path, monkeypatch):
     assert record["tool_numbers"]["numbers"]["posts"]["views_24h"] == {"median": 88, "n": 4}
     assert "999" not in json.dumps(record["tool_numbers"])
     out_of_scope = _post(server, title="他人", from_tool="after", from_account="second")
-    assert out_of_scope["isError"] and _text(out_of_scope) == "from_out_of_scope"
+    assert out_of_scope["isError"] and _text(out_of_scope).splitlines()[0] == "from_out_of_scope"
     both = _post(server, title="両方", from_tool="after", from_account="third",
                  from_report="r20260909-00000000")
-    assert both["isError"] and _text(both) == "invalid_from"
+    assert both["isError"] and _text(both).splitlines()[0] == "invalid_from"
     missing = _post(server, title="account が無い", from_tool="after")
-    assert missing["isError"] and _text(missing) == "invalid_from"
+    assert missing["isError"] and _text(missing).splitlines()[0] == "invalid_from"
 
 
 def test_showは読んだことを控え_digestはcredentialの範囲だけ(tmp_path, monkeypatch):
@@ -91,7 +91,7 @@ def test_showは読んだことを控え_digestはcredentialの範囲だけ(tmp_
     digest = json.loads(_text(server.call_tool("thth_plaza_digest", {})))
     assert digest["report_type"] == "plaza_digest" and digest["n"] == 0 and digest["denominator"] == 1
     denied = server.call_tool("thth_plaza_digest", {"target": "other"})
-    assert denied["isError"] and _text(denied) == "scope_unavailable"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "scope_unavailable"
     plaza.set_owner("masaru", ["kopicha", "other"], by="operator")
     by_owner = json.loads(_text(server.call_tool("thth_plaza_digest", {"target": "masaru"})))
     assert by_owner["basis"] == "owner"
@@ -101,4 +101,4 @@ def test_showは読んだことを控え_digestはcredentialの範囲だけ(tmp_
 def test_型の違う値は断る(tmp_path, monkeypatch, arguments):
     _root, server = _tenant(tmp_path, monkeypatch)
     denied = _post(server, **arguments)
-    assert denied["isError"] and _text(denied) == "invalid_request"
+    assert denied["isError"] and _text(denied).splitlines()[0] == "invalid_request"

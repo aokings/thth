@@ -245,10 +245,10 @@ def test_MCPの返事はbyが要り_利用者のcredentialには出ない(admin_
     root, path, value, server = admin_server
     theirs = report_inbox.file_report("second", kind="bug", title="他", body="本文", by="x")
     denied = server.call_tool("thth_admin_reports_reply", {"report_id": theirs["report_id"], "text": "t"})
-    assert denied["isError"] and denied["content"][0]["text"] == "invalid_request"
+    assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "invalid_request"
     denied = server.call_tool("thth_admin_reports_close", {"report_id": theirs["report_id"],
                               "reason": "fixed", "version": "3", "by": "masaru"})
-    assert denied["isError"] and denied["content"][0]["text"] == "invalid_version"
+    assert denied["isError"] and denied["content"][0]["text"].splitlines()[0] == "invalid_version"
     value["credentials"][0]["scope"] = "user"
     path.write_text(json.dumps(value))
     names = {tool["name"] for tool in server.server_tools(server.authenticated_context())}

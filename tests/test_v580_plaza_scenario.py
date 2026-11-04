@@ -386,10 +386,10 @@ def test_MCPの口は同じ引数(tmp_path, monkeypatch):
     props = tools["thth_plaza_post"]["inputSchema"]["properties"]
     assert "scenario" in props["from_tool"]["enum"] and {"from_project", "from_thread"} <= set(props)
     missing = mcp_post(server, kind="measure", from_tool="scenario", from_project="kopicha")
-    assert missing["isError"] and _text(missing) == "invalid_from"
+    assert missing["isError"] and _text(missing).splitlines()[0] == "invalid_from"
     other = mcp_post(server, kind="measure", from_tool="scenario", from_project="other", from_thread="flow-01")
-    assert other["isError"] and _text(other) == "from_out_of_scope"
+    assert other["isError"] and _text(other).splitlines()[0] == "from_out_of_scope"
     none = mcp_post(server, kind="measure", from_tool="scenario", from_project="kopicha", from_thread="nai-ito")
-    assert none["isError"] and _text(none) == "from_scenario_not_found"
+    assert none["isError"] and _text(none).splitlines()[0] == "from_scenario_not_found"
     mixed = mcp_post(server, kind="measure", from_tool="after", from_account="first", from_thread="x")
-    assert mixed["isError"] and _text(mixed) == "invalid_from"
+    assert mixed["isError"] and _text(mixed).splitlines()[0] == "invalid_from"

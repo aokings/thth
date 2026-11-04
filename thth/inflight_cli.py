@@ -88,11 +88,10 @@ def _print_json(payload) -> None:
 
 def _fail(args, code: int, reason: str, message: str) -> int:
     """断るときは静的な理由と次の一手（`reason: message` の 1 行）。"""
-    if args.json:
-        _print_json({"ok": False, "error": reason, "message": message})
-    else:
-        print(f"{reason}: {message}", file=sys.stderr)
-    return code
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, reason, line=f"{reason}: {message}",
+                        payload={"ok": False, "error": reason, "message": message}, rc=code, dump=_print_json)
 
 
 def summary(record: dict, *, now=None) -> dict:

@@ -79,11 +79,10 @@ def _print_json(payload) -> None:
 
 
 def _fail(args, rc: int, code: str, message: str, **extra) -> int:
-    if getattr(args, "json", False):
-        _print_json({"ok": False, "error": code, "message": message, **extra})
-    else:
-        print(f"{code}: {message}" if not message.startswith(code) else message, file=sys.stderr)
-    return rc
+    # 1 行目と今の鍵はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
+    from . import refusal
+    return refusal.emit(args, code, line=f"{code}: {message}" if not message.startswith(code) else message,
+                        payload={"ok": False, "error": code, "message": message, **extra}, rc=rc, dump=_print_json)
 
 
 # --------------------------------------------------------------------------
