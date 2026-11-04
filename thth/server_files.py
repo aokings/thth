@@ -58,8 +58,13 @@ def read_at(fd, name, *, private=False, maximum=262144):
 def replace_at(fd, name, raw, *, expected=None, new=False, private=False):
     """Caller holds its resource lock. Check old leaf before atomic replacement."""
     try:
-        old = read_at(fd, name, private=private)
-        if new or expected is not None and old != expected: raise UnsafeFile('server_file_changed')
+        # 古い中身の大きさでは断らない（大きさの上限は読む側のもの）。ここで既定の上限を見ていたので、
+        # 256 KiB を超えた予算の台帳が書けず、X の鍵の更新まで止まった（kopicha-x・2026-11-03）。
+        leaf = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        with os.fdopen(leaf, 'rb') as stream:
+            info = os.fstat(stream.fileno()); regular(info, private=private)
+            if new or expected is not None and (info.st_size != len(expected) or stream.read() != expected):
+                raise UnsafeFile('server_file_changed')
     except FileNotFoundError:
         if expected is not None: raise UnsafeFile('server_file_changed') from None
     temp = '.write-'+secrets.token_hex(16)

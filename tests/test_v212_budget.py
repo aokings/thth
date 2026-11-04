@@ -240,3 +240,27 @@ def test_storage_failure_never_dispatches_without_durable_reservation(env,monkey
     assert effects=={'reservation':[],'post':[],'get':['post'],'settlement':['post','get']}[phase]
     assert b.report()['held_usd']==('0.010' if phase=='settlement' else '0')
     assert b.report()['spent_estimate_usd']=='0'
+
+
+def test_ledger_over_256kib_still_saves_and_reserves(env):
+    # 2026-11-03: budget_x.json が 262,361 バイトになり、書き戻しの既定の上限で断られて X の鍵の更新が止まった。
+    setcap('5.000')
+    with b.locked() as fd:
+        value=b._read(fd);base=dict(value['policy']);value['policy_history']=[dict(base,version=i) for i in range(3000)];value['policy']=dict(base,version=3000);b._save(fd,value)
+    assert (env/'state'/'_admin'/'budget_x.json').stat().st_size>262144
+    with b.user_read('a'):pass
+    assert (env/'state'/'_admin'/'budget_x.json').stat().st_size>262144
+
+
+def test_replace_at_keeps_expected_and_new_checks_for_large_files(env):
+    raw=b'x'*300000
+    with server_files.directory(env/'big',create=True,private=True) as fd:
+        server_files.replace_at(fd,'f',raw,new=True,private=True)
+        with pytest.raises(server_files.UnsafeFile,match='server_file_changed'):
+            server_files.replace_at(fd,'f',b'y',new=True,private=True)
+        with pytest.raises(server_files.UnsafeFile,match='server_file_changed'):
+            server_files.replace_at(fd,'f',b'y',expected=b'x'*299999+b'z',private=True)
+        with pytest.raises(server_files.UnsafeFile,match='server_file_changed'):
+            server_files.replace_at(fd,'f',b'y',expected=b'short',private=True)
+        server_files.replace_at(fd,'f',b'y',expected=raw,private=True)
+        assert server_files.read_at(fd,'f',private=True)==b'y'
