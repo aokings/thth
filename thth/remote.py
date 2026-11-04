@@ -37,12 +37,14 @@ KEY = re.compile(r"[A-Za-z0-9_-]{16,512}\Z")
 class RemoteError(Exception):
     """遠くの道の断り。`code` は静的な符丁（1 語）。"""
 
-    def __init__(self, code, *, reason=None, next_at=None, rc=1):
+    def __init__(self, code, *, reason=None, next_at=None, rc=1, days_left=None):
         super().__init__(code)
         self.code = code
         self.reason = reason
         self.next_at = next_at
         self.rc = rc
+        # 段 E の慣らし（`ramp_daily_limit`）の残りの日数（VM の答えの `assessment.ramp.days_left`・数だけ）。
+        self.days_left = days_left
 
 
 def config_path() -> str:
@@ -294,6 +296,15 @@ def _text(value, limit=200):
     return (" ".join((redact.redact(value) or "").split()))[:limit] or None
 
 
+def _days_left(value):
+    """慣らしの断り（段 E）の残りの日数。`assessment.ramp.days_left` が 1〜99 の整数のときだけ。"""
+    if value.get("error") != "ramp_daily_limit":
+        return None
+    ramp = (value.get("assessment") or {}).get("ramp") if isinstance(value.get("assessment"), dict) else None
+    days = ramp.get("days_left") if isinstance(ramp, dict) else None
+    return days if type(days) is int and 1 <= days <= 99 else None
+
+
 def _answer(status, value):
     """200 の答え（断りなら `RemoteError`）。"""
     if status == 200:
@@ -301,7 +312,8 @@ def _answer(status, value):
         # （3.14.0 で `posts` だけ request_failed になっていた・09-26 masaru の通し確認）。
         if isinstance(value.get("error"), str) and value["error"]:
             raise RemoteError(_code(value.get("error"), "request_failed"), reason=_text(value.get("reason")),
-                              next_at=value.get("next_at") if isinstance(value.get("next_at"), str) else None)
+                              next_at=value.get("next_at") if isinstance(value.get("next_at"), str) else None,
+                              days_left=_days_left(value))
         return value
     if status == 401:
         raise RemoteError(value["error"] if value.get("error") in ("invalid_key", "key_expired") else "invalid_key",
@@ -378,6 +390,8 @@ def refuse(exc, *, as_json=False, account=None) -> int:
     line = exc.code + (f": {exc.reason}" if exc.reason else "")
     if exc.next_at:
         line += f"（次は {jst_text(exc.next_at)} から）"
+    if getattr(exc, "days_left", None) is not None:
+        line += f"（慣らしの期間・あと {exc.days_left} 日）"
     payload = {"error": exc.code}
     if exc.reason:
         payload["reason"] = exc.reason

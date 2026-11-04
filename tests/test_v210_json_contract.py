@@ -116,6 +116,8 @@ COMMANDS += ['ads estimate', 'ads skill']
 COMMANDS += ['plaza hide']
 # 5.11.0 段 7 の監査の直し: 管理者が非表示を戻す口。
 COMMANDS += ['admin plaza unhide']
+# 段 E（共有アプリの柵）: 全口座の合計と媒体ごとのアプリ全体の上限（読むだけ・--json は 1 つの値）。
+COMMANDS += ['media app-usage']
 
 
 def test_json_table_covers_every_parser():

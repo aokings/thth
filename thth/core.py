@@ -1707,6 +1707,13 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
                "数は thth account set <口座> reply.daily <数> --by <名前> で変えられます")
     elif code == "daily_limit":
         why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
+    elif code == "ramp_daily_limit":
+        # 段 E（`thth/shared_app.py`）: 招待で入った口座の最初の 14 日は、1 日の公開の上限を台帳の値の半分に
+        # して読む（台帳は書き換えない・口座は止めない）。残りの日数は見立ての `ramp` から。
+        from . import shared_app
+        ramp = (getattr(refused, "assessment", None) or {}).get("ramp")
+        why = (f"入ってから {shared_app.RAMP_DAYS} 日の慣らしの期間なので、1 日の公開の上限（daily_max_posts）を"
+               f"台帳の値の半分にしています{shared_app.ramp_line(ramp)}{when}")
     elif code == "quiet_hours":
         why = f"夜間（quiet_hours）です{when}"
     elif code == "burst_limit" and getattr(refused, "reason", None) == "bookmark_burst":
@@ -1843,6 +1850,9 @@ def public_assessment(found) -> dict | None:
                     "count_evidence": trait.get("count_evidence")} if trait else None
     if found.get("stopped_by_rule"):
         out["stopped_by_rule"] = found["stopped_by_rule"]
+    if isinstance(found.get("ramp"), dict):
+        # 段 E の慣らし（数と日付だけ）。慣らしで断ったときだけ鍵を足す。
+        out["ramp"] = {key: found["ramp"].get(key) for key in ("days_left", "until", "count", "ledger_count")}
     return out
 
 

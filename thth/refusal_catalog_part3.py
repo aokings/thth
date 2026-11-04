@@ -369,6 +369,23 @@ ENTRIES = {
         "better": "URL と一言の要約を添えると、引用が使えない instance でも話の流れが伝わります。",
         "doors": ("cli", "mcp"),
     },
+    # 段 E（`thth/shared_app.py`）: 招待で入った口座の最初の 14 日の慣らし。なぜは安全装置の文（`guard_why`）から。
+    "ramp_daily_limit": {
+        "kind": "refusal",
+        "why": None,
+        "fix": "明日 0:00 以降にもう一度送るか、その時刻に予約してください（慣らしが明ければ台帳の数に戻ります）",
+        "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production",
+        "better": "慣らしの間は 1 日の本数を絞り、返信（投稿とは別の枠）で会話を育てておくと、明けたあとの投稿が届きやすくなります",
+        "fix_by_door": {
+            "cli": {"text": "原稿の front-matter に publish_at: <時刻> を書いて queue に置き、承認してください（1 段目の digest を --confirm に渡して確定・timer がその時刻に出します）。慣らしが明ければ台帳の数に戻ります",
+                    "command": "thth approve <ファイル> --by <名前>"},
+            "remote": {"text": "次に出せる時刻に予約してください（慣らしが明ければ台帳の数に戻ります）",
+                       "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production"},
+            "mcp": {"text": "thth_draft_put に publish_at: <時刻> で下書きを置き、返った draft_id を thth_schedule_request に渡して予約してください（慣らしが明ければ台帳の数に戻ります）", "command": None},
+        },
+        "doors": ("cli", "mcp", "remote"),
+        "since": "5.11.1",
+    },
     "rate_limited": {
         "kind": "refusal",
         "why": "thth.me の鍵ごとの回数の上限（1 分に 60 回）に達しました。",

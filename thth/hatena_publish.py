@@ -51,7 +51,7 @@ KINDS = {"create": "entry_create", "update": "entry_update", "delete": "entry_de
 # 状態。この表は読み手の互換のために残す・戻し先には使わない）。
 BEFORE = {"create": "wanted", "update": "published", "delete": "published"}
 # 時刻が来れば解ける断り（timer の失敗にしない）。
-WAITING_REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit",
+WAITING_REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "ramp_daily_limit", "retract_limit",
                               "principal_daily_limit", "principal_retract_limit",
                               "blog_daily_limit", "blog_retract_limit",
                               # 4.0 S3 §9: 主体の 1 日の画像の上げ（翌日の 0 時に解ける）。
