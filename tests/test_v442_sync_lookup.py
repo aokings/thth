@@ -120,3 +120,29 @@ def test_relative_path_does_not_pull_unrelated_repo(isolated_account_factory, tm
     assert result.returncode == 2
     assert run_git(other_repo, ["rev-parse", "HEAD"]).stdout.strip() == before
     assert main["name"]
+
+
+# 5.12.1（運用の知らせ）: `thth lint <口座> <原稿>` は口座名をパスとして探し、全口座の取り込みの結果を
+# 並べていた。口座名で、その名前のファイルが無ければ取り込む前に 1 つの断りを返す。
+def test_lint_with_account_name_first_refuses_once_without_pulling(isolated_account):
+    rel = os.path.join("docs", "sns", "queue", "ok.md")
+    write_queue_file(isolated_account["queue_dir"], "ok.md",
+                     body="## threads\n\n本文です。\n", fm_overrides={"account": isolated_account["name"]})
+    result = run_thth(["lint", isolated_account["name"], rel], cwd=isolated_account["repo_dir"])
+    assert result.returncode == 2
+    rows = result.stderr.splitlines()
+    assert rows[0].startswith("lint_takes_no_account: thth lint は口座名を取りません")
+    assert any(row.startswith("通すには: ") and "thth lint <原稿>" in row for row in rows)
+    assert any(row.startswith("もっと良く: ") for row in rows)
+    assert "VM の repo に無いパス" not in result.stderr and "取り込" not in result.stderr
+    # 口座名を外せば通る。
+    assert run_thth(["lint", rel], cwd=isolated_account["repo_dir"]).returncode == 0
+
+
+def test_lint_reads_a_file_that_really_has_the_account_name(isolated_account):
+    write_queue_file(isolated_account["repo_dir"], isolated_account["name"],
+                     body="## threads\n\n本文です。\n", fm_overrides={"account": isolated_account["name"]})
+    # 今の場所に無くても、台帳の repo の根にあればそれを lint する。
+    result = run_thth(["lint", isolated_account["name"]])
+    assert result.returncode == 0, result.stderr
+    assert "lint_takes_no_account" not in result.stderr

@@ -78,6 +78,12 @@ def cmd_lint(args) -> int:
     # 2026-09-11・`ba81219` 後の掃討で検出）。for が 0 回まわるだけで「0 本を検査した」が
     # どこにも出ず、承認前の `cmd_approve()` にはある同じ関門が lint には無かった。
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
+    # 5.12.1: `thth lint <口座> <原稿>` と打つと口座名をパスとして探し、全口座の repo の取り込みの
+    # 結果まで並べていた（運用の知らせ）。口座名で、その名前のファイルが無いときは取り込む前に断る。
+    if args.file and _account_name_not_file(args.file[0]):
+        from . import refusal
+        payload = {"error": "lint_takes_no_account"}  # 棚卸し（tools/count_refusals.py）は JSON の欄で数える
+        return refusal.emit(args, payload["error"], payload=payload, account=args.file[0], rc=2)
     paths, note = _expand_targets(args.file, only_draft=False, purpose="lint")
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
@@ -330,6 +336,28 @@ def _translate_local_path(path: str, purpose: str | None = None, account=None) -
         print('承認の digest は VM の本文（同期のあと）で出ます——手元の本文ではありません',
               file=sys.stderr)
     return candidate
+
+
+def _account_name_not_file(item) -> bool:
+    """台帳の口座名で、その名前のファイルが今の場所にも台帳の repo の根にも無い（`thth lint` の 1 つ目・5.12.1）。
+
+    同じ名前のファイルが本当にあれば False（そのまま lint する）。"""
+    if not isinstance(item, str) or "/" in item or os.path.exists(item):
+        return False
+    try:
+        names = accounts_mod.list_account_names()
+    except (accounts_mod.AccountError, OSError, ValueError, TypeError):
+        return False
+    if item not in names:
+        return False
+    for name in names:
+        try:
+            repo = accounts_mod.load_account(name).get('repo_dir')
+        except (accounts_mod.AccountError, OSError, ValueError, TypeError, KeyError):
+            continue
+        if isinstance(repo, str) and os.path.exists(os.path.join(repo, item)):
+            return False
+    return True
 
 
 def _resolve_repo_path(path: str, purpose: str | None = None, account=None) -> str:
