@@ -336,6 +336,9 @@ def _build() -> dict[str, dict]:
             "lang": LANG,
             "retired": RETIRED.get(code),
             "sources": tuple(sources),
+            # 口ごとの通す道（`{口: {"text", "command"}}`・段 B の直し）と、安全装置の詳細ごとの文。
+            "fix_by_door": {door: dict(value) for door, value in (entry.get("fix_by_door") or {}).items()},
+            "by_detail": {word: dict(value) for word, value in (entry.get("by_detail") or {}).items()},
         }
     return catalog
 
@@ -362,7 +365,27 @@ def get(code: str) -> dict | None:
 # ---- 穴埋め（静的な型に検査済みの値だけ） ----
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
-_TIME = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2}|Z)?)?\Z")
+_TIME_FORM = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:[+-]\d{2}:\d{2}|Z)\Z")
+
+
+class _Moment:
+    """時刻の穴の検査（打てる命令に入る値）: `T` 区切りで日時とタイムゾーンがそろい、実在する時刻だけ。
+
+    日付だけ・タイムゾーン無し・存在しない日付（13 月 45 日・99 時）・空白区切りは通さない。"""
+
+    @staticmethod
+    def fullmatch(value):
+        if not isinstance(value, str) or not _TIME_FORM.fullmatch(value):
+            return None
+        import datetime
+        try:
+            parsed = datetime.datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+
+
+_TIME = _Moment()
 # 穴の名前 → 型の字面と値の検査。
 SLOTS = {
     "account": ("<口座>", _NAME),

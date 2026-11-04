@@ -802,8 +802,9 @@ def cli_argv(args: list) -> list:
 
 
 def run_cli(args: list, *, stdin_text: str | None = None) -> subprocess.CompletedProcess:
+    # 断りの「通すには」を MCP の口の文にする（読み手は MCP の窓口・CLI の命令を示さない・段 B の直し）。
     return subprocess.run(cli_argv(args), capture_output=True,
-                           text=True, input=stdin_text)
+                           text=True, input=stdin_text, env={**os.environ, "THTH_REFUSAL_DOOR": "mcp"})
 
 
 def _topic_stdin(arguments: dict, *, with_proposal: bool) -> tuple:
@@ -1560,7 +1561,7 @@ def _refusal_text(value, *, account=None, next_at=None, about=None, reason=None)
     口座は credential が許した名前だけ（`_remember_refusal` が確かめたもの）。足せなければ `value` のまま。"""
     try:
         from thth import refusal
-        values = {}
+        values = {'door': 'mcp'}
         if isinstance(account, str):
             values['account'] = account
         if isinstance(next_at, str):

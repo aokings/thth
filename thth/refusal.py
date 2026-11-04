@@ -61,6 +61,18 @@ def focus(code, detail=None) -> str:
     return code
 
 
+DOOR_NAMES = ("cli", "remote", "mcp")
+DOOR_ENV = "THTH_REFUSAL_DOOR"
+
+
+def door_of(door=None):
+    """口の名前。MCP が CLI を子として呼ぶとき（`THTH_REFUSAL_DOOR=mcp`）は、読み手が MCP なので mcp を先に。"""
+    import os
+    if os.environ.get(DOOR_ENV) == "mcp":
+        return "mcp"
+    return door if door in DOOR_NAMES else None
+
+
 def _values(values: dict) -> dict:
     """穴に渡す値。`next_at` は `<時刻>` の穴にも入れる（通すにはの予約の命令がそのまま打てる）。"""
     out = dict(values)
@@ -74,6 +86,8 @@ def parts(code, **values) -> dict | None:
 
     目録に無い・退いた符丁は None。値は `refusal_catalog.render` の穴の検査を通ったものだけ入る。
     `reason` は安全装置の静的な詳細（`refusal_catalog.GUARD_DETAIL_WORDS` の語だけ・ほかは見ない）。
+    `door` は口（`cli`＝手元の CLI・`remote`＝遠くの道の CLI・`mcp`）。目録の `fix_by_door` にその口の文があれば
+    それを出す（その口で打てる道）。環境の `THTH_REFUSAL_DOOR=mcp`（MCP が CLI を呼ぶとき）は口の指定より先に効く。
     """
     if not isinstance(code, str) or code in VIEW_ONLY:
         return None
@@ -90,6 +104,20 @@ def parts(code, **values) -> dict | None:
                                                              if isinstance(values.get("account"), str) else {}))
         if special:
             rendered["why"] = special
+    # 安全装置の詳細ごとの fix・better（返信の日の上限は投稿の枠と逆）と、口ごとの通す道（その口で打てる形）。
+    detail = (entry.get("by_detail") or {}).get(reason) if reason in refusal_catalog.GUARD_DETAIL_WORDS else None
+    chosen = {"text": entry["fix"]["text"], "command": entry["fix"]["command"],
+              "better": entry["better"], "fix_by_door": entry.get("fix_by_door") or {}}
+    if detail:
+        chosen = {"text": detail.get("fix", chosen["text"]), "command": detail.get("command", chosen["command"]),
+                  "better": detail.get("better", chosen["better"]), "fix_by_door": detail.get("fix_by_door") or {}}
+    door = door_of(values.get("door"))
+    by_door = chosen["fix_by_door"].get(door) if door else None
+    if by_door:
+        chosen = dict(chosen, text=by_door.get("text", chosen["text"]), command=by_door.get("command"))
+    rendered["fix"] = refusal_catalog.fill_slots(chosen["text"], **values)
+    rendered["command"] = refusal_catalog.fill_slots(chosen["command"], **values)
+    rendered["better"] = refusal_catalog.fill_slots(chosen["better"], **values)
     fix = rendered["fix"] or ""
     command = rendered["command"]
     if command and command not in fix:
@@ -177,6 +205,7 @@ def emit(args, code, *, line=None, payload=None, next_at=None, rc=2, both=False,
     """
     if as_json is None:
         as_json = bool(getattr(args, "json", False)) if args is not None else False
+    values.setdefault("door", "cli")  # emit は CLI の口（遠くの道は remote を渡す・MCP の子は環境が先）
     if "account" not in values and isinstance(getattr(args, "account", None), str):
         values["account"] = args.account
     if next_at is not None:

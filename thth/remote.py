@@ -390,7 +390,7 @@ def refuse(exc, *, as_json=False, account=None) -> int:
         if as_json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         return exc.rc
-    values = {"account": account} if isinstance(account, str) else {}
+    values = {"door": "remote", **({"account": account} if isinstance(account, str) else {})}
     if isinstance(exc.reason, str):
         values["reason"] = exc.reason  # 3 つが見るのは安全装置の静的な詳細だけ（`refusal.parts`）
     return refusal.emit(None, exc.code, line=line, payload=payload, next_at=exc.next_at, rc=exc.rc,

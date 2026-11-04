@@ -4091,7 +4091,7 @@ def cmd_send(args) -> int:
         # 安全装置の断り（段 B）: 目録の 3 つを足す。1 行目は安全装置の文のまま（それがなぜ）。
         from . import refusal
         guard_code = result.error if (code and result is not None and result.action == "guard") else None
-        guard_values = {"account": args.account, "next_at": getattr(result, "next_at", None),
+        guard_values = {"door": "cli", "account": args.account, "next_at": getattr(result, "next_at", None),
                         "reason": getattr(result, "reason", None)}
         if as_json and result is not None:
             body = {"account": args.account, "mode": result.mode, "action": result.action,

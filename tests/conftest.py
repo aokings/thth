@@ -548,7 +548,7 @@ def init_git_pair(tmp_path, *, seed_content: str, seed_name: str = "a.md"):
             "queue_dir": os.path.join(work, "docs", "sns", "queue")}
 
 
-def is_refusal(err: str, code: str) -> bool:
+def is_refusal(err: str, code: str, *, with_tail: bool = False) -> bool:
     """断りの stderr が「理由の符丁 1 行＋打てる報告の 1 行」か（3.1.2 §3.5・3.3.0 B3）。
 
     3.3.0 から 2 行目は account と理由の符丁を埋めた `report_inbox.refusal_line()`。
@@ -557,8 +557,10 @@ def is_refusal(err: str, code: str) -> bool:
     lines = err.strip().splitlines()
     # 段 B（前向きな断り）: 1 行目の符丁と最後の報告の行の間に、目録の 3 つ（なぜ・通すには・もっと良く）の行。
     # 目録の口（`thth/refusal.py`）にまだ寄せていない口は、今までどおり間に何も無い。
+    # `with_tail=True` は寄せた口の試験用: 間が目録の 3 つの行と一致し、空では通さない（段 B の直し 6）。
     from thth import refusal
     return (len(lines) >= 2 and lines[0] == code
-            and lines[1:-1] in ([], refusal.tail(code, lines[0]))
+            and lines[1:-1] in (([] if not with_tail else None), refusal.tail(code, lines[0]))
+            and (not with_tail or bool(lines[1:-1]))
             and lines[-1].startswith("report_channel: thth report file ")
             and f'--title "{code} で断られた"' in lines[-1])

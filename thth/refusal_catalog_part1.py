@@ -44,6 +44,15 @@ ENTRIES = {
         "fix": "公開・削除・予約は止まっています。持ち主が https://thth.me/activity で戻すと、また出せます",
         "command": "thth account resume <口座> --by <名前>",
         "better": "戻す前に止まった理由（連投なら間隔）を見直すと、同じ止めを繰り返しません",
+        # 戻す命令（`thth account resume`）は手元の台帳の CLI だけ（遠くの道と MCP では戻せない・持ち主が Web で）。
+        "fix_by_door": {
+            "cli": {"text": "公開・削除・予約は止まっています。持ち主が戻すと、また出せます",
+                    "command": "thth account resume <口座> --by <名前>"},
+            "remote": {"text": "公開・削除・予約は止まっています。持ち主が https://thth.me/activity で戻すと、また出せます",
+                       "command": None},
+            "mcp": {"text": "公開・削除・予約は止まっています。持ち主が https://thth.me/activity で戻すと、また出せます",
+                    "command": None},
+        },
         "doors": ("cli", "mcp", "remote"),
     },
     "account_unavailable": {
@@ -890,8 +899,27 @@ ENTRIES = {
         "kind": "refusal",
         "why": None,
         "fix": "明日まで待つ（上げるのは持ち主が https://thth.me/activity で）",
-        "command": "thth schedule <口座> --draft <下書き> --at <時刻> --production",
+        "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production",
         "better": "返信は投稿とは別の枠なので、今日は返信に回すと枠を使わず会話を伸ばせます",
+        "fix_by_door": {
+            "cli": {"text": "原稿の front-matter に publish_at: <時刻> を書いて queue に置き、承認してください（1 段目の digest を --confirm に渡して確定・timer がその時刻に出します）。数を上げるなら持ち主が thth account set <口座> daily_max_posts <数> --by <名前>",
+                    "command": "thth approve <ファイル> --by <名前>"},
+            "remote": {"text": "次に出せる時刻に予約してください（数を上げるのは持ち主が https://thth.me/activity で）",
+                       "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production"},
+            "mcp": {"text": "thth_draft_put に publish_at: <時刻> で下書きを置き、返った draft_id を thth_schedule_request に渡して予約してください（数を上げるのは持ち主が https://thth.me/activity で）", "command": None},
+        },
+        # 安全装置の詳細ごとの文（`GuardRefused.reason`）。返信だけの日の上限（reply.daily）は投稿の枠と逆になる。
+        "by_detail": {
+            "reply_daily": {
+                "fix": "返信は明日 0:00 以降にもう一度送ってください（数を上げるのは持ち主が https://thth.me/activity で）",
+                "command": None,
+                "better": "投稿は返信とは別の枠なので、今日のうちに伝えたいことは返信でない 1 本にまとめると、会話を止めずに届けられます",
+                "fix_by_door": {
+                    "cli": {"text": "返信は明日 0:00 以降にもう一度送ってください。数を上げるなら持ち主が thth account set <口座> reply.daily <数> --by <名前>",
+                            "command": "thth account set <口座> reply.daily <数> --by <名前>"},
+                },
+            },
+        },
         "doors": ("cli", "mcp", "remote"),
     },
     "daily_missing": {
@@ -1421,8 +1449,8 @@ ENTRIES = {
     "hashtags_disabled_by_ledger": {
         "kind": "refusal",
         "why": "この口座の台帳は hashtags: false なのに、本文に # の語があります",
-        "fix": "# を外してください。使うなら持ち主が thth account set <口座> hashtags true --by <名前>",
-        "command": "thth account set <口座> hashtags true --by <名前>",
+        "fix": "本文から # の語を外して、もう一度送ってください（タグを使うなら、持ち主が口座の台帳の hashtags を true にします）",
+        "command": None,
         "better": "語は本文に入れ、話題は topic: に書くと、タグ無しでも届きます",
         "doors": ("cli", "mcp"),
     },

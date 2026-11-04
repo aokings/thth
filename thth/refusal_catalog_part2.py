@@ -133,6 +133,10 @@ ENTRIES = {
         "why": "原稿が lint か形の検査を通りませんでした（続く符丁が当たった決まりです）。",
         "fix": "本文を直してもう一度（--dry-run で lint だけ確かめられます）",
         "command": "thth lint <ファイル>",
+        "fix_by_door": {
+            "remote": {"text": "続く符丁の所を直して、もう一度送ってください", "command": None},
+            "mcp": {"text": "続く符丁の所を直して、もう一度呼んでください", "command": None},
+        },
         "better": "送る前に手元で `thth lint <ファイル>` を通すと、断りの往復が減ります",
         "doors": ("mcp", "remote"),
     },
@@ -503,6 +507,13 @@ ENTRIES = {
         "why": "要求の形が受け付ける形と違います（知らない鍵・足りない鍵・型・- で始まる値など）。",
         "fix": ("受け付ける形に直して、もう一度送ってください（CLI は thth <命令> --help の形、"
                 "MCP は道具の説明（schema）にある鍵だけを正しい型で。key と value は両方そろえる）"),
+        "fix_by_door": {
+            "cli": {"text": "1 行目の後ろに書いた所を直して、もう一度打ってください（形は thth <命令> --help）", "command": None},
+            "remote": {"text": "1 行目の後ろに書いた所を直して、もう一度打ってください（形は thth <命令> --help）",
+                       "command": None},
+            "mcp": {"text": "道具の説明（schema）にある鍵だけを正しい型で渡し、必須の鍵を足してください（key と value は両方そろえる）",
+                    "command": None},
+        },
         "better": "書く道具の前に読むだけの道具か dry-run で形を確かめると、往復が減ります",
         "doors": ("cli", "mcp", "remote"),
     },

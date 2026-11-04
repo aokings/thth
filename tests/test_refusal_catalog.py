@@ -378,8 +378,9 @@ def test_安全装置のtoo_soonは3つがそろう():
 
 
 def test_穴埋めは検査を通った値だけ():
-    good = rc.render("too_soon", at="2026-11-03T10:00")
-    assert "2026-11-03T10:00" in good["command"]
+    good = rc.render("too_soon", at="2026-11-03T10:00+09:00")  # 段 B の直し: 時刻はタイムゾーンまでそろった形だけ
+    assert "2026-11-03T10:00+09:00" in good["command"]
+    assert "<時刻>" in rc.render("too_soon", at="2026-11-03T10:00")["command"]
     bad = rc.render("too_soon", at="明日の朝 /etc/passwd")
     assert "<時刻>" in bad["command"] and "passwd" not in bad["command"]
     assert rc.render("too_soon", body="本文")["command"] == rc.CATALOG["too_soon"]["fix"]["command"]

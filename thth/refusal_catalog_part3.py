@@ -876,12 +876,17 @@ ENTRIES = {
     "scope_unavailable": {
         "kind": "refusal",
         "why": "この鍵・credential では、その口座か project を扱えません。",
-        "fix": "この鍵の口座か確かめる（thth account status <口座>）",
+        "fix": ("鍵を発行した口座の名前で打ち直してください。この口座も扱うなら、その口座の持ち主に "
+                "https://thth.me/activity で鍵を発行してもらい、thth login で入れ替えてください"),
         # 見方ごとに文が違う（remote.NEXT 以外の口の文）。
         "fix_by_view": {
             "map_store.NEXT": "その project の地図は、この credential では読めません",
         },
-        "command": "thth account status <口座>",
+        "command": None,
+        "fix_by_door": {
+            "mcp": {"text": ("この credential が許す口座・project の名前で呼び直してください。ほかの口座も扱うなら、"
+                             "持ち主に credential の範囲を足してもらってください"), "command": None},
+        },
         "better": "扱う口座が増えたら、持ち主に鍵の範囲を足してもらうと一本の鍵で済みます。",
         "doors": ("cli", "mcp", "remote"),
     },
@@ -1237,8 +1242,14 @@ ENTRIES = {
     "too_soon": {
         "kind": "refusal",
         "why": None,
-        "fix": "次に出せる時刻に予約してください（thth schedule --text-file <ファイル> --at <時刻> --production）。",
-        "command": "thth schedule --text-file <ファイル> --at <時刻> --production",
+        "fix": "次に出せる時刻に予約してください（thth schedule <口座> --text-file <ファイル> --at <時刻> --production）。",
+        "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production",
+        # 口ごとの通す道（段 B の直し・その口で打って断られない形）。cli は手元の台帳・remote は遠くの道の CLI。
+        "fix_by_door": {
+            "cli": {"text": "原稿の front-matter に publish_at: <時刻> を書いて queue に置き、承認してください（1 段目の digest を --confirm に渡して確定・timer がその時刻に出します）", "command": "thth approve <ファイル> --by <名前>"},
+            "remote": {"text": "次に出せる時刻に予約してください", "command": "thth schedule <口座> --text-file <ファイル> --at <時刻> --production"},
+            "mcp": {"text": "thth_draft_put に publish_at: <時刻> で下書きを置き、返った draft_id を thth_schedule_request に渡して予約してください", "command": None},
+        },
         "better": "同じ趣旨なら間隔を空けて 2〜3 本に分けると、それぞれが違う時間帯の読者に届きます。",
         "doors": ("cli", "mcp", "remote"),
     },
