@@ -21,8 +21,11 @@ ROOT = Path(__file__).resolve().parent.parent
 DASHBOARDS = [ROOT / "skills" / "thth" / "dashboard" / f"{name}.html"
               for name in ("all", "campaign", "series", "project")]
 
-# no_better の数の上限（段 A の今の数で固定・版ごとに下げる。上げない）。
-NO_BETTER_LIMIT = {"internal": 196, "terminal": 14}
+# no_better の数の上限（段 F・版ごとに下げる。上げない）。版を上げたら、その版の行を足す
+# （前の版より上げない・今の数と同じにする）。better を足して数が減ったら、その版の上限も下げる。
+NO_BETTER_LIMITS = {
+    "5.11.1": {"internal": 196, "terminal": 13},
+}
 # 目録の項目の数の下限（消すときは項目を残して retired を立てる）。
 CATALOG_FLOOR = 750
 NEGATIVE_ENDINGS = ("できません", "不正です")
@@ -75,10 +78,46 @@ def test_betterが空ならno_betterの理由が要る():
     assert wrong == []
 
 
+def _version_key(version):
+    return tuple(int(part) for part in version.split("."))
+
+
+def _current_version():
+    return (ROOT / "thth" / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def test_no_betterの上限は今の版の行がある():
+    version = _current_version()
+    assert version in NO_BETTER_LIMITS, (
+        f"版 {version} の no_better の上限が無い。NO_BETTER_LIMITS に {version} の行を足す"
+        f"（前の版より上げない・今の数 {rc.counts()['no_better']} にそろえる）")
+
+
+def test_no_betterの上限は版ごとに上がらない():
+    rows = sorted(NO_BETTER_LIMITS.items(), key=lambda item: _version_key(item[0]))
+    for (before, low), (after, high) in zip(rows, rows[1:]):
+        for reason in rc.NO_BETTER:
+            assert high.get(reason, 0) <= low.get(reason, 0), (
+                f"no_better: {reason} の上限が {before} の {low.get(reason, 0)} から {after} で "
+                f"{high.get(reason, 0)} に上がった（better を足して数を下げる）")
+
+
 def test_no_betterの数は上限を超えない():
     counts = rc.counts()["no_better"]
-    for reason, limit in NO_BETTER_LIMIT.items():
-        assert counts.get(reason, 0) <= limit, f"no_better: {reason} が {counts.get(reason)}（上限 {limit}）"
+    limit = NO_BETTER_LIMITS.get(_current_version(), {})
+    for reason in rc.NO_BETTER:
+        n, cap = counts.get(reason, 0), limit.get(reason, 0)
+        assert n <= cap, (f"no_better: {reason} が {n}（上限 {cap}）。足した断りに better を書く"
+                          f"（thth/refusal_catalog_part*.py）か、better を書けない理由を見直す")
+
+
+def test_no_betterの上限は今の数まで下げてある():
+    """数が減ったら上限も下げる（上限に余りを残すと、あとで黙って増やせる）。"""
+    counts = rc.counts()["no_better"]
+    limit = NO_BETTER_LIMITS.get(_current_version(), {})
+    loose = {reason: (counts.get(reason, 0), cap) for reason, cap in limit.items()
+             if counts.get(reason, 0) < cap}
+    assert loose == {}, f"no_better の上限を今の数まで下げる（今の数, 上限）: {loose}"
 
 
 def test_項目の形():
