@@ -837,6 +837,7 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
                            "反応の多かった問いや告知から、次のキャンペーンの候補を並べてください。選ぶのは私です。")],
         "cannot_say": sorted(cannot_say),
         "limitations": _limitations()})
+    _add_refusal_meter(payload, names, now)
     if full and scenario is not None:
         payload["campaign_details"] = [
             _campaign_detail(project, t, events, now, allowed_names) for t in scenario.get("threads") or []]
@@ -893,7 +894,20 @@ def build_all(*, now=None, allowed_names=None) -> dict:
         "n_projects_attention": sum(1 for c in cards if c["status"] == "attention"),
         "projects": cards, "sort_basis": "project_name",
         "cannot_say": sorted(cannot_say), "limitations": _limitations()})
+    _add_refusal_meter(payload, [name for card in cards for name in card["accounts"]
+                                 if allowed_names is None or name in allowed_names], now)
     return payload
+
+
+def _add_refusal_meter(payload, names, now) -> None:
+    """手数の計測（段 F・`thth/meter.py`）: 断りの率と手順の飛ばし。**0 なら鍵を足さない。**読むだけ。"""
+    try:
+        from . import meter
+        value = meter.summary(names, now)
+    except Exception:  # noqa: BLE001 — 計測の読みで 1 枚を落とさない
+        value = None
+    if value is not None:
+        payload["refusal_meter"] = value
 
 
 # ------------------------------------------------------------------ 階層 3 の成果（既存の台帳を読むだけ）

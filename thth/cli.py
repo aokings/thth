@@ -87,6 +87,12 @@ def cmd_lint(args) -> int:
         print(f"検査できるものがありません（対象 0 件です）{note}", file=sys.stderr)
         return 1
     rows, any_error = [], False
+    # 手数の計測（段 F）: lint には口座の引数が無いので、原稿の front-matter の account に数える。
+    try:
+        from . import meter
+        args.meter_accounts = meter.draft_accounts(paths)
+    except Exception:  # noqa: BLE001 — 計測は付け足し
+        pass
     for path in paths:
         messages = lint_mod.lint_file(path)
         errors = [m for m in messages if not lint_mod.is_warning(m)]
@@ -5171,7 +5177,37 @@ def _entry(argv=None) -> int:
         # 埋める（分からなければ `<account>`・`<reason_code>` のまま）。
         from . import report_inbox
         print(report_inbox.refusal_line(account, code), file=sys.stderr)
+    else:
+        code = None
+    _meter(real_argv, rc, first_stage, code)
     return rc
+
+
+def _meter(real_argv, rc, first_stage, code) -> None:
+    """手数の計測の控えを 1 行（段 F・`thth/meter.py`）。**何も出さない・控えの失敗で rc を変えない。**
+
+    残すのは命令の名前・通ったか・断りの符丁・決まった旗の名前・時刻・口座だけ。
+    """
+    try:
+        from . import meter, refusals
+        args = _PARSED.get("args")
+        if args is None or any(flag in real_argv for flag in meter.SKIP_FLAGS):
+            return
+        account = getattr(args, "account", None)
+        names = ([account] if isinstance(account, str)
+                 else list(getattr(args, "meter_accounts", None) or []))
+        if not names:
+            return
+        parser = _PARSED.get("parser") or build_parser()
+        command = refusals.command_path(parser, real_argv)
+        lint_checked = real_argv[:1] == ["lint"] and rc == 1
+        outcome = ("ok" if rc == 0 or lint_checked else "first_stage" if first_stage else "refused")
+        marks = meter.marks_of_argv(real_argv)
+        for name in names:
+            meter.note(name, command=command, outcome=outcome,
+                       code=code if outcome == "refused" else None, marks=marks)
+    except Exception:  # noqa: BLE001 — 計測は付け足し。命令そのものを壊さない
+        pass
 
 
 def _remember_refusal(real_argv, rc, first_line) -> None:
@@ -5215,6 +5251,7 @@ def _main(argv, real_argv) -> int:
     else:
         args = parser.parse_args(argv)
     _PARSED["args"] = args
+    _PARSED["parser"] = parser
     routed = remote.route(args, real_argv[0] if real_argv else '')
     if routed is not None:
         return routed

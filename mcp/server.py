@@ -1448,6 +1448,7 @@ def server_call(name, arguments):
         # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
         # 1 つ目の text の 1 行目（符丁）はそのまま、2 行目から目録の 3 つ（段 B・`thth/refusal.py`）。
         account, code = _remember_refusal(context, name, arguments, value)
+        _meter(context, name, arguments, 'refused', code)
         text = _refusal_text(value, account=account, next_at=next_at, about=about, reason=reason)
         return {'content':[{'type':'text','text':text},_channel_note(account, code)],'isError':True}
     if context is None: return failure('unauthorized')
@@ -1506,6 +1507,10 @@ def server_call(name, arguments):
         else:
             result=execute_report(context,request)
         content=[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]
+        # 二段確認の 1 段目（広場の open・`preview`）は断りでも通ったものでもない（`refusals.mark_first_stage`）。
+        _meter(context, name, arguments,
+               'first_stage' if str((result or {}).get('report_type') if isinstance(result, dict) else '')
+               .endswith('_preview') else 'ok', None)
         note=_stopped_note(context,arguments)
         if note: content.append({'type':'text','text':note})
         return {'content':content}
@@ -1618,6 +1623,23 @@ def _remember_refusal(context, name, arguments, value):
         return account, code
     except Exception:
         return None, None
+
+
+def _meter(context, name, arguments, outcome, code):
+    """手数の計測の控え（段 F・`thth/meter.py`）。credential が許した口座だけ・控えの失敗で答えを変えない。"""
+    try:
+        if context is None or not isinstance(arguments, dict) or not isinstance(name, str):
+            return
+        account = arguments.get('account')
+        if not isinstance(account, str) or account not in (context.allowed_accounts or {}):
+            return
+        if not name.replace('_', '').isalnum():
+            return
+        from thth import meter
+        meter.note(account, command='mcp ' + name, outcome=outcome, code=code,
+                   marks=meter.marks_of_arguments(arguments))
+    except Exception:
+        pass
 
 
 def admin_context():

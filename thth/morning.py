@@ -195,7 +195,14 @@ def _tool_section(handoff, now=None, admin=False, configs=None, plaza=None):
     tool["previous_version"] = previous.pop() if len(previous) == 1 else None
     if notes:
         tool["release_notes"] = sorted(notes)
+    # 手数の計測（段 F・`thth/meter.py`）: 断りの率と手順の飛ばし。0 なら鍵を足さない（読むだけ）。
+    try:
+        from . import meter
+        refusal_meter = meter.summary(sorted(configs or {}), now)
+    except Exception:  # noqa: BLE001 — 計測の読みで 0 段を落とさない
+        refusal_meter = None
     return {
+        **({"refusal_meter": refusal_meter} if refusal_meter is not None else {}),
         "version": tool.get("version"),
         "previous_version": tool.get("previous_version"),
         "changed_since_last_read": changed,
@@ -1416,6 +1423,12 @@ def _render_section(section, out) -> None:
         out(f"  版 {value['version']}  前回から変わった: "
             f"{_yes(value['changed_since_last_read'])}"
             f"（前回 {value['previous_version'] or '—'}）")
+        if value.get("refusal_meter"):
+            from . import meter
+            for line in (meter.violation_line(value["refusal_meter"]),
+                         meter.rate_line(value["refusal_meter"])):
+                if line:
+                    out("  " + line)
         if value["release_notes"]:
             out("  リリースノート: " + "・".join(value["release_notes"]))
         if value["capabilities"] is not None:
