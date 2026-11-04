@@ -384,7 +384,7 @@ ENTRIES = {
             "mcp": {"text": "thth_draft_put に publish_at: <時刻> で下書きを置き、返った draft_id を thth_schedule_request に渡して予約してください（慣らしが明ければ台帳の数に戻ります）", "command": None},
         },
         "doors": ("cli", "mcp", "remote"),
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "rate_limited": {
         "kind": "refusal",

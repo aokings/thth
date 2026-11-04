@@ -29,7 +29,7 @@ from . import accounts, jst
 
 RAMP_DAYS = 14
 # これより前に入った口座には慣らしを掛けない（入れた日・既存の利用者を急に絞らない）。
-RAMP_SINCE = datetime.date(2026, 11, 4)
+RAMP_SINCE = datetime.date(2026, 11, 5)
 # 慣らしで半分にする行（台帳の `daily_max_posts`）。返信（`reply.daily`）・削除・反応には掛けない。
 RAMP_RULES = ("post.daily", "entry.daily")
 RAMP_CODE = "ramp_daily_limit"

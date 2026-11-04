@@ -13,7 +13,7 @@ HTTP（`/api/v1`・CLI が叩く）、添付の受け口（`/media-upload/`・LL
 from __future__ import annotations
 
 _W = ("worker",)
-_SINCE = "5.11.1"
+_SINCE = "5.12.0"
 _REPORT = "続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。"
 
 

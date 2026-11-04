@@ -632,7 +632,7 @@ ENTRIES = {
         "fix": "gh run view で落ちた試験を読み、直して main に push し、その commit の試験が緑になってから関門を打ち直してください。",
         "better": "直したら落ちた試験のファイルだけを手元で先に回すと、CI の往復を 1 回で済ませられます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_ci_waiting": {
         "kind": "refusal",
@@ -640,7 +640,7 @@ ENTRIES = {
         "fix": "その commit を main に push して gh run watch で試験の終わりを待ち、緑になってから関門を打ち直してください。",
         "better": "版上げの commit を先に push しておくと、リリースノートを書いている間に試験が終わります。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_ci_unreadable": {
         "kind": "cannot_say",
@@ -648,7 +648,7 @@ ENTRIES = {
         "fix": "gh auth status で gh のログインを確かめ、gh run list --commit <sha> が読めるようにしてから打ち直してください。",
         "better": "CI の中では GH_TOKEN に github.token を渡し、権限に actions: read を付けておくと読めます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_notes_missing": {
         "kind": "refusal",
@@ -656,7 +656,7 @@ ENTRIES = {
         "fix": "docs/リリースノート_<版>_<日付>.md を書いて commit し、その commit で関門を打ち直してください。",
         "better": "本番でどう変わるかを 1 行添えると、VM で確かめる 1 行がそのまま決まります。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_version_mismatch": {
         "kind": "refusal",
@@ -664,7 +664,7 @@ ENTRIES = {
         "fix": "thth/VERSION と server.json の 2 か所の version を同じ版に直して commit し、打ち直してください。",
         "better": "版上げは 3 か所（VERSION・server.json・リリースノート）を 1 つの commit にまとめると、食い違いが残りにくくなります。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_version_not_bumped": {
         "kind": "refusal",
@@ -672,7 +672,7 @@ ENTRIES = {
         "fix": "thth/VERSION・server.json を次の版に上げ、その版のリリースノートを足して commit し、打ち直してください。",
         "better": "直しだけの版は 3 つ目の数（x.y.Z）を上げると、利用者が変わり方の大きさを読み取れます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_audit_missing": {
         "kind": "refusal",
@@ -680,7 +680,7 @@ ENTRIES = {
         "fix": "docs/定型_監査の書.md の形で docs/監査_<版>_<日付>.md を書き、range に前の tag..監査した commit を入れて commit し、打ち直してください。",
         "better": "監査のあとに直した commit を fixed に並べておくと、直しのたびに監査をやり直さずに通せます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_audit_dangers_open": {
         "kind": "refusal",
@@ -688,7 +688,7 @@ ENTRIES = {
         "fix": "危ないを直して commit を fixed に足し dangers を 0 にするか、出してよい理由を waived に書いて、打ち直してください。",
         "better": "直した危ないは試験か lint にして「柵にしたもの」に書くと、次の版の監査がその分軽くなります。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_audit_malformed": {
         "kind": "refusal",
@@ -696,7 +696,7 @@ ENTRIES = {
         "fix": "docs/定型_監査の書.md の頭と末尾の節の形に合わせて書き直し、commit して打ち直してください。",
         "better": "雛形を写してから中身を書くと、欄の名前の打ち違いを防げます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
     "release_compat_red": {
         "kind": "refusal",
@@ -704,6 +704,6 @@ ENTRIES = {
         "fix": "関門が見せた試験の名前を python3 -m pytest -q で回して直し、commit して打ち直してください。",
         "better": "符丁や MCP の形を消すときは retired を立てて残すと、古い利用者の道を切らずに済みます。",
         "doors": _C,
-        "since": "5.11.1",
+        "since": "5.12.0",
     },
 }

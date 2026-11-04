@@ -25,6 +25,7 @@ DASHBOARDS = [ROOT / "skills" / "thth" / "dashboard" / f"{name}.html"
 # （前の版より上げない・今の数と同じにする）。better を足して数が減ったら、その版の上限も下げる。
 NO_BETTER_LIMITS = {
     "5.11.1": {"internal": 196, "terminal": 13},
+    "5.12.0": {"internal": 196, "terminal": 13},
 }
 # 目録の項目の数の下限（消すときは項目を残して retired を立てる）。
 CATALOG_FLOOR = 750
