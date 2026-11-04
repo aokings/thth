@@ -11,7 +11,7 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 **出来事と数だけを機械に読ませるときは `thth_events`・`thth_summary`**（4.0 の柱 1・読むだけ・媒体は呼ばない）。`thth events <project|account> --since 24h --json` は公開・取り下げ・届いた返信と言及・止まった口座・公開の結果待ち・予算切れ・予約の在庫切れの前触れ（`schedule_low`＝最後の予約が 48 時間より手前・`schedule_thin`＝1 日の本数が直近 7 日の平均の 6 割を切る日がある）を時刻順に（各行 `{schema: "thth.events/1", kind, account, occurred_at, recorded_at, ref, summary, event_id}`・他人の本文は入らない。続きは答えの `next_cursor` を `--after` に渡して読み、同じ出来事が 2 度来たら `event_id` で除く）、`thth summary <project|account> --json` は 24h・7d の公開数と反応の和・返していない返信・フォロワーの前日差・止まりを返す。`observe --json` の節は `sections_by_name.<名前>` で引く（`schema: "thth.observe/1"`。並びの `sections` は 4.0 で外す）。
 
-**断られたら・違和感があれば報告の口へ**: `thth_report_file`（CLI は `thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>`）。つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。小さいものも。重複は道具が束ねます。例: 「止まったのに気づかなかった」「断られた理由が分からなかった」「同じ操作を 3 回繰り返した」。道具が断った・結果が期待と違った・欲しい形がある・迷った（`friction`）、のどれかなら 1 回で置ける。**断られた直後なら、断りの最後の `report_channel:` の行をそのまま打てばよい**（`--from-last-refusal` が、道具が控えた直前の断り——時刻・版・コマンド・理由の符丁だけで、本文と引数の値は控えていない——を再現手順に添える。MCP は `thth_report_file {"account": …, "title": …, "from_last_refusal": true}`）。置いた報告がこの版で閉じたかは `thth_observe` の 0 段 `project_reports` に出る。返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
+**断られたら、断りの 3 行に従う。3 行で通れなければ `thth report file`。** 断りは CLI・`--json`・MCP のどの口でも、1 行目の `符丁: なぜ`、`通すには:`（その口で打てる命令つき）、`もっと良く:` を返す。符丁ごとの直し方はこの skill に書かない（3 行が正本）。3 行で通れない・理由が分からない・結果が期待と違った・欲しい形がある・迷った（`friction`）なら `thth_report_file`（CLI は `thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>`）。つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。小さいものも。重複は道具が束ねます。例: 「止まったのに気づかなかった」「断られた理由が分からなかった」「同じ操作を 3 回繰り返した」。**断られた直後なら、断りの最後の `report_channel:` の行をそのまま打てばよい**（`--from-last-refusal` が直前の断りの時刻・版・コマンド・符丁だけを添える——本文と引数の値は控えない。MCP は `thth_report_file {"account": …, "title": …, "from_last_refusal": true}`）。閉じたかは `thth_observe` の 0 段 `project_reports`、返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
 
 **施策を試したらプラザに置き、次を決める前に他のSNSの施策を読む**（3.4.0・施策のプラザ）。どちらも利用者の作業の一部です。小さな気づきも。`thth_plaza_post`（CLI は `thth plaza post <account> --kind measure|finding|question --title … --body-file … --scope "<SNS・企画の範囲>" --by <名前>`）。置いたものは**同じオーナーの全 account（SNSをまたぐ）**だけに見える。施策（`measure`）は `--declaration <study-report の宣言>` をSNSごとに並べると**観測は道具が付ける**（study-report と同じ計算・両群の分母・欠測は null と理由）。`--how` に数字を出し直せる thth のコマンドを 1 行（measure は必須・道具は実行しない）。本文に書いた数字は「本文」として分けて表示され、観測とは呼ばれない。`evidence_level` の `observed` は道具だけが付ける（名乗ると断られる）。読むのは `thth_plaza_list`・`thth_plaza_show`（CLI は `thth plaza list <project>`・`thth plaza show <id> --as <account>`）——SNSをまたぐ比較の表と追試の数（再現した・しなかった・試していないを同じ重さで）が出る。他のSNSの施策を自分のSNSで試したら `thth_plaza_reply` の `trial`（結果は reproduced・not_reproduced・not_tried）で返す。判定は `thth_plaza_update`（adopted・dropped・inconclusive・理由必須）。新着と「まだ試していないSNS」は `thth_observe` の 0 段と次の一手に出る。
 
@@ -57,7 +57,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - 道具: `thth_send_request`（`thth send`・その場で出て post_id とリンクが返る）、`thth_schedule_request`（`thth schedule --at`）、`thth_retract_request`（`thth retract`・道具は呼べば消す。端末の `thth retract` は手元と同じ二段で、一段目の digest を `--confirm` に渡す）、`thth_posts`・`thth_replies`・`thth_measured`・`thth_collect`・`thth_mentions`・`thth_topics_search`・`thth_profile`・`thth_location_search`（読む）、`thth_account_status`・`thth_settings`（状態・ガードは厳しくする向きだけ）、`thth_draft_list`。account は本人のアカウントだけ。actor/by/person/confirm/digest/ファイルパスを引数に加えない。
 - **キーと secret を聞かない・入力しない・会話へ貼らせない。** キーは `thth login` が手元に置き、`thth` コマンドだけが使う。あなたはキーを知らなくてよい。
 - `thth login` は本人がブラウザで許可する形（3.14.2）: ターミナルに出た `https://thth.me/login/XXXX-XXXX` を本人が開き、アカウント名とアカウントのシークレット を入れて「このデバイスにキーを渡す」を押す。キーを貼る作業は無い。あなたが代わりに許可したり、secret を聞いたりしない。
-- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が `thth login` をやり直す・ブラウザで許可すると発行し直す）・`remote_unsupported`（そのコマンドか旗は遠くの道に無い: `throw`・`run`・`auth`、`send --community`・`--goal`・`--confirm`、`retract --already-gone` など。旗は黙って捨てずに断る）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）・`publication_unconfirmed`（前の公開の結果が分かっていない・解くまで次は出ない。`thth inflight <アカウント>` で見て、本人がSNSの画面で確かめてから `thth inflight <アカウント> resolve --not-published` か `--published <post_id>`。一段目が出す digest を本人が `--confirm` に渡す）。自動で再依頼・再公開しない。
+- 断りは遠くの道でも 3 行（通すには は遠くの道で打てる形）。遠くの道に無い命令と旗（`throw`・`run`・`auth`、`send --community`・`--goal`・`--confirm`、`retract --already-gone` など）は黙って捨てずに断る。止まった口座は本人が https://thth.me/activity で戻す（あなたからは戻せない）。前の公開の結果が分からない間は、本人が SNS の画面で確かめてから `thth inflight <アカウント> resolve` で解く（一段目の digest を本人が `--confirm` に渡す）。自動で再依頼・再公開しない。
 - 出す前に本文を見たいと本人が言えば、`thth send --dry-run`（lint だけ・下書きが 1 本残る）か本文をそのまま見せてから `thth_send_request` を呼ぶ。THTH の側に承認の関所は無い。
 - 添付は端末の `thth send|schedule <アカウント> --media <手元の機械のファイル> --alt <説明>`（3.21.0）。MCP の `thth_send_request` には添付の欄が無い。
 - 端末の `thth send` は `--production` が無ければ出さない（lint だけ・下書きが 1 本残る）。`thth schedule --text … --at …` はその場で予約まで行う（承認の二段は無い）。過去の `--at` は断る。
@@ -66,19 +66,19 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 ## 反応（再投稿・いいね・3.15.0）
 
-`thth repost|unrepost|like|unlike <account> <投稿の id か URL> --by <名前>`（MCP `thth_repost`・`thth_like`、取り消しは `undo: true`）。反応は会話への参加なので、**所有者に頼まれたとき、または所有者が決めた方針の範囲でだけ使う**。いいねで返事の代わりにしない（返すべき相手には返信を書く）。Threads の API にはいいねが無い（`unsupported_on_platform`・再投稿と取り消しはできる）。断りは `scope_missing`（`thth auth <account> --by <名前>` で認可し直す）・`reaction_limit`（1 日の反応の上限）・`quiet_hours`（夜間は再投稿だけ断る）。同じ投稿への 2 回目は SNS に送らず `already_done`。
+`thth repost|unrepost|like|unlike <account> <投稿の id か URL> --by <名前>`（MCP `thth_repost`・`thth_like`、取り消しは `undo: true`）。反応は会話への参加なので、**所有者に頼まれたとき、または所有者が決めた方針の範囲でだけ使う**。いいねで返事の代わりにしない（返すべき相手には返信を書く）。Threads の API にはいいねが無い（`unsupported_on_platform`・再投稿と取り消しはできる）。同じ投稿への 2 回目は SNS に送らず `already_done`。
 
 ## X の非公開リスト（3.17.0）
 
-`thth list create <account> <名前> [--description …] --by <名前>`・`thth list add|remove <account> <list_id> <id か @handle…> --by <名前>`・`thth list show <account> <list_id> [--limit N]`（MCP には無い）。X のアカウントならどれでも（今は asmon-kanto-x と kopicha-x）・**使う前に各アカウントで `thth auth <account> --by <名前>` を打ち直す**。**非公開リストだけ**（公開は作れない）。足すのは**人が選んだ少数だけ**——1 回 10 人まで、検索結果から機械的に足さない（X の決まりで bulk・無差別の追加は不可）。足された相手に X が通知するかは未確認。書き込みは production: true の口座だけ・費用は月の X 予算（作る 0.010・足す／外す 0.005 USD、@handle の id 引き 0.010）。`show` は `where` と同じ有償の読み取り（1 本 0.005・1 日 60 本に数える・既定 10 本・最大 25）で、本文は返すだけで保存しない。断り: `scope_missing`（`thth auth <account> --by <名前>` で認可し直す）・`too_many_members`・`unsupported_on_platform`（X 以外）。
+`thth list create <account> <名前> [--description …] --by <名前>`・`thth list add|remove <account> <list_id> <id か @handle…> --by <名前>`・`thth list show <account> <list_id> [--limit N]`（MCP には無い）。X のアカウントならどれでも（今は asmon-kanto-x と kopicha-x）・**使う前に各アカウントで `thth auth <account> --by <名前>` を打ち直す**。**非公開リストだけ**（公開は作れない）。足すのは**人が選んだ少数だけ**——1 回 10 人まで、検索結果から機械的に足さない（X の決まりで bulk・無差別の追加は不可）。足された相手に X が通知するかは未確認。書き込みは production: true の口座だけ・費用は月の X 予算（作る 0.010・足す／外す 0.005 USD、@handle の id 引き 0.010）。`show` は `where` と同じ有償の読み取り（1 本 0.005・1 日 60 本に数える・既定 10 本・最大 25）で、本文は返すだけで保存しない。断り: `too_many_members`・`unsupported_on_platform`（X 以外）。
 
 ## 出さない期限（not_after・4.5.6）
 
-期日のある原稿（学校説明会・文化祭・申し込みの締め切り）は、queue の front-matter に `not_after: 2026-10-25T10:00:00+09:00`（`publish_at` と同じ形・`+09:00` 必須）を書く。**この時刻を過ぎたら THTH は出さない**——予約が詰まって遅れても、口座が止まっていても、終わった行事を告げない。無ければ今までどおり。`not_after` は承認の指紋（digest）に入る（**期限を延ばしたら承認し直し**）。lint: 形が違う・`publish_at` より前は `invalid_not_after`、今より前は警告（承認はできるが出ない）。`thth approve` の 1 段目に「出さない期限 YYYY-MM-DD HH:MM」、過ぎていれば「期限を過ぎているので確定しても出ません」。過ぎた原稿は書き換えない（approved のまま）・口座も止めない（次の原稿へ進む）。見え方: `thth queue` の「いま出ない: … — not_after_passed」・`thth schedule` の「出さない期限を過ぎました」（`--json` は `not_after`・`expired`）・board と morning の held（区分 `not_after_passed`）・`thth events` の `not_after_passed`（起きた時刻は期限）。公開の直前（container を作って待ったあと）にもう一度見て、過ぎていれば公開しない。連投（`thth: 2`）は根の front-matter の `not_after` を見て、途中の段で過ぎたら残りは出さない。thth.me の道は `thth schedule <account> --text … --at … --not-after …`・MCP の `thth_draft_put` の `not_after`。はてなブログの配信原稿には使えない。
+期日のある原稿（学校説明会・文化祭・申し込みの締め切り）は、queue の front-matter に `not_after: 2026-10-25T10:00:00+09:00`（`publish_at` と同じ形・`+09:00` 必須）を書く。**この時刻を過ぎたら THTH は出さない**——予約が詰まって遅れても、口座が止まっていても、終わった行事を告げない。無ければ今までどおり。`not_after` は承認の指紋（digest）に入る（**期限を延ばしたら承認し直し**）。今より前は lint の警告（承認はできるが出ない）。`thth approve` の 1 段目に「出さない期限 YYYY-MM-DD HH:MM」、過ぎていれば「期限を過ぎているので確定しても出ません」。過ぎた原稿は書き換えない（approved のまま）・口座も止めない（次の原稿へ進む）。見え方: `thth queue` の「いま出ない: … — not_after_passed」・`thth schedule` の「出さない期限を過ぎました」（`--json` は `not_after`・`expired`）・board と morning の held（区分 `not_after_passed`）・`thth events` の `not_after_passed`（起きた時刻は期限）。公開の直前（container を作って待ったあと）にもう一度見て、過ぎていれば公開しない。連投（`thth: 2`）は根の front-matter の `not_after` を見て、途中の段で過ぎたら残りは出さない。thth.me の道は `thth schedule <account> --text … --at … --not-after …`・MCP の `thth_draft_put` の `not_after`。
 
 ## 緊急の札（urgent）
 
-静かな時間帯（`quiet_hours`）でも出したい原稿（運休・中止・安全の知らせ）は、queue の front-matter に `urgent: true` を書いて承認する。**timer が越えるのは静かな時間帯だけ**——最短間隔・1 回の本数（`max_per_run`）・数の柵（1 日の上限など）・停止の印・承認は今までどおり（`thth throw --now` とは別物）。札は承認の指紋に入る（**承認のあとに付け外しすると `approval_stale`**・付けるなら承認の前に）。lint: `true`／`false` 以外は `invalid_urgent`、連投（`thth: 2`）とはてなブログの配信原稿には使えない。見え方: `thth approve` の 1 段目の「緊急」・`thth queue` の「緊急の札: …」・`thth schedule` の `[緊急]`（`--json` は `urgent`）。越えて出したら sent の記録と runs に `crossed_quiet_hours: true`、`thth events` の `published` に同じ鍵と「（緊急の札で静かな時間帯を越えた）」が付く。
+静かな時間帯（`quiet_hours`）でも出したい原稿（運休・中止・安全の知らせ）は、queue の front-matter に `urgent: true` を書いて承認する。**timer が越えるのは静かな時間帯だけ**——最短間隔・1 回の本数（`max_per_run`）・数の柵（1 日の上限など）・停止の印・承認は今までどおり（`thth throw --now` とは別物）。札は承認の指紋に入る（**承認のあとに付け外しすると `approval_stale`**・付けるなら承認の前に）。見え方: `thth approve` の 1 段目の「緊急」・`thth queue` の「緊急の札: …」・`thth schedule` の `[緊急]`（`--json` は `urgent`）。越えて出したら sent の記録と runs に `crossed_quiet_hours: true`、`thth events` の `published` に同じ鍵と「（緊急の札で静かな時間帯を越えた）」が付く。
 
 ## キャンペーンとシリーズ（scenario・5.0 段 1）
 
@@ -103,7 +103,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 ## X のコミュニティ（3.19.0）
 
-`thth community search <account> <語…> [--limit N] [--json]`（MCP には無い）で探し、`thth send <account> --community <id>` か queue の front-matter `community_id: <id>` で出す。X だけ・認可のやり直しは不要。探すのは有償の読み取り（1 件 0.005 USD・月の X 予算・1 日 60 本には数えない・既定 10 件・最大 25・保存しない）。`community_id` は digest／承認の指紋に入る。返信（reply_to・reply_to_file）と同時には使えない・連投には書けない。**参加は X の画面で先に**（API に参加の口も「参加しているか」の欄も無い）——参加していなければ X の断りが `x_unknown_refusal（…）` で残る。**各コミュニティの規則（宣伝の禁止など）は人が読んで守る**。所有者に頼まれたコミュニティへ、人が選んだ本文を 1 本ずつ出すだけ——検索の結果へ機械的に出さない・同じ本文を複数のコミュニティへ流さない（X の自動化の決まりで bulk・無差別は不可）。断り: `unsupported_on_platform`（X 以外）・`community_id_invalid`・lint の `invalid_publish_option`。
+`thth community search <account> <語…> [--limit N] [--json]`（MCP には無い）で探し、`thth send <account> --community <id>` か queue の front-matter `community_id: <id>` で出す。X だけ・認可のやり直しは不要。探すのは有償の読み取り（1 件 0.005 USD・月の X 予算・1 日 60 本には数えない・既定 10 件・最大 25・保存しない）。`community_id` は digest／承認の指紋に入る。返信（reply_to・reply_to_file）と同時には使えない・連投には書けない。**参加は X の画面で先に**（API に参加の口も「参加しているか」の欄も無い）——参加していなければ X の断りが `x_unknown_refusal（…）` で残る。**各コミュニティの規則（宣伝の禁止など）は人が読んで守る**。所有者に頼まれたコミュニティへ、人が選んだ本文を 1 本ずつ出すだけ——検索の結果へ機械的に出さない・同じ本文を複数のコミュニティへ流さない（X の自動化の決まりで bulk・無差別は不可）。断り: `unsupported_on_platform`（X 以外）・`community_id_invalid`。
 
 ## X のトレンドと語ごとの投稿数（3.19.0）
 
@@ -111,7 +111,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 ## Facebook ページ（5.1.0・10/29 段 0・段 1）
 
-- **口座の作り方**: 1 ページを 1 口座で扱う。`thth account add <口座> --media facebook --project <p> --handle <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`--handle` はページの「基本データ → ページの透明性」に出る「ページID」（数字）——**ページの URL の `profile.php?id=` の id ではない**（その id で作ると認可で `facebook_page_not_granted` になり、断り文に許可されたページの名前と id が並ぶ）。認可のログは既定で `$THTH_ROOT/state/_auth/<口座>-<日時>.log`（画面に「ログ: <パス>」）。
+- **口座の作り方**: 1 ページを 1 口座で扱う。`thth account add <口座> --media facebook --project <p> --handle <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`--handle` はページの「基本データ → ページの透明性」に出る「ページID」（数字）——**ページの URL の `profile.php?id=` の id ではない**。認可のログは既定で `$THTH_ROOT/state/_auth/<口座>-<日時>.log`（画面に「ログ: <パス>」）。
 - **post_id の形**: `<ページID>_<数字>`（例 `1361492233719922_122096173233535853`）。返信（コメント）の宛先・`thth retract`・`thth thread` はこの形で渡す。
 - **できること**: 文・リンクつきの文（本文の最初の URL がリンクの読み込みになる）・返信（コメント）・画像 1〜10 枚（jpeg・png・gif・1 枚 4,000,000 バイトまで。2 枚以上は原稿の添付の順に 1 本にまとまる・10 枚は THTH の線）・取り下げ・最近の投稿・コメントを読む・数（反応・コメント・シェア・表示）・ページの日次（`thth collect` が前日分を採り `thth account` に出る。Meta が返さない指標は 0 にせず「媒体が返さない」と出る）。静かな時間・間隔・日の上限は SNS の表がそのまま効く（`thth media traits facebook`）。
 - **投稿の編集** `thth edit <口座> <post_id> --text-file <ファイル> --by <名前>`: THTH で出した投稿だけ（`sent/` の記録が要る）。一段目は今の本文と直したあとの本文と digest を見せて何もしない。同じ命令に `--confirm <digest>` で 1 回だけ直し、記録の本文を直して前の本文を残す。結果が分からないときは「確かめてください」と言い、自動で投げ直さない。
@@ -123,7 +123,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 ## Instagram（Meta 計画 段 3・10/29）
 
-- **口座の作り方**: 1 つのプロ口座を 1 口座で扱う。鍵はつながっている Facebook ページの鍵（Facebook ログインの道）で、口座ごとに別の `.token`。`thth account add <口座> --media instagram --project <p> --handle <ig_user_id> --page-id <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`ig_user_id` はプロ口座の数字の id（`@` の名前ではない）で、ページの `instagram_business_account` から引ける。認可はページにつながっている Instagram が台帳の `ig_user_id` と同じときだけ保存する（違えば `instagram_account_mismatch`、つながっていなければ `instagram_account_not_linked`）。
+- **口座の作り方**: 1 つのプロ口座を 1 口座で扱う。鍵はつながっている Facebook ページの鍵（Facebook ログインの道）で、口座ごとに別の `.token`。`thth account add <口座> --media instagram --project <p> --handle <ig_user_id> --page-id <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`ig_user_id` はプロ口座の数字の id（`@` の名前ではない）で、ページの `instagram_business_account` から引ける。認可はページにつながっている Instagram が台帳の `ig_user_id` と同じときだけ保存する。
 - **post_id の形**: 数字（例 `17895695668004550`）。返事の宛先（`reply_to`）は**コメントの id**。
 - **できること**: JPEG の画像 1〜20 枚（8MB・縦横比 4:5〜1.91:1・2 枚以上はカルーセル）・`alt`（1000 字まで）・`post_options: {is_ai_generated: true}`（AI で作った印・承認の指紋に入る）・コメントへの返事・取り下げ・最近の投稿・コメントと返事を読む・数（いいね・コメント・表示・リーチ・シェア・保存）・口座の日次（`thth collect`）・`thth quota`（1 日の公開の上限 `content_publishing_limit` と使用量）。公開は Meta が `https://thth.me/m/` の一時 URL から画像を取りに来る（Threads と同じ relay）。公開の前に毎回 1 日の上限を読み、届いていれば出さない。
 - **コメントを隠す・戻す・消す**は `thth reply hide|unhide|delete`（Facebook と同じ）。**コメント欄の開け閉め** `thth comments close|open <口座> <post_id> --by <名前>`（1 段・戻せる・記録は moderation）。どれも台帳の `production: true` が要る。MCP には無い。
@@ -188,7 +188,7 @@ MCP `thread_read`。枝の会話を**生で**読み、誰がどんな立場か�
 **残すもの: なし**（読んで捨てる。runs には件数だけ）。
 **呼ばなくてよいとき**: 自分の根の枝は `thth threads` の形で足りるとき。
 
-**X の `where`・`thread` は有償**（2026-10-08〜）: 返ってきた他人の投稿 1 本ごとに約 0.005 USD。道具が守らせるもの——月の X の読み取り予算（本人確認と合わせて・`thth admin budget x`・超えたら `budget_exhausted`）、1 アカウントの JST の 1 日 60 本（`x_daily_read_cap`・`thth account set <名前> x_daily_reads <本数> --by <名前>`）、`where` は 1 語 既定 10・最大 25 本（超える `--limit` は断る）、`thread` は根 1 本＋枝 最大 50 本（超えた分は読まない・`truncated`）・直近 7 日だけ。毎回 `X の読み取り: 今回 N 本・約 $X・今日 n/60 本・今月 $a/$cap` の 1 行（`--json` は `x_read_cost`）。**運用の決まり**:
+**X の `where`・`thread` は有償**（2026-10-08〜）: 返ってきた他人の投稿 1 本ごとに約 0.005 USD。道具が守らせるもの——月の X の読み取り予算（本人確認と合わせて・`thth admin budget x`）、1 アカウントの JST の 1 日 60 本（`x_daily_read_cap`・`thth account set <名前> x_daily_reads <本数> --by <名前>`）、`where` は 1 語 既定 10・最大 25 本（超える `--limit` は断る）、`thread` は根 1 本＋枝 最大 50 本（超えた分は読まない・`truncated`）・直近 7 日だけ。毎回 `X の読み取り: 今回 N 本・約 $X・今日 n/60 本・今月 $a/$cap` の 1 行（`--json` は `x_read_cost`）。**運用の決まり**:
 1. 使うのは、人が選んで 1 本ずつ返す出向きのためだけ。timer・繰り返しの見張り・一覧の作り溜めには使わない（`thth observe`／毎朝の一枚・採取は X を検索も枝読みもしない）。
 2. 検索結果から自動で返信しない。返す相手と本文は毎回人（masaru）が見る。
 3. 他人の投稿の中身を repo・docs・台帳に写さない。要るのは post_id と仮名の鍵（author_key）だけ。
@@ -293,8 +293,8 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 
 - `thth --help` / `thth <subcommand> --help` が正本。
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
-- 道具の不具合・欲しい形・迷ったことは `thth report file`（MCP `thth_report_file`）で実装側に届ける（小さいものも歓迎・重複は道具が束ねる）。
-- 承認済みなのに出ない原稿は `thth_observe` の予定の段 `held_items`（file・理由・予定・経過）と `thth board` の要確認（先頭 5 本）に名前が出る。`approval_stale` は再承認（`thth approve` の二段）で直る。時刻を過ぎて出られないものがあると `thth run` は `held` として死活通知と運用通知に知らせる。
+- 断られたら 3 行に従い、通れなければ `thth report file`（冒頭の節）。
+- 承認済みなのに出ない原稿は `thth_observe` の予定の段 `held_items`（file・理由・予定・経過）と `thth board` の要確認（先頭 5 本）に名前が出る。時刻を過ぎて出られないものがあると `thth run` は `held` として死活通知と運用通知に知らせる。
 - 自分の開いている報告に書き足すなら `thth report add <report_id> --body-file <path|-> --by <名前>`（MCP `thth_report_add`）。
 - 他のSNSで試した施策と結果は `thth plaza list <project>`（MCP `thth_plaza_list`）で読める。試したら `thth plaza post`（MCP `thth_plaza_post`）で置く。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。

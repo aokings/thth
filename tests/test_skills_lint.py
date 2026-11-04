@@ -47,8 +47,8 @@ VERSION_FILE = os.path.join(REPO_ROOT, "thth", "VERSION")
 #   thth 69,079 / thth-flow 17,436 / thth-ads 12,704 / thth-admin 3,987。
 #   thth は設計 §5 のとおり 70,000 から。skill を薄くしたら上限も下げる。
 SIZE_LIMITS = {
-    # 5.11.0 段 7 の監査の直しで --preview・hide・unhide の 2 行を足して 70,048 になった。薄くするまでの間の上限。
-    "thth": 71_000,
+    # 段 C（2026-11-04）: 断りの 3 行と重なる符丁ごとの直し方を落として 70,048 → 68,690。下げる向きにだけ動かす。
+    "thth": 69_000,
     "thth-flow": 18_000,
     "thth-ads": 13_000,
     "thth-admin": 4_200,
