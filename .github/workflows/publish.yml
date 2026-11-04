@@ -26,7 +26,38 @@ permissions:
   contents: read
 
 jobs:
+  # **release の関門**（設計「監査と審査の機械化と前向きな断り」§6・段 D・`tools/release_gate.py`）。
+  # tag の commit で main の試験（test.yml）が緑・その版のリリースノート・版の一致・危ない領域に触るなら
+  # 覆う監査の書があり危ないが 0・互換の柵が緑、を見る。欠ければ `release_blocked: <符丁>` と 3 行を出して
+  # 止まり、下の publish は走らない（PyPI にも registry にも出ない）。main への push の試験（test.yml）には
+  # 足していないので、そちらは遅くならない。同じ命令を手元で release の枝を進める前に打てる。
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # test.yml の run の結果を gh で読む。
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 前の tag からの差分と、監査の書の範囲の commit を辿るので履歴と tag をすべて取る。
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存を入れる
+        run: python -m pip install --quiet --upgrade pytest pytest-xdist
+
+      - name: release の関門
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python tools/release_gate.py --ref "$GITHUB_SHA"
+
   publish:
+    needs: gate
     runs-on: ubuntu-latest
     environment: publish
     permissions:

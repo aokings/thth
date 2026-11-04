@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """断りの棚卸し（設計「監査と審査の機械化と前向きな断り」§1・段 A）。
 
-`thth/**/*.py` と `mcp/server.py` を AST で読み、断りの符丁を集めて、3 つの欠け
+`thth/**/*.py` と `mcp/server.py`（と release の関門 `tools/release_gate.py`）を AST で読み、断りの符丁を集めて、3 つの欠け
 （なぜ・どうすれば通るか・もっと良く）を数える。読むだけ（ファイルを書かない）。
 
 数え方（§1）:
@@ -60,9 +60,10 @@ def is_code(value) -> bool:
 
 def source_files(root: Path = ROOT) -> list[Path]:
     files = sorted(p for p in (root / "thth").rglob("*.py") if "__pycache__" not in p.parts)
-    server = root / "mcp" / "server.py"
-    if server.exists():
-        files.append(server)
+    # MCP の口と、release の関門（段 D・`_refuse("release_…")` が断りの口）。
+    for extra in (root / "mcp" / "server.py", root / "tools" / "release_gate.py"):
+        if extra.exists():
+            files.append(extra)
     return files
 
 
