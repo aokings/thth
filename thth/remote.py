@@ -92,7 +92,8 @@ ACCOUNT_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\Z")
 def _fail(code, message=None) -> int:
     # 1 行目はそのまま、目録の 3 つを足す（段 B・`thth/refusal.py`）。
     from . import refusal
-    return refusal.emit(None, code, line=code + (f": {message}" if message else ""), rc=2, as_json=False)
+    return refusal.emit(None, code, line=code + (f": {message}" if message else ""), rc=2, as_json=False,
+                        door="remote")
 
 
 def cmd_login(args) -> int:
