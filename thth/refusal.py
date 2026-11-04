@@ -94,6 +94,8 @@ def parts(code, **values) -> dict | None:
     entry = refusal_catalog.get(code)
     if entry is None or entry.get("retired"):
         return None
+    if set(entry.get("doors") or ()) <= set(refusal_catalog.FOREIGN_DOORS):
+        return None  # Worker だけの符丁（その文は Worker の口で通る道・Python の口には足さない）
     values = _values(values)
     rendered = refusal_catalog.render(code, **values)
     reason = values.get("reason")
@@ -114,7 +116,10 @@ def parts(code, **values) -> dict | None:
     door = door_of(values.get("door"))
     by_door = chosen["fix_by_door"].get(door) if door else None
     if by_door:
-        chosen = dict(chosen, text=by_door.get("text", chosen["text"]), command=by_door.get("command"))
+        chosen = dict(chosen, text=by_door.get("text", chosen["text"]), command=by_door.get("command"),
+                      better=by_door.get("better", chosen["better"]))
+        if by_door.get("why"):
+            rendered["why"] = refusal_catalog.fill_slots(by_door["why"], **values)
     rendered["fix"] = refusal_catalog.fill_slots(chosen["text"], **values)
     rendered["command"] = refusal_catalog.fill_slots(chosen["command"], **values)
     rendered["better"] = refusal_catalog.fill_slots(chosen["better"], **values)

@@ -11,6 +11,9 @@ import {pythonForTests} from './python-runtime.js';
 import {canonical,mediaRequest} from '../src/media.js';
 import {reply} from '../src/relay.js';
 import {canonical as approvalCanonical} from '../src/person.js';
+import {REFUSALS} from '../src/refusal-catalog.js';
+// 断りの答えは {error} に目録の 3 つ（why・fix・better）が足される（src/relay.js の explain）。
+const refusal=code=>({error:code,...REFUSALS[code]});
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
@@ -26,7 +29,7 @@ function dispatch(url,init={}){
 
 before(async()=>{
   const pair=generateKeyPairSync('rsa',{modulusLength:3072});privateKey=pair.privateKey;
-  const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/webhook-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
+  const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/webhook-object.js','src/index.js','src/relay.js','src/refusal-catalog.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js'];
   runtimeDirectory=await realpath(await mkdtemp(join(tmpdir(),'media-runtime-')));
   options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{RELAY_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},PERSON:{className:'Person',useSQLite:true}},ratelimits:{MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
   mf=new Miniflare(options);await mf.ready;
@@ -475,7 +478,7 @@ test('public private-object oracle is identical to unknown across methods',async
  for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}]){
   for(const id of [pending.id,stored.id,opaque()]){
    const response=await dispatch('https://media.test/m/'+id,init);assert.equal(response.status,410);
-   if(init.method!=='HEAD')assert.deepEqual(await response.json(),{error:'media_expired'});
+   if(init.method!=='HEAD')assert.deepEqual(await response.json(),refusal('media_expired'));
   }
  }
  assert.equal((await call(stored.id,'read',binding(stored))).status,200);
@@ -492,7 +495,7 @@ test('media rate rejection precedes signing, body, DO and R2; missing binding cl
    const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1','content-type':'application/json'}});
    Object.defineProperty(request,'body',{get(){assert.fail('body after rate refusal');}});
    const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,present?429:503);
-   assert.deepEqual(await response.json(),{error:present?'rate_limited':'media_unavailable'});assert.deepEqual(seen,present?[{key}]:[]);
+   assert.deepEqual(await response.json(),refusal(present?'rate_limited':'media_unavailable'));assert.deepEqual(seen,present?[{key}]:[]);
   }
  }
 });
@@ -738,7 +741,7 @@ test('unknown multipart retry returns explicit conflict without a second claim',
  assert.equal((await put(1)).status,503);
  const before=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(before.io_ticket);assert.equal(before.status,'pending');
  for(const n of [1,2]){
-  const response=await put(n);assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:'media_upload_unconfirmed_pending'});
+  const response=await put(n);assert.equal(response.status,409);assert.deepEqual(await response.json(),refusal('media_upload_unconfirmed_pending'));
   assert.deepEqual((await control(f.id)).find(([k])=>k==='media')[1],before);
  }
  assert.equal((await call(f.id,'complete',binding(f))).status,409);
@@ -768,7 +771,7 @@ test('upload IP quota rejects request121 across subjects, isolates peers and res
    return mediaRequest(request,env,new URL(request.url));};
  const peer='203.0.113.200',other='203.0.113.201';
  for(let n=0;n<quota.simple.limit;n++)assert.equal((await put(opaque(),peer)).status,404,'request'+(n+1));
- const refused=await put(opaque(),peer);assert.equal(refused.status,429);assert.deepEqual(await refused.json(),{error:'rate_limited'});
+ const refused=await put(opaque(),peer);assert.equal(refused.status,429);assert.deepEqual(await refused.json(),refusal('rate_limited'));
  assert.equal((await put(opaque(),other)).status,404,'a second peer must keep its own quota');
  assert.equal((await put(opaque(),peer)).status,429,'a new subject must not refresh the peer quota');
  quota.advance(quota.simple.period*1000);
@@ -788,7 +791,7 @@ test('unresolved I/O refuses every manage claim before it mutates the row',async
  const nonces=(await control(f.id)).find(([k])=>k==='nonces')[1];
  for(const op of ['complete','status','read','ack']){
   const response=await call(f.id,op,binding(f));
-  assert.equal(response.status,409,op);assert.deepEqual(await response.json(),{error:'media_upload_unconfirmed_pending'});
+  assert.equal(response.status,409,op);assert.deepEqual(await response.json(),refusal('media_upload_unconfirmed_pending'));
  }
  const after=(await control(f.id)).find(([k])=>k==='media')[1];
  assert.equal(after.status,before.status);assert.equal(after.status,'ready');
@@ -801,11 +804,11 @@ test('missing binding is 503 media_unavailable and any other fault is 500 media_
  const request=()=>new Request(url,{method:'POST',headers:{'cf-connecting-ip':'203.0.113.9','content-type':'application/json'},body:'{}'});
  const base={MEDIA_OBJECT:{},MEDIA_BUCKET:{},MEDIA_CONTROL_LIMIT:null};
  const unavailable=await mediaRequest(request(),base,url);
- assert.equal(unavailable.status,503);assert.deepEqual(await unavailable.json(),{error:'media_unavailable'});
+ assert.equal(unavailable.status,503);assert.deepEqual(await unavailable.json(),refusal('media_unavailable'));
  const boom={...base,MEDIA_CONTROL_LIMIT:{async limit(){throw new Error('synthetic-secret-detail');}}};
  const internal=await mediaRequest(request(),boom,url);
  assert.equal(internal.status,500);
  const body=await internal.text();
- assert.deepEqual(JSON.parse(body),{error:'media_internal'});
+ assert.deepEqual(JSON.parse(body),refusal('media_internal'));
  assert.ok(!body.includes('synthetic-secret-detail'),'error message leaked');
 });

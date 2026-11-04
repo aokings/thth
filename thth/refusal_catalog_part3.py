@@ -374,7 +374,12 @@ ENTRIES = {
         "why": "thth.me の鍵ごとの回数の上限（1 分に 60 回）に達しました。",
         "fix": "少し待ってもう一度（鍵ごと 1 分に 60 回まで）",
         "better": "読むだけの確かめは --json で 1 回取って使い回すと、回数を節約できます。",
-        "doors": ("remote",),
+        "fix_by_door": {
+            "worker": {"why": "thth.me の回数の上限（IP ごと・鍵ごと・受け口ごと）に達しました。",
+                       "text": "応答の retry-after の秒数だけ待ってから、送り直してください", "command": None,
+                       "better": "読むだけの確かめは 1 回取って使い回すと、回数を節約できます。"},
+        },
+        "doors": ("remote", "worker"),
     },
     "reaction_limit": {
         "kind": "refusal",
@@ -499,8 +504,12 @@ ENTRIES = {
         "kind": "refusal",
         "why": "thth.me の relay が答えを返しませんでした。",
         "fix": "網を確かめ、少し置いてからもう一度打ってください。",
+        "fix_by_door": {
+            "worker": {"why": "thth.me の relay の受け口が、いま答えを返せません。",
+                       "text": "少し置いてから、同じ命令をもう一度打ってください。", "command": None},
+        },
         "no_better": "internal",
-        "doors": ("cli",),
+        "doors": ("cli", "worker"),
     },
     "remote_config_invalid": {
         "kind": "refusal",
@@ -1230,7 +1239,11 @@ ENTRIES = {
         "why": "同じ鍵の前の依頼がまだ終わっていません。",
         "fix": "前の依頼が終わるのを待ってもう一度",
         "better": "続けて打つ命令は前の結果を待ってから順に打つと、待ちが一番短く済みます。",
-        "doors": ("remote",),
+        "fix_by_door": {
+            "worker": {"why": "同じ鍵の前の依頼がまだ終わっておらず、待っている依頼が上限に達しました。",
+                       "text": "前の依頼の結果を /api/v1/result/<request_id> で受け取ってから、送り直してください", "command": None},
+        },
+        "doors": ("remote", "worker"),
     },
     "too_many_tags": {
         "kind": "refusal",

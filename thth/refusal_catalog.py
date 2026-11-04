@@ -10,7 +10,8 @@
 - `fix`: `{"text": 通すには, "command": 打てる命令の型 or None}`。
 - `better`: もっと良く（1 行）。利用者向けの断りは必須（masaru 2026-11-03 の決定）。
 - `no_better`: better を書かない理由。`internal`（内部の故障系）か `terminal`（先の一手が無い）。数に上限を置き版ごとに下げる。
-- `doors`: その符丁が出る口（`cli`・`mcp`・`remote`・`dashboard`）。
+- `doors`: その符丁が出る口（`cli`・`mcp`・`remote`・`dashboard`・`worker`）。`worker` は thth.me の Worker
+  （`callback/src`）が `{error: 符丁}` で断る口。`worker` だけの符丁は Python の口（`thth/refusal.py`）では引かない。
 - `since`: 目録に載った時点の版（段 A の初期の項目は、その時点で既にあった符丁として 5.10.0）。
 - `lang`: 文の言語（`ja`）。
 - `retired`: 退いた符丁の印（消すときは項目を消さずにこれを立てる・互換の柵が読む）。
@@ -24,8 +25,13 @@
 `hatena_entry._MESSAGES` など 15）は、目録から作る読むだけの見方（`fix_view`）になった。文を足す・直すときは
 部の `fix`（と `fix_by_view`）を書き、`FIX_VIEWS` に符丁を並べる。モジュールに辞書を直に書くと柵が赤になる。
 `core.guard_refusal_message` の文は `why` に、import して値を引く（`guard_why`）。ダッシュボードの
-`THTH_REASON` は Python の包みに入らない HTML にしか無いので、ここに正本として置き（`DASHBOARD_REASON_JA`）、
-4 つの HTML と一致することを試験で縛る（次の段で HTML をここから生成する）。
+`THTH_REASON` の文は、ここに正本として置き（`DASHBOARD_REASON_JA`・目録の `why` に入る）、4 つの HTML の表は
+`tools/render_refusals.py` が目録の `dashboard` の口の `why` から生成する（手で直さない・ずれたら試験が赤）。
+
+**Worker の口**（`worker`）: `tools/render_refusals.py` が、`worker` の口を持つ符丁の 3 つ（`door_view("worker")`）を
+`callback/src/refusal-catalog.js` に書き出し、Worker の `reply` が断りの答えに `why`・`fix`・`better` を足す。
+ほかの口にも出る符丁は、`fix_by_door["worker"]` に Worker の口で通れる文を書く（`text`・`command` のほか、
+その口でだけ違う `why`・`better` も書ける）。Worker は穴を埋めないので、Worker の口の文に型の穴は書かない。
 
 **import の向き**: 説明の辞書を持つモジュール（`accounts`・`queuefile` など `core` が import するものを含む）が
 この目録を import する。`CATALOG` は `core` を読む（`guard_why`）ので、import の時には作らず、初めて読まれた
@@ -40,18 +46,20 @@ import re
 from types import MappingProxyType
 
 from . import (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_part3, refusal_catalog_part4,
-               refusal_catalog_part5)
+               refusal_catalog_part5, refusal_catalog_part6)
 
 # 項目を書いた部（1〜3: 設計 §1 の 8 つの口・集合・JSON の欄・説明の辞書。4〜5: 広告の口 OpsRefused と
-# 認可の口 FlowError）。
+# 認可の口 FlowError。6: Worker の口）。
 PARTS = (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_part3, refusal_catalog_part4,
-         refusal_catalog_part5)
+         refusal_catalog_part5, refusal_catalog_part6)
 
 LANG = "ja"
 INITIAL_SINCE = "5.10.0"
 KINDS = ("refusal", "cannot_say")
 NO_BETTER = ("internal", "terminal")
-DOORS = ("cli", "mcp", "remote", "dashboard")
+DOORS = ("cli", "mcp", "remote", "dashboard", "worker")
+# Python の口で引かない口（その口だけの符丁は `thth/refusal.py` が何も足さない）。
+FOREIGN_DOORS = ("worker",)
 
 # 説明の辞書の見方（`fix_view`）。各モジュールの元の名前（`remote.NEXT` など）は、ここに並べた符丁を
 # 部の文から引いた読むだけの写像になる（呼び出し側は無改修）。並びは元の辞書の鍵の順（`lint.REASONS` が
@@ -360,6 +368,39 @@ def _catalog() -> dict[str, dict]:
 
 def get(code: str) -> dict | None:
     return _catalog().get(code)
+
+
+def door_parts(code: str, door: str) -> dict | None:
+    """その口での 3 つ（`why`・`fix`・`better`）。穴は埋めない（型のまま）。口に出ない・退いた符丁は None。
+
+    `fix_by_door[door]` があれば、その `text`・`command`（と書いてあれば `why`・`better`）を使う。
+    fix には打てる命令を（）で添える（`refusal.parts` と同じ形）。"""
+    entry = _catalog().get(code)
+    if entry is None or entry.get("retired") or door not in entry["doors"]:
+        return None
+    by = entry["fix_by_door"].get(door) or {}
+    text = by.get("text", entry["fix"]["text"]) or ""
+    command = by["command"] if "command" in by else entry["fix"]["command"]
+    if command and command not in text:
+        text = f"{text}（{command}）"
+    return {"why": by.get("why", entry["why"]) or "", "fix": text,
+            "better": by.get("better", entry["better"]) or None}
+
+
+def door_view(door: str) -> dict[str, dict]:
+    """その口に出る符丁の 3 つを、符丁の順で（Worker の書き出しが読む）。"""
+    return {code: door_parts(code, door) for code in sorted(_catalog()) if door_parts(code, door) is not None}
+
+
+def dashboard_view() -> dict[str, str]:
+    """ダッシュボードの `THTH_REASON`（`dashboard` の口の符丁 → 目録の `why`）。
+
+    並びは `DASHBOARD_REASON_JA` の順（今の HTML の並び）、そこに無い符丁は後ろに符丁の順で。"""
+    catalog = _catalog()
+    codes = [code for code, entry in catalog.items() if "dashboard" in entry["doors"] and not entry.get("retired")]
+    order = {code: index for index, code in enumerate(DASHBOARD_REASON_JA)}
+    codes.sort(key=lambda code: (order.get(code, len(order)), code))
+    return {code: catalog[code]["why"] for code in codes}
 
 
 # ---- 穴埋め（静的な型に検査済みの値だけ） ----

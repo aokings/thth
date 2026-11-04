@@ -7,7 +7,7 @@
 //   **Worker で先に断り、権威は VM**（VM が資格情報のファイルでもう一度確かめる）。
 // - 応答は最長 20 秒待つ（アカウントの束を 0.5 秒ごとに見る）。結果が入れば 200 で VM の JSON をそのまま。
 //   20 秒を超えたら 202 {status: pending, request_id}。CLI は /api/v1/result/<request_id> を見に行く。
-// - Worker が自分で断るときは {error: <符丁>} だけ。
+// - Worker が自分で断るときは {error: <符丁>} に、目録の why・fix・better を足す（relay.js の reply・VM の JSON には足さない）。
 // - **request の中身も結果も記録しない**（/activity と同じ作法: no-store・no-referrer・観測ログ無し）。
 //   本文はアカウントの束に最長 120 秒・結果は入ってから 10 分だけ。
 import {PERSON,boundedBody,accountStub,publicQuota} from './person.js';

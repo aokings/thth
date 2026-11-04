@@ -280,7 +280,11 @@ ENTRIES = {
         "fix": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
         "command": "thth login",
         "better": "鍵は `thth login`（ブラウザで許可）で取ると、手で貼る間違いが起きません",
-        "doors": ("remote",),
+        "fix_by_door": {
+            "worker": {"why": "Authorization: Bearer の鍵が無いか、thth.me に登録されていません（取り消されたか、違う鍵です）。",
+                       "text": "`thth login` でブラウザから許可し直して新しい鍵を取り、その鍵で送り直してください", "command": None},
+        },
+        "doors": ("remote", "worker"),
     },
     "invalid_key_format": {
         "kind": "refusal",
@@ -455,7 +459,13 @@ ENTRIES = {
         "why": "--from・--to が YYYY-MM-DD の日付でないか、--from が --to より後です。",
         "fix": "--from・--to は 2026-09-01 の形の日付です（--from は --to より前）",
         "better": "消す期間を必要な分だけに絞ると、残したい集計を巻き込みません",
-        "doors": ("cli",),
+        "fix_by_door": {
+            "worker": {"why": "Range の範囲が添付の大きさの外か、読めない形です。",
+                       "text": "Range を外すか、応答の content-range に書いた大きさの内側で bytes=始め-終わり を頼み直してください",
+                       "command": None,
+                       "better": "Range を付けずに一度で取ると、往復が減ります"},
+        },
+        "doors": ("cli", "worker"),
     },
     "invalid_reason": {
         "kind": "refusal",
@@ -513,9 +523,13 @@ ENTRIES = {
                        "command": None},
             "mcp": {"text": "道具の説明（schema）にある鍵だけを正しい型で渡し、必須の鍵を足してください（key と value は両方そろえる）",
                     "command": None},
+            "worker": {"why": "要求の形が受け付ける形と違います（path・query・Content-Type・本文の鍵のどれか）。",
+                       "text": "URL を出した命令の出力どおりの path と Content-Type で、決まった鍵だけを送り直してください",
+                       "command": None,
+                       "better": "HTTP を直接組まず thth の CLI か MCP の道具から呼ぶと、形は道具が整えます"},
         },
         "better": "書く道具の前に読むだけの道具か dry-run で形を確かめると、往復が減ります",
-        "doors": ("cli", "mcp", "remote"),
+        "doors": ("cli", "mcp", "remote", "worker"),
     },
     "invalid_retention": {
         "kind": "refusal",
@@ -751,7 +765,10 @@ ENTRIES = {
         "fix": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
         "command": "thth login",
         "better": "期限の近い鍵を https://thth.me/activity で早めに発行し直すと、作業の途中で止まりません",
-        "doors": ("remote",),
+        "fix_by_door": {
+            "worker": {"text": "`thth login` でブラウザから許可し直して新しい鍵を取り、その鍵で送り直してください", "command": None},
+        },
+        "doors": ("remote", "worker"),
     },
     "key_in_argument": {
         "kind": "refusal",
@@ -864,8 +881,13 @@ ENTRIES = {
         "why": "thth.me がブラウザ式の login を受け付けませんでした。",
         "fix": "鍵が手元にあれば `thth login --stdin` で入れ、無ければ https://thth.me/activity で発行してください",
         "command": "thth login --stdin",
+        "fix_by_door": {
+            "worker": {"why": "thth.me が、いまブラウザ式の login を受け付けられません。",
+                       "text": "少し置いて `thth login` をやり直すか、鍵が手元にあれば `thth login --stdin` で入れてください",
+                       "command": None},
+        },
         "no_better": "internal",
-        "doors": ("remote",),
+        "doors": ("remote", "worker"),
     },
     "managed_git_store_unsafe_mode": {
         "kind": "refusal",
@@ -1028,7 +1050,11 @@ ENTRIES = {
         "why": "その添付はまだ検査を終えておらず、原稿に付けられません。",
         "fix": "thth_media_complete で完了させてから原稿に付けてください",
         "better": "添付を原稿より先に完了まで済ませると、下書きを置く手順が一度で済みます",
-        "doors": ("mcp", "remote"),
+        "fix_by_door": {
+            "worker": {"why": "その添付は、まだ受け取りか検査を終えていません。",
+                       "text": "受け口の URL への PUT を終えてから、thth_media_complete で完了させてください", "command": None},
+        },
+        "doors": ("mcp", "remote", "worker"),
     },
     "media_not_representable": {
         "kind": "refusal",
@@ -1063,7 +1089,10 @@ ENTRIES = {
         "why": "添付の大きさが、その kind の上限（画像 8 MB・動画 1 GB・音声 100 MB）を超えています。",
         "fix": "上限より小さく書き出し直して、thth_media_upload_url から新しく始めてください",
         "better": "画像は長辺を媒体の表示に合わせて縮めると、見た目を保ったまま軽くなります",
-        "doors": ("mcp", "remote"),
+        "fix_by_door": {
+            "worker": {"text": "上限より小さく書き出し直して、thth_media_upload_url から新しく始めてください", "command": None},
+        },
+        "doors": ("mcp", "remote", "worker"),
     },
     "media_spoiler_requires_media": {
         "kind": "refusal",
@@ -1376,7 +1405,13 @@ ENTRIES = {
         "why": "指した id のもの（判断・観測・型の仕様）か、報告の口の path が見つかりません。",
         "fix": "id を一覧から写し直してください（topics の decision は口座名を渡すと新しい順に並びます）",
         "better": "id を記録した直後の出力から控えておくと、読み返しで迷いません",
-        "doors": ("cli", "remote"),
+        "fix_by_door": {
+            "worker": {"why": "その URL の path か id は thth.me に無いか、期限が切れて消えました。",
+                       "text": "URL を出した命令（`thth login`・招待・thth_media_upload_url など）をもう一度打ち、出た新しい URL を使ってください",
+                       "command": None,
+                       "better": "URL は出た直後に使うと、期限が切れて消える前に済みます"},
+        },
+        "doors": ("cli", "remote", "worker"),
     },
     "not_logged_in": {
         "kind": "refusal",
