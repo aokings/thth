@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import argparse
 import importlib.util
 import re
 from pathlib import Path
@@ -14,6 +13,7 @@ import pytest
 
 from thth import cli, core, guard, lint, queuefile
 from thth import refusal_catalog as rc
+from tests.command_helpers import command_problem
 
 ROOT = Path(__file__).resolve().parent.parent
 DASHBOARDS = [ROOT / "skills" / "thth" / "dashboard" / f"{name}.html"
@@ -24,6 +24,8 @@ NO_BETTER_LIMIT = {"internal": 196, "terminal": 14}
 # 目録の項目の数の下限（消すときは項目を残して retired を立てる）。
 CATALOG_FLOOR = 750
 NEGATIVE_ENDINGS = ("できません", "不正です")
+# fix の終わりで断る打ち消し（5.11.0 監査 5-d）。可能の打ち消し・「ありません」・「ていません」。
+NEGATIVE_FIX_ENDING = re.compile(r"((でき|[えけせてねべめれ])ません|できない|不正です|不可です|ありません|ていません)$")
 
 
 def _count_refusals():
@@ -125,43 +127,80 @@ def test_ダッシュボードのTHTH_REASONは目録と一致する():
         assert rc.CATALOG[code]["why"] == why, code
 
 
+def _last_sentence(text: str) -> str:
+    """文の終わり（句点・空白を除いたもの）。末尾の補いの「（…）」が通る道（`thth …`・
+    「ください」・「〜ます」）を書いていればその補いを終わりとし、そうでなければ補いを除く。"""
+    text = text.rstrip("。 ")
+    m = re.search(r"（([^（）]*)）$", text)
+    if m:
+        inner = m.group(1).rstrip("。 ")
+        if "thth " in inner or "ください" in inner or inner.endswith("ます"):
+            return inner
+        text = text[:m.start()]
+    return text.rstrip("。 ")
+
+
 def test_言い方_できませんで終わらない():
-    dict_fixed = {code for code, entry in rc.CATALOG.items()
-                  if any(s.startswith("fix_dict:") for s in entry["sources"])}
+    """fix は「どうすれば通るか」で終える（原則 docs/原則_前向きな断り.md）。
+
+    5.11.0 監査 5-d: 説明の辞書から引いた文も見る（前は除いていた）。fix は「できません」
+    「不正です」のほか、可能の打ち消し（〜えません・〜けません・〜せません …）・「ありません」・
+    「ていません」で終わる形も断る。better は利点で終わる文なので「〜ません」は見ない。"""
     wrong = []
     for code, entry in rc.CATALOG.items():
-        texts = [entry["better"]] + ([] if code in dict_fixed else [entry["fix"]["text"]])
-        wrong += [code for text in texts if text.rstrip("。 ").endswith(NEGATIVE_ENDINGS)]
+        fix = _last_sentence(entry["fix"]["text"])
+        if NEGATIVE_FIX_ENDING.search(fix):
+            wrong.append(f"{code}（fix）: {entry['fix']['text']}")
+        if _last_sentence(entry["better"]).endswith(NEGATIVE_ENDINGS):
+            wrong.append(f"{code}（better）: {entry['better']}")
     assert wrong == []
 
 
-def _subcommands(parser):
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            return action.choices
-    return None
+def test_壊れた例_言い方の柵が打ち消しの終わりを拾う():
+    bad = ["予約はできません。", "付けません", "THTH からは変更できない", "この形は不可です", "指した原稿が queue にありません", "何もしていません。",
+           "その札は待ちではありません（付けた札は取り消せません）"]
+    good = ["thth lint で直してください", "口座ごとの欄を見てください（媒体ごとに足していません）",
+            "持ち主が戻すと、また出せます", "その点はありません（thth map show <project>）"]
+    assert [t for t in bad if not NEGATIVE_FIX_ENDING.search(_last_sentence(t))] == []
+    assert [t for t in good if NEGATIVE_FIX_ENDING.search(_last_sentence(t))] == []
+
+
+def test_sinceは版の形で今の版より新しくない():
+    """5.11.0 監査 5-d: `since` は x.y.z の形で、今の版（thth/VERSION）を越えない。"""
+    current = tuple(int(n) for n in (ROOT / "thth" / "VERSION").read_text().strip().split("."))
+    wrong = [code for code, entry in rc.CATALOG.items()
+             if not re.fullmatch(r"\d+\.\d+\.\d+", str(entry["since"]))
+             or tuple(int(n) for n in entry["since"].split(".")) > current]
+    assert wrong == []
+
+
+# 符丁を投げる file から、その符丁が出る口が分かるもの（5.11.0 監査 5-d）。
+_DOOR_OF_FILE = (("mcp/", "mcp"), ("thth/server", "remote"), ("skills/thth/dashboard/", "dashboard"))
+
+
+def test_doorsは符丁を投げるfileの口を含む(inventory):
+    """`tools/count_refusals.py` が符丁を見つけた file から口が分かるとき、その口が `doors` にある。"""
+    wrong = []
+    for row in inventory["rows"]:
+        doors = set(rc.CATALOG[row["code"]]["doors"])
+        for path in row["files"]:
+            for prefix, door in _DOOR_OF_FILE:
+                if path.startswith(prefix) and door not in doors:
+                    wrong.append(f"{row['code']}: {path} は {door} の口（doors {sorted(doors)}）")
+    assert wrong == []
 
 
 def test_fixの命令は実在する():
+    """段 C の skill lint と同じ確かめ（語で分ける段・choices・旗まで）を使う（5.11.0 監査 5-c）。"""
     parser = cli.build_parser()
     wrong = []
     for code, entry in rc.CATALOG.items():
         command = entry["fix"]["command"]
         if not command:
             continue
-        words = command.split()
-        if words[0] != "thth":
-            wrong.append(code)
-            continue
-        current = parser
-        for word in words[1:3]:
-            choices = _subcommands(current)
-            if choices is None or word.startswith(("-", "<")):
-                break
-            if word not in choices:
-                wrong.append(code)
-                break
-            current = choices[word]
+        problem = command_problem(parser, command)
+        if problem is not None:
+            wrong.append(f"{code}: `{command}` — {problem}")
     assert wrong == []
 
 

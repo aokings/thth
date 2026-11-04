@@ -758,8 +758,8 @@ ENTRIES = {
     "clicks_unavailable": {
         "kind": "cannot_say",
         "why": None,
-        "fix": "この媒体では投稿ごとのクリックを THTH から採れません",
-        "better": "リンクに UTM を付けてリンク先の計測で数えると、媒体を問わず比べられます",
+        "fix": "この媒体の投稿ごとのクリックは THTH から採れないので、リンクに UTM を付けてリンク先の計測で数えてください",
+        "better": "どの媒体のリンクも同じ UTM の付け方にそろえておくと、媒体を問わず比べられます",
         "doors": ("cli", "mcp", "dashboard"),
     },
     "collect_too_soon": {

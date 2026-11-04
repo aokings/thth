@@ -8,7 +8,9 @@ skill 4 本（`skills/*/SKILL.md`）の本文が、道具の実物とずれて�
 見るもの:
   1. backtick の `thth …` の命令（行内と、``` の囲みの中で `thth ` で始まる行）が
      argparse の経路に実在する。`a|b` は全部の枝が実在すること。`<…>`・`[…]`・
-     `-…`・`…` が来たらそこで止める（その先は引数）。
+     `-…`・`…` が来たらそこで止める（その先は引数）。語で分ける段（scenario・
+     account・topics）の語・位置引数の choices・旗も見る（`tests/command_helpers.py`）。
+     囲みの中の行頭の `$ `・`NAME=value ` は剥がし、`\\` で続く行は繋ぐ。
   2. backtick の MCP の道具名（`thth_…`）が `mcp/server.py` の道具一覧に実在する。
   3. 古い版の「新しく」を名乗る文——今の版より大版が 2 つ以上古い「（x.y.z）」の
      印——を**警告**する（赤にしない・集計して 1 行）。
@@ -23,7 +25,6 @@ skill の本文はこの試験では変えない（skill を薄くするのは 5
 """
 from __future__ import annotations
 
-import argparse
 import glob
 import importlib.util
 import os
@@ -33,6 +34,9 @@ import warnings
 import pytest
 
 from thth.cli import build_parser
+
+# 命令の確かめは目録の柵と共用（5.11.0 監査 5-a〜5-c）。
+from tests.command_helpers import command_problem, extract_commands  # noqa: F401
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS_GLOB = os.path.join(REPO_ROOT, "skills", "*", "SKILL.md")
@@ -79,26 +83,6 @@ def _skills() -> dict:
     return out
 
 
-_FENCE = re.compile(r"```.*?```", re.S)
-_INLINE = re.compile(r"`([^`\n]+)`")
-
-
-def extract_commands(text: str) -> list:
-    """backtick の `thth …` の命令を集める（行内と、囲みの中の `thth ` で始まる行）。"""
-    found = []
-    for block in _FENCE.findall(text):
-        for line in block.splitlines():
-            line = line.strip()
-            if line.startswith("thth "):
-                found.append(line)
-    outside = _FENCE.sub("", text)
-    for inner in _INLINE.findall(outside):
-        inner = inner.strip()
-        if inner == "thth" or inner.startswith("thth "):
-            found.append(inner)
-    return found
-
-
 _TOOL = re.compile(r"`(thth_[a-z0-9_]+)(?=[`\s{])")
 
 
@@ -108,11 +92,11 @@ def extract_tool_names(text: str) -> list:
     return _TOOL.findall(text)
 
 
-_CODE = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`\s*(?:で断|になり、断)")
+_CODE = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`\s*(?:で断|になり、断|（断り）)")
 
 
 def extract_refusal_codes(text: str) -> list:
-    """断りの符丁と読める backtick（直後が「で断」「になり、断」のもの）。"""
+    """断りの符丁と読める backtick（直後が「で断」「になり、断」「（断り）」のもの。5.11.0 監査 5-e）。"""
     return _CODE.findall(text)
 
 
@@ -130,49 +114,6 @@ def old_version_marks(text: str, current_major: int) -> list:
 
 
 # ---------------------------------------------------------------- 実物
-
-def _subparsers(parser):
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            return action
-    return None
-
-
-def _positionals(parser) -> list:
-    return [a for a in parser._actions
-            if not a.option_strings and not isinstance(a, argparse._SubParsersAction)]
-
-
-_STOP_PREFIXES = ("-", "<", "[", "{", '"', "'", "|", "…", "$")
-
-
-def command_problem(parser, command: str):
-    """`thth …` が argparse の経路に実在しなければ理由の文字列、実在すれば None。"""
-    tokens = command.split()
-    if not tokens or tokens[0] != "thth":
-        return f"thth で始まらない: {command!r}"
-    current, path = parser, ["thth"]
-    for token in tokens[1:]:
-        if token.startswith(_STOP_PREFIXES) or "…" in token:
-            break
-        sub = _subparsers(current)
-        if sub is None:
-            break  # 葉に着いた。ここから先は引数。
-        branches = token.split("|")
-        known = [b for b in branches if b in sub.choices]
-        if len(known) == len(branches):
-            current = sub.choices[branches[0]]
-            path.append(token)
-            continue
-        if known:
-            missing = [b for b in branches if b not in sub.choices]
-            return f"{' '.join(path)} の下に無い枝: {missing}"
-        if len(path) == 1 or not _positionals(current):
-            # 最上段・位置引数を取らない段で、知らない語が来た。
-            return f"{' '.join(path)} の下に {token!r} が無い"
-        break  # 位置引数（プロジェクトの名など）として受ける段。
-    return None
-
 
 def _load_mcp_server():
     spec = importlib.util.spec_from_file_location("thth_mcp_server_skills_lint", MCP_SERVER)
@@ -353,7 +294,29 @@ def test_壊れた例_実在しない道具名で赤になる(tools):
     assert [n for n in names if n not in tools] == ["thth_obsrve"]
 
 
+def test_壊れた例_語で分ける命令の綴り違いと旗で赤になる(parser):
+    """5.11.0 監査 5-a・5-c: argparse の外で語を分ける命令・位置引数の choices・旗。"""
+    bad = ["thth scenario lnt kp", "thth account kp sett", "thth inflight kp resolv",
+           "thth topics observ", "thth topics observe --inptu x", "thth send <a> --fiel x",
+           "thth inflight <口座> shw", "thth topics suggest|observ", "thth plaza post --hwo x"]
+    good = ["thth scenario lint kp", "thth account set kp write.floor 3 --reason x",
+            "thth inflight kp resolve --published x", "thth topics observe --input x",
+            "thth topics kopicha --search 語 --tag", "thth scenario kp", "thth <コマンド> … --json",
+            "thth topics history お茶", "thth topics retract-note <note_id>",
+            "thth inflight <口座> resolve --published x", "thth account set|resume <口座>",
+            "thth scenario show|lint <project>", 'thth plaza post --how "thth measured kopicha-x --days 7"']
+    assert [c for c in bad if command_problem(parser, c) is None] == []
+    assert {c: command_problem(parser, c) for c in good if command_problem(parser, c)} == {}
+
+
+def test_壊れた例_囲みの行頭の印と続きの行を読む():
+    """5.11.0 監査 5-b: 行頭の `$ `・`NAME=value `・`env NAME=value ` を剥がし、`\\` で続く行を繋ぐ。"""
+    text = "```\n$ thth sendd kp \\\n  --file x\nTHTH_ROOT=/srv/thth thth bord\nenv THTH_ROOT=/srv thth doctor kp\n```"
+    assert extract_commands(text) == ["thth sendd kp --file x", "thth bord", "thth doctor kp"]
+
+
 def test_壊れた例_符丁と古い印を拾う():
     assert extract_refusal_codes(BROKEN_SKILL) == ["too_soon"]
+    assert extract_refusal_codes("`write_floor_reached`（断り）") == ["write_floor_reached"]
     marks = old_version_marks("**新しい**（3.8.0・何か）と（4.1.0）と（5.9.0）", 5)
     assert marks == [(1, "3.8.0")]

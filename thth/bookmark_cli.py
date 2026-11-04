@@ -187,17 +187,17 @@ def _refuse(args, code, message, rc=2, **extra) -> int:
 
 _MESSAGES = {
     "use_delivery": "この URL は自分の記事です。--delivery <配信 id> で指してください（thth deliveries <口座>）",
-    "bookmark_other_lane_article": "この URL は同じ owner の別のレーン（別の主体）の記事です。付けません",
+    "bookmark_other_lane_article": "この URL は同じ owner の別のレーン（別の主体）の記事なので、この主体からは付けません。そのレーンの主体から付けてください",
     "invalid_url": "URL は http／https で、host があり、空白・制御文字の無いものです",
-    "bookmark_not_found": "THTH が付けたブックマークの記録がありません（手で付けたものは THTH から消しません）",
+    "bookmark_not_found": "THTH が付けたブックマークの記録がありません（手で付けたものは THTH から消しません）。thth bookmark list <口座> で THTH が付けたものを確かめてください",
     "bookmark_already_deleted": "このブックマークはもう消しています",
-    "bookmark_edit_missing_remote": "はてなにこの主体のブックマークがありません。直しの口では新しく付けません"
-                                    "（付けるなら thth bookmark add）。何もしていません",
+    "bookmark_edit_missing_remote": "はてなにこの主体のブックマークが無いので、何もしていません"
+                                    "（直しの口は付いたものだけを直します）。新しく付けるなら thth bookmark add で付けてください",
     "bookmark_edit_no_change": "直したあとの中身が今と同じです（何もしていません）",
     "bookmark_result_unknown": "付けた（か前の直しの）結果がまだ分かりません。thth bookmark reconcile <口座> のあとに直してください",
     "approval_stale": "表示したあとに台帳が変わりました。もう一度 1 段目から",
     "invalid_op": "op は add か delete です（コメント・タグの直しははてなの画面から）",
-    "bookmark_precheck_failed": "打つ前の確かめ（この主体のブックマークの GET）が通りませんでした。何もしていません",
+    "bookmark_precheck_failed": "打つ前の確かめ（この主体のブックマークの GET）が通らなかったので、何もしていません。少し置いてからもう一度打ってください",
     "bookmark_record_failed": "はてなには打ちましたが、記録（sent/bm:）を書けませんでした。置き場を直し、"
                               "はてなの画面で付いているかを確かめてください（打ち直しは柵が止めます）",
     "hatena_auth_rejected": "はてなが認可を断りました。thth principal auth <主体> --force --by <名前> をやり直してください",
@@ -381,14 +381,14 @@ def cmd_list(args) -> int:
 # --------------------------------------------------------------------------
 
 _BATCH_MESSAGES = {
-    "batch_empty": "付けられる札が 1 件もありません（除いた理由は 1 段目の一覧に）",
+    "batch_empty": "付けられる札が 1 件もありません。1 段目の一覧の除いた理由を見て、札を直してから並べ直してください",
     "batch_too_large": "札が多すぎます（1 ファイル 100 件・256 KB まで）。分けてください",
     "batch_exists": "同じ札の並びはもう承認しています（thth bookmark batch-status <口座>）",
     "batch_not_found": "そのまとめ（か札の番号）がありません（thth bookmark batch-status <口座>）",
-    "batch_unreadable": "まとめのファイルが読めません",
-    "batch_text_invalid": "札のファイルを読めません（1 行に 1 件の JSON か、JSON の配列）",
-    "batch_not_cancellable": "その札は待ちではありません（付けた・断った・取り消した札は取り消せません）",
-    "schedule_unavailable": "timer に載っていない口座（scheduled: false）では、並べても付きません",
+    "batch_unreadable": "まとめのファイルが読めません。パスと読みの権限を確かめて、もう一度打ってください",
+    "batch_text_invalid": "札のファイルを読めません。1 行に 1 件の JSON か、JSON の配列に直してください",
+    "batch_not_cancellable": "その札は待ちではないので取り消せません（付けた・断った・取り消した札はそのまま残ります）。thth bookmark batch-status <口座> で札の状態を確かめてください",
+    "schedule_unavailable": "timer に載っていない口座（scheduled: false）では、並べても付きません。thth bookmark add でその場で付けるか、口座を timer に載せてから並べてください",
     "unsupported_operation": "はてなの口座でだけ使えます",
 }
 

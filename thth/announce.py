@@ -27,8 +27,8 @@ LINT_CODES = ("invalid_announces", "announces_not_found", "announces_other_lane"
               "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces")
 _MESSAGES = {
     "invalid_announces": "announces は配信 id（dl_ と 16 進 12 桁）です",
-    "announces_not_found": "announces の配信が同じ project のはてなの口座の配信の台帳にありません",
-    "announces_other_lane": "announces の配信は別の project（別レーン）の記事です。結べません",
+    "announces_not_found": "announces の配信が同じ project のはてなの口座の配信の台帳にありません。thth deliveries <project> の一覧から配信の id を写してください",
+    "announces_other_lane": "announces の配信は別の project（別レーン）の記事なので結べません。その記事のレーンの SNS の口座の原稿に書いてください",
     "announces_not_allowed": "announces は SNS の口座の原稿にだけ書けます（はてなの口座には書けません）",
     "article_mismatch": "article が配信の台帳の記事の名と違います",
     "article_url_placeholder_twice": "本文の {article_url} は 1 つまでです",

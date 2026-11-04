@@ -493,5 +493,5 @@ _WRITEBACK_NEXT = {
     "writeback_push_failed": ("記録の commit はできましたが push できませんでした"
                               "（inflight は残っています）。repo を直して push してから、もう一度"),
     "text_mismatch_after_rebase": "同期のあとに原稿が食い違いました。原稿を確かめてから、もう一度",
-    "unusable_post_id": "post_id の形が台帳に書けません",
+    "unusable_post_id": "post_id の形が台帳に書けません。媒体の画面で投稿を確かめてから、thth inflight <口座> resolve --published <post_id> --by <名前>（出ていなければ --not-published）で結果を決めてください",
 }

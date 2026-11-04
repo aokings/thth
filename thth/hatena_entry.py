@@ -57,7 +57,7 @@ S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE
 DELETABLE_CONFLICTS = ("readback_changed", "syntax_mismatch")
 _MESSAGES = {
     "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
-    "article_source_missing": "article_source: が無いか、指すファイルが repo にありません",
+    "article_source_missing": "article_source: が無いか、指すファイルが repo にありません。repo の根からの相対パスで書き、そのファイルを commit してください",
     "invalid_article_source": "article_source: は repo の中の相対パスだけです（`..`・絶対パス・`.` 始まりは不可）",
     "title_required": "title: が要ります（はてなブログの記事の題）",
     "invalid_op": "op: は create・update・delete のどれかです",
@@ -65,10 +65,10 @@ _MESSAGES = {
     "blog_id_in_manuscript": "blog_id: は原稿に書きません（口座の台帳から引きます）",
     "categories_invalid": f"categories: は {CATEGORIES_MAX} 個まで・1 つ {CATEGORY_CHARS_MAX} 字までです",
     "invalid_form": "form: は full・summary・entry のどれかです",
-    "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）",
-    "image_missing": "本文の画像（![](<パス>)）が repo にありません",
+    "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）。thth deliveries <口座> で配信の id を確かめてください",
+    "image_missing": "本文の画像（![](<パス>)）が repo にありません。画像を repo に置いて commit してください",
     "image_too_large": "本文の画像が 1 枚の上限（既定 8 MiB・主体の台帳の fotolife.max_image_bytes）を超えています",
-    "image_type_unsupported": "本文の画像の形式が JPEG・PNG・GIF ではありません（中身の先頭で判定・拡張子は見ません）",
+    "image_type_unsupported": "本文の画像の形式が JPEG・PNG・GIF ではありません（中身の先頭で判定・拡張子は見ません）。JPEG・PNG・GIF に書き出し直してください",
     "too_many_images": "本文の画像が 1 記事の上限（既定 20 枚・fotolife.max_images_per_entry）を超えています",
     "images_too_large": "本文の画像の合計が上限（既定 64 MiB・fotolife.max_total_bytes）を超えています",
     "relative_link_unresolvable": ("記事に相対リンクがありますが、口座の台帳に link_base（相対リンクの基準の"
@@ -85,7 +85,7 @@ _MESSAGES = {
                                 "thth conflict <口座> <dl> resolve --gone）"),
     "delivery_state_no_follow": ("delivery: の配信は THTH が追従しないことにしたものです（no_follow）。更新はしません"
                                  "（削除はできます・戻すなら thth conflict <口座> <dl> resolve --adopt）"),
-    "update_no_change": "出した版と同じです（本文・題・カテゴリ・画像のどれも変わっていない）。更新は送りません",
+    "update_no_change": "出した版と同じです（本文・題・カテゴリ・画像のどれも変わっていない）。更新は送っていません。直すときは記事を変えて commit してから打ってください",
     "delivery_state_deleted": "もう削除した配信です（deleted）",
     "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
                               "まだ追跡されていない）。記事を commit してから"),

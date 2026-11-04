@@ -71,6 +71,8 @@ name_is_safe = accounts_mod.name_is_safe
 
 # `thth account` の 1 本目の位置引数が、アカウント名ではなく枝の名前になるもの。
 VERBS = ("add", "migrate")
+# `dispatch()` が 1 本目の位置引数で分ける語の全部（skill lint が綴り違いを見るのに使う）。
+DISPATCH_WORDS = VERBS + ("leave", "set", "resume", "status")
 
 
 # --------------------------------------------------------------------------

@@ -326,14 +326,14 @@ REPLY_TO_FILE_BUNDLE = "reply_to_file_bundle_unsupported"
 REPLY_TO_FILE_UNREADABLE = "reply_to_file_unreadable"
 
 REPLY_TO_FILE_MESSAGES = {
-    REPLY_TO_CONFLICT: "reply_to と reply_to_file は併用できません（どちらか 1 つ）",
+    REPLY_TO_CONFLICT: "reply_to と reply_to_file は併用できません。どちらか 1 つにしてください",
     REPLY_TO_FILE_INVALID: ("同じ queue の原稿のファイル名だけを書いてください"
                             "（`.md`・`/` `\\` `..` を含まない）"),
-    REPLY_TO_FILE_SELF: "自分自身は指せません",
-    REPLY_TO_FILE_MISSING: "指した原稿が同じ queue にありません",
+    REPLY_TO_FILE_SELF: "自分自身は指せません。返す先の別の原稿のファイル名を書いてください",
+    REPLY_TO_FILE_MISSING: "指した原稿が同じ queue にありません。返す先の原稿を同じ queue に置いてから指してください",
     REPLY_TO_FILE_ACCOUNT_MISMATCH: "指した原稿の account が違います（同じ account の原稿だけ）",
-    REPLY_TO_FILE_BUNDLE: "スレッド連投（thth: 2）の原稿は指せません（thth: 1 の原稿だけ）",
-    REPLY_TO_FILE_UNREADABLE: "指した原稿が thth: 1 の原稿として読めません",
+    REPLY_TO_FILE_BUNDLE: "スレッド連投（thth: 2）の原稿は指せません。thth: 1 の原稿を指してください",
+    REPLY_TO_FILE_UNREADABLE: "指した原稿が thth: 1 の原稿として読めません。thth lint <ファイル> で返す先の原稿を先に直してください",
 }
 
 

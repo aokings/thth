@@ -147,8 +147,8 @@ NEXT = {
     "not_owner": "結果の更新・判定・範囲の変更は、置いた持ち主（同じ project）だけができます",
     "invalid_verdict": "--verdict は adopted・dropped・inconclusive のどれかです",
     "invalid_declaration": "施策の宣言を読めません（thth study-report <file> で形を確かめてください）",
-    "declaration_out_of_scope": "宣言の account が、置く account と同じ持ち主（project）ではありません",
-    "plaza_project_required": "project を持たない account は広場の参加・open に使えません",
+    "declaration_out_of_scope": "宣言の account が、置く account と同じ持ち主（project）ではありません。同じ project の account の宣言を指してください",
+    "plaza_project_required": "project を持たない account は広場の参加・open に使えません。project を持つ account から置いてください",
     "invalid_visibility": "--visibility は project・owner・open のどれかです",
     "invalid_owner": "組の名前（英数字と - _）と、組に入れる project を 1 つ以上並べてください"
                      f"（{OWNER_PROJECTS_MAX} まで）",
@@ -176,10 +176,10 @@ NEXT = {
     "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
                     "どれかです（無ければ付けない）",
     "invalid_from": "--from は analytics-report・after・study-report のどれかと引数（account か宣言の"
-                    "ファイル）、または scenario <project> <糸の id> です。--from-doc・--from-report "
-                    "とは一緒に使えません",
+                    "ファイル）、または scenario <project> <糸の id> です。--from・--from-doc・--from-report "
+                    "は、どれか 1 つだけにしてください",
     "from_unavailable": "--from の出力を道具が作れませんでした（その命令を単独で打って確かめてください）",
-    "from_out_of_scope": "--from の account・project が、置く account と同じ持ち主（project）ではありません",
+    "from_out_of_scope": "--from の account・project が、置く account と同じ持ち主（project）ではありません。同じ project の account を --from に書いてください",
     "from_scenario_not_found": "その id の糸（kind: thread）がありません（thth scenario <project> で一覧）",
     "from_is_finding": "--from-doc と --from-report は気づき（finding）として置きます（--kind は付けないか finding）",
     "invalid_from_doc": "--from-doc は repo の中の md（通常のファイル・1 MiB まで・UTF-8）です",
@@ -195,7 +195,7 @@ NEXT = {
                       "（読み手が読者層の違いを知るため。例: Threads の朝の投稿・茶の話題）",
     "how_required": "施策（measure）には --how に数字を出し直せる thth の命令を 1 行書いてください"
                     "（例: thth measured kopicha-threads）",
-    "invalid_how": f"--how は `thth ` で始まる 1 行（{HOW_MAX} 字まで）の命令です。道具は実行しません",
+    "invalid_how": f"--how は控えの欄で、道具は実行しません。`thth ` で始まる 1 行（{HOW_MAX} 字まで）の命令を書いてください",
     "observed_is_tool_only": "observed（観測あり）は道具だけが付けます。--evidence-level は stated"
                              "（本文だけ）か hypothesis（見立て）です",
     "invalid_evidence_level": "--evidence-level は stated か hypothesis です",

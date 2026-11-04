@@ -95,8 +95,8 @@ NEXT = {
     "invite_already_used": "その招待は使用済みです。口座を止めるなら thth account leave <口座> --by <名前>",
     "invite_not_open": "その招待はもう使えない状態です（取り消し済み・期限切れ・登録失敗）",
     "invite_tty_required": "招待 URL は tty に 1 回だけ出します。ssh なら ssh -t で入ってください",
-    "invite_registration_rejected": "Worker が招待の登録を断りました。Worker の deploy と署名鍵"
-                                    "（RELAY_PUBLIC_KEY・置き替える前は旧名の APPROVAL_PUBLIC_KEY）を確かめてください。招待は作られていません",
+    "invite_registration_rejected": "Worker が招待の登録を断りました（招待は作られていません）。Worker の deploy と署名鍵"
+                                    "（RELAY_PUBLIC_KEY・置き替える前は旧名の APPROVAL_PUBLIC_KEY）を確かめてから、作り直してください",
     "invite_registration_unknown": "Worker に届いたか分かりません。thth admin invite revoke <id> で"
                                    "取り消してから作り直してください",
     "invite_revoke_unknown": "Worker で取り消せたか分かりません。同じ命令をもう一度打ってください",

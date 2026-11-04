@@ -63,8 +63,8 @@ NEXT = {
     "invalid_project": "project 名を確かめてください（台帳の project の綴り）",
     "project_unknown": "その project の account が台帳にありません（綴りを確かめてください）",
     "invalid_node": f"点は空でない 1 行・{NODE_MAX_CHARS} 字までの語です（制御文字は使えません）",
-    "node_handle": "点に @名前 や仮名（author_key）の形は入れられません。特定の人を観測する"
-                   "地図にはしません",
+    "node_handle": "点に @名前 や仮名（author_key）の形は入れられません（特定の人を観測する"
+                   "地図にはしません）。その人が話している話題の語を点にしてください",
     "node_url": "点に URL やドメインは入れられません。話題の語にしてください",
     "node_person_like": "点に個人名らしき語（敬称つき・「名 姓」の形）は入れられません。"
                         "話題の語にしてください",

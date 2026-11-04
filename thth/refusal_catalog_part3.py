@@ -730,7 +730,7 @@ ENTRIES = {
         "fix": "--adopt・--gone・--no-follow のどれかを付けて resolve してください。",
         "command": "thth conflict <口座> <配信 id> resolve --adopt",
         "better": "外での直しを残したいなら --adopt で採り、記事の正本にも同じ直しを入れておくと揃います。",
-        "doors": ("cli", "mcp"),
+        "doors": ("cli", "mcp", "remote"),
     },
     "response_invalid": {
         "kind": "refusal",
