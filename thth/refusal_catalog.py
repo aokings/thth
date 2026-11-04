@@ -14,21 +14,30 @@
 - `since`: 目録に載った時点の版（段 A の初期の項目は、その時点で既にあった符丁として 5.10.0）。
 - `lang`: 文の言語（`ja`）。
 - `retired`: 退いた符丁の印（消すときは項目を消さずにこれを立てる・互換の柵が読む）。
-- `sources`: 既存の文をどこから引いたか（`fix_dict:<module>.<name>`・`guard_message`・`dashboard`）。
+- `sources`: 文の出どころ・出る所（`fix_dict:<module>.<name>` はその符丁が出る説明の辞書の見方・
+  `guard_message`・`dashboard`）。
 
-**既存の文は読み取って使う**（写さない）: 各モジュールの説明の辞書（`NEXT`・`_MESSAGES` など）の文は
-`fix.text` に、`core.guard_refusal_message` の文は `why` に、import して値を引く。元の辞書は書き換えない
-（目録の見方に置き換えるのは次の段）。ダッシュボードの `THTH_REASON` は Python の包みに入らない HTML に
-しか無いので、ここに正本として置き（`DASHBOARD_REASON_JA`）、4 つの HTML と一致することを試験で縛る
-（次の段で HTML をここから生成する）。
+部の項目には、ほかに `fix_by_view`（`{見方: 文}`・同じ符丁でも説明の辞書ごとに文が違うときの、その見方の文）
+を書ける。目録の `fix.text` には `fix` の文（優先順で先に来る見方の文）が入る。
+
+**通す直し方の文の正本は部**（段 A の 2 つ目・5.11.0 のあと）: 各モジュールの説明の辞書（`remote.NEXT`・
+`hatena_entry._MESSAGES` など 15）は、目録から作る読むだけの見方（`fix_view`）になった。文を足す・直すときは
+部の `fix`（と `fix_by_view`）を書き、`FIX_VIEWS` に符丁を並べる。モジュールに辞書を直に書くと柵が赤になる。
+`core.guard_refusal_message` の文は `why` に、import して値を引く（`guard_why`）。ダッシュボードの
+`THTH_REASON` は Python の包みに入らない HTML にしか無いので、ここに正本として置き（`DASHBOARD_REASON_JA`）、
+4 つの HTML と一致することを試験で縛る（次の段で HTML をここから生成する）。
+
+**import の向き**: 説明の辞書を持つモジュール（`accounts`・`queuefile` など `core` が import するものを含む）が
+この目録を import する。`CATALOG` は `core` を読む（`guard_why`）ので、import の時には作らず、初めて読まれた
+時に作る（`__getattr__`）。`fix_view` は部だけを読む。
 
 **穴埋めは静的な型と検査済みの値だけ**（`render`）: `<口座>`・`<主体>`・`<名前>`・`<時刻>` の型の穴に、
 形を検査した値だけを入れる。自由文・本文・パスは埋めない。
 """
 from __future__ import annotations
 
-import importlib
 import re
+from types import MappingProxyType
 
 from . import (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_part3, refusal_catalog_part4,
                refusal_catalog_part5)
@@ -44,24 +53,100 @@ KINDS = ("refusal", "cannot_say")
 NO_BETTER = ("internal", "terminal")
 DOORS = ("cli", "mcp", "remote", "dashboard")
 
-# 既存の説明の辞書（読む順＝複数の辞書に同じ符丁があるときの優先順）。値は文（str）。
-FIX_SOURCES = (
-    ("thth.remote", "NEXT"),
-    ("thth.invites", "NEXT"),
-    ("thth.report_inbox", "NEXT"),
-    ("thth.map_store", "NEXT"),
-    ("thth.plaza", "NEXT"),
-    ("thth.hatena_entry", "_MESSAGES"),
-    ("thth.bookmark_cli", "_MESSAGES"),
-    ("thth.bookmark_cli", "_BATCH_MESSAGES"),
-    ("thth.announce", "_MESSAGES"),
-    ("thth.queuefile", "REPLY_TO_FILE_MESSAGES"),
-    ("thth.inflight_cli", "_WRITEBACK_NEXT"),
-    ("thth.accounts", "_DUMMY_NEXT"),
-    ("thth.admin_diagnose", "ISOLATION_HINTS"),
-    ("thth.dashboard_cli", "ADS_NEXT"),
-    ("thth.cli", "VALUE_ERROR_NEXT"),
-)
+# 説明の辞書の見方（`fix_view`）。各モジュールの元の名前（`remote.NEXT` など）は、ここに並べた符丁を
+# 部の文から引いた読むだけの写像になる（呼び出し側は無改修）。並びは元の辞書の鍵の順（`lint.REASONS` が
+# `queuefile.REPLY_TO_FILE_MESSAGES` の順に読む）。見方の並びは、同じ符丁が複数の見方にあるときの優先順で、
+# 部の `fix` には先に来る見方の文を書き、文が違う見方は部の `fix_by_view` に書く。
+# `accounts._DUMMY_NEXT` の `handle`・`instance` は欄の名前（符丁の形でない）で目録に載らないので、
+# accounts.py に残す。
+FIX_VIEWS = {
+    "remote.NEXT": (
+        "not_logged_in", "invalid_key", "key_expired", "remote_config_invalid", "remote_unavailable",
+        "remote_pending", "remote_unsupported", "rate_limited", "too_many_requests", "daily_limit", "retract_limit",
+        "quiet_hours", "account_stopped", "settings_loosen_requires_owner", "scope_unavailable",
+        "writes_not_allowed", "invalid_draft", "publication_unconfirmed", "confirm_mismatch", "inflight_changed",
+        "decision_required", "media_inflight_held", "media_inflight_unsupported",
+    ),
+    "invites.NEXT": (
+        "invite_media_unsupported", "invalid_instance", "invalid_project", "invalid_label", "invalid_expires",
+        "invite_project_in_owner_group", "invite_account_exists", "invite_not_found", "invite_already_used",
+        "invite_not_open", "invite_tty_required", "invite_registration_rejected", "invite_registration_unknown",
+        "invite_revoke_unknown", "invite_remote_created_audit_unconfirmed", "invite_remote_created_delivery_failed",
+        "admin_draft_invite_account_only", "admin_draft_credential_missing", "admin_draft_invalid_draft",
+    ),
+    "report_inbox.NEXT": (
+        "by_required", "invalid_account", "account_unavailable", "invalid_kind", "invalid_report",
+        "report_too_long", "secret_detected", "report_rate_limited", "duplicate_report", "report_not_found",
+        "report_already_closed", "invalid_close_reason", "invalid_version", "invalid_status",
+        "report_store_unavailable", "report_log_unavailable", "invalid_export_target", "report_closed",
+        "no_last_refusal", "invalid_since",
+    ),
+    "map_store.NEXT": (
+        "by_required", "invalid_project", "project_unknown", "invalid_node", "node_handle", "node_url",
+        "node_person_like", "secret_detected", "node_exists", "node_not_found", "node_limit", "invalid_edge",
+        "edge_exists", "edge_not_found", "edge_cycle", "edge_limit", "invalid_retention", "invalid_range",
+        "invalid_since", "map_store_unavailable", "map_log_unavailable", "scope_unavailable",
+    ),
+    "plaza.NEXT": (
+        "by_required", "invalid_account", "account_unavailable", "invalid_kind", "invalid_post", "post_too_long",
+        "secret_detected", "plaza_rate_limited", "duplicate_post", "plaza_not_found", "plaza_store_unavailable",
+        "plaza_log_unavailable", "plaza_not_joined", "invalid_reply_kind", "reason_required",
+        "measure_link_required", "measure_link_invalid", "not_a_measure", "not_owner", "invalid_verdict",
+        "invalid_declaration", "declaration_out_of_scope", "plaza_project_required", "invalid_visibility",
+        "invalid_owner", "plaza_owner_conflict", "plaza_owner_unregistered", "plaza_owner_not_found",
+        "redaction_unavailable", "invalid_until", "invalid_trial_due", "nothing_to_update", "plaza_hidden",
+        "already_hidden", "not_hidden", "invalid_min_n", "invalid_goal", "invalid_from", "from_unavailable",
+        "from_out_of_scope", "from_scenario_not_found", "from_is_finding", "invalid_from_doc",
+        "from_doc_outside_repo", "from_doc_not_committed", "from_report_not_found", "from_report_open",
+        "from_report_no_reply", "invalid_kind_detail", "scope_required", "how_required", "invalid_how",
+        "observed_is_tool_only", "invalid_evidence_level", "invalid_trial_result", "open_digest_mismatch",
+        "open_requires_cli", "third_party_handle",
+    ),
+    "hatena_entry._MESSAGES": (
+        "article_required", "article_source_missing", "invalid_article_source", "title_required", "invalid_op",
+        "delivery_required", "blog_id_in_manuscript", "categories_invalid", "invalid_form", "delivery_unknown",
+        "image_missing", "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large",
+        "relative_link_unresolvable", "delivery_state_wanted", "delivery_state_inflight", "delivery_state_unknown",
+        "delivery_state_published", "delivery_state_conflict", "delivery_state_no_follow", "update_no_change",
+        "delivery_state_deleted", "article_not_committed",
+    ),
+    "bookmark_cli._MESSAGES": (
+        "use_delivery", "bookmark_other_lane_article", "invalid_url", "bookmark_not_found",
+        "bookmark_already_deleted", "bookmark_edit_missing_remote", "bookmark_edit_no_change",
+        "bookmark_result_unknown", "approval_stale", "invalid_op", "bookmark_precheck_failed",
+        "bookmark_record_failed", "hatena_auth_rejected", "hatena_rejected_item",
+    ),
+    "bookmark_cli._BATCH_MESSAGES": (
+        "batch_empty", "batch_too_large", "batch_exists", "batch_not_found", "batch_unreadable",
+        "batch_text_invalid", "batch_not_cancellable", "schedule_unavailable", "unsupported_operation",
+    ),
+    "announce._MESSAGES": (
+        "invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",
+        "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces",
+    ),
+    "queuefile.REPLY_TO_FILE_MESSAGES": (
+        "reply_to_conflict", "reply_to_file_invalid", "reply_to_file_self", "reply_to_file_missing",
+        "reply_to_file_account_mismatch", "reply_to_file_bundle_unsupported", "reply_to_file_unreadable",
+    ),
+    "inflight_cli._WRITEBACK_NEXT": (
+        "text_mismatch_before_writeback", "repo_sync_failed", "writeback_push_failed", "text_mismatch_after_rebase",
+        "unusable_post_id",
+    ),
+    "accounts._DUMMY_NEXT": (
+        "redirect_uri", "blog_id", "hatena_id", "link_base",
+    ),
+    "admin_diagnose.ISOLATION_HINTS": (
+        "root_mismatch", "private_root_required", "account_registry_mismatch",
+    ),
+    "dashboard_cli.ADS_NEXT": (
+        "ads_stop_unconfirmed", "ads_active_outside_thth", "ads_no_end_time", "ads_account_status",
+        "ads_spend_over_estimate", "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset",
+        "ads_token_expiring", "ads_read_failed",
+    ),
+    "cli.VALUE_ERROR_NEXT": (
+        "managed_git_store_unsafe_mode",
+    ),
+}
 
 # ダッシュボードの「言えない」の理由（`skills/thth/dashboard/*.html` の `THTH_REASON` と同じ文）。
 DASHBOARD_REASON_JA = {
@@ -152,13 +237,48 @@ class _Refused(Exception):
     assessment = None
 
 
+def _raw_entries() -> dict[str, dict]:
+    """部の項目を 1 つの辞書に（同じ符丁が 2 つの部にあれば止める）。部は文だけなので import の時に読んでよい。"""
+    raw: dict[str, dict] = {}
+    for part in PARTS:
+        for code, entry in part.ENTRIES.items():
+            if code in raw:
+                raise ValueError(f"duplicate_catalog_entry: {code}")
+            raw[code] = entry
+    return raw
+
+
+_RAW = _raw_entries()
+
+
+def view_text(view: str, code: str) -> str:
+    """見方 `view`（`remote.NEXT` など）での符丁の文: 部の `fix_by_view` にその見方があればそれ、無ければ `fix`。"""
+    entry = _RAW[code]
+    text = (entry.get("fix_by_view") or {}).get(view, entry.get("fix"))
+    if not isinstance(text, str) or not text:
+        raise ValueError(f"fix_view_text_missing: {view} {code}")
+    return text
+
+
+def fix_view(view: str):
+    """説明の辞書の見方（読むだけ）。`FIX_VIEWS[view]` の順に、符丁 → 部の文。
+
+    各モジュールの元の名前（`NEXT = refusal_catalog.fix_view("remote.NEXT")`）に置く。書き足しは型の上でも
+    断る（`MappingProxyType`）。文を足すときは部と `FIX_VIEWS` を書く。"""
+    return MappingProxyType({code: view_text(view, code) for code in FIX_VIEWS[view]})
+
+
+def views_of(code: str) -> tuple[str, ...]:
+    """その符丁が出る見方（`FIX_VIEWS` の順）。"""
+    return tuple(view for view, codes in FIX_VIEWS.items() if code in codes)
+
+
 def fix_texts() -> dict[str, list[tuple[str, str]]]:
-    """既存の説明の辞書の文を符丁ごとに `[(出どころ, 文), …]`（優先順）で返す。"""
+    """見方の文を符丁ごとに `[(見方, 文), …]`（優先順）で返す（柵と棚卸しが読む）。"""
     found: dict[str, list[tuple[str, str]]] = {}
-    for module_name, name in FIX_SOURCES:
-        table = getattr(importlib.import_module(module_name), name)
-        for code, text in table.items():
-            found.setdefault(code, []).append((f"{module_name.split('.')[-1]}.{name}", str(text)))
+    for view, codes in FIX_VIEWS.items():
+        for code in codes:
+            found.setdefault(code, []).append((view, view_text(view, code)))
     return found
 
 
@@ -177,15 +297,8 @@ def guard_why(code: str) -> str | None:
 
 
 def _build() -> dict[str, dict]:
-    raw: dict[str, dict] = {}
-    for part in PARTS:
-        for code, entry in part.ENTRIES.items():
-            if code in raw:
-                raise ValueError(f"duplicate_catalog_entry: {code}")
-            raw[code] = entry
-    fixes = fix_texts()
     catalog: dict[str, dict] = {}
-    for code, entry in raw.items():
+    for code, entry in _RAW.items():
         sources = []
         why = entry.get("why")
         if why is None and code in DASHBOARD_REASON_JA:
@@ -195,15 +308,12 @@ def _build() -> dict[str, dict]:
             why = guard_why(code)
             if why is not None:
                 sources.append("guard_message")
-        fix_text = entry.get("fix")
-        if code in fixes:
-            # 既存の説明の辞書がある符丁は、その文を使う（食い違わせない・置き換えは次の段）。
-            origin, fix_text = fixes[code][0]
-            sources.append(f"fix_dict:{origin}")
+        # 説明の辞書の見方に出る符丁の印（文は部の `fix`・見方ごとの違いは `fix_by_view`）。
+        sources.extend(f"fix_dict:{view}" for view in views_of(code))
         catalog[code] = {
             "kind": entry["kind"],
             "why": why or "",
-            "fix": {"text": fix_text or "", "command": entry.get("command")},
+            "fix": {"text": entry.get("fix") or "", "command": entry.get("command")},
             "better": entry.get("better") or "",
             "no_better": entry.get("no_better"),
             "doors": tuple(entry.get("doors") or ()),
@@ -215,11 +325,23 @@ def _build() -> dict[str, dict]:
     return catalog
 
 
-CATALOG: dict[str, dict] = _build()
+def __getattr__(name: str):
+    # `CATALOG` は初めて読まれた時に作る（`guard_why` が `core` を読むので、`core` が import する
+    # `accounts`・`queuefile` がこの目録を import する時に作ると、半ばの `core` を読んでしまう）。
+    if name == "CATALOG":
+        catalog = _build()
+        globals()["CATALOG"] = catalog
+        return catalog
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+
+def _catalog() -> dict[str, dict]:
+    return globals().get("CATALOG") or __getattr__("CATALOG")
 
 
 def get(code: str) -> dict | None:
-    return CATALOG.get(code)
+    return _catalog().get(code)
 
 
 # ---- 穴埋め（静的な型に検査済みの値だけ） ----
@@ -240,7 +362,7 @@ def render(code: str, **values) -> dict:
 
     返す形: `{"code", "why", "fix", "command", "better"}`。符丁が目録に無ければ KeyError。
     """
-    entry = CATALOG[code]
+    entry = _catalog()[code]
     filled = {}
     for key, value in values.items():
         slot = SLOTS.get(key)
@@ -274,9 +396,10 @@ def lines(code: str, **values) -> list[str]:
 
 def counts() -> dict:
     """棚卸しの数（kind ごと・fix・better・no_better）。"""
-    out = {"entries": len(CATALOG), "kind": {}, "why": 0, "fix": 0, "fix_command": 0, "better": 0,
+    catalog = _catalog()
+    out = {"entries": len(catalog), "kind": {}, "why": 0, "fix": 0, "fix_command": 0, "better": 0,
            "no_better": {}}
-    for entry in CATALOG.values():
+    for entry in catalog.values():
         out["kind"][entry["kind"]] = out["kind"].get(entry["kind"], 0) + 1
         out["why"] += bool(entry["why"])
         out["fix"] += bool(entry["fix"]["text"])

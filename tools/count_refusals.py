@@ -14,7 +14,8 @@
   符丁の形の文字列。
 - **JSON の欄**: dict の字面の `"error"`・`"reason"`・`"code"` の値が符丁の形の文字列のもの。
 - **fix の辞書**: 名に `NEXT`・`MESSAGES`・`HINTS` を含む dict の鍵（符丁の形のもの）。
-  鍵は符丁にも数える（説明の辞書に載るのは断りの符丁）。
+  鍵は符丁にも数える（説明の辞書に載るのは断りの符丁）。説明の辞書は目録の見方（`fix_view`）に
+  置き換えたので、目録の `FIX_VIEWS` と部の文を AST で読み、見方を持つモジュールの file の辞書として数える。
 
 欠けの見方（今のソース）:
 
@@ -173,7 +174,57 @@ def scan(root: Path = ROOT) -> dict:
                             and isinstance(value, ast.Constant) and is_code(value.value)):
                         codes[value.value]["sources"].add("json")
                         codes[value.value]["files"].add(rel)
+    for rel, name, table in fix_views(root):
+        # 説明の辞書の見方（`NEXT = refusal_catalog.fix_view("remote.NEXT")`）は、目録の `FIX_VIEWS` と部の文から
+        # 読む。符丁はその見方を持つモジュールの file に数える（辞書を字面で書いていた時と同じ数え方）。
+        fix_dicts[f"{rel}:{name}"] = table
+        for code, text in table.items():
+            codes[code]["sources"].add("fix_dict")
+            codes[code]["files"].add(rel)
+            codes[code]["texts"].append(text)
     return {"codes": codes, "mouth_calls": mouth_calls, "fix_dicts": fix_dicts}
+
+
+def fix_views(root: Path = ROOT) -> list[tuple[str, str, dict[str, str]]]:
+    """目録の `FIX_VIEWS`（見方 → 符丁の並び）と部の `fix`・`fix_by_view` を AST で読み、
+    `[(モジュールの file, 名前, {符丁: 文}), …]` を返す（import しない）。"""
+    try:
+        tree = ast.parse((root / "thth" / "refusal_catalog.py").read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return []
+    views: dict[str, list[str]] = {}
+    for node in tree.body:
+        if (isinstance(node, (ast.Assign, ast.AnnAssign)) and "FIX_VIEWS" in _target_names(node)
+                and isinstance(node.value, ast.Dict)):
+            for key, value in zip(node.value.keys, node.value.values):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    views[key.value] = [v for v in _strings(value) if is_code(v)]
+    entries: dict[str, ast.Dict] = {}
+    for part in sorted((root / "thth").glob("refusal_catalog_part*.py")):
+        for node in ast.parse(part.read_text(encoding="utf-8")).body:
+            if (isinstance(node, ast.Assign) and "ENTRIES" in _target_names(node)
+                    and isinstance(node.value, ast.Dict)):
+                for key, value in zip(node.value.keys, node.value.values):
+                    if isinstance(key, ast.Constant) and isinstance(value, ast.Dict):
+                        entries[key.value] = value
+    out = []
+    for view, view_codes in views.items():
+        module, _, name = view.partition(".")
+        table = {}
+        for code in view_codes:
+            fields = {k.value: v for k, v in zip(entries[code].keys, entries[code].values)
+                      if isinstance(k, ast.Constant)} if code in entries else {}
+            text = ""
+            by_view = fields.get("fix_by_view")
+            if isinstance(by_view, ast.Dict):
+                for k, v in zip(by_view.keys, by_view.values):
+                    if isinstance(k, ast.Constant) and k.value == view:
+                        text = " ".join(_strings(v))
+            if not text and "fix" in fields:
+                text = " ".join(_strings(fields["fix"]))
+            table[code] = text
+        out.append((f"thth/{module}.py", name, table))
+    return out
 
 
 def guard_message_codes(root: Path = ROOT) -> set[str]:

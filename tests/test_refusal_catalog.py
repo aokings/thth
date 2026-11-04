@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import ast
+import importlib
 import importlib.util
 import re
 from pathlib import Path
@@ -94,20 +96,179 @@ def test_retiredの無い符丁が消えたら赤(source_codes):
     assert gone == [], f"ソースから消えた符丁（互換のため retired を立てる）: {gone}"
 
 
-def test_目録のfixは既存の辞書の文と食い違わない():
+def test_目録のfixは見方の優先の文と同じ():
+    """目録の `fix.text` は、`FIX_VIEWS` の順で先に来る見方の文（部の `fix`）。"""
     texts = rc.fix_texts()
-    wrong = [code for code, found in texts.items()
-             if code in rc.CATALOG and rc.CATALOG[code]["fix"]["text"] not in {text for _, text in found}]
+    wrong = [code for code, found in texts.items() if rc.CATALOG[code]["fix"]["text"] != found[0][1]]
     assert wrong == []
 
 
-def test_説明の辞書がある符丁は部にfixの文を書かない():
-    """5.11.0 段 8 監査: `fix_dict` が優先するので、部に書いた `fix` の文は使われず、食い違っても気づけない。
-    説明の辞書（`FIX_SOURCES`）に文がある符丁は、部の `fix` を None にする（正本は辞書の 1 か所）。"""
+def _part_entry(code: str) -> dict:
+    found = [part.ENTRIES[code] for part in rc.PARTS if code in part.ENTRIES]
+    assert len(found) == 1, code
+    return found[0]
+
+
+# 見方を持つモジュールの辞書に、目録に無い鍵として残してよいもの（欄の名前・符丁の形でない）。
+NON_CODE_VIEW_KEYS = {"accounts._DUMMY_NEXT": {"handle", "instance"}}
+
+
+def _view_table(view: str):
+    module_name, _, name = view.partition(".")
+    return getattr(importlib.import_module(f"thth.{module_name}"), name)
+
+
+def test_見方の値は部に書いた文と一致する():
+    """段 A の 2 つ目: 各モジュールの説明の辞書（`remote.NEXT` など）は目録の見方。値は部の `fix`
+    （その見方の `fix_by_view` があればそれ）と 1 字も違わず、鍵の順は `FIX_VIEWS` の順。"""
+    wrong = []
+    for view, codes in rc.FIX_VIEWS.items():
+        table = _view_table(view)
+        for code in codes:
+            entry = _part_entry(code)
+            expected = (entry.get("fix_by_view") or {}).get(view, entry.get("fix"))
+            if table.get(code) != expected or not expected:
+                wrong.append(f"{view} {code}")
+        extra = set(table) - set(codes)
+        if extra - NON_CODE_VIEW_KEYS.get(view, set()):
+            wrong.append(f"{view} の辞書に目録に無い鍵: {sorted(extra)}")
+        listed = [key for key in table if key in set(codes)]
+        if listed != list(codes):
+            wrong.append(f"{view} の鍵の順が FIX_VIEWS と違う")
+    assert wrong == []
+
+
+def test_部のfix_by_viewは見方に出る符丁の違う文だけ():
+    """5.11.0 段 8 監査の柵（使われない写しを置かない）を、正本が部に移った形で保つ。`fix_by_view` は
+    その符丁を並べた見方の鍵だけで、`fix` と違う文だけを書く（同じ文・出ない見方の文は使われない写し）。
+    見方に出る符丁は部の `fix` が空でない。"""
     texts = rc.fix_texts()
-    dead = sorted(code for part in rc.PARTS for code, entry in part.ENTRIES.items()
-                  if code in texts and entry.get("fix") is not None)
-    assert dead == []
+    wrong = []
+    for part in rc.PARTS:
+        for code, entry in part.ENTRIES.items():
+            views = {view for view, _ in texts.get(code, [])}
+            for view, text in (entry.get("fix_by_view") or {}).items():
+                if view not in views or text == entry.get("fix") or not text:
+                    wrong.append(f"{code}: fix_by_view {view}")
+            if views and not entry.get("fix"):
+                wrong.append(f"{code}: 見方に出るのに部の fix が空")
+    assert wrong == []
+
+
+_FIX_DICT_NAME = re.compile(r"(NEXT|MESSAGES|HINTS)")
+# 説明の辞書の名でも、断りの符丁の文でないもの（目録の外に置いてよい・理由を添える）。
+FIX_DICT_OUTSIDE = {
+    "thth/maintain.py:_MESSAGES": "token の状態（ok・expired …）の言い分で、断りの符丁の通す直し方ではない",
+}
+_CODE_KEY = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+\Z")
+
+
+def _fix_dict_writes(path: Path) -> list[str]:
+    """説明の辞書の名（NEXT・MESSAGES・HINTS を含む）に、符丁の鍵（字面か定数の名）の辞書を直に書く所。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    rel = path.relative_to(ROOT)
+    found = []
+
+    def code_keys(node):
+        return [k for k in node.keys
+                if (isinstance(k, ast.Constant) and isinstance(k.value, str) and _CODE_KEY.fullmatch(k.value))
+                or isinstance(k, (ast.Name, ast.Attribute))]
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", None)
+                if isinstance(target, ast.Subscript):
+                    base = target.value
+                    name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+                    if name and _FIX_DICT_NAME.search(name):
+                        found.append(f"{rel}:{node.lineno} {name}[…] = …")
+                elif name and _FIX_DICT_NAME.search(name) and isinstance(node.value, ast.Dict) \
+                        and code_keys(node.value) and f"{rel}:{name}" not in FIX_DICT_OUTSIDE:
+                    found.append(f"{rel}:{node.lineno} {name} = {{…}}")
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr in ("update", "setdefault")):
+            base = node.func.value
+            name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+            if name and _FIX_DICT_NAME.search(name):
+                found.append(f"{rel}:{node.lineno} {name}.{node.func.attr}(…)")
+    return found
+
+
+def test_説明の辞書はモジュールに直に書かない():
+    """通す直し方の文の正本は目録の部の 1 か所。モジュールに `NEXT = {"符丁": "文"}`・`NEXT.update(…)`・
+    `NEXT["符丁"] = …` を書くと赤（文は部の `fix` に書き、符丁を `FIX_VIEWS` に並べて
+    `refusal_catalog.fix_view(…)` で引く）。"""
+    found = []
+    for path in sorted((ROOT / "thth").rglob("*.py")):
+        if "__pycache__" in path.parts or path.name.startswith("refusal_catalog"):
+            continue
+        found.extend(_fix_dict_writes(path))
+    assert found == [], f"説明の辞書を直に書いた所（目録の部へ移す）: {found}"
+
+
+def test_見方は各モジュールでfix_viewから作る():
+    """`FIX_VIEWS` の見方ごとに、そのモジュールの名が `refusal_catalog.fix_view("<見方>")` で作られている。"""
+    wrong = []
+    for view in rc.FIX_VIEWS:
+        module_name, _, name = view.partition(".")
+        tree = ast.parse((ROOT / "thth" / f"{module_name}.py").read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "fix_view"
+                 and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == view]
+        assigned = [node for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+                    and any(sub in calls for sub in ast.walk(node.value))]
+        if len(assigned) != 1:
+            wrong.append(view)
+    assert wrong == []
+
+
+def test_見方は読むだけ():
+    table = _view_table("remote.NEXT")
+    with pytest.raises(TypeError):
+        table["new_code"] = "文"
+
+
+# 置き換えの前に f 文字列で定数を埋めていた文（見方では部の字面）。定数を変えたら部の文も直す。
+VIEW_CONSTANTS = (
+    ("invites.NEXT", "invalid_project", ("PROJECT_MAX",)),
+    ("invites.NEXT", "invalid_label", ("LABEL_MAX",)),
+    ("invites.NEXT", "invalid_expires", ("MAX_DAYS",)),
+    ("report_inbox.NEXT", "report_too_long", ("TITLE_MAX", "BODY_MAX", "REPRO_MAX", "REPLY_MAX")),
+    ("report_inbox.NEXT", "report_rate_limited", ("DAILY_LIMIT",)),
+    ("map_store.NEXT", "invalid_node", ("NODE_MAX_CHARS",)),
+    ("map_store.NEXT", "node_limit", ("MAX_NODES",)),
+    ("map_store.NEXT", "edge_limit", ("MAX_EDGES",)),
+    ("map_store.NEXT", "invalid_retention", ("MAX_RETENTION_DAYS",)),
+    ("plaza.NEXT", "post_too_long", ("TITLE_MAX", "BODY_MAX", "REPLY_MAX", "TEXT_MAX", "REASON_MAX")),
+    ("plaza.NEXT", "plaza_rate_limited", ("DAILY_LIMIT",)),
+    ("plaza.NEXT", "invalid_owner", ("OWNER_PROJECTS_MAX",)),
+    ("plaza.NEXT", "scope_required", ("SCOPE_NOTE_MAX",)),
+    ("plaza.NEXT", "invalid_how", ("HOW_MAX",)),
+    ("hatena_entry._MESSAGES", "categories_invalid", ("CATEGORIES_MAX", "CATEGORY_CHARS_MAX")),
+)
+
+
+def test_見方の文はモジュールの定数の今の値を言う():
+    wrong = []
+    for view, code, names in VIEW_CONSTANTS:
+        module = importlib.import_module(f"thth.{view.partition('.')[0]}")
+        text = _view_table(view)[code]
+        for name in names:
+            value = getattr(module, name)
+            if not re.search(rf"(?<!\d){value}(?!\d)", text):
+                wrong.append(f"{view} {code}: {name}={value}")
+    assert wrong == []
+
+
+def test_queuefileの見方の鍵はREPLY_TOの定数():
+    """`REPLY_TO_FILE_MESSAGES` は定数（`REPLY_TO_CONFLICT` など）を鍵にしていた。見方の鍵が同じ値の集合。"""
+    constants = {value for name, value in vars(queuefile).items()
+                 if name.startswith("REPLY_TO_") and name != "REPLY_TO_FILE_KEY"  # 欄の名前
+                 and isinstance(value, str) and _CODE_KEY.fullmatch(value)}
+    assert set(queuefile.REPLY_TO_FILE_MESSAGES) == constants
 
 
 def test_目録のwhyは安全装置の文と食い違わない():

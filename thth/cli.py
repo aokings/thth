@@ -51,6 +51,7 @@ from . import selfupdate as selfupdate_mod
 from . import threadshape as threadshape_mod
 from . import topics as topics_mod
 from . import writeback as writeback_mod
+from . import refusal_catalog
 
 
 def _print_json(obj) -> None:
@@ -5113,11 +5114,7 @@ def main(argv=None) -> int:
 
 
 # 入口で受ける静的な符丁の断り（3.14.3 穴 4）と次の一歩。載っていない符丁は既定の 1 行。
-VALUE_ERROR_NEXT = {
-    "managed_git_store_unsafe_mode": ("記録置き場に group/other の書き込みがあります。"
-                                      "chmod -R go-w $THTH_ROOT/repos/_server/<口座> "
-                                      "$THTH_ROOT/state/<口座>/git-origin.git で直してからもう一度"),
-}
+VALUE_ERROR_NEXT = refusal_catalog.fix_view("cli.VALUE_ERROR_NEXT")
 _VALUE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{2,63}\Z")
 
 

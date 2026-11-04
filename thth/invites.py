@@ -35,6 +35,7 @@ import time
 import uuid
 
 from . import accounts, admin_log, relay, jst, private_store, redact
+from . import refusal_catalog
 
 DIRECTORY = "_invites"
 INVITE_ID = re.compile(r"[0-9a-f]{12}\Z")
@@ -80,31 +81,7 @@ REASONS = frozenset((
     "invite_remote_created_audit_unconfirmed", "invite_remote_created_delivery_failed",
 ))
 # 断るときは理由と次の一手（静的な文だけ・値は混ぜない）。
-NEXT = {
-    "invite_media_unsupported": "招待は --media threads か mastodon です（mastodon は --instance https://… も）。"
-                                "Bluesky は従前どおり運営者が thth account add と thth auth で用意してください",
-    "invalid_instance": "--instance は Mastodon の https の origin です（例: https://mastodon.social）。"
-                        "--media mastodon のときだけ付けます",
-    "invalid_project": f"--project は英数字と - _ . だけ・{PROJECT_MAX} 字までです",
-    "invalid_label": f"--label は 1 行・{LABEL_MAX} 字までです（控えのメモ・Worker には送りません）",
-    "invalid_expires": f"--expires は 1d〜{MAX_DAYS}d の日数です（例: 30d）",
-    "invite_project_in_owner_group": "その project は持ち主の組に入っています。招待は外の人のためなので、"
-                                     "組の外の project で作ってください（thth admin plaza owner list）",
-    "invite_account_exists": "招待の口座名が既にあります。もう一度 create してください",
-    "invite_not_found": "その id の招待はありません（thth admin invite list）",
-    "invite_already_used": "その招待は使用済みです。口座を止めるなら thth account leave <口座> --by <名前>",
-    "invite_not_open": "その招待はもう使えない状態です（取り消し済み・期限切れ・登録失敗）",
-    "invite_tty_required": "招待 URL は tty に 1 回だけ出します。ssh なら ssh -t で入ってください",
-    "invite_registration_rejected": "Worker が招待の登録を断りました（招待は作られていません）。Worker の deploy と署名鍵"
-                                    "（RELAY_PUBLIC_KEY・置き替える前は旧名の APPROVAL_PUBLIC_KEY）を確かめてから、作り直してください",
-    "invite_registration_unknown": "Worker に届いたか分かりません。thth admin invite revoke <id> で"
-                                   "取り消してから作り直してください",
-    "invite_revoke_unknown": "Worker で取り消せたか分かりません。同じ命令をもう一度打ってください",
-    "invite_remote_created_audit_unconfirmed": "招待は作られ URL も出しましたが、変更ログに書けたか"
-                                               "分かりません。thth admin log を確かめてください",
-    "invite_remote_created_delivery_failed": "招待は作られましたが URL を tty に出せませんでした。"
-                                             "thth admin invite revoke <id> で取り消してください",
-}
+NEXT = refusal_catalog.fix_view("invites.NEXT")
 
 
 class InviteError(ValueError):
@@ -1026,13 +1003,6 @@ ADMIN_REASONS = frozenset(("admin_draft_invite_account_only", "admin_draft_crede
                            "admin_draft_invalid_draft"))
 # 3.13.0 で `admin_approval_*` から改めた。旧名で来ても新名で言う（互換）。
 LEGACY_ADMIN_REASONS = {"admin_approval_" + name[len("admin_draft_"):]: name for name in ADMIN_REASONS}
-NEXT.update({
-    "admin_draft_invite_account_only": "この口は招待で用意した口座（inv-…）だけです。運営者自身の口座は"
-                                          "従来どおり thth approve か MCP の道で",
-    "admin_draft_credential_missing": "その口座の資格情報の 1 件がありません。thth worker を "
-                                         "--credentials 付きで動かすと、次の巡で足します（thth admin invite list）",
-    "admin_draft_invalid_draft": "--draft は draft_id（64 桁）か、その口座の queue の原稿のパスです",
-})
 
 
 def invite_context(account):

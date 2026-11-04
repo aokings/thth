@@ -32,6 +32,7 @@ import re
 import unicodedata
 
 from . import accounts, admin_log, handoff_cursor, jst, private_store, redact
+from . import refusal_catalog
 
 SCHEMA_VERSION = 1
 DIRECTORY = "_map"
@@ -58,32 +59,7 @@ REASONS = frozenset((
     "map_log_unavailable", "scope_unavailable",
 ))
 
-NEXT = {
-    "by_required": "--by <名前> を付けてください（誰が変えたかを残します）",
-    "invalid_project": "project 名を確かめてください（台帳の project の綴り）",
-    "project_unknown": "その project の account が台帳にありません（綴りを確かめてください）",
-    "invalid_node": f"点は空でない 1 行・{NODE_MAX_CHARS} 字までの語です（制御文字は使えません）",
-    "node_handle": "点に @名前 や仮名（author_key）の形は入れられません（特定の人を観測する"
-                   "地図にはしません）。その人が話している話題の語を点にしてください",
-    "node_url": "点に URL やドメインは入れられません。話題の語にしてください",
-    "node_person_like": "点に個人名らしき語（敬称つき・「名 姓」の形）は入れられません。"
-                        "話題の語にしてください",
-    "secret_detected": "秘密らしき値が含まれます。点には話題の語だけを入れてください",
-    "node_exists": "その点は既にあります（thth map show <project>）",
-    "node_not_found": "その点はありません（thth map show <project>）",
-    "node_limit": f"点は project あたり {MAX_NODES} までです。使わない点を消してから足してください",
-    "invalid_edge": "線の両端は既にある別々の点です（thth admin map node add で先に点を足す）",
-    "edge_exists": "その線は既にあります",
-    "edge_not_found": "その線はありません（thth map show <project>）",
-    "edge_cycle": "包含の線が輪になります（広い語が狭い語に含まれる形は張れません）",
-    "edge_limit": f"包含の線は project あたり {MAX_EDGES} 本までです",
-    "invalid_retention": f"保持の日数は 1〜{MAX_RETENTION_DAYS} の整数です",
-    "invalid_range": "--from・--to は 2026-09-01 の形の日付です（--from は --to より前）",
-    "invalid_since": "--since は期間（30d・12w）か ISO 時刻です",
-    "map_store_unavailable": "地図の置き場が読めません。管理者に知らせてください",
-    "map_log_unavailable": "変更ログに書けなかったので変えていません。管理者に知らせてください",
-    "scope_unavailable": "その project の地図は、この credential では読めません",
-}
+NEXT = refusal_catalog.fix_view("map_store.NEXT")
 
 
 class MapError(ValueError):
