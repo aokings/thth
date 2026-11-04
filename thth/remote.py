@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 
 from . import redact, secrets_fs
+from . import refusal_catalog
 
 DEFAULT_URL = "https://thth.me"
 # 段 2 の bearer（Worker の `BEARER`）は印字できる ASCII の 16〜512 字。発行する鍵は
@@ -354,37 +355,7 @@ def _wait(cfg, request_id):
 # 断りの出し方（手元の道と同じ: 1 語＋次の一手・rc≠0）
 # --------------------------------------------------------------------------
 
-NEXT = {
-    "not_logged_in": "thth login（ブラウザで許可）か、口座の台帳を手元に置く",
-    "invalid_key": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
-    "key_expired": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
-    "remote_config_invalid": "thth logout のあと thth login でもう一度",
-    "remote_unavailable": "網を確かめてもう一度（thth.me に届きませんでした）",
-    "remote_pending": "まだ結果が返っていません。出たかどうかは thth posts で確かめてから打ち直す",
-    "remote_unsupported": "この命令は手元の台帳で動かす命令なので、thth.me の鍵では使えません。台帳を持つ手元の THTH で打ってください",
-    "rate_limited": "少し待ってもう一度（鍵ごと 1 分に 60 回まで）",
-    "too_many_requests": "前の依頼が終わるのを待ってもう一度",
-    "daily_limit": "明日まで待つ（上げるのは持ち主が https://thth.me/activity で）",
-    "retract_limit": "明日まで待つ（上げるのは持ち主が https://thth.me/activity で）",
-    "quiet_hours": "静かな時間帯が明けてから",
-    "account_stopped": "公開・削除・予約は止まっています。持ち主が https://thth.me/activity で戻すと、また出せます",
-    "settings_loosen_requires_owner": "緩めるのは持ち主が https://thth.me/activity で",
-    "scope_unavailable": "この鍵の口座か確かめる（thth account status <口座>）",
-    "writes_not_allowed": "読むだけの鍵です。https://thth.me/activity で書ける鍵を発行し直す",
-    "invalid_draft": "本文を直してもう一度（--dry-run で lint だけ確かめられます）",
-    # 前の公開の結果が分かっていない（inflight・3.14.3 穴 3）。解くまで次の公開は出ない。
-    "publication_unconfirmed": ("thth inflight <口座> で見て、媒体の画面で出たかを確かめてから "
-                                "thth inflight <口座> resolve --not-published か --published <post_id>"),
-    "confirm_mismatch": "もう一度 thth inflight <口座> resolve から（表示した digest と中身が違います）",
-    "inflight_changed": "もう一度 thth inflight <口座> から（表示したあとに inflight が替わりました）",
-    "decision_required": "--not-published（出ていない）か --published <post_id>（出ていた）を付ける",
-    # 4.5.5: 添付の inflight（手元の `inflight_cli.refusal` と同じ符丁）。
-    "media_inflight_held": ("held は媒体に出ていません。媒体の画面で確かめてから "
-                            "thth inflight <口座> resolve --not-published"),
-    "media_inflight_unsupported": ("thth inflight <口座> で phase を見る（held は --not-published・"
-                                   "unknown／publishing／published は --published <post_id>・ほかは "
-                                   "docs/原稿_添付_2.13.md の手順）"),
-}
+NEXT = refusal_catalog.fix_view("remote.NEXT")
 
 
 def jst_text(value):

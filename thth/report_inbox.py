@@ -34,6 +34,7 @@ import sys
 
 from . import accounts, admin_log, jst, private_store, redact
 from . import __version__
+from . import refusal_catalog
 
 SCHEMA_VERSION = 1
 # `friction`（3.3.0 B4）: 迷った・分かりにくかった・同じ操作を繰り返した。不具合とも
@@ -76,33 +77,7 @@ REASONS = frozenset((
 ))
 
 # 断りのあとに添える「次の一手」（人と LLM が読む 1 行・静的）。
-NEXT = {
-    "by_required": "--by <名前> を付けてください（誰が置いたかを残します）",
-    "invalid_account": "account 名を確かめてください（thth account <account>）",
-    "account_unavailable": "account の台帳が読めないか停止中です（thth account <account>）",
-    "invalid_kind": "--kind は bug・request・friction のどれかです（friction は迷った・"
-                    "分かりにくかった・同じ操作を繰り返した）",
-    "invalid_report": "title と本文は空にできません。title は 1 行です",
-    "report_too_long": f"title は {TITLE_MAX} 字・本文は {BODY_MAX} 字・再現手順は {REPRO_MAX} 字"
-                       f"・返事は {REPLY_MAX} 字までです。分けるか縮めてください",
-    "secret_detected": "秘密らしき値（token・Bearer・sk-・32 桁以上の 16 進 等）が含まれます。"
-                       "伏せてから置き直してください（sha は先頭 12 桁までで足ります）",
-    "report_rate_limited": f"1 account につき直近 24 時間で {DAILY_LIMIT} 件までです。"
-                           "既存の報告に書き足せないときは時間をおいてください",
-    "duplicate_report": "同じ title と本文の報告が 24 時間以内にあります。既存の id を見てください",
-    "report_not_found": "report_id を確かめてください（thth report list <account|project>）",
-    "report_already_closed": "閉じた報告は閉じ直せません。返事は reply で足せます",
-    "invalid_close_reason": "--reason は fixed・wontfix・duplicate・invalid のどれかです",
-    "invalid_version": "--version は 3.1.2 のような版の番号です",
-    "invalid_status": "--status は open・closed・all のどれかです",
-    "report_store_unavailable": "報告の置き場が読めません。管理者に知らせてください",
-    "report_log_unavailable": "変更ログに書けなかったので置いていません。管理者に知らせてください",
-    "invalid_export_target": "--to は書き込めるディレクトリです",
-    "report_closed": "閉じた報告には書き足せません。新しく thth report file で置いてください",
-    "no_last_refusal": "この account の直前の断りの控えがありません。--body-file で何が起きたかを"
-                       "書いて置いてください",
-    "invalid_since": "--since は 2026-09-24 のような日付です",
-}
+NEXT = refusal_catalog.fix_view("report_inbox.NEXT")
 
 # 置く前の似た報告（設計 3.2.0 §4.5-2）: 同じ project の開いている報告から、
 # 題の語が 1 つ以上重なるものを最大この件数まで。

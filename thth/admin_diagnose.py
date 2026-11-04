@@ -17,13 +17,10 @@ import stat
 from pathlib import Path
 
 from . import accounts
+from . import refusal_catalog
 
 # 置き場の検査の理由ごとの次の一手。`{root}` は資格情報に書かれた置き場。
-ISOLATION_HINTS = {
-    "root_mismatch": "THTH_ROOT={root} を付けて打ってください",
-    "private_root_required": "{root} のモードを 700 にし、持ち主を今の利用者にしてください",
-    "account_registry_mismatch": "THTH_ROOT={root} を付けて、{root}/accounts の台帳を読む形で打ってください",
-}
+ISOLATION_HINTS = refusal_catalog.fix_view("admin_diagnose.ISOLATION_HINTS")
 ISOLATION_FALLBACK = "置き場の検査で断りました（thth doctor で {root} の中を確かめてください）"
 
 

@@ -9,6 +9,8 @@ import re
 import sys
 import urllib.parse
 
+from . import refusal_catalog
+
 # この thth アプリ repo 自身の場所（thth/ パッケージの 1 つ上）。
 # VM では $THTH_ROOT/app がここに一致する。
 #
@@ -228,23 +230,14 @@ DUMMY_HATENA_ID = "demo"
 DUMMY_LINK_BASE_HOST = "example.invalid"
 
 _DUMMY_NEXT = {
-    "redirect_uri": ("Meta アプリに登録した URL を "
-                     "`thth account add <name> --redirect-uri <url>` か、"
-                     "台帳の `redirect_uri` に入れてください（導入文書 §4）。"),
+    **refusal_catalog.fix_view("accounts._DUMMY_NEXT"),
+    # `handle`・`instance` は欄の名前（1 語で符丁の形でない）なので目録に載らない。文はここに置く。
     "handle": ("そのアカウントの本物の handle を台帳の `handle` に入れてください"
                "（Bluesky は `name.bsky.social`・Mastodon は `@` を除いた利用者名・"
                "導入文書 §4）。"),
     "instance": ("自分のインスタンスの URL を "
                  "`thth account add <name> --instance https://<instance>` か、"
                  "台帳の `instance` に入れてください（導入文書 §4）。"),
-    "blog_id": ("本物のブログのドメイン（例 `name.hatenablog.com`）を主体の台帳の `blogs[]` と"
-                "口座の `blog_id` に入れてください（`thth account add <name> --media hatenablog "
-                "--principal <主体> --blog <blog_id>`）。"),
-    "hatena_id": ("本物のはてな ID を主体の台帳の `hatena_id` に入れてください"
-                  "（`thth principal add <主体> --hatena-id <id>`）。口座の `handle` も同じ値に。"),
-    "link_base": ("記事の相対リンクの基準にする URL（レーンの記事が公開されているサイト・https）を"
-                  "口座の台帳の `link_base` に入れてください。無ければ欄ごと消してください"
-                  "（相対リンクのある記事は `relative_link_unresolvable` で断ります）。"),
 }
 
 

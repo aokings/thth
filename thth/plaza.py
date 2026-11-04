@@ -37,6 +37,7 @@ import secrets
 from . import accounts, admin_log, jst, private_store, redact
 from . import goals as _goals
 from . import __version__
+from . import refusal_catalog
 
 SCHEMA_VERSION = 1
 KINDS = ("measure", "finding", "question")
@@ -121,96 +122,7 @@ REASONS = frozenset((
     "invalid_owner", "plaza_owner_conflict", "plaza_owner_unregistered", "plaza_owner_not_found",
 ))
 
-NEXT = {
-    "by_required": "--by <名前> を付けてください（誰が置いたかを残します）",
-    "invalid_account": "account 名を確かめてください（thth account <account>）",
-    "account_unavailable": "account の台帳が読めないか停止中です（thth account <account>）",
-    "invalid_kind": "--kind は measure（施策）・finding（気づき）・question（問い）のどれかです",
-    "invalid_post": "title と本文は空にできません。title は 1 行です",
-    "post_too_long": f"title は {TITLE_MAX} 字・本文は {BODY_MAX} 字・返信は {REPLY_MAX} 字・"
-                     f"仮説と変えたことは {TEXT_MAX} 字・理由は {REASON_MAX} 字までです",
-    "secret_detected": "秘密らしき値（token・Bearer・sk-・32 桁以上の 16 進 等）が含まれます。"
-                       "伏せてから置き直してください",
-    "plaza_rate_limited": f"1 account につき直近 24 時間で {DAILY_LIMIT} 件（置く＋返信）までです",
-    "duplicate_post": "同じ title と本文が 24 時間以内にあります。既存の id に返信してください",
-    "plaza_not_found": "plaza_id を確かめてください（thth plaza list <account|project>）",
-    "plaza_store_unavailable": "広場の置き場が読めません。管理者に知らせてください",
-    "plaza_log_unavailable": "変更ログに書けなかったので置いていません。管理者に知らせてください",
-    "plaza_not_joined": "この持ち主は広場（open）に参加していません。open は参加した持ち主どうしの場です"
-                        "（参加は管理者が thth admin plaza join <project> で入れます）。"
-                        "project の範囲なら今のまま置けます",
-    "invalid_reply_kind": "--kind は comment・tried・agree・disagree のどれかです",
-    "reason_required": "理由が要ります（disagree は --text-file、判定と非表示は --reason）",
-    "measure_link_required": "tried（うちでも試した）には自分の施策の id を --measure で付けてください",
-    "measure_link_invalid": "--measure は自分の持ち主が置いた施策（measure）の id です",
-    "not_a_measure": "結果の更新と判定は施策（measure）にだけ付けられます",
-    "not_owner": "結果の更新・判定・範囲の変更は、置いた持ち主（同じ project）だけができます",
-    "invalid_verdict": "--verdict は adopted・dropped・inconclusive のどれかです",
-    "invalid_declaration": "施策の宣言を読めません（thth study-report <file> で形を確かめてください）",
-    "declaration_out_of_scope": "宣言の account が、置く account と同じ持ち主（project）ではありません。同じ project の account の宣言を指してください",
-    "plaza_project_required": "project を持たない account は広場の参加・open に使えません。project を持つ account から置いてください",
-    "invalid_visibility": "--visibility は project・owner・open のどれかです",
-    "invalid_owner": "組の名前（英数字と - _）と、組に入れる project を 1 つ以上並べてください"
-                     f"（{OWNER_PROJECTS_MAX} まで）",
-    "plaza_owner_conflict": "その project は別の組に入っています。先に thth admin plaza owner unset "
-                            "<組の名前> で外してください（1 つの project は 1 つの組だけ）",
-    "plaza_owner_unregistered": "この project は持ち主の組に入っていません。owner の範囲は管理者が組を"
-                                "登録してから使えます（thth admin plaza owner set <組の名前> <project> "
-                                "<他の project> --by <名前>）。project の範囲なら今のまま置けます",
-    "plaza_owner_not_found": "その名前の組はありません（thth admin plaza owner list）",
-    "redaction_unavailable": "他の人の情報を落とすための台帳が読めないので open に出していません"
-                             "（project の範囲なら置けます）",
-    "invalid_until": "--until は 2026-09-30T00:00:00+09:00 のような timezone 付きの時刻です",
-    "invalid_trial_due": "--trial-due は気づき（finding）にだけ付けられ、2026-10-08 か "
-                         "2026-10-08T09:00:00+09:00 のような日付・時刻です",
-    "nothing_to_update": "--refresh・--verdict・--visibility のどれかを付けてください",
-    "plaza_hidden": "非表示の書き込みです（管理者か、置いた本人が隠しました）。返信・更新はできません。"
-                    "戻してほしいときは、id と理由を添えて管理者に頼んでください（管理者は thth admin plaza "
-                    "unhide <id> --reason <理由> --by <名前> で戻せます）。書き直すなら、直した中身を "
-                    "thth plaza post … --preview で見てから新しく置けます",
-    "already_hidden": "既に非表示です（隠し直す必要はありません）。戻すのは管理者です（thth admin plaza "
-                      "unhide <id> --reason <理由> --by <名前>）。中身を直すなら新しく置いてください",
-    "not_hidden": "その書き込みは非表示ではありません（戻すものがありません）。状態は thth admin plaza show "
-                  "<id> で確かめられます。隠すなら thth admin plaza hide <id> --reason <理由> --by <名前> です",
-    "invalid_min_n": "--min-n は 1 以上の整数です",
-    "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
-                    "どれかです（無ければ付けない）",
-    "invalid_from": "--from は analytics-report・after・study-report のどれかと引数（account か宣言の"
-                    "ファイル）、または scenario <project> <糸の id> です。--from・--from-doc・--from-report "
-                    "は、どれか 1 つだけにしてください",
-    "from_unavailable": "--from の出力を道具が作れませんでした（その命令を単独で打って確かめてください）",
-    "from_out_of_scope": "--from の account・project が、置く account と同じ持ち主（project）ではありません。同じ project の account を --from に書いてください",
-    "from_scenario_not_found": "その id の糸（kind: thread）がありません（thth scenario <project> で一覧）",
-    "from_is_finding": "--from-doc と --from-report は気づき（finding）として置きます（--kind は付けないか finding）",
-    "invalid_from_doc": "--from-doc は repo の中の md（通常のファイル・1 MiB まで・UTF-8）です",
-    "from_doc_outside_repo": "--from-doc の文書が、置く account の repo の外です",
-    "from_doc_not_committed": "--from-doc の文書に commit していない変更があります（どの版か言えないので"
-                              "置きません）。commit してから置いてください",
-    "from_report_not_found": "report_id を確かめてください（自分の project の報告だけ写せます）",
-    "from_report_open": "まだ閉じていない報告です。閉じて返事が付いてから写せます",
-    "from_report_no_reply": "実装側の返事が無い報告です（写すものがありません）",
-    "invalid_kind_detail": "--kind-detail は finding にだけ付けられ、pattern（型）・rule（規則）・"
-                           "pitfall（罠）・tool_tip（道具のコツ）のどれかです",
-    "scope_required": f"--scope に媒体・企画の範囲を 1 行（{SCOPE_NOTE_MAX} 字まで）で書いてください"
-                      "（読み手が読者層の違いを知るため。例: Threads の朝の投稿・茶の話題）",
-    "how_required": "施策（measure）には --how に数字を出し直せる thth の命令を 1 行書いてください"
-                    "（例: thth measured kopicha-threads）",
-    "invalid_how": f"--how は控えの欄で、道具は実行しません。`thth ` で始まる 1 行（{HOW_MAX} 字まで）の命令を書いてください",
-    "observed_is_tool_only": "observed（観測あり）は道具だけが付けます。--evidence-level は stated"
-                             "（本文だけ）か hypothesis（見立て）です",
-    "invalid_evidence_level": "--evidence-level は stated か hypothesis です",
-    "invalid_trial_result": "追試（trial）には --result reproduced・not_reproduced・not_tried の"
-                            "どれかを付けてください",
-    "open_digest_mismatch": "他の持ち主に見える本文と観測が一段目のあとで変わりました。--confirm を外して"
-                            "一段目からやり直し、表示を読み直してください",
-    "open_requires_cli": "open にする（他の持ち主に見せる）のは人の CLI の二段確認だけです"
-                         "（thth plaza post … --open / thth plaza update … --visibility open）。"
-                         "open の 1 件への返信と、open の 1 件の写しが変わる更新も同じです"
-                         "（thth plaza reply … / thth plaza update …）。"
-                         "MCP では project の範囲まで置けます",
-    "third_party_handle": "open に出す文に @名前 の形（自分の handle 以外）があります。他の人の名前は"
-                          "open に出せません。消してから置き直してください（project の範囲なら置けます）",
-}
+NEXT = refusal_catalog.fix_view("plaza.NEXT")
 
 # **置くのは作業の一部と道具が言う**（設計 §5・報告の口 3.3.0 B と同じ型）。
 WELCOME = ("施策を試したら広場に置き、次を決める前に他の媒体の施策を読む——"

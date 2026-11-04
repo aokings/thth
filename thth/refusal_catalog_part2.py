@@ -37,7 +37,7 @@ ENTRIES = {
     "invalid_account": {
         "kind": "refusal",
         "why": "口座名の形が違うか、この呼び手からは扱えない口座です。",
-        "fix": None,
+        "fix": "account 名を確かめてください（thth account <account>）",
         "command": "thth account <口座>",
         "better": "扱える口座は `thth plaza list <project>`・`thth report list <project>` で project ごとに見られます",
         "doors": ("cli", "mcp"),
@@ -60,7 +60,7 @@ ENTRIES = {
     "invalid_announces": {
         "kind": "refusal",
         "why": "announces: に書けるのは配信 id（dl_ と 16 進 12 桁）だけです。",
-        "fix": None,
+        "fix": "announces は配信 id（dl_ と 16 進 12 桁）です",
         "command": "thth deliveries <口座>",
         "better": "告知する記事の配信 id は `thth deliveries <口座>` から写すと打ち間違えません",
         "doors": ("cli", "mcp"),
@@ -83,7 +83,7 @@ ENTRIES = {
     "invalid_article_source": {
         "kind": "refusal",
         "why": "article_source: は repo の中の相対パスだけを受けます（..・絶対パス・. 始まりは使えません）。",
-        "fix": None,
+        "fix": "article_source: は repo の中の相対パスだけです（`..`・絶対パス・`.` 始まりは不可）",
         "command": "thth lint <ファイル>",
         "better": "記事の正本を repo の決まったフォルダにまとめると、相対パスが短く保てます",
         "doors": ("cli", "mcp"),
@@ -99,7 +99,7 @@ ENTRIES = {
     "invalid_close_reason": {
         "kind": "refusal",
         "why": "閉じる理由に書けるのは fixed・wontfix・duplicate・invalid の 4 つです。",
-        "fix": None,
+        "fix": "--reason は fixed・wontfix・duplicate・invalid のどれかです",
         "command": "thth admin reports close <report_id> --reason fixed --version <版> --by <名前>",
         "better": "wontfix や duplicate のときは reply で理由や元の報告の id を添えると、報告した側が次に進めます",
         "doors": ("cli",),
@@ -123,7 +123,7 @@ ENTRIES = {
     "invalid_declaration": {
         "kind": "refusal",
         "why": "施策の宣言のファイルが読めないか、形が検査を通りません。",
-        "fix": None,
+        "fix": "施策の宣言を読めません（thth study-report <file> で形を確かめてください）",
         "command": "thth study-report <ファイル>",
         "better": "宣言に仮説と測る指標を 1 つずつ書くと、広場で結果を比べやすくなります",
         "doors": ("cli", "mcp"),
@@ -131,7 +131,7 @@ ENTRIES = {
     "invalid_draft": {
         "kind": "refusal",
         "why": "原稿が lint か形の検査を通りませんでした（続く符丁が当たった決まりです）。",
-        "fix": None,
+        "fix": "本文を直してもう一度（--dry-run で lint だけ確かめられます）",
         "command": "thth lint <ファイル>",
         "better": "送る前に手元で `thth lint <ファイル>` を通すと、断りの往復が減ります",
         "doors": ("mcp", "remote"),
@@ -139,7 +139,7 @@ ENTRIES = {
     "invalid_edge": {
         "kind": "refusal",
         "why": "線の両端は、地図に既にある別々の点でなければなりません。",
-        "fix": None,
+        "fix": "線の両端は既にある別々の点です（thth admin map node add で先に点を足す）",
         "command": "thth admin map node add <project> <語> --by <名前>",
         "better": "狭い語から広い語へ線を張ると、集計が上の語にまとまって見やすくなります",
         "doors": ("cli",),
@@ -147,28 +147,28 @@ ENTRIES = {
     "invalid_evidence_level": {
         "kind": "refusal",
         "why": "--evidence-level に書けるのは stated か hypothesis です。",
-        "fix": None,
+        "fix": "--evidence-level は stated か hypothesis です",
         "better": "--from analytics-report <口座> で観測を写させると、道具が observed を付けて重みが増します",
         "doors": ("cli", "mcp"),
     },
     "invalid_expires": {
         "kind": "refusal",
         "why": "--expires は 1d から上限までの日数で書きます。",
-        "fix": None,
+        "fix": "--expires は 1d〜90d の日数です（例: 30d）",
         "better": "相手が使う日が決まっていれば短め（例: 7d）にすると、使われない招待が残りません",
         "doors": ("cli",),
     },
     "invalid_export_target": {
         "kind": "refusal",
         "why": "--to が書き込めるディレクトリ（symlink でないもの）を指していません。",
-        "fix": None,
+        "fix": "--to は書き込めるディレクトリです",
         "better": "書き出し先を私有の置き場に 1 つ決めておくと、毎回の確かめが要りません",
         "doors": ("cli",),
     },
     "invalid_form": {
         "kind": "refusal",
         "why": "form: に書けるのは full・summary・entry のどれかです。",
-        "fix": None,
+        "fix": "form: は full・summary・entry のどれかです",
         "command": "thth lint <ファイル>",
         "better": "同じ連載では form をそろえると、記事どうしの反応を比べやすくなります",
         "doors": ("cli", "mcp"),
@@ -184,14 +184,14 @@ ENTRIES = {
     "invalid_from": {
         "kind": "refusal",
         "why": "--from の種類と引数の組合せが、受け付ける形ではありません。",
-        "fix": None,
+        "fix": "--from は analytics-report・after・study-report のどれかと引数（account か宣言のファイル）、または scenario <project> <糸の id> です。--from・--from-doc・--from-report は、どれか 1 つだけにしてください",
         "better": "--from analytics-report <口座> で観測を写させると、本文を書く手間が減り observed が付きます",
         "doors": ("cli", "mcp"),
     },
     "invalid_from_doc": {
         "kind": "refusal",
         "why": "--from-doc に渡せるのは repo の中の md（通常のファイル・1 MiB まで・UTF-8）です。",
-        "fix": None,
+        "fix": "--from-doc は repo の中の md（通常のファイル・1 MiB まで・UTF-8）です",
         "better": "気づきは md 1 本に 1 つずつ短く分けると、広場で読まれやすくなります",
         "doors": ("cli", "mcp"),
     },
@@ -206,7 +206,7 @@ ENTRIES = {
     "invalid_goal": {
         "kind": "refusal",
         "why": "--goal に書けるのは reach・click・follow・reply のどれかです。",
-        "fix": None,
+        "fix": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）のどれかです（無ければ付けない）",
         "better": "goal を付けておくと、広場の比較と読む 1 件の選び方が同じ目的の施策に寄ります",
         "doors": ("cli", "mcp"),
     },
@@ -228,7 +228,7 @@ ENTRIES = {
     "invalid_how": {
         "kind": "refusal",
         "why": "--how は `thth ` で始まる 1 行の命令だけを受けます（道具は実行しません）。",
-        "fix": None,
+        "fix": "--how は控えの欄で、道具は実行しません。`thth ` で始まる 1 行（300 字まで）の命令を書いてください",
         "better": "実際に打った命令をそのまま書くと、読んだ人が同じ手順で追試できます",
         "doors": ("cli", "mcp"),
     },
@@ -250,7 +250,7 @@ ENTRIES = {
     "invalid_instance": {
         "kind": "refusal",
         "why": "--instance は Mastodon の https の origin で、--media mastodon のときだけ付けます。",
-        "fix": None,
+        "fix": "--instance は Mastodon の https の origin です（例: https://mastodon.social）。--media mastodon のときだけ付けます",
         "better": "相手の使っている instance を先に聞いておくと、招待を作り直さずに済みます",
         "doors": ("cli",),
     },
@@ -273,7 +273,7 @@ ENTRIES = {
     "invalid_key": {
         "kind": "refusal",
         "why": "thth.me がこの鍵を受け付けませんでした（取り消されたか、違う鍵です）。",
-        "fix": None,
+        "fix": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
         "command": "thth login",
         "better": "鍵は `thth login`（ブラウザで許可）で取ると、手で貼る間違いが起きません",
         "doors": ("remote",),
@@ -289,21 +289,25 @@ ENTRIES = {
     "invalid_kind": {
         "kind": "refusal",
         "why": "--kind に書ける語ではありません（広場は measure・finding・question、報告は bug・request・friction）。",
-        "fix": None,
+        "fix": "--kind は bug・request・friction のどれかです（friction は迷った・分かりにくかった・同じ操作を繰り返した）",
+        # 見方ごとに文が違う（report_inbox.NEXT 以外の口の文）。
+        "fix_by_view": {
+            "plaza.NEXT": "--kind は measure（施策）・finding（気づき）・question（問い）のどれかです",
+        },
         "better": "迷ったら広場は finding、報告は friction で置けば、道具が束ねて実装側に届きます",
         "doors": ("cli", "mcp"),
     },
     "invalid_kind_detail": {
         "kind": "refusal",
         "why": "--kind-detail は finding にだけ付けられ、pattern・rule・pitfall・tool_tip のどれかです。",
-        "fix": None,
+        "fix": "--kind-detail は finding にだけ付けられ、pattern（型）・rule（規則）・pitfall（罠）・tool_tip（道具のコツ）のどれかです",
         "better": "細かい種類を付けると、生きたコツ集（`thth plaza digest`）で同じ種類が並びます",
         "doors": ("cli", "mcp"),
     },
     "invalid_label": {
         "kind": "refusal",
         "why": "--label は 1 行・上限の字数までのメモです。",
-        "fix": None,
+        "fix": "--label は 1 行・80 字までです（控えのメモ・Worker には送りません）",
         "better": "誰に何のために出したかを短く書くと、招待の一覧で見分けやすくなります",
         "doors": ("cli",),
     },
@@ -340,14 +344,14 @@ ENTRIES = {
     "invalid_min_n": {
         "kind": "refusal",
         "why": "--min-n は 1 以上の整数です。",
-        "fix": None,
+        "fix": "--min-n は 1 以上の整数です",
         "better": "比べる件数を小さくしすぎず数件以上にすると、偶然に引きずられない判定になります",
         "doors": ("cli", "mcp"),
     },
     "invalid_node": {
         "kind": "refusal",
         "why": "点は空でない 1 行・上限の字数までの語です（制御文字は使えません）。",
-        "fix": None,
+        "fix": "点は空でない 1 行・40 字までの語です（制御文字は使えません）",
         "better": "点を観測したい話題の短い語にすると、検索と集計にそのまま使えます",
         "doors": ("cli",),
     },
@@ -370,7 +374,11 @@ ENTRIES = {
     "invalid_op": {
         "kind": "refusal",
         "why": "op に書ける語ではありません（はてなの記事は create・update・delete、ブックマークは add か delete）。",
-        "fix": None,
+        "fix": "op: は create・update・delete のどれかです",
+        # 見方ごとに文が違う（hatena_entry._MESSAGES 以外の口の文）。
+        "fix_by_view": {
+            "bookmark_cli._MESSAGES": "op は add か delete です（コメント・タグの直しははてなの画面から）",
+        },
         "better": "記事を直すときは delivery: 付きの update にすると、記事の URL と反応が引き継がれます",
         "doors": ("cli", "mcp"),
     },
@@ -384,7 +392,7 @@ ENTRIES = {
     "invalid_owner": {
         "kind": "refusal",
         "why": "組の名前の形が違うか、組に入れる project が無いか多すぎます。",
-        "fix": None,
+        "fix": "組の名前（英数字と - _）と、組に入れる project を 1 つ以上並べてください（20 まで）",
         "command": "thth admin plaza owner list",
         "better": "同じ持ち主の project だけを 1 つの組にまとめると、owner の範囲が意図どおりに働きます",
         "doors": ("cli",),
@@ -400,14 +408,18 @@ ENTRIES = {
     "invalid_post": {
         "kind": "refusal",
         "why": "題か本文が空か、題が 1 行でないか、置く口が決まりの外です。",
-        "fix": None,
+        "fix": "title と本文は空にできません。title は 1 行です",
         "better": "題に結論を 1 行で書くと、一覧だけで読み手に届きます",
         "doors": ("cli", "mcp"),
     },
     "invalid_project": {
         "kind": "refusal",
         "why": "project 名の形が違います（英数字と - _ . だけ・上限の字数まで）。",
-        "fix": None,
+        "fix": "--project は英数字と - _ . だけ・53 字までです",
+        # 見方ごとに文が違う（invites.NEXT 以外の口の文）。
+        "fix_by_view": {
+            "map_store.NEXT": "project 名を確かめてください（台帳の project の綴り）",
+        },
         "better": "`thth account <口座>` に出る project 名を写すと、綴りを間違えません",
         "doors": ("cli", "mcp"),
     },
@@ -437,7 +449,7 @@ ENTRIES = {
     "invalid_range": {
         "kind": "refusal",
         "why": "--from・--to が YYYY-MM-DD の日付でないか、--from が --to より後です。",
-        "fix": None,
+        "fix": "--from・--to は 2026-09-01 の形の日付です（--from は --to より前）",
         "better": "消す期間を必要な分だけに絞ると、残したい集計を巻き込みません",
         "doors": ("cli",),
     },
@@ -459,7 +471,7 @@ ENTRIES = {
     "invalid_reply_kind": {
         "kind": "refusal",
         "why": "返信の --kind に書けるのは comment・tried・agree・disagree のどれかです。",
-        "fix": None,
+        "fix": "--kind は comment・tried・agree・disagree のどれかです",
         "better": "試したなら tried で自分の施策の id を添えると、媒体をまたいだ比較に入ります",
         "doors": ("cli", "mcp"),
     },
@@ -482,7 +494,7 @@ ENTRIES = {
     "invalid_report": {
         "kind": "refusal",
         "why": "題か本文が空か、題が 1 行でないか、置く口が決まりの外です。",
-        "fix": None,
+        "fix": "title と本文は空にできません。title は 1 行です",
         "better": "何をして・何が起きて・何を期待したかを 1 行ずつ書くと、実装側が早く直せます",
         "doors": ("cli", "mcp"),
     },
@@ -496,7 +508,7 @@ ENTRIES = {
     "invalid_retention": {
         "kind": "refusal",
         "why": "保持の日数は 1 から上限までの整数です。",
-        "fix": None,
+        "fix": "保持の日数は 1〜180 の整数です",
         "command": "thth admin map retention <project> <日数> --by <名前>",
         "better": "見返す期間に合わせて短めにすると、置き場が軽く保てます",
         "doors": ("cli",),
@@ -519,14 +531,18 @@ ENTRIES = {
     "invalid_since": {
         "kind": "refusal",
         "why": "--since が期間（30d など）や日付・時刻として読めません。",
-        "fix": None,
+        "fix": "--since は 2026-09-24 のような日付です",
+        # 見方ごとに文が違う（report_inbox.NEXT 以外の口の文）。
+        "fix_by_view": {
+            "map_store.NEXT": "--since は期間（30d・12w）か ISO 時刻です",
+        },
         "better": "読み返す区切り（週の初めなど）を決めて --since を付けると、差分だけを短く読めます",
         "doors": ("cli", "mcp"),
     },
     "invalid_status": {
         "kind": "refusal",
         "why": "--status に書けるのは open・closed・all のどれかです。",
-        "fix": None,
+        "fix": "--status は open・closed・all のどれかです",
         "better": "ふだんは open だけを読み、閉じた報告の返事は all でまとめて見ると短く済みます",
         "doors": ("cli", "mcp"),
     },
@@ -541,21 +557,21 @@ ENTRIES = {
     "invalid_trial_due": {
         "kind": "refusal",
         "why": "--trial-due は気づき（finding）にだけ付けられ、日付か timezone 付きの時刻で書きます。",
-        "fix": None,
+        "fix": "--trial-due は気づき（finding）にだけ付けられ、2026-10-08 か 2026-10-08T09:00:00+09:00 のような日付・時刻です",
         "better": "追試の日を入れておくと、その日に観測で結果を確かめる流れが作れます",
         "doors": ("cli", "mcp"),
     },
     "invalid_trial_result": {
         "kind": "refusal",
         "why": "追試（trial）には --result が要り、reproduced・not_reproduced・not_tried のどれかです。",
-        "fix": None,
+        "fix": "追試（trial）には --result reproduced・not_reproduced・not_tried のどれかを付けてください",
         "better": "再現しなかった結果も置くと digest に並び、ほかの人の無駄打ちが減ります",
         "doors": ("cli", "mcp"),
     },
     "invalid_until": {
         "kind": "refusal",
         "why": "--until が timezone 付きの時刻として読めません。",
-        "fix": None,
+        "fix": "--until は 2026-09-30T00:00:00+09:00 のような timezone 付きの時刻です",
         "better": "施策の終わりを入れておくと、結果の取り直し（--refresh）の区切りがはっきりします",
         "doors": ("cli", "mcp"),
     },
@@ -570,7 +586,7 @@ ENTRIES = {
     "invalid_url": {
         "kind": "refusal",
         "why": "URL が、http／https で host があり空白・制御文字の無い形ではありません。",
-        "fix": None,
+        "fix": "URL は http／https で、host があり、空白・制御文字の無いものです",
         "better": "自分の記事なら URL でなく配信 id で指すと、取り違えが起きません",
         "doors": ("cli", "remote"),
     },
@@ -585,28 +601,28 @@ ENTRIES = {
     "invalid_verdict": {
         "kind": "refusal",
         "why": "--verdict に書けるのは adopted・dropped・inconclusive のどれかです。",
-        "fix": None,
+        "fix": "--verdict は adopted・dropped・inconclusive のどれかです",
         "better": "dropped でも理由を --reason に残すと、同じ施策を試す人の判断材料になります",
         "doors": ("cli", "mcp"),
     },
     "invalid_version": {
         "kind": "refusal",
         "why": "--version は 3.1.2 のような版の番号です。",
-        "fix": None,
+        "fix": "--version は 3.1.2 のような版の番号です",
         "better": "直した版を正しく入れると、報告した側の `thth report timeline` に結ばれます",
         "doors": ("cli",),
     },
     "invalid_visibility": {
         "kind": "refusal",
         "why": "--visibility に書けるのは project・owner・open のどれかです。",
-        "fix": None,
+        "fix": "--visibility は project・owner・open のどれかです",
         "better": "まず project で置き、結果が出てから open にすると、見せる中身を確かめてから広げられます",
         "doors": ("cli", "mcp"),
     },
     "invite_account_exists": {
         "kind": "refusal",
         "why": "招待で作る口座名が既に使われています。",
-        "fix": None,
+        "fix": "招待の口座名が既にあります。もう一度 create してください",
         "command": "thth admin invite create --media <媒体> --project <project> --by <名前>",
         "better": "相手ごとに project 名を分けておくと、口座名がぶつかりにくくなります",
         "doors": ("cli",),
@@ -614,7 +630,7 @@ ENTRIES = {
     "invite_already_used": {
         "kind": "refusal",
         "why": "その招待は既に使われ、口座の用意が済んでいます。",
-        "fix": None,
+        "fix": "その招待は使用済みです。口座を止めるなら thth account leave <口座> --by <名前>",
         "better": "新しい人には別の招待を作り 1 人 1 本にすると、誰が使ったかを追えます",
         "doors": ("cli",),
     },
@@ -629,14 +645,14 @@ ENTRIES = {
     "invite_media_unsupported": {
         "kind": "refusal",
         "why": "招待で作れる媒体は threads と mastodon だけです。",
-        "fix": None,
+        "fix": "招待は --media threads か mastodon です（mastodon は --instance https://… も）。Bluesky は従前どおり運営者が thth account add と thth auth で用意してください",
         "better": "ほかの媒体も使う相手には、まず threads か mastodon で招待すると早く使い始められます",
         "doors": ("cli",),
     },
     "invite_not_found": {
         "kind": "refusal",
         "why": "その id の招待は記録にありません。",
-        "fix": None,
+        "fix": "その id の招待はありません（thth admin invite list）",
         "command": "thth admin invite list",
         "better": "招待の id を作ったときの出力から控えておくと、取り消しで迷いません",
         "doors": ("cli",),
@@ -644,7 +660,7 @@ ENTRIES = {
     "invite_not_open": {
         "kind": "refusal",
         "why": "その招待は取り消し済み・期限切れ・登録失敗のどれかで、もう使えません。",
-        "fix": None,
+        "fix": "その招待はもう使えない状態です（取り消し済み・期限切れ・登録失敗）",
         "command": "thth admin invite create --media <媒体> --project <project> --by <名前>",
         "better": "相手が使う日に合わせて新しく作ると、期限切れを避けられます",
         "doors": ("cli",),
@@ -652,7 +668,7 @@ ENTRIES = {
     "invite_project_in_owner_group": {
         "kind": "refusal",
         "why": "招待は外の人のためのもので、持ち主の組に入った project では作れません。",
-        "fix": None,
+        "fix": "その project は持ち主の組に入っています。招待は外の人のためなので、組の外の project で作ってください（thth admin plaza owner list）",
         "command": "thth admin plaza owner list",
         "better": "外の人には専用の project 名を付けると、組の共有と混ざりません",
         "doors": ("cli",),
@@ -660,14 +676,14 @@ ENTRIES = {
     "invite_registration_rejected": {
         "kind": "refusal",
         "why": "Worker が招待の登録を断りました（deploy か署名鍵が合っていない見込み）。",
-        "fix": None,
+        "fix": "Worker が招待の登録を断りました（招待は作られていません）。Worker の deploy と署名鍵（RELAY_PUBLIC_KEY・置き替える前は旧名の APPROVAL_PUBLIC_KEY）を確かめてから、作り直してください",
         "no_better": "internal",
         "doors": ("cli",),
     },
     "invite_registration_unknown": {
         "kind": "refusal",
         "why": "招待の登録が Worker に届いたかどうか分かりません。",
-        "fix": None,
+        "fix": "Worker に届いたか分かりません。thth admin invite revoke <id> で取り消してから作り直してください",
         "command": "thth admin invite revoke <id> --by <名前>",
         "no_better": "internal",
         "doors": ("cli",),
@@ -675,7 +691,7 @@ ENTRIES = {
     "invite_remote_created_audit_unconfirmed": {
         "kind": "refusal",
         "why": "招待は作られ URL も出ましたが、変更ログに書けたかが分かりません。",
-        "fix": None,
+        "fix": "招待は作られ URL も出しましたが、変更ログに書けたか分かりません。thth admin log を確かめてください",
         "command": "thth admin log",
         "no_better": "internal",
         "doors": ("cli",),
@@ -683,7 +699,7 @@ ENTRIES = {
     "invite_remote_created_delivery_failed": {
         "kind": "refusal",
         "why": "招待は作られましたが、URL を tty に出せませんでした。",
-        "fix": None,
+        "fix": "招待は作られましたが URL を tty に出せませんでした。thth admin invite revoke <id> で取り消してください",
         "command": "thth admin invite revoke <id> --by <名前>",
         "no_better": "internal",
         "doors": ("cli",),
@@ -691,7 +707,7 @@ ENTRIES = {
     "invite_revoke_unknown": {
         "kind": "refusal",
         "why": "Worker で招待を取り消せたかどうか分かりません。",
-        "fix": None,
+        "fix": "Worker で取り消せたか分かりません。同じ命令をもう一度打ってください",
         "command": "thth admin invite revoke <id> --by <名前>",
         "no_better": "internal",
         "doors": ("cli",),
@@ -706,7 +722,7 @@ ENTRIES = {
     "invite_tty_required": {
         "kind": "refusal",
         "why": "招待 URL は端末（tty）に 1 回だけ出す決まりで、今の接続には tty がありません。",
-        "fix": None,
+        "fix": "招待 URL は tty に 1 回だけ出します。ssh なら ssh -t で入ってください",
         "better": "ssh -t で入った端末から作り、URL をその場で相手に渡すと控えが残りません",
         "doors": ("cli",),
     },
@@ -720,7 +736,7 @@ ENTRIES = {
     "key_expired": {
         "kind": "refusal",
         "why": "thth.me の鍵の期限が切れています。",
-        "fix": None,
+        "fix": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
         "command": "thth login",
         "better": "期限の近い鍵を https://thth.me/activity で早めに発行し直すと、作業の途中で止まりません",
         "doors": ("remote",),
@@ -760,7 +776,7 @@ ENTRIES = {
     "link_base": {
         "kind": "refusal",
         "why": "はてなブログの台帳の link_base が無いか雛形のままで、記事の相対リンクを解けません。",
-        "fix": None,
+        "fix": "記事の相対リンクの基準にする URL（レーンの記事が公開されているサイト・https）を口座の台帳の `link_base` に入れてください。無ければ欄ごと消してください（相対リンクのある記事は `relative_link_unresolvable` で断ります）。",
         "better": "link_base を入れておくと、記事の中のリンクを相対で書けてサイトの移転にも強くなります",
         "doors": ("cli",),
     },
@@ -842,7 +858,7 @@ ENTRIES = {
     "managed_git_store_unsafe_mode": {
         "kind": "refusal",
         "why": "記録の置き場に group／other の書き込み権限があり、安全のため使いません。",
-        "fix": None,
+        "fix": "記録置き場に group/other の書き込みがあります。chmod -R go-w $THTH_ROOT/repos/_server/<口座> $THTH_ROOT/state/<口座>/git-origin.git で直してからもう一度",
         "no_better": "internal",
         "doors": ("cli", "mcp", "remote"),
     },
@@ -856,14 +872,14 @@ ENTRIES = {
     "map_log_unavailable": {
         "kind": "refusal",
         "why": "変更ログに書けなかったので、地図を変えていません。",
-        "fix": None,
+        "fix": "変更ログに書けなかったので変えていません。管理者に知らせてください",
         "no_better": "internal",
         "doors": ("cli",),
     },
     "map_store_unavailable": {
         "kind": "refusal",
         "why": "地図の置き場が読めません。",
-        "fix": None,
+        "fix": "地図の置き場が読めません。管理者に知らせてください",
         "no_better": "internal",
         "doors": ("cli", "mcp"),
     },
@@ -878,14 +894,14 @@ ENTRIES = {
     "measure_link_invalid": {
         "kind": "refusal",
         "why": "--measure に渡せるのは自分の持ち主が置いた施策の id で、tried と trial の返信だけです。",
-        "fix": None,
+        "fix": "--measure は自分の持ち主が置いた施策（measure）の id です",
         "better": "自分の施策を先に広場へ置いてから tried で結ぶと、媒体をまたいだ比較に入ります",
         "doors": ("cli", "mcp"),
     },
     "measure_link_required": {
         "kind": "refusal",
         "why": "tried（うちでも試した）の返信には、自分の施策の id が要ります。",
-        "fix": None,
+        "fix": "tried（うちでも試した）には自分の施策の id を --measure で付けてください",
         "command": "thth plaza list <口座>",
         "better": "まだなら `thth plaza post <口座> --kind measure` で施策を先に置くと、結果も道具が観測します",
         "doors": ("cli", "mcp"),
@@ -931,7 +947,7 @@ ENTRIES = {
     "media_inflight_held": {
         "kind": "refusal",
         "why": "添付つきの公開が held（媒体に出ていない）のまま止まっています。",
-        "fix": None,
+        "fix": "held は媒体に出ていません。媒体の画面で確かめてから thth inflight <口座> resolve --not-published",
         "command": "thth inflight <口座> resolve --not-published --by <名前>",
         "better": "大きな動画を先に小さく書き出すと、媒体の取り込み待ちで止まることが減ります",
         "doors": ("mcp", "remote"),
@@ -939,7 +955,7 @@ ENTRIES = {
     "media_inflight_unsupported": {
         "kind": "refusal",
         "why": "この添付の inflight の phase は、この解き方では解けない形です。",
-        "fix": None,
+        "fix": "thth inflight <口座> で phase を見る（held は --not-published・unknown／publishing／published は --published <post_id>・ほかは docs/原稿_添付_2.13.md の手順）",
         "command": "thth inflight <口座>",
         "better": "解く前に媒体の画面で出たかを確かめておくと、二重の公開を防げます",
         "doors": ("mcp", "remote"),
@@ -1168,7 +1184,7 @@ ENTRIES = {
     "no_last_refusal": {
         "kind": "refusal",
         "why": "この口座の直前の断りの控えがありません。",
-        "fix": None,
+        "fix": "この account の直前の断りの控えがありません。--body-file で何が起きたかを書いて置いてください",
         "better": "断りを受けたらその場で --from-last-refusal を付けて置くと、再現の手順を道具が添えます",
         "doors": ("cli", "mcp"),
     },
@@ -1273,7 +1289,7 @@ ENTRIES = {
     "node_exists": {
         "kind": "refusal",
         "why": "その点は地図に既にあります。",
-        "fix": None,
+        "fix": "その点は既にあります（thth map show <project>）",
         "command": "thth map show <project>",
         "better": "近い語は新しく足さず、線（包含）で既にある点に結ぶと集計がまとまります",
         "doors": ("cli",),
@@ -1281,14 +1297,14 @@ ENTRIES = {
     "node_handle": {
         "kind": "refusal",
         "why": "点に @名前 や仮名（author_key）の形は入れられません（特定の人を観測しない決まり）。",
-        "fix": None,
+        "fix": "点に @名前 や仮名（author_key）の形は入れられません（特定の人を観測する地図にはしません）。その人が話している話題の語を点にしてください",
         "better": "人でなく、その人が話している話題の語を点にすると、同じ流れを追えます",
         "doors": ("cli",),
     },
     "node_limit": {
         "kind": "refusal",
         "why": "点が project あたりの上限に達しています。",
-        "fix": None,
+        "fix": "点は project あたり 20 までです。使わない点を消してから足してください",
         "command": "thth map show <project>",
         "better": "狭い語は線で広い語にまとめると、少ない点で広く見られます",
         "doors": ("cli",),
@@ -1296,7 +1312,7 @@ ENTRIES = {
     "node_not_found": {
         "kind": "refusal",
         "why": "その点は地図にありません。",
-        "fix": None,
+        "fix": "その点はありません（thth map show <project>）",
         "command": "thth map show <project>",
         "better": "点の綴りは `thth map show <project>` の一覧から写すと間違えません",
         "doors": ("cli",),
@@ -1304,14 +1320,14 @@ ENTRIES = {
     "node_person_like": {
         "kind": "refusal",
         "why": "点に個人名らしき語（敬称つき・「名 姓」の形）は入れられません。",
-        "fix": None,
+        "fix": "点に個人名らしき語（敬称つき・「名 姓」の形）は入れられません。話題の語にしてください",
         "better": "人でなく話題の語を点にすると、同じ流れを追えます",
         "doors": ("cli",),
     },
     "node_url": {
         "kind": "refusal",
         "why": "点に URL やドメインは入れられません。",
-        "fix": None,
+        "fix": "点に URL やドメインは入れられません。話題の語にしてください",
         "better": "サイトの名でなく、そこで扱う話題の語を点にすると検索に使えます",
         "doors": ("cli",),
     },
@@ -1332,7 +1348,7 @@ ENTRIES = {
     "not_a_measure": {
         "kind": "refusal",
         "why": "結果の更新・判定・観測の写しは、施策（measure）にだけ付けられます。",
-        "fix": None,
+        "fix": "結果の更新と判定は施策（measure）にだけ付けられます",
         "better": "観測を伴う試みは measure で置くと、道具が数を取り直して判定まで追えます",
         "doors": ("cli", "mcp"),
     },
@@ -1353,7 +1369,7 @@ ENTRIES = {
     "not_logged_in": {
         "kind": "refusal",
         "why": "thth.me の鍵も手元の口座の台帳も無く、どちらの道でも動けません。",
-        "fix": None,
+        "fix": "thth login（ブラウザで許可）か、口座の台帳を手元に置く",
         "command": "thth login",
         "better": "`thth login` で一度許可すれば、以後は台帳なしで遠くの道を使えます",
         "doors": ("remote",),
@@ -1368,7 +1384,7 @@ ENTRIES = {
     "not_owner": {
         "kind": "refusal",
         "why": "その操作は、口座か書き込みの持ち主（同じ project）だけができます。",
-        "fix": None,
+        "fix": "結果の更新・判定・範囲の変更は、置いた持ち主（同じ project）だけができます",
         "better": "共同で扱う project は、管理者に持ち主の組へまとめてもらうと互いに読めます",
         "doors": ("cli", "mcp", "remote"),
     },
@@ -1390,28 +1406,28 @@ ENTRIES = {
     "nothing_to_update": {
         "kind": "refusal",
         "why": "更新する中身（--refresh・--verdict・--visibility）が 1 つも付いていません。",
-        "fix": None,
+        "fix": "--refresh・--verdict・--visibility のどれかを付けてください",
         "better": "結果が出たら --refresh で観測を取り直し、--verdict で判定まで一度に付けると読み手に伝わります",
         "doors": ("cli", "mcp"),
     },
     "observed_is_tool_only": {
         "kind": "refusal",
         "why": "observed（観測あり）は道具だけが付ける印で、手では付けられません。",
-        "fix": None,
+        "fix": "observed（観測あり）は道具だけが付けます。--evidence-level は stated（本文だけ）か hypothesis（見立て）です",
         "better": "--from analytics-report <口座> で観測を写させると、道具が observed を付けます",
         "doors": ("cli", "mcp"),
     },
     "open_digest_mismatch": {
         "kind": "refusal",
         "why": "一段目のあとで、ほかの持ち主に見える本文か観測が変わりました。",
-        "fix": None,
+        "fix": "他の持ち主に見える本文と観測が一段目のあとで変わりました。--confirm を外して一段目からやり直し、表示を読み直してください",
         "better": "一段目の表示を読んだらすぐ二段目を打つと、その間に変わることが減ります",
         "doors": ("cli",),
     },
     "open_requires_cli": {
         "kind": "refusal",
         "why": "open にする（ほかの持ち主に見せる）のは、人が CLI で二段確認したときだけです。",
-        "fix": None,
+        "fix": "open にする（他の持ち主に見せる）のは人の CLI の二段確認だけです（thth plaza post … --open / thth plaza update … --visibility open）。open の 1 件への返信と、open の 1 件の写しが変わる更新も同じです（thth plaza reply … / thth plaza update …）。MCP では project の範囲まで置けます",
         "better": "MCP では project か owner の範囲で置き、見せたいものだけを CLI で open にすると安全に広げられます",
         "doors": ("mcp", "remote"),
     },
@@ -1480,21 +1496,21 @@ ENTRIES = {
     "plaza_hidden": {
         "kind": "refusal",
         "why": "その書き込みは非表示（管理者か置いた本人が隠した）で、返信・更新はできません。",
-        "fix": None,
+        "fix": "非表示の書き込みです（管理者か、置いた本人が隠しました）。返信・更新はできません。戻してほしいときは、id と理由を添えて管理者に頼んでください（管理者は thth admin plaza unhide <id> --reason <理由> --by <名前> で戻せます）。書き直すなら、直した中身を thth plaza post … --preview で見てから新しく置けます",
         "better": "同じ話題を続けるなら新しく置き、元の id に本文で触れると流れが残ります",
         "doors": ("cli", "mcp"),
     },
     "plaza_log_unavailable": {
         "kind": "refusal",
         "why": "変更ログに書けなかったので、広場に置いていません。",
-        "fix": None,
+        "fix": "変更ログに書けなかったので置いていません。管理者に知らせてください",
         "no_better": "internal",
         "doors": ("cli", "mcp"),
     },
     "plaza_not_found": {
         "kind": "refusal",
         "why": "その plaza_id の書き込みは見つかりません（読める範囲の外も同じに見せます）。",
-        "fix": None,
+        "fix": "plaza_id を確かめてください（thth plaza list <account|project>）",
         "command": "thth plaza list <口座>",
         "better": "id を置いたときの出力から控えておくと、返信や更新で迷いません",
         "doors": ("cli", "mcp"),
@@ -1502,14 +1518,14 @@ ENTRIES = {
     "plaza_not_joined": {
         "kind": "refusal",
         "why": "この持ち主は広場の open に参加していません。",
-        "fix": None,
+        "fix": "この持ち主は広場（open）に参加していません。open は参加した持ち主どうしの場です（参加は管理者が thth admin plaza join <project> で入れます）。project の範囲なら今のまま置けます",
         "better": "参加を待つ間は project か owner の範囲で置いておくと、参加後に open へ広げられます",
         "doors": ("cli", "mcp"),
     },
     "plaza_owner_conflict": {
         "kind": "refusal",
         "why": "その project は既に別の組に入っています（1 つの project は 1 つの組だけ）。",
-        "fix": None,
+        "fix": "その project は別の組に入っています。先に thth admin plaza owner unset <組の名前> で外してください（1 つの project は 1 つの組だけ）",
         "command": "thth admin plaza owner list",
         "better": "組を持ち主ごとに 1 つにまとめると、範囲の重なりが起きません",
         "doors": ("cli",),

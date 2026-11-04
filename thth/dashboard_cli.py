@@ -34,6 +34,7 @@ import sys
 
 from . import accounts as accounts_mod
 from . import jst
+from . import refusal_catalog
 
 SCHEMA = "thth.dashboard/1"
 SCENARIO_SCHEMA = "thth.scenario/1"
@@ -73,16 +74,7 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            # Meta 計画 段 6: Webhook の受け口から取り込めない（`thth/webhook.py`・続いている状態）。
            "webhook_down": "Webhook の取り込みが止まっている"}
 # 広告の出来事の次の一手（題は `KIND_JA`）。
-ADS_NEXT = {"ads_stop_unconfirmed": "広告マネージャで今すぐ止める（THTH の stop が止まったと確かめられなかった）",
-            "ads_active_outside_thth": "広告マネージャで誰が始めたか確かめ、要らなければ止める",
-            "ads_no_end_time": "広告マネージャで終了日を入れるか止める",
-            "ads_account_status": "広告マネージャで支払いと審査を確かめる",
-            "ads_spend_over_estimate": "広告マネージャで支出を確かめる",
-            "ads_spend_cap_near": "使ってよい額か決め、管理画面で spend_cap を直す",
-            "ads_budget_low": "今月はここまでにするか決める",
-            "ads_spend_cap_unset": "管理画面で spend_cap を入れる（THTH からは入れない）",
-            "ads_token_expiring": "thth ads auth で鍵を取り直す",
-            "ads_read_failed": "thth ads doctor で読めない理由を見る"}
+ADS_NEXT = refusal_catalog.fix_view("dashboard_cli.ADS_NEXT")
 # 予算の断りの符丁 → 画面の言葉（読むと投稿は別の断り・言葉で分ける）。
 BUDGET_JA = {"budget_exhausted": "X の読む予算が今月の上限", "missing_rate": "X の読む予算の為替の設定が無い",
              "post_budget_exhausted": "X の投稿の予算が今月の上限"}

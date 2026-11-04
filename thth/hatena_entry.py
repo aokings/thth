@@ -25,6 +25,7 @@ from . import deliveries as deliveries_mod
 from . import hatena_convert
 from . import jst
 from . import queuefile
+from . import refusal_catalog
 
 KIND = "hatena_entry"
 OPS = approval_mod.HATENA_ENTRY_OPS
@@ -55,41 +56,7 @@ S3_IMAGE_REFUSALS = ("image_too_large", "image_type_unsupported", "too_many_imag
 S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE_REFUSALS + ("update_no_change",)
 # 4.0 S5 §5.4: 衝突のままでも削除を承認できる理由（外で手直しされた・別の記法で出た）。
 DELETABLE_CONFLICTS = ("readback_changed", "syntax_mismatch")
-_MESSAGES = {
-    "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
-    "article_source_missing": "article_source: が無いか、指すファイルが repo にありません。repo の根からの相対パスで書き、そのファイルを commit してください",
-    "invalid_article_source": "article_source: は repo の中の相対パスだけです（`..`・絶対パス・`.` 始まりは不可）",
-    "title_required": "title: が要ります（はてなブログの記事の題）",
-    "invalid_op": "op: は create・update・delete のどれかです",
-    "delivery_required": "op: update・delete には delivery:（配信 id）が要ります",
-    "blog_id_in_manuscript": "blog_id: は原稿に書きません（口座の台帳から引きます）",
-    "categories_invalid": f"categories: は {CATEGORIES_MAX} 個まで・1 つ {CATEGORY_CHARS_MAX} 字までです",
-    "invalid_form": "form: は full・summary・entry のどれかです",
-    "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）。thth deliveries <口座> で配信の id を確かめてください",
-    "image_missing": "本文の画像（![](<パス>)）が repo にありません。画像を repo に置いて commit してください",
-    "image_too_large": "本文の画像が 1 枚の上限（既定 8 MiB・主体の台帳の fotolife.max_image_bytes）を超えています",
-    "image_type_unsupported": "本文の画像の形式が JPEG・PNG・GIF ではありません（中身の先頭で判定・拡張子は見ません）。JPEG・PNG・GIF に書き出し直してください",
-    "too_many_images": "本文の画像が 1 記事の上限（既定 20 枚・fotolife.max_images_per_entry）を超えています",
-    "images_too_large": "本文の画像の合計が上限（既定 64 MiB・fotolife.max_total_bytes）を超えています",
-    "relative_link_unresolvable": ("記事に相対リンクがありますが、口座の台帳に link_base（相対リンクの基準の"
-                                   " URL・https）がありません。link_base を書くか、リンクを絶対 URL に"),
-    "delivery_state_wanted": "delivery: の配信はまだ出していません（wanted）。update・delete は出したあとの配信だけです",
-    "delivery_state_inflight": ("delivery: の配信は送っている途中か、送った結果を確かめていません（inflight）。"
-                                "thth deliveries で確かめてから"),
-    "delivery_state_unknown": ("delivery: の配信は送った結果が分かりません（unknown）。"
-                               "はてなの画面と thth deliveries で確かめてから"),
-    "delivery_state_published": ("delivery: の配信はもう出ています（published）。create で書けるのは"
-                                 "取り消した予約の配信だけです。直すなら op: update"),
-    "delivery_state_conflict": ("delivery: の配信は conflict です（はてなの側で手直しされた・別の記法で出た・"
-                                "外で消えた）。thth conflict <口座> で解いてから（外で消えていたなら "
-                                "thth conflict <口座> <dl> resolve --gone）"),
-    "delivery_state_no_follow": ("delivery: の配信は THTH が追従しないことにしたものです（no_follow）。更新はしません"
-                                 "（削除はできます・戻すなら thth conflict <口座> <dl> resolve --adopt）"),
-    "update_no_change": "出した版と同じです（本文・題・カテゴリ・画像のどれも変わっていない）。更新は送っていません。直すときは記事を変えて commit してから打ってください",
-    "delivery_state_deleted": "もう削除した配信です（deleted）",
-    "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
-                              "まだ追跡されていない）。記事を commit してから"),
-}
+_MESSAGES = refusal_catalog.fix_view("hatena_entry._MESSAGES")
 
 
 class EntryError(ValueError):
