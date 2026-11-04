@@ -201,6 +201,18 @@ def test_大きくなったら14日の内に詰め直す(two, monkeypatch):
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
 
+def test_小さいファイルでも15日前の行は次に書くときに消える(two):
+    """14 日の約束は大きさに依らない（監査 5.12.0「出したあとでよい」1）。"""
+    meter.note("kopicha-threads", command="send", outcome="ok",
+               now=jst.now_jst() - datetime.timedelta(days=15))
+    meter.note("kopicha-threads", command="send", outcome="ok", now=_at(5))
+    path, raw = _raw("kopicha-threads")
+    assert os.path.getsize(path) < meter.MAX_BYTES
+    rows = [json.loads(line) for line in raw.splitlines()]
+    assert len(rows) == 1 and jst.parse(rows[0]["at"]) > jst.now_jst() - datetime.timedelta(hours=1)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
 def test_MCPのサーバ型も控える_許された口座だけ(user_server):  # noqa: F811
     _root, _path, _value, server = user_server
     denied = server.call_tool("thth_draft_put", {"account": "first", "file": "x.md", "text": SECRET})

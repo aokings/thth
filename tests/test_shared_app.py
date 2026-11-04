@@ -120,6 +120,23 @@ def test_慣らしが明ける日の予約は台帳の数で数える(env):
     assert str(_refused(env, operation='schedule_request', draft_id=second['draft_id'])) == 'ramp_daily_limit'
 
 
+def test_符丁の選びは当てたときと同じused足すaddsで台帳の数を見る():
+    """監査 5.12.0「出したあとでよい」2: `used + 1` でなく `assess._hit` と同じ `used + adds`。"""
+    from thth import assess
+    ramps = {"post.daily": {"ledger_count": 4, "count": 2, "days_left": 11, "until": "2026-11-24",
+                            "started": "2026-11-10"}}
+    rule = {"id": "post.daily", "on_exceed": "refuse", "signal": "frequency", "phase": "estimate",
+            "purpose": "safety", "scope": "account", "trait": "t", "refusal": "daily_limit", "detail": None}
+    def refused(used, adds):
+        return shared_app.mark_ramp(assess.finding(rule, assess._hit(used, adds, 2)), ramps)
+    # 足すのが 3 件なら台帳の 4 件でも当たる（used 2 + 3 > 4）→ 今までの daily_limit。
+    assert refused(2, 3)["code"] == "daily_limit"
+    # 足すのが 1 件なら台帳では通る（2 + 1 <= 4）→ 慣らしの符丁。
+    assert refused(2, 1)["code"] == shared_app.RAMP_CODE
+    # 足さない（同じ配信）なら used が台帳の数ちょうどでも台帳では通る。
+    assert refused(4, 0)["code"] == shared_app.RAMP_CODE
+
+
 def test_慣らしの断りは目録にあり3つがそろう():
     entry = refusal_catalog.CATALOG[shared_app.RAMP_CODE]
     assert entry["kind"] == "refusal" and set(entry["doors"]) == {"cli", "mcp", "remote"}

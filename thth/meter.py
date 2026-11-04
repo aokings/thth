@@ -19,7 +19,8 @@
 崩さない: 通った読む命令は控えず（`counted_on_success`）、断られたとき（`last_refusals.json` を既に書く）
 だけ控える。だから率の分母は「書く・送る・置く命令と lint」で、読む命令の断りは数だけ別に出す。
 
-大きさと期間: `KEEP_DAYS`（14 日・直近 7 日とその前の 7 日を比べるため）より古い行は書くときに落とす。
+大きさと期間: `KEEP_DAYS`（14 日・直近 7 日とその前の 7 日を比べるため）より古い行は書くときに落とす
+（先頭の 1 行だけ見て、14 日より古ければ詰める・毎回全体は書き直さない）。
 ファイルが `MAX_BYTES` を超えたら、14 日の内の新しい `MAX_ROWS` 行に詰め直す。置き場は口座の state の中
 なので、`thth account leave` で state ごと消える。
 
@@ -187,9 +188,23 @@ def note(account, *, command, outcome, code=None, marks=(), now=None) -> bool:
     finally:
         os.close(fd)
     os.chmod(target, 0o600)
-    if os.path.getsize(target) > MAX_BYTES:
-        _compact(account, jst.parse(row["at"]))
+    at = jst.parse(row["at"])
+    if os.path.getsize(target) > MAX_BYTES or _head_is_stale(target, at):
+        _compact(account, at)
     return True
+
+
+def _head_is_stale(target, now) -> bool:
+    """先頭の行が 14 日より古いか（1 行だけ読む。読めない先頭は詰めて落とす）。"""
+    try:
+        with open(target, encoding="utf-8") as stream:
+            first = stream.readline()
+        at = jst.parse(json.loads(first)["at"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return True
+    if at is None:
+        return True
+    return at < now - datetime.timedelta(days=KEEP_DAYS)
 
 
 def _compact(account, now) -> None:

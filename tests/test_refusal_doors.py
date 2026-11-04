@@ -436,6 +436,19 @@ def test_遠くの道の断りは目録にある符丁ならどれも3つの行�
     assert missing == []
 
 
+def test_遠くの道の入口の断りは遠くの道の通すにはを出す(monkeypatch, capsys):
+    """`remote._fail`（login まわり）は口 `remote` で出す（監査 5.12.0「出したあとでよい」3）。"""
+    from thth import remote as remote_mod
+    entry = refusal_catalog.CATALOG["key_in_argument"]
+    monkeypatch.setitem(entry, "doors", ("cli", "remote"))
+    monkeypatch.setitem(entry, "fix_by_door", {"remote": {"text": "遠くの道の文", "command": None},
+                                               "cli": {"text": "手元の文", "command": None}})
+    assert remote_mod._fail("key_in_argument", "x") == 2
+    rows = capsys.readouterr().err.splitlines()
+    assert rows[0] == "key_in_argument: x"
+    assert f"{refusal.FIX}遠くの道の文" in rows and not any("手元の文" in row for row in rows)
+
+
 def test_read_coordinationの断りは3つの行を持つ(tmp_path, monkeypatch, capsys):
     """`conftest.is_refusal` は寄せていない口のために間が空でも通す。寄せた口は `with_tail` で 3 つの行まで見る。"""
     from tests.conftest import is_refusal

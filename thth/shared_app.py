@@ -93,7 +93,10 @@ def mark_ramp(result, ramps) -> dict:
         return result
     ramp = ramps.get(result.get("rule"))
     used = result.get("used")
-    if ramp is None or not isinstance(used, int) or used + 1 > ramp["ledger_count"]:
+    # 当てたときと同じ `used + adds`（`assess._hit`）で、台帳の数でも当たるかを見る。
+    adds = result.get("adds")
+    adds = adds if isinstance(adds, int) else 1
+    if ramp is None or not isinstance(used, int) or used + adds > ramp["ledger_count"]:
         return result
     result["code"] = RAMP_CODE
     result["ramp"] = dict(ramp)

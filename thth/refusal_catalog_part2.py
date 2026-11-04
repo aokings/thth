@@ -838,6 +838,15 @@ ENTRIES = {
         "better": "出た文を `thth report file` で知らせてもらえれば、次から符丁 1 語で言えるようにします",
         "doors": ("mcp", "remote"),
     },
+    "lint_takes_no_account": {
+        "kind": "refusal",
+        "why": "thth lint は口座名を取りません。1 つ目の引数 <口座> は台帳の口座名で、その名前のファイルがありません。",
+        "fix": "口座名を外して、原稿のパスだけで打ち直してください（口座は原稿の front-matter の account から読みます）",
+        "command": "thth lint <原稿>",
+        "better": "原稿の置き場ごと渡す（thth lint <置き場のフォルダ>）と、1 回でまとめて確かめられます",
+        "doors": ("cli",),
+        "since": "5.12.1",
+    },
     "location_metadata_present": {
         "kind": "refusal",
         "why": "添付に位置情報が入っているため、外に出しません。",
