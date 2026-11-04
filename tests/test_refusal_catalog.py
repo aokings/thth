@@ -386,3 +386,22 @@ def test_穴埋めは検査を通った値だけ():
     assert rc.render("too_soon", body="本文")["command"] == rc.CATALOG["too_soon"]["fix"]["command"]
     first = rc.lines("daily_limit")[0]
     assert first.startswith("daily_limit: ")
+
+
+def test_目録を作るときに台帳や置き場を読まない(monkeypatch):
+    """目録は初めて引かれた時に作る（`__getattr__`）ので、断りの最中に作られうる。作る途中で口座の台帳を読むと、
+    不正な名前の断りより先に置き場に触る（CI の分け方で test_v213_review_followups が赤になった・11/04）。
+    順番に頼らず、毎回作り直して確かめる。"""
+    from thth import accounts
+
+    calls = []
+
+    def forbidden(*a, **kw):
+        # 呼ぶ側が `except Exception` で包む所もあるので、上げずに記録して後で照らす。
+        calls.append(a)
+        raise AssertionError(f"catalog build touched storage: {a!r}")
+
+    monkeypatch.setattr(accounts, "load_account", forbidden)
+    built = rc._build()
+    assert calls == [], f"目録を作る途中で口座の台帳を読んだ: {calls}"
+    assert built["bookmark_not_allowed_for_lane"]["why"]

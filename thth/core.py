@@ -1745,11 +1745,14 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = "同じ owner の別のブックマークが打っている最中です。少し置いてもう一度"
     elif code == "bookmark_not_allowed_for_lane":
         # 実機の確かめ 10/17 の 7: 直す先は口座でなく主体の台帳（bookmark.lanes）。
-        try:
-            cfg = accounts_mod.load_account(account_name)
-            principal, project = cfg.get("principal") or "<主体>", cfg.get("project") or "<lane>"
-        except Exception:  # noqa: BLE001 — 文のためだけ
-            principal, project = "<主体>", "<lane>"
+        # 名前の形を通らないもの（目録が文を作るときの型 `<口座>` など）では台帳を読まない。
+        principal, project = "<主体>", "<lane>"
+        if accounts_mod.name_is_safe(account_name):
+            try:
+                cfg = accounts_mod.load_account(account_name)
+                principal, project = cfg.get("principal") or "<主体>", cfg.get("project") or "<lane>"
+            except Exception:  # noqa: BLE001 — 文のためだけ
+                pass
         why = (f"このレーン（{project}）は主体のブックマークを許すレーン（主体の台帳の bookmark.lanes）にありません。"
                f"許すなら thth principal set {principal} bookmark.lanes <lane>[,<lane>…] --by <名前>")
     elif code == "invalid_media_traits":
