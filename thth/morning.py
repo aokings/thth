@@ -860,6 +860,15 @@ def _media_observations_line(now):
         return None
 
 
+def _app_usage_lines(now):
+    """共有アプリの合計の行（`shared_app.alert_lines`・8 割の下なら空）。読めなければ空（観測を落とさない）。"""
+    try:
+        from . import shared_app
+        return shared_app.alert_lines(now=now)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _bookmark_batch_row(name, now):
     """人の手が要るブックマークのまとめ（`bookmark_batch.attention`）。無ければ None。"""
     from . import bookmark_batch
@@ -1346,7 +1355,10 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
          **cell({"by_account": today_entries, "budget": budget_cell,
                  **({"ads": ads_cell} if ads_cell is not None else {}),
                  # 段 4（§9.2）: 媒体の断りの観測（30 日・読むだけ）。無ければ鍵を足さない。
-                 **({"media_observations": seen} if (seen := _media_observations_line(now)) else {})})},
+                 **({"media_observations": seen} if (seen := _media_observations_line(now)) else {}),
+                 # 段 E（`thth/shared_app.py`）: 全テナントの合計が媒体のアプリ全体の上限の 8 割に達した数だけ。
+                 # **管理者の 1 枚だけ**（サーバ型の利用者に他のテナントの量を渡さない）。無ければ鍵を足さない。
+                 **({"app_usage": lines} if allowed_names is None and (lines := _app_usage_lines(now)) else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
     ]
 
@@ -1538,6 +1550,8 @@ def _render_section(section, out) -> None:
     if name == "today":
         if value.get("media_observations"):
             out(f"  {value['media_observations']}（thth media observations <媒体>）")
+        for line in value.get("app_usage") or []:
+            out(f"  {line}（thth media app-usage）")
         ads = value.get("ads")
         if ads is not None:
             if ads.get("cannot_say") is not None:

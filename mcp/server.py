@@ -1524,6 +1524,10 @@ def server_call(name, arguments):
                 text+=': '+exc.reason+': 持ち主が戻すまで公開・削除・予約はできません'
             elif isinstance(getattr(exc,'next_at',None),str):
                 text+=': next_at='+exc.next_at
+            ramp=(getattr(exc,'assessment',None) or {}).get('ramp') if str(exc)=='ramp_daily_limit' else None
+            if isinstance(ramp,dict) and type(ramp.get('days_left')) is int:
+                # 段 E の慣らし: 残りの日数（数だけ）。
+                text+=': days_left='+str(ramp['days_left'])
             return failure(text, next_at=getattr(exc,'next_at',None), reason=getattr(exc,'reason',None))
         if str(exc)=='collect_too_soon' and isinstance(getattr(exc,'next_at',None),str):
             # 読む口の採取の間隔（設計 3.14.0 §3.2）: 次に採れる時刻を添える。

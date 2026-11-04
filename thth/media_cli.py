@@ -6,6 +6,7 @@
 - `thth media traits` — 媒体の一覧（対応・未対応・項目の数・既定を持つ行）
 - `thth media traits <媒体> [--signal <行>]` — 項目・根拠・確かさ・導く既定
 - `thth media check` — 台帳の検査（T-M-1）。問題があれば exit 1
+- `thth media app-usage` — 共有アプリの全口座の合計と、媒体ごとのアプリ全体の上限（段 E・読むだけ）
 
 終了コード: 0 通る・1 検査に落ちた（check と、検査に落ちた台帳を traits で読んだとき）・2 知らない媒体。
 """
@@ -50,6 +51,10 @@ def register(sub) -> None:
     w.add_argument("--by", default=None, help="誰が（必須）")
     w.add_argument("--json", action="store_true")
     w.set_defaults(func=cmd_observe)
+    # 段 E（`thth/shared_app.py`）: 全口座の使った量の合計と、媒体ごとのアプリ全体の上限（読むだけ・運営者の CLI）。
+    a = msub.add_parser("app-usage", help="共有アプリの全口座の合計と、媒体ごとのアプリ全体の上限（読むだけ・上限が分からない媒体も言う）")
+    a.add_argument("--json", action="store_true")
+    a.set_defaults(func=cmd_app_usage)
 
 
 def _print_json(payload) -> None:
@@ -267,3 +272,14 @@ def _observation_fail(args, code, message) -> int:
     else:
         print(f"{code}: {message}", file=sys.stderr)
     return 2
+
+
+def cmd_app_usage(args) -> int:
+    """全口座の合計（読むだけ）。上限の数が台帳に無い媒体は「上限が分からない」と言う。"""
+    from . import shared_app
+    rows = shared_app.usage()
+    if args.json:
+        _print_json({"schema": "thth.app-usage/1", "alert_ratio": shared_app.ALERT_RATIO, "rows": rows})
+        return 0
+    shared_app.render(rows)
+    return 0

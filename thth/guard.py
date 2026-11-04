@@ -17,6 +17,8 @@
 - `too_soon`     : 前の公開から `min_interval_hours` が経っていない（次に出せる時刻を添える）
 - `quiet_hours`  : 夜間（`quiet_hours`）に今すぐ出そうとした（明ける時刻を添える）
 - `daily_limit`  : その日の公開が `daily_max_posts` に達した（翌日 0 時を添える）
+- `ramp_daily_limit`: 招待で入った口座の最初の 14 日（慣らし・`thth/shared_app.py`）に、半分にした 1 日の
+  公開の上限に達した（台帳の数なら通る・翌日 0 時を添える・`assessment.ramp` に残りの日数）。口座は止めない
 - `retract_limit`: その日の削除が `daily_max_retracts` に達した（翌日 0 時を添える）
 - `account_stopped`（詳細 `burst`）: 直近 `burst.minutes` 分の公開と削除の合計が
   `burst.count` を超える依頼だった → 口座を止めて断る。**同じ配信（はてな）への操作は窓の中で 1 件**
@@ -44,7 +46,7 @@ import json
 import os
 from pathlib import Path
 
-from . import accounts, assess, jst, limits_policy, sent as sent_mod, server_files
+from . import accounts, assess, jst, limits_policy, sent as sent_mod, server_files, shared_app
 from .report_service import ReportServiceError
 
 # 主体・ブログ・ブックマークの段（設計 4.0 S1 §4.1・§4.2）。はてなの口座だけに出る。
@@ -59,6 +61,8 @@ PRINCIPAL_REFUSALS = frozenset((
 REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit",
                        # 止めずに 1 件だけ断る（返信の burst・3.25.0／止めの印を置けない置き場）。
                        "burst_limit",
+                       # 新しいテナントの慣らし（段 E）: 台帳の数なら通るが、入ってから 14 日の半分の上限に当たった。
+                       shared_app.RAMP_CODE,
                        # 媒体の台帳（thth/media_traits/）が検査を通らず、柵の表を作れない（断る・落ちない）。
                        "invalid_media_traits"))
             | PRINCIPAL_REFUSALS)
@@ -431,6 +435,11 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
     return max(events + [now]) + span + gap
 
 
+def _ramp_day(kind, publish_at, now):
+    """慣らしを見る日（予約はその公開の日・ほかは今日）。`assess._frequency` の日の数えと同じ日。"""
+    return jst.to_jst(publish_at).date() if kind == "schedule" and publish_at is not None else now.date()
+
+
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
           publish_at=None, scheduled_same_day=0, reply=False, cli=False,
           principal_scheduled_same_day=None, bookmark_url=None, pending_replies=None,
@@ -502,8 +511,11 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     materials = assess.Materials(
         loaders={"counts": counts, "events": lambda: _events_of(account)},
         fns={"burst_slot": lambda ahead: burst_slot(account, cfg, now=now, pending=ahead)})
-    # 2〜3. 行の表（安全装置と見立て）を表の順に当てる。
-    result = assess.evaluate(_rules_for("sns", action, cfg=cfg), request, materials)
+    # 2〜3. 行の表（安全装置と見立て）を表の順に当てる。新しいテナントの慣らし（段 E・`shared_app`）は
+    # 行の写しの 1 日の公開の上限を半分にする（台帳は書き換えない）。
+    rules = _rules_for("sns", action, cfg=cfg)
+    ramps = shared_app.apply_ramp(rules, cfg, _ramp_day(kind, publish_at, now))
+    result = shared_app.mark_ramp(assess.evaluate(rules, request, materials), ramps)
     _enforce(result, account=account, principal=None, can_stop=can_stop, now=now, actor=actor, via=via,
              credential=credential)
 
@@ -768,7 +780,9 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
         fns={"principal_scheduled_same_day": lambda day: principals.scheduled_same_day(name, day)})
     # 4〜5. 行の表（ブックマークの止め線 → 日の上限 → ブックマークの枠 → 記事の burst（口座 → 主体）→
     # 1 URL に 1 回 → 共通の最低線）。
-    result = assess.evaluate([r for r in rules if r["phase"] != "halt"], request, materials)
+    live = [r for r in rules if r["phase"] != "halt"]
+    ramps = shared_app.apply_ramp(live, cfg, _ramp_day(kind, publish_at, now)) if family == "hatenablog" else {}
+    result = shared_app.mark_ramp(assess.evaluate(live, request, materials), ramps)
     _enforce(result, account=account, principal=name, can_stop=can_stop, now=now, actor=actor, via=via,
              credential=credential)
 
