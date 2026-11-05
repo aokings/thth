@@ -4,7 +4,8 @@
 > managing your own social media accounts (Threads, Bluesky, Mastodon, X).
 > Because it is a CLI, an LLM can drive it; the bundled MCP server and skills
 > only make that easier. Local queue work is recorded in git. An invited person
-> authorizes Threads, runs `thth login` in a terminal, and authorizes the device
+> authorizes the invited service (Threads, Mastodon, a Facebook Page or Instagram),
+> runs `thth login` in a terminal, and authorizes the device
 > in a browser before using the command for their own account through the
 > operator (gotoq)'s server. The owner sets
 > safety limits, reviews activity, stops the account, and manages keys at
