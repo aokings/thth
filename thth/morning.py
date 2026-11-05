@@ -869,6 +869,15 @@ def _app_usage_lines(now):
         return []
 
 
+def _meta_watch_line(now):
+    """権限の不使用の見張りの 1 行（`permission_watch.observe_line`・知らせが無ければ None）。読めなければ None。"""
+    try:
+        from . import permission_watch
+        return permission_watch.observe_line(permission_watch.build(now=now))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _bookmark_batch_row(name, now):
     """人の手が要るブックマークのまとめ（`bookmark_batch.attention`）。無ければ None。"""
     from . import bookmark_batch
@@ -1358,7 +1367,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                  **({"media_observations": seen} if (seen := _media_observations_line(now)) else {}),
                  # 段 E（`thth/shared_app.py`）: 全テナントの合計が媒体のアプリ全体の上限の 8 割に達した数だけ。
                  # **管理者の 1 枚だけ**（サーバ型の利用者に他のテナントの量を渡さない）。無ければ鍵を足さない。
-                 **({"app_usage": lines} if allowed_names is None and (lines := _app_usage_lines(now)) else {})})},
+                 **({"app_usage": lines} if allowed_names is None and (lines := _app_usage_lines(now)) else {}),
+                 # 段 M5（`thth/permission_watch.py`）: 権限の不使用の知らせ。**管理者の 1 枚だけ**。無ければ鍵を足さない。
+                 **({"meta_watch": line} if allowed_names is None and (line := _meta_watch_line(now)) else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
     ]
 
@@ -1552,6 +1563,8 @@ def _render_section(section, out) -> None:
             out(f"  {value['media_observations']}（thth media observations <媒体>）")
         for line in value.get("app_usage") or []:
             out(f"  {line}（thth media app-usage）")
+        if value.get("meta_watch"):
+            out(f"  {value['meta_watch']}")
         ads = value.get("ads")
         if ads is not None:
             if ads.get("cannot_say") is not None:

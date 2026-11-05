@@ -194,6 +194,49 @@ def render_maintain_service() -> str:
     )
 
 
+# 権限の不使用の見張りの最小の読み（`thth admin meta keepalive`・計画 Meta 全部盛り §3.3）。1 日 1 回で、
+# 打つのは 25 日使っていない読むだけの権限だけ（何も要らない日は網に出ない）。`thth maintain` と分けるのは、
+# 置いた VM でだけ呼び出しが始まるようにするため。
+META_KEEPALIVE_ONCALENDAR = "*-*-* 04:47:00"
+
+
+def render_meta_keepalive_timer() -> str:
+    """`thth-meta-keepalive.timer` の中身（`thth systemd --meta-keepalive`）。"""
+    return (
+        "# 生成: `thth systemd --meta-keepalive`（手で編集しない）。\n"
+        "[Unit]\n"
+        "Description=THTH 権限の不使用の見張りの最小の読み（1 日 1 回）\n"
+        "\n"
+        "[Timer]\n"
+        f"OnCalendar={META_KEEPALIVE_ONCALENDAR}\n"
+        "# VM が落ちていた日も起動後に 1 回走らせる（同じ日の 2 回目は叩かない）。\n"
+        "Persistent=true\n"
+        "RandomizedDelaySec=0\n"
+        "Unit=thth-meta-keepalive.service\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def render_meta_keepalive_service() -> str:
+    """`thth-meta-keepalive.service` の中身（`thth systemd --meta-keepalive --service`）。"""
+    return (
+        "# 生成: `thth systemd --meta-keepalive --service`（手で編集しない）。\n"
+        "[Unit]\n"
+        "Description=THTH 権限の不使用の見張りの最小の読み\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "User=wt\n"
+        "Environment=THTH_ROOT=/srv/thth\n"
+        "ExecStart=/srv/thth/app/bin/thth admin meta keepalive\n"
+        "TimeoutStartSec=300\n"
+    )
+
+
 # 世間の層（`thth map collect <project>`・設計 3.5.0）の timer は **project ごと・1 日 1 回**。
 # 明け方（05 時台）に置き、分は project 名のハッシュでずらす（同じ分に複数の project が
 # 検索を叩かない）。**世間の層を有効にする `THTH_MAP_WORLD=1` は service にだけ置く**

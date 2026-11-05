@@ -4258,6 +4258,14 @@ def cmd_systemd(args) -> int:
         sys.stdout.write(systemd_gen.render_map_service() if args.service
                          else systemd_gen.render_map_timer(args.map))
         return 0
+    if getattr(args, "meta_keepalive", False):
+        # 権限の不使用の見張りの timer/service は 1 日 1 回・アカウント別ではない。
+        if args.account or getattr(args, "maintain", False) or getattr(args, "collect_only", False):
+            print("--meta-keepalive は account／--maintain／--collect-only と併用できません", file=sys.stderr)
+            return 2
+        sys.stdout.write(systemd_gen.render_meta_keepalive_service() if args.service
+                         else systemd_gen.render_meta_keepalive_timer())
+        return 0
     if getattr(args, "maintain", False):
         # `thth maintain` の timer/service は 1 日 1 回・アカウント別ではない。
         sys.stdout.write(systemd_gen.render_maintain_service() if args.service
@@ -4839,8 +4847,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_systemd.add_argument("account", nargs="?")
     p_systemd.add_argument("--maintain", action="store_true",
                            help="thth maintain（トークン保守・1 日 1 回）の unit を出す")
+    p_systemd.add_argument("--meta-keepalive", action="store_true", dest="meta_keepalive",
+                           help="thth admin meta keepalive（権限の不使用の見張り・1 日 1 回）の unit を出す")
     p_systemd.add_argument("--service", action="store_true",
-                           help="--maintain／--collect-only と併用: .timer でなく .service を出す")
+                           help="--maintain／--meta-keepalive／--collect-only と併用: .timer でなく .service を出す")
     p_systemd.add_argument("--collect-only", action="store_true",
                            help="採集だけの unit を出す（同席専用＝scheduled: false の"
                                 "アカウント用。thth-collect@<account>）")

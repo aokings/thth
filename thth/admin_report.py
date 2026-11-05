@@ -374,6 +374,9 @@ def register(sub):
     # 招待リンク（設計 3.10.0）。口の中身は `thth/invites.py` に閉じる。
     from . import invites
     invites.register_admin(commands)
+    # 権限の不使用の見張り（計画 Meta 全部盛り M5）。口の中身は `thth/permission_watch_cli.py` に閉じる。
+    from . import permission_watch_cli
+    permission_watch_cli.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

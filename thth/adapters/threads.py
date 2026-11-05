@@ -1222,6 +1222,30 @@ class ThreadsAdapter(base.Adapter):
     # 引く（Meta 自身の公開プロフィール・第三者ではない）。
     PROFILE_LOOKUP_USERNAME = "threads"
 
+    # 権限の不使用の見張り（`permission_watch`・計画 Meta 全部盛り §3.3）の最小の読み。**読むだけの権限だけ。**
+    # 書く権限（投稿・返信・削除）をここに足さない（`tests/test_m5_permission_watch.py` が縛る）。
+    KEEPALIVE_READS = frozenset({"threads_basic", "threads_manage_insights", "threads_read_replies",
+                                 "threads_keyword_search", "threads_manage_mentions",
+                                 "threads_profile_discovery", "threads_location_tagging"})
+
+    def keepalive_read(self, permission: str) -> None:
+        """その権限を使う読みを 1 回（返信だけ投稿を引くので 2 回）。答えの中身は使わない・残さない。"""
+        user_id = self.user_id
+        if permission == "threads_basic":
+            self._get("/v1.0/me", {"fields": "id"})
+        elif permission == "threads_manage_insights":
+            now = int(time.time())
+            self._get(f"/v1.0/{user_id}/threads_insights",
+                      {"metric": "views", "since": now - 86400, "until": now})
+        elif permission == "threads_read_replies":
+            rows = self._rows(self._get(f"/v1.0/{user_id}/threads", {"fields": "id", "limit": 1}), "投稿の一覧")
+            if not rows:
+                raise base.AdapterError("permission_keepalive_no_target: 投稿が無いので返信を読めません")
+            self._get(f"/v1.0/{rows[0]['id']}/conversation", {"fields": "id", "limit": 1})
+        else:
+            probe = next(p for p in self._extra_probes(user_id) if p.permission == permission)
+            self._get(probe.path, probe.params)
+
     def _extra_probes(self, user_id: str) -> list:
         return [
             # **L2** https://developers.facebook.com/docs/threads/keyword-search

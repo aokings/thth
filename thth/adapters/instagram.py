@@ -627,6 +627,21 @@ class InstagramAdapter(fb.FacebookAdapter):
                     "appsecret_proof": bool(self.app_secret), "publishing": publishing})
         return out
 
+    # 権限の不使用の見張り（`permission_watch`）の最小の読み。**読むだけの権限だけ。**
+    KEEPALIVE_READS = frozenset({"instagram_basic", "instagram_manage_comments", "instagram_manage_insights"})
+
+    def keepalive_read(self, permission: str) -> None:
+        """その権限を使う読みを 1 回（コメントだけ投稿を引くので 2 回）。答えの中身は使わない・残さない。"""
+        if permission == "instagram_basic":
+            self.whoami()
+        elif permission == "instagram_manage_comments":
+            self._keepalive_comments(permission)
+        else:
+            now = int(jst.now_jst().timestamp())
+            name, spec = ACCOUNT_DAILY_SPECS[0]
+            self._insight_rows(f"/{self.ig_user_id}/insights", (name,),
+                               dict(spec, since=str(now - 2 * 86400), until=str(now - 86400)), "口座の日次")
+
     def probe(self, *, get=None) -> list:
         """読み取りだけで能力を測る（`thth doctor`）。**投稿・返信・削除は呼ばない。**"""
         results = []
