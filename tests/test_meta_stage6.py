@@ -179,13 +179,23 @@ def test_形の違う頁は1行も落とさず_取り込めない状態にする
     w.add("page", PAGE, "feed", comment(1))
     good = w("webhook", "meta", "pull", {"after": None})
     for broken in ({**good, "rows": [dict(good["rows"][0], key="x" * 64)]},
-                   {**good, "rows": [dict(good["rows"][0], object="user")]},
+                   {**good, "rows": [dict(good["rows"][0], object="../x")]},
                    {**good, "next": "../x"}, {"rows": "x", "next": None, "stats": {}}, ["not", "dict"]):
         w.broken_page = broken
         with pytest.raises(webhook.WebhookError):
             webhook.pull_once()
         assert webhook.rows_for(FB_ACCOUNT) == []
     assert not any(op == "ack" for op, _ in w.calls)
+
+
+def test_知らないobjectは頁を断らず捨てて数える_同じ頁の行は取り込む(env):
+    w = env["worker"]
+    w.add("whatsapp_business", "123", "messages", {"id": "1"})
+    w.add("page", PAGE, "feed", comment(1))
+    result = webhook.pull_once()
+    assert result["pulled"] == 2 and result["routed"] == {FB_ACCOUNT: 1}
+    assert result["unrouted"] == {"whatsapp_business": 1} and w.rows == []
+    assert webhook.status()["unrouted"] == {"whatsapp_business": 1} and not webhook.status().get("down_since")
 
 
 def test_頁を辿って全部取り込む(env):
@@ -503,8 +513,71 @@ def test_本文を読み直せない返信は台帳に入れず次の採取で�
     result, _calls = _th_collect(monkeypatch, broken, now=now)
     assert replies.load(TH_ACCOUNT)["replies"] == []
     assert not any("webhook" in e.lower() or "404" in e for e in result["errors"]), "読めない返信を採取の失敗に数えた"
-    _th_collect(monkeypatch, _th_body, now=now)
+    _th_collect(monkeypatch, _th_body, now=now + datetime.timedelta(hours=1))
     assert [r["reply_id"] for r in replies.load(TH_ACCOUNT)["replies"]] == ["17901"]
+    assert webhook.fill_failures(TH_ACCOUNT) == {}, "読めたあとも失敗の記録が残った"
+
+
+def test_読めない返信は同じidを2度目の採取で呼ばず_間隔を倍にして4回で打ち切る(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    th["worker"].add("threads", TH_USER, "replies", th_reply(1))
+    webhook.pull_once()
+    calls = []
+
+    def broken(post_id):
+        calls.append(post_id)
+        raise base.AdapterError("投稿の取得: HTTP 404")
+    hour = datetime.timedelta(hours=1)
+    for at, total in ((0, 1), (0.5, 1), (1, 2), (2.5, 2), (3, 3), (6.5, 3), (7, 4), (40, 4)):
+        _th_collect(monkeypatch, broken, now=now + at * hour)
+        assert len(calls) == total, at
+    row = webhook.fill_failures(TH_ACCOUNT)["17901"]
+    assert set(row) == {"tries", "first_at", "next_at"} and row["tries"] == 4
+    # 記録は通知の行に混ざらない・本文を持たない。
+    assert [r["field"] for r in webhook.rows_for(TH_ACCOUNT)] == ["replies"]
+    assert os.stat(webhook.inbox_dir(TH_ACCOUNT) / webhook.FILL_FILE).st_mode & 0o077 == 0
+    # 元の通知の行と同じ日数で記録も消える。
+    webhook.save_fill_failures(TH_ACCOUNT, webhook.fill_failures(TH_ACCOUNT), now + 31 * 24 * hour)
+    assert webhook.fill_failures(TH_ACCOUNT) == {}
+
+
+def test_読めない行が25件あっても読める行が写る(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    broken = {f"1790{n}" for n in range(1, 26)}
+    for n in range(1, 26):
+        th["worker"].add("threads", TH_USER, "replies", th_reply(n))
+    th["worker"].add("threads", TH_USER, "replies", th_reply(99))
+    webhook.pull_once()
+
+    def fetch(post_id):
+        if post_id in broken:
+            raise base.AdapterError("投稿の取得: HTTP 404")
+        return _th_body(post_id)
+    _th_collect(monkeypatch, fetch, now=now)
+    assert [r["reply_id"] for r in replies.load(TH_ACCOUNT)["replies"]] == ["179099"]
+
+
+def test_1回の採取の失敗は上限まで(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    for n in range(collect.WEBHOOK_FILL_FAILS_MAX + 5):
+        th["worker"].add("threads", TH_USER, "replies", th_reply(n))
+    webhook.pull_once()
+    calls = []
+
+    def broken(post_id):
+        calls.append(post_id)
+        raise base.AdapterError("投稿の取得: HTTP 404")
+    _th_collect(monkeypatch, broken, now=now)
+    assert len(calls) == collect.WEBHOOK_FILL_FAILS_MAX
 
 
 def test_読み直しは1回の採取で上限まで(th, monkeypatch):

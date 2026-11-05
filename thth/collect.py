@@ -67,6 +67,8 @@ REPLY_MARKS_HOURS = [1, 6, 24, 72, 168]
 WEBHOOK_REPLY_MARKS_HOURS = [24, 168]
 # 1 回の採取で、Webhook の行の本文を読み直す上限（`webhook_fill`・読めなかった行は次の採取でまた試す）。
 WEBHOOK_FILL_MAX = 20
+# 1 回の採取で、読み直しに失敗してよい上限（読み直せた数とは別に数える・間隔は `webhook.note_fill_failure`）。
+WEBHOOK_FILL_FAILS_MAX = 50
 
 def metric_window_days():
     return math.ceil(max(AGE_MARKS_HOURS) * 1.25 / 24)
@@ -893,6 +895,8 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
     自分の投稿でないものは台帳に写さない（記録は `state/<口座>/inbox/` に残る）。
     本文の無い行（Threads・Worker は id と時刻だけを積む）は、写す分だけ `webhook_fill` で読み直す。読めなければ
     写さない（巡回が拾う）。**本文の無い行を台帳に入れない**——入れると巡回が同じ id を既知として飛ばす。
+    読めなかった id は `state/<口座>/inbox/fill_failures.json` に残し、間隔を倍にして数回で打ち切る（消された返信を
+    毎回読み直さない）。失敗は読み直しの上限（`WEBHOOK_FILL_MAX`）を食わないので、読める行が締め出されない。
     """
     if not getattr(adapter, "WEBHOOK_REPLIES", False):
         return []
@@ -913,8 +917,11 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
         if isinstance(root, str) and root in mine and _safe_post_id(root):
             by_post.setdefault(root, []).append(row)
     touched = []
+    from . import webhook as webhook_mod
     fill = getattr(adapter, "webhook_fill", None)
-    fills_left = WEBHOOK_FILL_MAX
+    account = getattr(adapter, "webhook_account", None)
+    failures = _fill_failures(webhook_mod, account, log) if callable(fill) and account else {}
+    fills_left, fails_left, failures_changed = WEBHOOK_FILL_MAX, WEBHOOK_FILL_FAILS_MAX, False
     for post_id, items in sorted(by_post.items()):
         path = os.path.join(replies_dir, f"{postid_mod.to_filename(post_id)}.ndjson")
         known = {reply_row_id(row) for row in _reply_rows(path)}
@@ -924,21 +931,39 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
             if not isinstance(rid, str) or not rid or rid in known:
                 continue
             if "text" not in row:
-                if not callable(fill) or fills_left <= 0:
+                if (not callable(fill) or fills_left <= 0 or fails_left <= 0
+                        or not webhook_mod.fill_due(failures, rid, now)):
                     continue
-                fills_left -= 1
                 try:
                     row = fill(row)
                 except Exception as e:  # noqa: BLE001 — 消された返信もここに来る。採取の失敗に数えない
+                    webhook_mod.note_fill_failure(failures, rid, now)
+                    fails_left -= 1
+                    failures_changed = True
                     log(f"Webhook の返信を読み直せません: {rid}（{redact_mod.redact(str(e))}）")
                     continue
+                fills_left -= 1
+                failures_changed = failures.pop(rid, None) is not None or failures_changed
             known.add(rid)
             fresh.append({**row, "kind": "reply", "post_id": post_id, "collected_at": jst.iso(now)})
         if fresh:
             _append_ndjson(path, fresh)
             touched.append(path)
             log(f"返信 {len(fresh)} 件（Webhook）: {post_id}")
+    if failures_changed and account:
+        try:
+            webhook_mod.save_fill_failures(account, failures, now)
+        except (OSError, ValueError) as e:  # 残せなくても次の採取でまた試すだけ
+            log(f"Webhook の読み直しの記録を残せません: {redact_mod.redact(str(e))}")
     return touched
+
+
+def _fill_failures(webhook_mod, account: str, log) -> dict:
+    try:
+        return webhook_mod.fill_failures(account)
+    except (OSError, ValueError) as e:  # 読めなければ記録なしで続ける（採取の他を止めない）
+        log(f"Webhook の読み直しの記録を読めません: {redact_mod.redact(str(e))}")
+        return {}
 
 
 def _collect_follow(adapter, account_cfg: dict, due: list, *, now, owned, paid_reads: bool,

@@ -25,6 +25,7 @@ VM の `thth worker` が 30 秒ごとに署名つき relay（`/relay/v/webhook/m
   `state/_webhook/status.json`         最後の取り込み・取り込めない状態の始まり・Worker の数・捨てた数
   `state/_webhook/outages.ndjson`      取り込めなかった時間・消えた数・断った数（1 件 1 行・追記）
   `state/<口座>/inbox/<日>.ndjson`      口座に振り分けた変化（30 日で消す）
+  `state/<口座>/inbox/fill_failures.json`  本文を読み直せなかった id・回数・次の時刻（30 日で消す）
 """
 from __future__ import annotations
 
@@ -47,7 +48,9 @@ DASHBOARD_FIELDS = {"instagram": ("comments", "mentions", "story_insights"),
                     "threads": SUBSCRIBE_FIELDS["threads"]}
 OBJECT_BY_MEDIUM = {"facebook": "page", "instagram": "instagram", "threads": "threads"}
 ID_KEY = {"facebook": "page_id", "instagram": "ig_user_id", "threads": "user_id"}
-OBJECTS = frozenset(OBJECT_BY_MEDIUM.values())
+# 頁の行の `object` の形。**知らない object でも頁は断らない**（Worker が先に新しい種類を積んでも取り込みを止めない・
+# `_pull` が `unrouted` に数えて ack する）。
+OBJECT_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 # 取り込みの間隔（`thth worker` は 2 秒ごとに回るので、ここで間を空ける）。Worker の RELAY_JOB_LIMIT は 180/分。
 PULL_EVERY_SECONDS = 30
 # 最後の取り込みの成功がこれより新しければ「Webhook が届いている」（collect が巡回の間隔を伸ばす）。
@@ -57,6 +60,10 @@ DOWN_AFTER = datetime.timedelta(minutes=5)
 # 購読してから一度も取り込めていない状態をこれより長く見たら events に出す。
 NEVER_PULLED_AFTER = datetime.timedelta(minutes=10)
 KEEP_DAYS = 30
+# 本文を読み直せなかった id の記録（`state/<口座>/inbox/` の脇）。1・2・4 時間と空けて、4 回で打ち切る（巡回は続く）。
+FILL_FILE = "fill_failures.json"
+FILL_RETRY_FIRST = datetime.timedelta(hours=1)
+FILL_TRIES_MAX = 4
 PAGES_MAX = 50
 ACK_MAX = 200
 FILE_MAX = 64 * 1024 * 1024
@@ -158,6 +165,47 @@ def rows_for(account: str) -> list:
         return []
 
 
+def fill_failures(account: str) -> dict:
+    """本文を読み直せなかった id → `{tries, first_at, next_at}`（本文は持たない）。無ければ空。"""
+    try:
+        with server_files.directory(inbox_dir(account), private=True) as fd:
+            return _read_json(fd, FILL_FILE, {})
+    except FileNotFoundError:
+        return {}
+
+
+def fill_due(failures: dict, message_id: str, now) -> bool:
+    """この id を今読み直してよいか（記録が無い・次の時刻を過ぎた・打ち切っていない）。"""
+    row = failures.get(message_id)
+    if not isinstance(row, dict):
+        return True
+    if not isinstance(row.get("tries"), int) or row["tries"] >= FILL_TRIES_MAX:
+        return False
+    at = jst.parse(row.get("next_at")) if isinstance(row.get("next_at"), str) else None
+    return at is None or now >= at
+
+
+def note_fill_failure(failures: dict, message_id: str, now) -> None:
+    """失敗を 1 回足す。次に試すまでの間隔は 1 回ごとに倍（`FILL_RETRY_FIRST` から）。"""
+    row = failures.get(message_id) if isinstance(failures.get(message_id), dict) else {}
+    tries = (row.get("tries") if isinstance(row.get("tries"), int) else 0) + 1
+    failures[message_id] = {"tries": tries, "first_at": row.get("first_at") or jst.iso(now),
+                            "next_at": jst.iso(now + FILL_RETRY_FIRST * 2 ** (tries - 1))}
+
+
+def save_fill_failures(account: str, failures: dict, now) -> None:
+    """記録を書く。`KEEP_DAYS` を過ぎた id は消す（元の通知の行も同じ日数で消える）。"""
+    floor = now - datetime.timedelta(days=KEEP_DAYS)
+
+    def fresh(row):
+        first = jst.parse(row.get("first_at")) if isinstance(row, dict) and isinstance(row.get("first_at"), str) else None
+        return first is not None and first >= floor
+    with server_files.directory(inbox_dir(account), create=True, private=True) as fd:
+        with server_files.lock_at(fd, ".write.lock"):
+            server_files.replace_at(fd, FILL_FILE, server_files.encode({k: v for k, v in failures.items() if fresh(v)}),
+                                    private=True)
+
+
 def counts_for(account: str) -> dict:
     """口座の記録の数（欄ごと）と最後に受けた時刻。`thth webhook status` が出す（本文は出さない）。"""
     rows = rows_for(account)
@@ -243,7 +291,8 @@ def routes() -> dict:
 
 def _valid_row(row) -> bool:
     return (type(row) is dict and isinstance(row.get("key"), str) and KEY.fullmatch(row["key"]) is not None
-            and row.get("object") in OBJECTS and isinstance(row.get("entry_id"), str)
+            and isinstance(row.get("object"), str) and OBJECT_NAME.fullmatch(row["object"]) is not None
+            and isinstance(row.get("entry_id"), str)
             and ENTRY_ID.fullmatch(row["entry_id"]) is not None and isinstance(row.get("field"), str)
             and type(row.get("time")) is int and (row.get("value") is None or isinstance(row.get("value"), str))
             and type(row.get("oversize")) is bool and type(row.get("received_at")) is int)
