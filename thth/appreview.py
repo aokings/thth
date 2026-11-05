@@ -108,13 +108,13 @@ SEGMENTS = (
          ("two", "thth retract {TH} {TH_POST} --reason {REASON} --by {BY}"),
          ("hand", "スマホで投稿が消えたのを見せたら Return")),
     # ---------------------------------------------------------------- Facebook ページと Instagram の審査員の流れ
-    _seg("flow-meta", "facebook", "Reviewer flow — Facebook Login for Business, a Page and its Instagram account.",
-         ["pages_show_list", "business_management", "public_profile", "threads_business_basic"],
-         ("prep", _LOGIN_PREP),
-         ("hand", "Authorize → Facebook ログイン for Business でテストのページと Instagram を選び、権限の一覧を見せて"
+    _seg("flow-meta", "facebook", "Reviewer flow — Facebook Login for Business, a Facebook Page.",
+         ["pages_show_list", "business_management", "public_profile"],
+         ("prep", _LOGIN_PREP + "（Facebook ページの招待）"),
+         ("hand", "Authorize → Facebook ログイン for Business でテストのページを選び、権限の一覧を見せて"
                   "許可 → 完了ページが出たら Return"),
          ("off", _OFF_SECRET), ("login",),
-         ("cmd", "thth doctor {FB}"), ("cmd", "thth doctor {IG}")),
+         ("cmd", "thth doctor {FB}")),
     # ---------------------------------------------------------------- Facebook ページ
     _seg("fb-read", "facebook", "pages_read_engagement, read_insights — the Page's posts and metrics.",
          ["pages_read_engagement", "read_insights"],
@@ -173,6 +173,15 @@ SEGMENTS = (
     _seg("meta-embed", "facebook", "Meta oEmbed Read — the embed HTML of a public Facebook post.",
          ["meta_oembed_read"], ("cmd", "thth embed {FB} {FB_URL}")),
     # ---------------------------------------------------------------- Instagram
+    # 審査員の招待は媒体ごとに 1 本・鍵は口座 1 つ（Worker が口座ごとの鍵の表で引く）。FB の鍵で `doctor {IG}` を打つと
+    # 401 `invalid_key` なので、IG の区間の前に IG の招待で login をやり直す（計画 §4 の「遠くの道で分かったこと」）。
+    _seg("flow-ig", "instagram", "Reviewer flow — an Instagram account, with the Threads account linked to it.",
+         ["threads_business_basic"],
+         ("prep", _LOGIN_PREP + "（Instagram の招待・Facebook ページの招待とは別の 1 本）"),
+         ("hand", "Authorize → Facebook ログイン for Business で Instagram を選び、権限の一覧を見せて許可 → "
+                  "完了ページが出たら Return"),
+         ("off", _OFF_SECRET), ("login",),
+         ("cmd", "thth doctor {IG}")),
     _seg("ig-basic", "instagram", "instagram_basic — the Instagram account's own media.", ["instagram_basic"],
          ("cmd", "thth posts {IG} --limit 3")),
     _seg("ig-publish", "instagram", "instagram_content_publish — publish an image.", ["instagram_content_publish"],
@@ -204,10 +213,12 @@ SEGMENTS = (
          ("two", "thth retract {IG} {IG_POST} --reason {REASON} --by {BY}"),
          ("hand", "Instagram から消えたのを見せたら Return")),
     # ---------------------------------------------------------------- 広告
-    _seg("flow-ads", "ads", "Reviewer flow — authorize an ad account.", [],
-         ("prep", _LOGIN_PREP),
-         ("hand", "Authorize → 広告アカウントを選び、権限の一覧を見せて許可 → 完了ページが出たら Return"),
-         ("off", _OFF_SECRET), ("login",), ("cmd", "thth ads doctor {AD}")),
+    # 広告の招待は資格の行を作らず、`thth login` の鍵が広告の台帳に結ばれない（遠くの道に出ていない・計画 §4）。
+    # 広告の区間は login せず、運営者の台帳のある手元の thth で撮る（`appreview_rec.sh` の REC_LOCAL_THTH）。
+    _seg("flow-ads", "ads", "Reviewer flow — an ad account, shown from the operator's ledger.", [],
+         ("prep", "広告の区間（flow-ads・ads-*）は thth login を使わず、運営者の台帳（adaccounts/）のある手元の thth で撮る: "
+                  "REC_LOCAL_THTH にその thth の命令を渡しておく（例 REC_LOCAL_THTH='python3 -m thth'）"),
+         ("cmd", "thth ads doctor {AD}")),
     _seg("ads-read", "ads", "ads_read — the ad account and its insights.", ["ads_read"],
          ("cmd", "thth ads show {AD}"), ("cmd", "thth ads insights {AD}")),
     _seg("ads-manage", "ads", "ads_management, pages_manage_ads — boost a Page post (created paused), then stop.",

@@ -503,6 +503,10 @@ def record_observation(account_name, report, *, probed_at=None, credential_gener
                    auth_via=previous.get('auth_via'),auth_observed_at=previous.get('auth_observed_at'),
                    auth_credential_generation=previous.get('auth_credential_generation'))
         handoff_cursor.write_snapshot(account_name,'doctor.json',value)
+    if any(row.get('key')=='connected_threads_user' and row.get('ok') is True for row in value['probes']):
+        # Threads の口座の id を読めた（`threads_business_basic`）。permission_watch が数える 1 行（命令の名前・媒体・結果だけ）。
+        from . import meta_public
+        meta_public.record_read(account_name,'connected_threads_user',cfg.get('media'),True)
     return value
 
 

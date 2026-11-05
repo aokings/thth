@@ -88,14 +88,13 @@ items	threads_delete
 two	thth retract {TH} {TH_POST} --reason {REASON} --by {BY}
 hand	スマホで投稿が消えたのを見せたら Return
 end
-seg	flow-meta	facebook	Reviewer flow — Facebook Login for Business, a Page and its Instagram account.
-items	pages_show_list business_management public_profile threads_business_basic
-prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく
-hand	Authorize → Facebook ログイン for Business でテストのページと Instagram を選び、権限の一覧を見せて許可 → 完了ページが出たら Return
+seg	flow-meta	facebook	Reviewer flow — Facebook Login for Business, a Facebook Page.
+items	pages_show_list business_management public_profile
+prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく（Facebook ページの招待）
+hand	Authorize → Facebook ログイン for Business でテストのページを選び、権限の一覧を見せて許可 → 完了ページが出たら Return
 off	完了ページの secret と鍵を録画の外で控え、画面から消す
 login
 cmd	thth doctor {FB}
-cmd	thth doctor {IG}
 end
 seg	fb-read	facebook	pages_read_engagement, read_insights — the Page's posts and metrics.
 items	pages_read_engagement read_insights
@@ -179,6 +178,14 @@ seg	meta-embed	facebook	Meta oEmbed Read — the embed HTML of a public Facebook
 items	meta_oembed_read
 cmd	thth embed {FB} {FB_URL}
 end
+seg	flow-ig	instagram	Reviewer flow — an Instagram account, with the Threads account linked to it.
+items	threads_business_basic
+prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく（Instagram の招待・Facebook ページの招待とは別の 1 本）
+hand	Authorize → Facebook ログイン for Business で Instagram を選び、権限の一覧を見せて許可 → 完了ページが出たら Return
+off	完了ページの secret と鍵を録画の外で控え、画面から消す
+login
+cmd	thth doctor {IG}
+end
 seg	ig-basic	instagram	instagram_basic — the Instagram account's own media.
 items	instagram_basic
 cmd	thth posts {IG} --limit 3
@@ -228,12 +235,9 @@ items	instagram_manage_contents
 two	thth retract {IG} {IG_POST} --reason {REASON} --by {BY}
 hand	Instagram から消えたのを見せたら Return
 end
-seg	flow-ads	ads	Reviewer flow — authorize an ad account.
+seg	flow-ads	ads	Reviewer flow — an ad account, shown from the operator's ledger.
 items	-
-prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく
-hand	Authorize → 広告アカウントを選び、権限の一覧を見せて許可 → 完了ページが出たら Return
-off	完了ページの secret と鍵を録画の外で控え、画面から消す
-login
+prep	広告の区間（flow-ads・ads-*）は thth login を使わず、運営者の台帳（adaccounts/）のある手元の thth で撮る: REC_LOCAL_THTH にその thth の命令を渡しておく（例 REC_LOCAL_THTH='python3 -m thth'）
 cmd	thth ads doctor {AD}
 end
 seg	ads-read	ads	ads_read — the ad account and its insights.

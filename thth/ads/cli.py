@@ -182,8 +182,21 @@ def cmd_accounts(args) -> int:
 
 # ------------------------------------------------------------------ 計画 Meta 全部盛り M3（読むだけ・保存しない）
 
-def _read_only(args, call, render) -> int:
-    """読むだけの口の枠: 読んで出すだけ（snapshot にも台帳にも書かない）。"""
+def _record_read(name, action, ok) -> None:
+    """広告の口座の runs に 1 行（命令の名前・結果だけ。カタログ・リード・数・設定の中身は入れない）。
+    `permission_watch` が `adaccount_state/<名前>/` のここを数える。書けなくても読む口は止めない。"""
+    from .. import runs as runs_mod
+    now = jst.now_jst()
+    try:
+        runs_mod.append_run(ledger.ensure_state_dir(name), {
+            "account": name, "run_id": f"{action}-{jst.iso(now)}", "mode": "read", "action": action,
+            "medium": "ads", "status": "ok" if ok else "error", "error": None}, jst.month_str(now))
+    except (OSError, ValueError, accounts.AccountError):
+        pass
+
+
+def _read_only(args, call, render, action) -> int:
+    """読むだけの口の枠: 読んで出すだけ（snapshot にも台帳にも書かない。残すのは runs の 1 行だけ）。"""
     try:
         _cfg, _token, reader = _reader(args.name)
         value = call(reader)
@@ -191,9 +204,11 @@ def _read_only(args, call, render) -> int:
         if exc.code in READ_REFUSALS:
             print(guide.skill_line(), file=sys.stderr)
             return refusal.emit(args, exc.code)
+        _record_read(args.name, action, False)
         return _fail(_error_text(exc))
     except (accounts.AccountError, meta_errors.RateLimited, ValueError) as exc:
         return _fail(_error_text(exc))
+    _record_read(args.name, action, True)
     _emit({"adaccount": args.name, "storage": "display_only", **value}, args.json, render)
     return 0
 
@@ -204,7 +219,7 @@ def cmd_catalog(args) -> int:
             print(f"商品カタログ {len(value['catalogs'])} 件（{args.name}）")
             for row in value["catalogs"]:
                 print(f"  {row['id']}  {row['name']}  商品 {row['product_count']}")
-        return _read_only(args, lambda reader: {"catalogs": reader.catalogs()}, render)
+        return _read_only(args, lambda reader: {"catalogs": reader.catalogs()}, render, "ads_catalog")
 
     def render_products(value):
         print(f"商品 {len(value['products'])} 件（カタログ {args.catalog}・先頭の 1 頁）")
@@ -212,7 +227,7 @@ def cmd_catalog(args) -> int:
             print(f"  {row.get('id')}  {row.get('retailer_id') or '—'}  {row.get('name') or '—'}")
     return _read_only(args, lambda reader: {"catalog": args.catalog,
                                             "products": reader.catalog_products(args.catalog, args.limit)},
-                      render_products)
+                      render_products, "ads_catalog")
 
 
 def _lead_page(reader, wanted) -> str:
@@ -245,7 +260,7 @@ def cmd_leads(args) -> int:
         print(f"リード {len(value['leads'])} 件（フォーム {value['form']}・先頭の 1 頁・端末に出すだけで残しません）")
         for row in value["leads"]:
             print(f"  {row['created_time']}  {row['id']}  {json.dumps(row['fields'], ensure_ascii=False)}")
-    return _read_only(args, call, render)
+    return _read_only(args, call, render, "ads_leads")
 
 
 def cmd_network(args) -> int:
@@ -253,7 +268,7 @@ def cmd_network(args) -> int:
         print(f"Audience Network の数（{args.name}・省略 {value['omitted']} 行）")
         for row in value["rows"]:
             print(f"  {row['metric']}  {row['value']}")
-    return _read_only(args, lambda reader: reader.audience_network(args.since, args.until), render)
+    return _read_only(args, lambda reader: reader.audience_network(args.since, args.until), render, "ads_network")
 
 
 def cmd_shop(args) -> int:
@@ -261,7 +276,7 @@ def cmd_shop(args) -> int:
         print(f"ショップの設定 {len(value['shops'])} 件（{args.name}）")
         for row in value["shops"]:
             print(f"  {row.get('id')}  {row.get('cta') or '—'}  {row.get('shop_setup') or '—'}")
-    return _read_only(args, lambda reader: {"shops": reader.shop_settings()}, render)
+    return _read_only(args, lambda reader: {"shops": reader.shop_settings()}, render, "ads_shop")
 
 
 # ------------------------------------------------------------------ show
