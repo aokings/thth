@@ -250,7 +250,9 @@ def test_askに同じgoalの他の媒体の観測_observedがあるときだけ(
     same = plaza_moments.same_goal("kopicha-threads", "reach", medium="threads")
     assert same["n"] == 1 and same["items"][0]["plaza_id"] == measure["plaza_id"]
     assert same["line"].startswith(f"広場: 同じ goal（reach）で他の媒体では mastodon {measure['plaza_id']}")
-    assert "views_24h +12（n=5/6）" in same["line"] and "999" not in same["line"]
+    # 本文の 999 を拾っていないこと。plaza_id は乱数で「999」を含みうる（11/05 の CI の赤）ので除いて見る。
+    assert "views_24h +12（n=5/6）" in same["line"]
+    assert "999" not in same["line"].replace(measure["plaza_id"], "")
     assert stated["plaza_id"] not in json.dumps(same, ensure_ascii=False)
     # 同じ媒体の書き込みは「他の媒体」ではない。goal が違えば出さない。
     assert plaza_moments.same_goal("kopicha-threads", "reach", medium="mastodon") is None
