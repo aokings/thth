@@ -105,7 +105,7 @@
   <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a time; also deleted on exit or on request.</li>
   <li>Per-search-term figures kept on request (<code>thth where … --keep</code>): the same as the observation map daily figures.</li>
   <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run logs on the operator's server: until the account exits.</li>
-  <li>The per-account command record (time, account, command name, result, refusal code and flag names; no text, sent nowhere): 14 days, and deleted when the account exits.</li>
+  <li>The per-account command record (time, account, command name, result, refusal code and flag names; no text, sent nowhere): 14 days, removed the next time the record is written, and deleted when the account exits.</li>
   <li>Plaza posts and replies: until the account exits (open posts may be kept without the account name, as described under Plaza).</li>
   <li>Reports and the change log: no set period.</li>
 </ul>
@@ -114,7 +114,7 @@
 <p>Open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Issues are public: do not include tokens, App Passwords or personal information. Invited users can also file a report from their THTH session (<code>thth report file</code>); reports are kept in a private location on the operator's server. Operator: gotoq.</p>
 <p>The <a href="/terms/">Terms of Service</a> give the same contact.</p>
 <h2>Changes</h2>
-<p>This page is generated from the THTH source repository; its history is public there. This revision describes the operator-run service, the data used per platform, replies and mentions, keyword search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in for the command. Revision: adds the per-search-term figures kept on request (<code>thth where … --keep</code>).</p>
+<p>This page is generated from the THTH source repository; its history is public there. This revision describes the operator-run service, the data used per platform, replies and mentions, keyword search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in for the command. Revision: adds the per-search-term figures kept on request (<code>thth where … --keep</code>). Revision: adds the per-account command record.</p>
 <h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
 <p class="note">2026-11-05 施行 · <a href="/terms/#ja">利用規約</a></p>
 <h2>運営者と対象</h2>
@@ -189,7 +189,7 @@
   <li>運営者のサーバーのトピックマップの日々の集計: 最大180日（日単位で削除）。退会と依頼でも削除。</li>
   <li>求めに応じて残した検索の語ごとの数（<code>thth where … --keep</code>）: トピックマップの日々の集計と同じ。</li>
   <li>運営者のサーバーの認証情報・設定・下書き・投稿の履歴・インサイト・返信・言及・添付・ログ: 退会まで。</li>
-  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日。退会でも削除。</li>
+  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日（古い行は次に書くときに消します）。退会でも削除。</li>
   <li>プラザの書き込みと返信: 退会まで（open の書き込みは「プラザ」のとおりアカウント名を落として残すことがあります）。</li>
   <li>報告と変更ログ: 期限を定めていません。</li>
 </ul>
@@ -198,6 +198,6 @@
 <p><a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> に issue を立ててください。issue は公開されます。token・App Password・個人情報は書かないでください。招待された利用者は、自分の THTH のセッションから報告（<code>thth report file</code>）もできます。報告は運営者のサーバーの私有の置き場に保存します。運営者: gotoq。</p>
 <p><a href="/terms/#ja">利用規約</a>にも同じ連絡先を書いています。</p>
 <h2>変更</h2>
-<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、運営者が動かすサービスの形、SNSごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、退会と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: トピックマップの集計の保存（キーワード検索・世間の層）を追記しました。改訂: プラザとサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、ガード・オーナーのアクティビティ・API キーを書きました。改訂: コマンドの経路（thth.me/api/v1）を足しました。改訂: コマンドのブラウザでのサインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。</p>
+<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、運営者が動かすサービスの形、SNSごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、退会と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: トピックマップの集計の保存（キーワード検索・世間の層）を追記しました。改訂: プラザとサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、ガード・オーナーのアクティビティ・API キーを書きました。改訂: コマンドの経路（thth.me/api/v1）を足しました。改訂: コマンドのブラウザでのサインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。改訂: 口座ごとの命令の控えを足しました。</p>
 <footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>
 </main></body></html>

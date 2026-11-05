@@ -563,7 +563,7 @@ def build_privacy() -> str:
     add("  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run "
         "logs on the operator's server: until the account exits.</li>")
     add("  <li>The per-account command record (time, account, command name, result, refusal code and flag names; "
-        "no text, sent nowhere): 14 days, and deleted when the account exits.</li>")
+        "no text, sent nowhere): 14 days, removed the next time the record is written, and deleted when the account exits.</li>")
     add("  <li>Plaza posts and replies: until the account exits (open posts may be kept without the account "
         "name, as described under Plaza).</li>")
     add("  <li>Reports and the change log: no set period.</li>")
@@ -584,7 +584,7 @@ def build_privacy() -> str:
         "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
         "the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in "
         "for the command. Revision: adds the per-search-term figures kept on request (<code>thth where … "
-        "--keep</code>).</p>")
+        "--keep</code>). Revision: adds the per-account command record.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -792,7 +792,7 @@ def build_privacy() -> str:
     add("  <li>運営者のサーバーのトピックマップの日々の集計: 最大180日（日単位で削除）。退会と依頼でも削除。</li>")
     add("  <li>求めに応じて残した検索の語ごとの数（<code>thth where … --keep</code>）: トピックマップの日々の集計と同じ。</li>")
     add("  <li>運営者のサーバーの認証情報・設定・下書き・投稿の履歴・インサイト・返信・言及・添付・ログ: 退会まで。</li>")
-    add("  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日。退会でも削除。</li>")
+    add("  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日（古い行は次に書くときに消します）。退会でも削除。</li>")
     add("  <li>プラザの書き込みと返信: 退会まで（open の書き込みは「プラザ」のとおりアカウント名を落として残すことがあります）。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
     add("</ul>")
@@ -809,7 +809,7 @@ def build_privacy() -> str:
         "退会と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: トピックマップの集計の保存（キーワード検索・世間の層）を追記しました。"
         "改訂: プラザとサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、ガード・"
         "オーナーのアクティビティ・API キーを書きました。改訂: コマンドの経路（thth.me/api/v1）を足しました。改訂: コマンドのブラウザでの"
-        "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。</p>")
+        "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。改訂: 口座ごとの命令の控えを足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
