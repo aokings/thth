@@ -248,7 +248,9 @@ def bind(adapter,cfg):
              # 計画 Meta 全部盛り 段 M2: Threads の購読の権限の確かめと、通知の本文の読み直し。
              'require_webhook_scopes','webhook_fill',
              # 計画 Meta 全部盛り M3: 読むだけの口。
-             'oembed','public_search','upcoming_events'}
+             'oembed','public_search','upcoming_events',
+             # 計画 Meta 全部盛り 段 M5: 権限の不使用の見張りの最小の読み。
+             'keepalive_read'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

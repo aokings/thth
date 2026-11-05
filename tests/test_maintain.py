@@ -200,6 +200,8 @@ def stuck_account(tmp_path, monkeypatch, isolated_account_factory, thth_root):
     account["mails"] = mails
     account["state"] = accounts_mod.state_dir_for(account["name"])
     account["cfg"] = accounts_mod.load_account(account["name"])
+    # ここは鍵と run の止まりの試験。権限の不使用の知らせ（55 日使っていない鍵で鳴る）は M5 の試験が見る。
+    monkeypatch.setattr(report, "_meta_watch", lambda now: ({}, {}))
     return account
 
 

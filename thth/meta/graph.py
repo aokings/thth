@@ -30,7 +30,7 @@ import urllib.request
 from .. import appenv, httpsafe
 from .. import redact as redact_mod
 from ..adapters import base
-from . import errors, usage
+from . import calls, errors, usage
 
 # **版は 1 か所**（L2: changelog の最新 v26.0・2026-07-29）。上げるときはここだけを直す。
 GRAPH_VERSION = "v26.0"
@@ -130,6 +130,11 @@ class Client:
         if self.account or self.usage_path:
             usage.observe(self.account, headers, path=self.usage_path)
 
+    def _tally(self, ok: bool) -> None:
+        """広告の口座の呼び出しを数える（段の条件・`calls.py`）。ページ・IG の口座は数えない。"""
+        if self.usage_path:
+            calls.note(self.usage_path, ok)
+
     def request(self, method: str, path: str, *, params: dict | None = None,
                 form: dict | None = None, body: bytes | None = None,
                 headers: dict | None = None, timeout: float | None = None,
@@ -171,6 +176,7 @@ class Client:
         except urllib.error.HTTPError as exc:
             err = errors.graph_error(exc)
             self._observe(exc.headers)
+            self._tally(False)
             if errors.is_rate_limited(err):
                 code = err.get("code")
                 minutes, until = usage.note_rate_limited(self.account, exc.headers, code,
@@ -185,6 +191,7 @@ class Client:
                                          wait_minutes=minutes, until=until, urgent=urgent) from None
             raise
         self._observe(response_headers)
+        self._tally(True)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError("response too large")
         return json.loads(raw) if raw else {}

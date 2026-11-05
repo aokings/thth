@@ -1146,6 +1146,31 @@ class FacebookAdapter(base.Adapter):
                 "付けないと Meta のアプリの設定「Require App Secret」を入れられません")
         return results
 
+    # 権限の不使用の見張り（`permission_watch`・計画 Meta 全部盛り §3.3）の最小の読み。**読むだけの権限だけ。**
+    KEEPALIVE_READS = frozenset({"pages_show_list", "pages_read_engagement", "pages_read_user_content",
+                                 "read_insights", "pages_manage_metadata"})
+
+    def _keepalive_comments(self, permission: str) -> None:
+        """いちばん新しい投稿のコメントを 1 件だけ読む（投稿が無ければ読めない）。"""
+        posts = self.recent_posts(limit=1)
+        if not posts:
+            raise AdapterError("permission_keepalive_no_target: 投稿が無いのでコメントを読めません")
+        self._get(f"/{posts[0]['post_id']}/comments", "コメントの読み",
+                  params={"fields": "id", "limit": 1}, permission=permission)
+
+    def keepalive_read(self, permission: str) -> None:
+        """その権限を使う読みを 1 回（コメントだけ投稿を引くので 2 回）。答えの中身は使わない・残さない。"""
+        if permission == "pages_show_list":
+            self.whoami()
+        elif permission == "pages_read_engagement":
+            self.recent_posts(limit=1)
+        elif permission == "pages_read_user_content":
+            self._keepalive_comments(permission)
+        elif permission == "read_insights":
+            self._page_metric_rows(PAGE_DAILY_METRICS[:1], "ページの日次")
+        else:
+            self.subscribed_webhooks()
+
     def _data_access_verdict(self, value, *, now=None):
         """`/debug_token` の**今の** `data_access_expires_at` → `(ok, detail)`（10/29 段 0・計画 C-2 の 2）。
 

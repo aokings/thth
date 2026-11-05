@@ -118,6 +118,8 @@ COMMANDS += ['plaza hide']
 COMMANDS += ['admin plaza unhide']
 # 段 E（共有アプリの柵）: 全口座の合計と媒体ごとのアプリ全体の上限（読むだけ・--json は 1 つの値）。
 COMMANDS += ['media app-usage']
+# 段 M5（権限の不使用の見張り）: 見る・台帳・最小の読み（--json は 1 つの値）。
+COMMANDS += ['admin meta watch', 'admin meta ledger', 'admin meta set', 'admin meta keepalive']
 
 
 def test_json_table_covers_every_parser():

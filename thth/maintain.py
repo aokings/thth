@@ -82,7 +82,8 @@ ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
                               ADS_TOKEN_EXPIRING, ADS_NOT_GRANTED})
 
 # board の `stuck` に載せる鍵の状態（5.12.3）。`no_token`・`config_error` は `thth run` の止まりが
-# 言い、データの期限は `thth events` が言うので、ここには入れない（同じ話を 2 回言わない）。
+# 言い、データの期限は `thth events` と権限の見張り（`permission_watch`）が言うので、ここには入れない
+# （同じ話を 2 回言わない）。
 TOKEN_INCIDENT_CODES = {REFRESH_FAILED: "token_refresh_failed", EXPIRED: "token_expired",
                         EXPIRING: "token_expiring", TOKEN_INCOMPLETE: "token_incomplete",
                         UNREADABLE: "token_unreadable"}

@@ -449,6 +449,7 @@ def board_summary(now=None) -> dict:
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
     accounts_out = []
     now = now if now is not None else jst.now_jst()
+    meta_view, meta_stuck = _meta_watch(now)
     for name in accounts_mod.list_account_names():
         try:
             account_cfg = accounts_mod.load_account(name)
@@ -566,8 +567,9 @@ def board_summary(now=None) -> dict:
             # endpoint は check の秘密なので board は env を読まない。最後の run が
             # 安全な状態ファイルへ残した「設定有無・配送結果」だけを表示する。
             "incident_notifications": incident_mod.summary(account_cfg, state_dir),
-            # 今も解けていない止まり（無ければ None・hub が読む）。読むだけ。
-            "stuck": incident_mod.stuck(name, state_dir),
+            # 今も解けていない止まり（無ければ None・hub が読む）。読むだけ。本物の止まりが先で、
+            # 無ければ権限の不使用の見張りの知らせ（`permission_watch`・行に `level` が足してある）。
+            "stuck": incident_mod.stuck(name, state_dir) or meta_stuck.get(name),
             "inflight_started": (inflight_diagnostic.since
                                   if inflight_diagnostic else None),
             "inflight_reason": (inflight_diagnostic.reason
@@ -708,7 +710,19 @@ def board_summary(now=None) -> dict:
             # 「外」と「repo の中（互換）」で並ぶ顔ぶれが変わる。**画面が誰の
             # 台帳を読んだのかを言わないと、移行のさなかに何が正か判らない。**
             "accounts_dir": accounts_mod.accounts_dir_info(),
-            "app": app}
+            "app": app,
+            # 権限の不使用の見張りの全体（`permission_watch`・足すだけ）。
+            "meta_watch": meta_view}
+
+
+def _meta_watch(now):
+    """board の `meta_watch` と、口座ごとの `stuck` の行。読めなければ言えないと言う（board を落とさない）。"""
+    from . import permission_watch
+    try:
+        view = permission_watch.build(now=now)
+        return permission_watch.board_cell(view), permission_watch.stuck_rows(view)
+    except Exception:  # noqa: BLE001 — 見張りの読みで board を落とさない
+        return {"cannot_say": "unavailable"}, {}
 
 
 def release_summary():
