@@ -93,6 +93,42 @@ def latest_reply_at(reply_rows: list):
     return latest
 
 
+def in_window(*, now, posted_at, reply_rows: list, own_reply_at, cfg: dict) -> bool:
+    """取り直しの窓の中か。投稿から `live_hours` 以内、または最後の動き（台帳の返信・
+    自分の返信）から `live_hours` 以内。`every_minutes` の間隔は見ない（`candidate` と
+    observe の `live_posts` が同じ判定を使う）。"""
+    import datetime
+    live = datetime.timedelta(hours=cfg["live_hours"])
+    if now - posted_at <= live:
+        return True
+    activity = [t for t in (latest_reply_at(reply_rows), own_reply_at) if t is not None]
+    return bool(activity) and now - max(activity) <= live
+
+
+def live_count(*, now, posts: dict, reply_rows_by_post: dict, own_reply_at: dict, cfg: dict,
+               max_age_hours=None):
+    """取り直しの窓の中にある自分の投稿の数（observe の `live_posts`・11/06）。
+
+    `posts` は post_id → 出した時刻。取り直しが無効の口座（X の既定など）は `None`
+    （言えない・0 にしない）。未来の投稿と、`max_age_hours`（採取が見る `collect_days`）を
+    過ぎた投稿は採取も取り直さないので数えない。
+    """
+    if not cfg.get("enabled"):
+        return None
+    import datetime
+    n = 0
+    for pid, posted_at in posts.items():
+        age = now - posted_at
+        if age < datetime.timedelta(0):
+            continue
+        if max_age_hours is not None and age > datetime.timedelta(hours=max_age_hours):
+            continue
+        if in_window(now=now, posted_at=posted_at, reply_rows=reply_rows_by_post.get(pid) or [],
+                     own_reply_at=own_reply_at.get(pid), cfg=cfg):
+            n += 1
+    return n
+
+
 def candidate(*, now, posted_at, reply_rows: list, fetch_rows: list, own_reply_at, cfg: dict,
               followed_at=None):
     """取り直す候補なら並べ替えの鍵（いちばん新しい動きの時刻）を返す。違えば None。
@@ -102,10 +138,9 @@ def candidate(*, now, posted_at, reply_rows: list, fetch_rows: list, own_reply_a
     これと台帳の取得の行の新しいほうから数える。
     """
     import datetime
-    live = datetime.timedelta(hours=cfg["live_hours"])
     activity = [t for t in (latest_reply_at(reply_rows), own_reply_at) if t is not None]
-    latest = max(activity) if activity else None
-    if now - posted_at > live and (latest is None or now - latest > live):
+    if not in_window(now=now, posted_at=posted_at, reply_rows=reply_rows,
+                     own_reply_at=own_reply_at, cfg=cfg):
         return None
     last = max([t for t in (last_fetch_at(fetch_rows), followed_at) if t is not None], default=None)
     if last is not None and now - last < datetime.timedelta(minutes=cfg["every_minutes"]):
@@ -145,27 +180,51 @@ def read_state(state_dir: str, *, log=None) -> dict:
     壊れていても採取は止めない（読めなければ空として扱い、log に 1 行）。空なら台帳の
     取得の行だけで間隔を数えるので、取りすぎるのは高々 1 回。
     """
+    state, why, detail = _load_state(state_dir)
+    if state is None:
+        path = state_path(state_dir)
+        if log and why == "follow_state_unreadable":
+            log(f"返信の取り直しの記録を読めないので空として扱います: {path}（{detail}）")
+        elif log and why == "follow_state_malformed":
+            log(f"返信の取り直しの記録の形が違うので空として扱います: {path}")
+        return {}
+    return state
+
+
+def _load_state(state_dir: str):
+    """`(post_id → 時刻, 理由コード, 詳細)`。読めたら理由は None、読めなければ中身が None。"""
     path = state_path(state_dir)
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        return {}
+        return None, "follow_state_missing", None
     except (OSError, ValueError) as e:
-        if log:
-            log(f"返信の取り直しの記録を読めないので空として扱います: {path}（{e.__class__.__name__}）")
-        return {}
+        return None, "follow_state_unreadable", e.__class__.__name__
     last = data.get("last") if isinstance(data, dict) else None
     if not isinstance(last, dict):
-        if log:
-            log(f"返信の取り直しの記録の形が違うので空として扱います: {path}")
-        return {}
+        return None, "follow_state_malformed", None
     out = {}
     for pid, raw in last.items():
         at = jst.parse(raw) if isinstance(raw, str) else None
         if at is not None:
             out[str(pid)] = at
-    return out
+    return out, None, None
+
+
+def last_followed(state_dir: str):
+    """この口座で最後に取り直した時刻（VM の `reply_follow.json` の `last` のいちばん新しい値）。
+
+    `(時刻, 理由コード)`。無い（`follow_state_missing`）・壊れている
+    （`follow_state_unreadable`・`follow_state_malformed`）・行が無い（`follow_state_empty`）
+    ときは時刻が None で理由を返す。黙って「取り直していない」にしない。
+    """
+    state, why, _ = _load_state(state_dir)
+    if state is None:
+        return None, why
+    if not state:
+        return None, "follow_state_empty"
+    return max(state.values()), None
 
 
 def write_state(state_dir: str, state: dict, *, now, live_hours: int, log=None) -> None:

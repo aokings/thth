@@ -12,7 +12,9 @@ def _id(value):
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _relations(name, cfg, now):
+def _relations(name, cfg, now, posted=None):
+    """`posted` を渡すと post_id → 出した時刻（いちばん早い記録）を書き込む（observe の
+    `live_posts`・11/06）。"""
     relations, reasons, owned = {}, set(), set()
 
     def accept(row, *, timestamp):
@@ -24,6 +26,8 @@ def _relations(name, cfg, now):
             reasons.add('own_post_time_unknown')
             return
         owned.add(pid)
+        if posted is not None and (pid not in posted or at < posted[pid]):
+            posted[pid] = at
         if 'reply_to' not in row:
             reasons.add('own_post_parent_unknown')
             return
@@ -103,7 +107,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
     now = now or jst.now_jst()
     floor = read_window.cutoff(since, now=now)
     cfg = accounts.load_account(account_name)
-    roots, answered, reasons, _, branches = _relations(account_name, cfg, now)
+    posted = {}
+    roots, answered, reasons, _, branches = _relations(account_name, cfg, now, posted)
     try:
         data = replies.load(account_name, allowed_names=allowed_names)
     except (OSError, ValueError, TypeError, AttributeError):
@@ -213,6 +218,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
                       if at is not None and at <= now), default=None)
     stale_since = min(observed.values()) if observed else None
     rows.sort(key=lambda row: (-row['age_hours'], row['reply_id']))
+    follow = _follow_window(account_name, cfg, now,
+                            {pid: at for pid, at in posted.items() if pid in roots}, selected)
     return dict(account=account_name, n_total=len(rows), replies=rows,
                 window=dict(since=jst.iso(floor) if floor else None, until=jst.iso(now), basis='reply_timestamp'),
                 collection_stale_hours=round(stale, 3) if stale is not None else None,
@@ -221,7 +228,43 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
                 last_fetch_at=jst.iso(max(observed.values())) if observed else None,
                 last_reply_collected_at=jst.iso(last_reply) if last_reply else None,
                 cannot_say=sorted(reasons),
+                **follow,
                 summary=dict(n=len(rows), oldest_age_hours=max((r['age_hours'] for r in rows), default=None)))
+
+
+def _follow_window(account_name, cfg, now, posts, reply_rows):
+    """取り直しの窓（`thth/reply_follow.py`）から見た口座の様子（11/06・依頼
+    `docs/依頼_media-hub_返信の取得の窓_2026-11-06.md`）。
+
+    - `live_posts`: 窓の中にある自分の投稿の数（`reply_follow.in_window` と同じ判定・
+      `every_minutes` の間隔は見ない）。取り直しが無効の口座は None。
+    - `follow_last_at`: VM の `state/<口座>/reply_follow.json` の、最後に取り直した時刻。
+      新しい返信の無い取り直しは台帳に書かない（10/21）ので、`last_fetch_at` とは別に持つ。
+    - `follow_cannot_say`: 言えない理由のコード（無ければ空）。
+    """
+    from . import reply_follow
+    follow_cfg = reply_follow.settings(cfg)
+    why = []
+    by_post = {}
+    for row in reply_rows:
+        by_post.setdefault(row.get('post_id'), []).append(row)
+    errors = []
+    own = reply_follow.own_reply_times(sent.records(accounts.state_dir_for(account_name), errors=errors))
+    live = reply_follow.live_count(
+        now=now, posts=posts, reply_rows_by_post=by_post, own_reply_at=own, cfg=follow_cfg,
+        max_age_hours=int(cfg.get('collect_days', 14) or 14) * 24)
+    if live is None:
+        why.append('follow_disabled')
+    elif errors:
+        # 自分の返信の時刻が読めなければ、窓が延びているかを言い切れない。
+        live = None
+        why.append('sent_unreadable')
+    last, state_why = reply_follow.last_followed(accounts.state_dir_for(account_name))
+    if state_why:
+        why.append(state_why)
+    return dict(live_posts=live, live_hours=follow_cfg['live_hours'],
+                follow_last_at=jst.iso(last) if last else None,
+                follow_cannot_say=why)
 
 
 def cmd(args):

@@ -357,6 +357,13 @@ def _unanswered_rows(name, now, allowed_names=None, cfg=None):
             "last_fetch_hours": _ago(result.get("last_fetch_at"), now),
             "last_reply_collected_at": result.get("last_reply_collected_at"),
             "last_reply_hours": _ago(result.get("last_reply_collected_at"), now),
+            # 取り直しの窓（11/06・依頼 `docs/依頼_media-hub_返信の取得の窓_2026-11-06.md`）。
+            # `last_fetch_*` は台帳の `kind: fetch` だけから数える意味のまま（後方互換）。
+            "live_posts": result.get("live_posts"),
+            "live_hours": result.get("live_hours"),
+            "follow_last_at": result.get("follow_last_at"),
+            "follow_last_hours": _ago(result.get("follow_last_at"), now),
+            "follow_cannot_say": list(result.get("follow_cannot_say") or []),
             "cannot_say": list(result.get("cannot_say") or [])}
 
 
