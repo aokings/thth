@@ -445,7 +445,9 @@ def _source_withdrawn(cfg, event) -> bool:
     if not file or not cfg or accounts.repo_state(cfg) != accounts.REPO_OK:
         return False
     try:
-        return queuefile.parse(str(Path(accounts.resolved_repo_dir(cfg)) / file)).get("status") != "approved"
+        source = queuefile.parse(str(Path(accounts.resolved_repo_dir(cfg)) / file))
+        # `not_after` を過ぎた原稿は approved のまま二度と試みられない（core）。退いたのと同じに見る。
+        return source.get("status") != "approved" or queuefile.not_after_blocks(source.front_matter, jst.now_jst())
     except FileNotFoundError:
         return True
     except (OSError, ValueError, TypeError):
@@ -454,10 +456,11 @@ def _source_withdrawn(cfg, event) -> bool:
 
 def _still_awaiting_publish(row, cfg, state_dir, result) -> bool:
     """公開の失敗の止まりが、まだ解けていないか。解けるのは公開が成功したか原稿が退いたときだけ。"""
-    event = _open_run_event(row) if row["last"] == "fail" else None
-    return bool(event and event.get("awaiting_publish")
-                and not _published_after(event, state_dir, result)
-                and not _source_withdrawn(cfg, event))
+    # 間に試みの前の止まり（account_locked など）が挟まっても待ちを落とさないよう、止まりの列を全部見る。
+    chain = _stop_chain(row) if row["last"] == "fail" else []
+    return any(event.get("awaiting_publish")
+               and not _published_after(event, state_dir, result)
+               and not _source_withdrawn(cfg, event) for event in chain)
 
 
 def _new_event(state, reason, file=None):

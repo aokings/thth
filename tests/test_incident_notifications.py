@@ -457,6 +457,28 @@ def test_11月3日の並びは止まり1回と本物の復旧1回だけ(setup):
     assert row(s)["last"] == "success"
 
 
+def test_間に別の止まりが挟まっても公開が通るまで復旧と言わない(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    _run(s, "success", _idle())
+    _run(s, "fail", SimpleNamespace(file=None, mode="production", action="none", exit_code=2), "account_locked")
+    _run(s, "success", _idle())
+    assert not any(state == "recovered" for state, _ in _states(s))
+    assert incident.stuck("demo", s.state) is not None
+    _run(s, "success", _posted(s))
+    assert _states(s)[-1] == ("recovered", "healthy")
+    assert incident.stuck("demo", s.state) is None
+
+
+def test_not_afterを過ぎた原稿の止まりは解ける(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    s.path.write_text(s.path.read_text().replace("status: approved", "status: approved\nnot_after: 2000-01-01T00:00:00+09:00", 1))
+    _run(s, "success", _idle())
+    assert _states(s)[-1] == ("recovered", "healthy")
+    assert incident.stuck("demo", s.state) is None
+
+
 def test_次の原稿の公開でも解ける(setup):
     s = setup
     _run(s, "fail", _failed(s))
