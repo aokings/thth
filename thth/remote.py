@@ -425,7 +425,7 @@ UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor",
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",
-                  "thread", "where", "who", "events", "summary", "dashboard")
+                  "thread", "where", "who", "events", "summary", "dashboard", "embed", "upcoming")
 
 
 # `--remote` を子の命令（`bookmark add`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
@@ -1060,6 +1060,18 @@ def _who(args, account):
     return 0
 
 
+def _embed(args, account):
+    """`thth embed <口座> <URL>`（計画 Meta 全部盛り M3・審査員の道）。"""
+    from . import meta_public
+    return _shown(args, call("embed", account, url=args.url), meta_public.show_embed)
+
+
+def _upcoming(args, account):
+    """`thth upcoming <口座>`（計画 Meta 全部盛り M3・審査員の道）。"""
+    from . import meta_public
+    return _shown(args, call("upcoming_events", account), meta_public.show_upcoming)
+
+
 def _profile(args, account):
     from . import threads_read_cli
     value = call("profile", account, username=args.username)
@@ -1195,7 +1207,7 @@ COMMANDS.update({
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
     "location search": _location, "account status": _account_status, "account set": _account_set,
-    "queue": _queue, "thread": _thread, "where": _where, "who": _who,
+    "queue": _queue, "thread": _thread, "where": _where, "who": _who, "embed": _embed, "upcoming": _upcoming,
 })
 
 

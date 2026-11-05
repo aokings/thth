@@ -74,7 +74,8 @@ def _profile_for(account_cfg: dict, account_name: str, *, username: str | None):
     その場で叩く（設計「自分の泉」§2.4）。**保存しない**。戻りは
     `(profile, cannot_say理由)`——どちらか一方だけが非 `None`。
 
-    `profile_lookup` を持つのは Threads だけ（`ThreadsAdapter.CAPABILITIES`）。
+    `profile_lookup` を持つのは Threads・Instagram（`business_discovery`）・Facebook（他のページの
+    公開の数）。Instagram と Facebook は数と id だけを頼む（計画 Meta 全部盛り M3）。
     `author_key` は非可逆なので、**username が無ければ引きようがない**——
     `--author-key` だけで呼んだときは、その旨を `cannot_say` に出す（引けた
     ことにしない）。
@@ -348,7 +349,11 @@ def _render_node(node: dict) -> None:
             tail = "—"
         print(f"  {arrow} {at}  root={root}  {tail}")
     if node.get("profile"):
-        print(f"  プロフィール @{node['profile'].get('username')}")
+        profile = node["profile"]
+        counts = [f"{label} {profile[key]}" for key, label in (("follower_count", "フォロワー"), ("media_count", "投稿数"),
+                                                               ("fan_count", "いいねした人")) if key in profile]
+        print(f"  プロフィール @{profile.get('username')}" + (f"・{'・'.join(counts)}" if counts else ""))
+        threads_read_cli_mod.show_recent_media(profile, indent="    ")
     provenance = node.get("provenance") or {}
     if provenance.get("replies_other_account_files"):
         print(f"  返信の台帳: 他 account の投稿のファイル "
@@ -386,7 +391,8 @@ def register(sub) -> None:
     p.add_argument("--project", default=None, metavar="P",
                    help="account の代わりに、この project の account 全部を対象にする")
     p.add_argument("--profile", action="store_true",
-                   help="その場で公開プロフィールを引く（Threads だけ・保存しない）")
+                   help="その場で公開プロフィールを引く（Threads・Instagram・Facebook・保存しない。"
+                        "Instagram はプロ口座の数、Facebook はページの数だけ）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_who)
 

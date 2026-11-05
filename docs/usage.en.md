@@ -416,8 +416,21 @@ them sends anything anywhere (design "自分の泉"):
 - **`thth who (<account>|--project P) (<author_key>|@<username>) [--profile] [--json]`**
   — a pseudonym's history with you: how many times you've crossed paths, when,
   and how they reacted — never what anyone wrote. `--profile` fetches a live
-  public profile (Threads only) without storing it. A single, unreadable
+  public profile without storing it (Threads; on Instagram another professional
+  account's public counts, on Facebook another Page's). A single, unreadable
   `<account>` exits 1, the same as `where`.
+- **Instagram and Facebook in `thth where`**: on an Instagram account the words
+  are hashtags (`--recent` reads recent media, otherwise top media); on a
+  Facebook account they search Pages. Both take only words, `--recent` and
+  `--limit`, and return ids, links and counts — never post text or images.
+  Instagram allows 30 different hashtags per account in 7 days: the 31st is
+  refused before any request (`ig_hashtag_limit`, with the time it frees up).
+  Until Meta approves the feature these answers refuse with
+  `meta_feature_required`; `thth auth` does not change that.
+- **`thth embed <account> <url> [--json]`** — embed HTML for a public post on the
+  account's platform (oEmbed). **`thth upcoming <instagram account> [--json]`** —
+  events the account hosts (only those made in Ads Manager or through the API).
+  Both are shown, not stored, and work over `thth login`.
 - **`thth after (<account>|--project P) [--reply-to ID] [--author-key KEY] [--topic WORD]
   [--hour-band BAND] [--window-days N] [--min-n N] [--json]`** — after you've
   posted or replied, how it landed: owned measured root posts and replies are

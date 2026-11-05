@@ -34,8 +34,9 @@ PAGE, IG_ID, ACT = "61596075596464", "17841437318552220", "1234567890"
 REVIEW = {
     "facebook": {"pages_manage_ads", "pages_manage_cta", "publish_video", "pages_messaging", "pages_utility_messaging"},
     "instagram": {"instagram_manage_engagement", "instagram_manage_messages", "pages_read_user_content",
-                  "threads_business_basic"},
-    "ads": {"catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list"},
+                  "threads_business_basic", "instagram_manage_upcoming_events"},
+    "ads": {"catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list",
+            "read_audience_network_insights", "commerce_account_read_settings"},
 }
 
 

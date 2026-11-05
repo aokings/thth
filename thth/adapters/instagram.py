@@ -83,6 +83,17 @@ REPLY_THREADS_MAX = 500
 # 1 日の公開の上限（`content_publishing_limit` が読めないときの見立てにだけ使う・本番 10/29 に 100）。
 PUBLISH_LIMIT_OBSERVED = 100
 
+# 計画 Meta 全部盛り M3（読むだけ）。他人の投稿は数と id だけを頼む（`caption`・`media_url` を足さない・
+# `tests/test_m3_public_reads.py` が縛る）。
+PUBLIC_CONTENT_FEATURE = "Instagram Public Content Access"
+HASHTAG_MEDIA_FIELDS = "id,media_type,permalink,timestamp,like_count,comments_count"
+HASHTAG_MEDIA_MAX = 50
+DISCOVERY_MEDIA_MAX = 10
+# `business_discovery.username(…)` の欄の式に入れるので字を絞る。
+USERNAME_RE = re.compile(r"[A-Za-z0-9._]{1,30}")
+UPCOMING_FIELDS = "id,title,start_time,end_time"
+UPCOMING_PERMISSION = "instagram_manage_upcoming_events"
+
 UNSUPPORTED = {
     "repost": "Instagram に再投稿の口はありません",
     "like": "THTH の instagram の口はまだいいねを扱いません（段 3 の後半）",
@@ -133,8 +144,11 @@ class InstagramAdapter(fb.FacebookAdapter):
     # `recent_posts`・`thread_read`（`fetch_post`）・`views`・`account_insights`（口座の日次）・`carousel`
     # （JPEG 2〜20 枚）・`hide_reply`（コメントを隠す・戻す・消す）・`comment_control`（コメント欄の開け閉め）・
     # `quota`（1 日の公開の上限と使用量）。`edit_post` は持たない（キャプションを直す口が公式に無い・L3）。
+    # 計画 Meta 全部盛り M3: `embed`（oEmbed）・`public_search`（ハッシュタグ）・`profile_lookup`（他のプロ口座の
+    # 公開の数）・`upcoming_events`（自分の予定）。どれも読むだけで、答えは画面に出すだけ（保存しない）。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "account_insights",
-                                         "carousel", "hide_reply", "comment_control", "quota"})
+                                         "carousel", "hide_reply", "comment_control", "quota", "embed",
+                                         "public_search", "profile_lookup", "upcoming_events"})
     UNSUPPORTED_REACTIONS = UNSUPPORTED
     TOKEN_KEYS = ("access_token",)
     TOKEN_SETUP_HINT = "thth auth"
@@ -597,6 +611,61 @@ class InstagramAdapter(fb.FacebookAdapter):
             out["unavailable"] = unavailable
         return out
 
+    # ----- 計画 Meta 全部盛り M3（読むだけ） --------------------------------
+
+    def oembed(self, url: str) -> dict:
+        """公開の投稿の埋め込み（`GET /instagram_oembed`・L2: instagram-platform/oembed）。"""
+        return fb.oembed_fields(self._feature_get("/instagram_oembed", "埋め込み", fb.OEMBED_FEATURE,
+                                                  params={"url": url}))
+
+    def public_search(self, word: str, *, recent: bool = False, limit: int = 25) -> list:
+        """ハッシュタグの投稿（`ig_hashtag_search` → `top_media`／`recent_media`・L2）。
+
+        **本文（`caption`）と画像（`media_url`）は頼まない**（規約 6.2 の安全側・数と id だけ）。
+        7 日 30 種の柵は呼ぶ側（`meta_public.reserve_hashtags`）が網に出る前に見る。
+        """
+        found = self._rows(self._feature_get("/ig_hashtag_search", "ハッシュタグの検索", PUBLIC_CONTENT_FEATURE,
+                                             params={"user_id": self.ig_user_id, "q": word}), "ハッシュタグの検索")
+        hashtag = str(found[0].get("id") or "") if found else ""
+        if not IG_ID.fullmatch(hashtag):
+            return []
+        body = self._feature_get(f"/{hashtag}/{'recent_media' if recent else 'top_media'}", "ハッシュタグの投稿",
+                                 PUBLIC_CONTENT_FEATURE,
+                                 params={"user_id": self.ig_user_id, "fields": HASHTAG_MEDIA_FIELDS,
+                                         "limit": min(limit, HASHTAG_MEDIA_MAX)})
+        return [{"post_id": str(row.get("id")), **_media_counts(row)}
+                for row in self._rows(body, "ハッシュタグの投稿") if row.get("id")]
+
+    def profile_lookup(self, username: str) -> dict:
+        """他のプロ口座の公開の数（`business_discovery`・L2）。自己紹介・本文・画像は頼まない。"""
+        handle = str(username or "").strip().lstrip("@")
+        if not USERNAME_RE.fullmatch(handle):
+            raise fb.AdapterError("プロフィールの参照: Instagram の username は英数・.・_ の 30 字までです")
+        fields = (f"business_discovery.username({handle}){{username,followers_count,media_count,"
+                  f"media.limit({DISCOVERY_MEDIA_MAX}){{{HASHTAG_MEDIA_FIELDS}}}}}")
+        body = self._get(f"/{self.ig_user_id}", "プロフィールの参照", params={"fields": fields},
+                         permission=self.INSIGHTS_PERMISSION)
+        node = body.get("business_discovery")
+        if not isinstance(node, dict) or not isinstance(node.get("username"), str):
+            raise fb.AdapterError("プロフィールの参照: 応答に username がありません（取れたことにしません）")
+        out = {"username": node["username"], "medium": MEDIUM,
+               "author_key": base.author_key(MEDIUM, node["username"])}
+        for source, target in (("followers_count", "follower_count"), ("media_count", "media_count")):
+            if type(node.get(source)) is int:
+                out[target] = node[source]
+        media = node.get("media") if isinstance(node.get("media"), dict) else {}
+        rows = media.get("data") if isinstance(media.get("data"), list) else []
+        out["recent_media"] = [{"id": str(row.get("id")), **_media_counts(row)}
+                               for row in rows if isinstance(row, dict) and row.get("id")]
+        return out
+
+    def upcoming_events(self) -> list:
+        """自分の口座が主催する予定（`GET /{ig-user-id}/upcoming_events`・広告マネージャか API で作った物だけ）。"""
+        body = self._get(f"/{self.ig_user_id}/upcoming_events", "予定",
+                         params={"fields": UPCOMING_FIELDS}, permission=UPCOMING_PERMISSION)
+        return [{key: row[key] for key in UPCOMING_FIELDS.split(",") if isinstance(row.get(key), str)}
+                for row in self._rows(body, "予定")]
+
     # ----- 素性・検査 ------------------------------------------------------
 
     def whoami(self) -> dict:
@@ -781,6 +850,15 @@ def thth_post_daily() -> int | None:
     except Exception:   # noqa: BLE001 — 読めないなら比べない
         return None
     return None
+
+
+def _media_counts(row: dict) -> dict:
+    """公開の投稿 1 本の種類・時刻・リンク・数（持ち主が隠すと `like_count` は無い＝None・0 にしない）。"""
+    return {"media_type": row.get("media_type") if isinstance(row.get("media_type"), str) else None,
+            "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else None,
+            "permalink": row.get("permalink") if isinstance(row.get("permalink"), str) else None,
+            "likes": row.get("like_count") if type(row.get("like_count")) is int else None,
+            "comments": row.get("comments_count") if type(row.get("comments_count")) is int else None}
 
 
 def post_url(permalink) -> str | None:

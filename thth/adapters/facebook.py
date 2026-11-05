@@ -137,6 +137,21 @@ DATA_ACCESS_WARN_DAYS = meta_tokens.DATA_ACCESS_WARN_DAYS
 PAGE_NAME_MAX = 80
 # 断り文に並べるページの数の上限（許可されたページが多い人の画面を埋めない）。
 PAGES_LISTED_MAX = 20
+# 計画 Meta 全部盛り M3（読むだけ）。機能の名前は features-reference のとおり（断りの文に出す）。
+OEMBED_FEATURE = "Meta oEmbed Read"
+PUBLIC_CONTENT_FEATURE = "Page Public Content Access"
+PUBLIC_METADATA_FEATURE = "Page Public Metadata Access"
+# 投稿・動画は URL の形で分け、どちらでもなければページの oEmbed（L2: oembed-post・oembed-video・oembed-page）。
+OEMBED_VIDEO_PATH = re.compile(r"/(?:videos?|reel|watch)(?:/|\?|$)")
+OEMBED_POST_PATH = re.compile(r"/(?:posts|permalink|photos?|story\.php|permalink\.php)(?:/|\?|$)")
+OEMBED_KEYS = ("html", "type", "version", "width", "height", "provider_name", "provider_url", "author_name")
+PAGE_SEARCH_FIELDS = "id,name,link"
+PAGE_PROFILE_FIELDS = "id,name,fan_count,followers_count"
+# 他のページの投稿は数だけを頼む（`message` を足さない・`tests/test_m3_public_reads.py` が縛る）。
+PAGE_POST_COUNT_FIELDS = "id,created_time,shares,comments.summary(true).limit(0),reactions.summary(true).limit(0)"
+PROFILE_POSTS_MAX = 10
+# URL の 1 段に入れるので字を絞る（`/`・`?`・`{` などを通さない）。
+PAGE_NAME_RE = re.compile(r"[A-Za-z0-9.\-]{1,50}")
 # 台帳の `page_id` の正しい引き方（10/29 段 0・`account add`・`from_account` の断り文で同じ文）。
 PAGE_ID_HINT = ("ページの「基本データ → ページの透明性」に出る「ページID」を書きます"
                 "（ページの URL の profile.php?id= の id は人の画面の id で、API のページ id ではありません）")
@@ -253,9 +268,12 @@ class FacebookAdapter(base.Adapter):
     # 足していなかった（THTH開発 第11 の許可で `tests/test_facebook_adapter.py` の能力の集合を 1 行直した）。
     # 段 6（10/29）: `inbox`・`mentions`（Webhook の `feed`・`mention` を VM が取りに来た記録
     # `state/<口座>/inbox/` から読む・Meta は呼ばない）。`thth webhook subscribe` で購読してから届く。
+    # 計画 Meta 全部盛り M3: `embed`（oEmbed）・`public_search`（ページの検索）・`profile_lookup`（他のページの
+    # 公開の数）。どれも読むだけで、答えは画面に出すだけ（保存しない）。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
                                          "account_insights", "carousel", "edit_post", "hide_reply",
-                                         "quota", "inbox", "mentions"})
+                                         "quota", "inbox", "mentions", "embed", "public_search",
+                                         "profile_lookup"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",
@@ -923,6 +941,62 @@ class FacebookAdapter(base.Adapter):
             out["unavailable"] = unavailable
         return out
 
+    # ----- 計画 Meta 全部盛り M3（読むだけ） --------------------------------
+
+    def _feature_get(self, path: str, what: str, feature: str, *, params: dict) -> dict:
+        """機能の審査が要る口の GET。権限系の断りは再認可で直らないので、機能の断りに言い換える。"""
+        try:
+            return self._get(path, what, params=params, permission=feature)
+        except base.PermissionMissing as exc:
+            raise meta_errors.feature_required(what, feature, exc.detail) from None
+
+    def oembed(self, url: str) -> dict:
+        """公開の投稿・動画・ページの埋め込み（L2: graph-api/reference/oembed-post）。"""
+        edge = ("oembed_video" if OEMBED_VIDEO_PATH.search(url) else
+                "oembed_post" if OEMBED_POST_PATH.search(url) else "oembed_page")
+        return oembed_fields(self._feature_get("/" + edge, "埋め込み", OEMBED_FEATURE, params={"url": url}))
+
+    def public_search(self, word: str, *, recent: bool = False, limit: int = 25) -> list:
+        """ページの検索（`GET /pages/search`・L2: pages-api/search-pages）。並びの指定は無い。"""
+        body = self._feature_get("/pages/search", "ページの検索", PUBLIC_CONTENT_FEATURE,
+                                 params={"q": word, "fields": PAGE_SEARCH_FIELDS,
+                                         "limit": min(limit, RECENT_POSTS_MAX)})
+        return [{"post_id": str(row.get("id")),
+                 "author": row["name"][:PAGE_NAME_MAX] if isinstance(row.get("name"), str) else None,
+                 "permalink": row.get("link") if isinstance(row.get("link"), str) else None}
+                for row in self._rows(body, "ページの検索") if row.get("id")]
+
+    def profile_lookup(self, username: str) -> dict:
+        """他のページの公開の数（Page Public Metadata Access）と直近の投稿の数（Page Public Content Access）。
+
+        **本文は頼まない**（数と id だけ）。投稿の数が読めなくても、ページの数は返す。
+        """
+        name = str(username or "").strip().lstrip("@")
+        if not PAGE_NAME_RE.fullmatch(name):
+            raise AdapterError("プロフィールの参照: ページの id か、URL に出るページの名前"
+                               "（英数・.・- の 50 字まで）を渡してください")
+        body = self._feature_get("/" + name, "プロフィールの参照", PUBLIC_METADATA_FEATURE,
+                                 params={"fields": PAGE_PROFILE_FIELDS})
+        page_id = str(body.get("id") or "")
+        if not PAGE_ID.fullmatch(page_id):
+            raise AdapterError("プロフィールの参照: 応答に id がありません（取れたことにしません）")
+        out = {"username": name, "id": page_id, "medium": MEDIUM,
+               "author_key": base.author_key(MEDIUM, page_id)}
+        if isinstance(body.get("name"), str):
+            out["name"] = body["name"][:PAGE_NAME_MAX]
+        for source, target in (("followers_count", "follower_count"), ("fan_count", "fan_count")):
+            if type(body.get(source)) is int:
+                out[target] = body[source]
+        try:
+            rows = self._rows(self._feature_get(f"/{page_id}/posts", "ページの投稿の数", PUBLIC_CONTENT_FEATURE,
+                                                params={"fields": PAGE_POST_COUNT_FIELDS,
+                                                        "limit": PROFILE_POSTS_MAX}), "ページの投稿の数")
+        except base.AdapterError as exc:
+            out["recent_media_cannot_say"] = self._scrub(exc)[:200]
+            return out
+        out["recent_media"] = [_page_post_counts(row) for row in rows]
+        return out
+
     # ----- 素性・検査 ------------------------------------------------------
 
     def whoami(self) -> dict:
@@ -1105,6 +1179,28 @@ class FacebookAdapter(base.Adapter):
 
     def refresh_token(self, token):
         raise NotImplementedError("Facebook のページの鍵に期限は無い（TOKEN_NO_EXPIRY の説明）")
+
+
+def oembed_fields(body: dict) -> dict:
+    """oEmbed の答えのうち埋め込みに要る欄だけ（`html` が無ければ取れたことにしない）。"""
+    if not isinstance(body.get("html"), str) or not body["html"]:
+        raise AdapterError("埋め込み: 応答に html がありません（取れたことにしません）")
+    return {key: body[key] for key in OEMBED_KEYS if key in body}
+
+
+def _summary_total(value):
+    summary = value.get("summary") if isinstance(value, dict) else None
+    total = summary.get("total_count") if isinstance(summary, dict) else None
+    return total if type(total) is int else None
+
+
+def _page_post_counts(row: dict) -> dict:
+    """他のページの投稿 1 本の id・時刻・数（本文は頼んでいない）。"""
+    shares = row.get("shares") if isinstance(row.get("shares"), dict) else {}
+    return {"id": str(row.get("id") or ""),
+            "timestamp": row.get("created_time") if isinstance(row.get("created_time"), str) else None,
+            "likes": _summary_total(row.get("reactions")), "comments": _summary_total(row.get("comments")),
+            "shares": shares.get("count") if type(shares.get("count")) is int else None}
 
 
 def _day_value(row):

@@ -246,7 +246,9 @@ def bind(adapter,cfg):
              # Meta 計画 段 6（10/29）: Webhook の購読（ページの subscribed_apps）と、受けた記録を読む口。
              'subscribe_webhooks','subscribed_webhooks','webhook_replies',
              # 計画 Meta 全部盛り 段 M2: Threads の購読の権限の確かめと、通知の本文の読み直し。
-             'require_webhook_scopes','webhook_fill'}
+             'require_webhook_scopes','webhook_fill',
+             # 計画 Meta 全部盛り M3: 読むだけの口。
+             'oembed','public_search','upcoming_events'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

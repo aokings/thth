@@ -62,6 +62,8 @@ CAPABILITY_LABELS = {
     "keyword_search": "語による公開投稿の検索",
     "mentions": "自分への言及の取得",
     "profile_lookup": "公開プロフィールの参照",
+    "embed": "投稿の埋め込み",
+    "upcoming_events": "予定の読み取り",
 }
 
 # **権限は乗っているのに API が断ったときの断り**（引継ぎ 2026-09-15 §3-D）。
@@ -1074,6 +1076,7 @@ def show_profile(account: str, profile: dict) -> int:
     print(f"{account}  プロフィール @{profile.get('username')}")
     for key, label in (("name", "名前"), ("biography", "自己紹介"),
                        ("follower_count", "フォロワー"), ("is_verified", "認証"),
+                       ("media_count", "投稿数"), ("fan_count", "いいねした人"),
                        ("likes_count", "いいね（累計）"), ("views_count", "表示（累計）"),
                        ("reposts_count", "再投稿（累計）"), ("quotes_count", "引用（累計）"),
                        ("profile_picture_url", "画像")):
@@ -1082,4 +1085,18 @@ def show_profile(account: str, profile: dict) -> int:
             if key == "biography":
                 value = _one_line(value, 200)
             print(f"  {_pad(label, 14)}: {value}")
+    show_recent_media(profile, indent="  ")
     return 0
+
+
+def show_recent_media(profile: dict, *, indent: str) -> None:
+    """Instagram・Facebook の他の口座の直近の投稿の数（計画 Meta 全部盛り M3・本文は持たない）。"""
+    for row in profile.get("recent_media") or []:
+        print(f"{indent}{row.get('timestamp') or '—'}  いいね={_dash(row.get('likes'))}"
+              f"  コメント={_dash(row.get('comments'))}  {row.get('permalink') or row.get('id')}")
+    if profile.get("recent_media_cannot_say"):
+        print(f"{indent}言えない: {profile['recent_media_cannot_say']}")
+
+
+def _dash(value) -> str:
+    return "—" if value is None else str(value)

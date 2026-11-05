@@ -5109,6 +5109,9 @@ def build_parser() -> argparse.ArgumentParser:
     # 口は `thth/ads/cli.py` に閉じる。**Meta に書く命令はこの段に無い**（tests/test_meta_stage4.py）。
     from .ads import cli as ads_cli
     ads_cli.register(sub)
+    # `thth embed`・`thth upcoming`（計画 Meta 全部盛り M3・読むだけ・保存しない）。口は `thth/meta_public.py` に閉じる。
+    from . import meta_public
+    meta_public.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

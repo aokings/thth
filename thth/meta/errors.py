@@ -36,6 +36,16 @@ AMBIGUOUS = "ambiguous"
 
 # 本文を読んだ結果を例外に覚えさせる名前（同じ例外を 2 度読むと 2 度目は空になるため）。
 _CACHE = "_thth_graph_error"
+# 機能（Feature）の審査が要る読む口の断り（計画 Meta 全部盛り M3）。権限と違い再認可では直らない。
+FEATURE_REASONS = ("meta_feature_required",)
+
+
+def feature_required(what: str, feature: str, detail=None) -> base.AdapterError:
+    """Meta が権限系の code で断った、機能の審査が要る口の例外（文に 3 つを入れて 1 行に畳む）。"""
+    from .. import refusal
+    code = FEATURE_REASONS[0]
+    first = f"{code}: {what}: 機能 {feature} が要ります" + (f"（{detail}）" if detail else "")
+    return base.AdapterError(" ".join(refusal.text_lines(first, code)))
 
 
 def graph_error(error: urllib.error.HTTPError) -> dict:

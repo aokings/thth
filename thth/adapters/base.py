@@ -212,6 +212,14 @@ KNOWN_CAPABILITIES = frozenset({
     # --- Meta 計画 段 3（10/29）
     # 投稿のコメント欄を開ける・閉める（IG の `comment_enabled`・`set_comments_enabled()`・`thth comments`）。
     "comment_control",
+    # --- 計画 Meta 全部盛り M3（読むだけ・審査の録画に映す最小の口）
+    # 公開の投稿の埋め込みの HTML を読める（`oembed()`・`thth embed`）。
+    "embed",
+    # Meta の公開の検索（`public_search()`・`thth where`）。IG はハッシュタグ、FB はページの検索。
+    # `keyword_search` と語を分ける: 朝の報告と観測の地図（timer）が IG の 7 日 30 種を食わないように。
+    "public_search",
+    # IG の口座が主催する予定を読める（`upcoming_events()`・`thth upcoming`）。
+    "upcoming_events",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。
