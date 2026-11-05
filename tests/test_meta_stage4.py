@@ -260,6 +260,17 @@ def test_addは上限0_旗false_0600で書き_口座の名前とぶつかれば�
     assert "adaccount_name_taken" in capsys.readouterr().err
 
 
+def test_account_addは広告の口座と同じ名前を断る(env, capsys):
+    """設計 広告の資格と遠くの道 案 B: 名前は accounts/ と adaccounts/ で一意（資格の行は名前だけを持つ）。"""
+    assert add(env) == 0
+    capsys.readouterr()
+    rc = cli.main(["account", "add", NAME, "--media", "threads", "--project", "kopicha", "--by", "masaru"])
+    err = capsys.readouterr().err
+    assert rc == 2 and err.startswith("account_registry_ambiguous: ")
+    assert "通すには" in err and "もっと良く" in err
+    assert not (env["ledgers"] / (NAME + ".json")).exists()
+
+
 def test_台帳の検査_上限は3つの0以上の整数_通貨は3字():
     data = ledger.build(NAME, act_id=ACT, project="kopicha")
     ledger.validate(NAME, data)

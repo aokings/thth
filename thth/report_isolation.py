@@ -130,6 +130,11 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
     scan(resolved / "state" / "_admin")  # Shared administrator state is report-readable too.
     # 報告の口（設計 3.1.2）の置き場も共有の読み場。symlink・特殊ファイルを同じ門で断る。
     scan(resolved / "state" / "_reports")
+    # 広告の口座の台帳（設計 広告の資格と遠くの道 案 B）。行の名前が `adaccounts/` にあれば、その台帳も
+    # 同じ門で見る。置き場は行に広告の名前が無くても歩く（symlink・特殊ファイルを今より多く断る側）。
+    ad_dir = resolved / "adaccounts"
+    if ad_dir.exists() or ad_dir.is_symlink():
+        scan(ad_dir)
 
     def inside(path):
         if not isinstance(path, str) or not os.path.isabs(path):
@@ -140,6 +145,13 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
     for name, project in allowed.items():
         if not isinstance(project, (str, type(None))):
             raise IsolationError("invalid_report_scope")
+        try:
+            kind = accounts.ledger_kind(name)
+        except accounts.AccountError:
+            raise IsolationError(accounts.AMBIGUOUS) from None
+        if kind == accounts.ADACCOUNT_KIND:
+            _validate_adaccount(name, project, ad_dir, scan, inside, allow_unreadable=allow_unreadable)
+            continue
         # Even a corrupt ledger has a report-readable state subtree.
         inside(accounts.state_dir_for(name))
         scan(accounts.state_dir_for(name))
@@ -180,6 +192,28 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
         for path in accounts.data_dirs(cfg, name).values():
             inside(path)
             scan(path)
+
+
+def _validate_adaccount(name, project, ad_dir, scan, inside, *, allow_unreadable=False):
+    """広告の口座の 1 行（`adaccounts/<名前>.json`）。口座の行と同じ門: 置き場・台帳の形・project・資源が root の下。"""
+    from .ads import ledger as ads_ledger
+    if Path(ads_ledger.adaccounts_dir()).resolve() != ad_dir:
+        raise IsolationError("account_registry_mismatch")
+    # 遠くの道の依頼の印は口座の種類に依らず `state/<名前>/requests/`（設計 §3.4）。広告の状態は `adaccount_state/`。
+    for path in (accounts.state_dir_for(name), ads_ledger.state_dir_for(name)):
+        inside(path)
+        scan(path)
+    raw = read_registry_ledger(ad_dir / (name + ".json"))  # regular・nlink 1・O_NOFOLLOW
+    if allow_unreadable:
+        if raw is None:
+            return
+        cfg = dict(raw, token=accounts._expand(raw.get("token")))
+    else:
+        cfg = ads_ledger.load(name)
+    if cfg.get("adaccount") != name or registry_project(cfg) != project:
+        raise IsolationError("account_scope_mismatch")
+    if cfg.get("token"):
+        inside(cfg["token"])
 
 
 def _walk_error(_):

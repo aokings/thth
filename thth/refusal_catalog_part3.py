@@ -1717,6 +1717,16 @@ ENTRIES = {
         "doors": ("cli",),
         "since": "5.12.6",
     },
+    # 設計 広告の資格と遠くの道（2026-11-06・案 B）: 名前は accounts/ と adaccounts/ の 2 つの置き場で一意。
+    "account_registry_ambiguous": {
+        "kind": "refusal",
+        "why": "同じ名前の台帳が accounts/ と adaccounts/ の両方にある（か、作ると両方にできる）ので、どちらの口座か決められません。",
+        "fix": "口座には広告の口座と違う名前を付けて打ち直すか、既に両方にあるなら管理者にどちらか片方を別の名前に移してもらってください",
+        "command": "thth account add <名前> --media <媒体> --project <project> --by <名前>",
+        "better": "広告の口座は名前の後ろに -ads をそろえて付けると、人にも道具にも見分けがつきます",
+        "doors": ("cli",),
+        "since": "5.12.6",
+    },
     "window_open": {
         "kind": "cannot_say",
         "why": None,

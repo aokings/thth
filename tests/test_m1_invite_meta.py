@@ -248,6 +248,25 @@ def credentials_file(root, tmp_path):
     return path
 
 
+def test_段0_広告の名前の行が1つあると常駐の毎巡が止まる(world, tmp_path, monkeypatch):
+    """設計 広告の資格と遠くの道 段 0: `adaccounts/` の名前の行を手で 1 つ足すと、今の main では常駐の毎巡の
+    `validate_environment` が `invalid_report_environment` で全部を止める（段 1 のあと緑）。"""
+    from thth import worker as worker_mod
+    root, tty, _, _, _, _ = world
+    monkeypatch.delenv("THTH_ACCOUNTS_DIR")  # 常駐の検査は置き場の差し替えを断る（本番の形）
+    (root / "accounts").mkdir(mode=0o700, exist_ok=True)
+    row, digest = make(tty, media="ads")
+    authorize(world, digest)
+    credentials = credentials_file(root, tmp_path)
+    worker_mod.run_once(credentials)  # 管理者の行だけなら通る（足す前の確かめ）
+    config = json.loads(credentials.read_text())
+    config["credentials"].append({"sha256": "c" * 64, "expires_at": "2099-01-01T00:00:00+09:00", "revoked": False,
+                                  "accounts": {row["account"]: "meta-review"}, "scope": "user", "writes": True,
+                                  "actor": row["account"]})
+    credentials.write_text(json.dumps(config))
+    worker_mod.run_once(credentials)
+
+
 def test_広告の口座の要約はWorkerの形で_止める操作は広告の止めの印を書く(world, tmp_path):
     root, tty, _, _, _, _ = world
     row, digest = make(tty, media="ads")
