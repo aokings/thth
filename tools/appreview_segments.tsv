@@ -1,0 +1,270 @@
+# 生成物（手で直さない）: python3 -m thth admin appreview script --tsv > tools/appreview_segments.tsv
+# 正本は thth/appreview.py の SEGMENTS。tests/test_m5_appreview.py が一致を見る。
+slot	TH	Threads の口座名
+slot	FB	Facebook ページの口座名
+slot	IG	Instagram の口座名
+slot	AD	広告の台帳の名前
+slot	BY	記録に残す名前
+slot	BODY	投稿の本文
+slot	REPLY	返信の本文
+slot	REASON	取り下げの理由
+slot	TH_POST	th-publish で出した Threads の投稿の id
+slot	FB_POST	fb-publish で出したページの投稿の id
+slot	IG_POST	ig-publish で出した Instagram の投稿の id
+slot	AD_POST	宣伝するページの投稿の id（消していないもの）
+slot	FB_COMMENT	ページのコメントの id
+slot	IG_COMMENT	Instagram のコメントの id
+slot	IG_MEDIA	いいねを付ける Instagram の投稿（media）の id
+slot	IMAGE	Instagram に出す画像（jpeg）のパス
+slot	FB_PSID	ページの受信箱の会話の id（thth dm list に出る）
+slot	IG_PSID	Instagram の受信箱の会話の id（thth dm list に出る）
+slot	CTA	行動ボタンの id（thth page cta show に出る）
+slot	LIVE	ライブの id（thth live create が返す）
+slot	TITLE	ライブの題
+slot	WORD	検索の語
+slot	TAG	ハッシュタグ（# なし）
+slot	PLACE	場所の語
+slot	TH_URL	Threads の投稿の URL
+slot	FB_URL	Facebook の投稿の URL
+slot	THUSER	Threads の公開の口座名（例 threads）
+slot	IGUSER	Instagram のビジネスの口座名（@ を付ける）
+slot	FBPAGE	Facebook のページ名（@ を付ける）
+slot	MENTION	ページへの言及（@[ページの id]）を含む本文
+slot	EDITED	直したあとの本文
+slot	BUDGET	通しの予算（円・止めた形で作るのでお金は動かない）
+slot	END	終了の日時（ISO 8601）
+slot	CATALOG	カタログの id（thth ads catalog list に出る）
+seg	th-basic	threads	threads_basic — the account's own posts.
+items	threads_basic
+cmd	thth posts {TH} --limit 3
+end
+seg	th-publish	threads	threads_content_publish — publish a post from the command line.
+items	threads_content_publish
+cmd	thth send {TH} --text {BODY}
+hand	スマホの Threads で投稿が見えたら（映して）Return
+end
+seg	th-reply	threads	threads_manage_replies — a reply, sent the same way.
+items	threads_manage_replies
+cmd	thth send {TH} --text {REPLY} --reply-to {TH_POST}
+hand	スマホで投稿の下に返信が見えたら Return
+end
+seg	th-read-replies	threads	threads_read_replies — read the replies to the account's posts.
+items	threads_read_replies
+cmd	thth replies {TH} --refresh --limit 3
+end
+seg	th-insights	threads	threads_manage_insights — fetch and show the post metrics.
+items	threads_manage_insights
+cmd	thth collect {TH}
+cmd	thth measured {TH} --limit 3
+end
+seg	th-search	threads	threads_keyword_search — search a topic word on request.
+items	threads_keyword_search
+cmd	thth where {TH} {WORD}
+end
+seg	th-mentions	threads	threads_manage_mentions — mentions of the account.
+items	threads_manage_mentions
+cmd	thth mentions {TH} --refresh --limit 3
+end
+seg	th-profile	threads	threads_profile_discovery — a public profile.
+items	threads_profile_discovery
+cmd	thth profile {TH} {THUSER}
+end
+seg	th-location	threads	threads_location_tagging — find a place to tag.
+items	threads_location_tagging
+cmd	thth location search {TH} {PLACE}
+end
+seg	th-share-ig	threads	threads_share_to_instagram — share a post to the linked Instagram stories.
+items	threads_share_to_instagram
+cmd	thth send {TH} --text {BODY} --share-to-instagram
+hand	Instagram のストーリーズに出たのを（映して）見せたら Return
+end
+seg	th-embed	threads	Threads oEmbed Read — the embed HTML of a public post.
+items	threads_oembed_read
+cmd	thth embed {TH} {TH_URL}
+end
+seg	th-delete	threads	threads_delete — delete the post, then confirm in the Threads app.
+items	threads_delete
+cmd	thth retract {TH} {TH_POST} --reason {REASON}
+hand	スマホで投稿が消えたのを見せたら Return
+end
+seg	flow-meta	facebook	Reviewer flow — Facebook Login for Business, a Page and its Instagram account.
+items	pages_show_list business_management public_profile threads_business_basic
+prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく
+hand	Authorize → Facebook ログイン for Business でテストのページと Instagram を選び、権限の一覧を見せて許可 → 完了ページが出たら Return
+off	完了ページの secret と鍵を録画の外で控え、画面から消す
+login
+cmd	thth doctor {FB}
+cmd	thth doctor {IG}
+end
+seg	fb-read	facebook	pages_read_engagement, read_insights — the Page's posts and metrics.
+items	pages_read_engagement read_insights
+cmd	thth posts {FB} --limit 3
+cmd	thth collect {FB}
+cmd	thth measured {FB} --limit 3
+end
+seg	fb-publish	facebook	pages_manage_posts — publish, edit and delete a Page post.
+items	pages_manage_posts
+cmd	thth send {FB} --text {BODY}
+hand	ページに投稿が出たのを見せたら Return
+two	thth edit {FB} {FB_POST} --text {EDITED} --by {BY}
+cmd	thth retract {FB} {FB_POST} --reason {REASON}
+hand	ページから消えたのを見せたら Return
+end
+seg	fb-mention	facebook	Page Mentioning — mention another Page in a Page post.
+items	page_mentioning
+cmd	thth send {FB} --text {MENTION}
+hand	ページの投稿で言及が見えたら Return
+end
+seg	fb-comments	facebook	pages_read_user_content, Business Asset User Profile Access — comments and the commenter's name.
+items	pages_read_user_content business_asset_user_profile_access
+prep	別のテストの口座からページの投稿にコメントを 1 つ付けておく
+cmd	thth replies {FB} --refresh --limit 3
+end
+seg	fb-engage	facebook	pages_manage_engagement — reply to a comment and hide it.
+items	pages_manage_engagement
+cmd	thth send {FB} --text {REPLY} --reply-to {FB_COMMENT}
+cmd	thth reply hide {FB} {FB_COMMENT} --by {BY}
+hand	ページで返事と隠したコメントを見せたら Return
+end
+seg	fb-webhook	facebook	pages_manage_metadata — subscribe the Page to webhooks.
+items	pages_manage_metadata
+cmd	thth webhook subscribe {FB} --by {BY}
+hand	別のテストの口座からページにコメントを付けたら Return
+cmd	thth webhook status
+end
+seg	fb-cta	facebook	pages_manage_cta — read and remove a call-to-action button.
+items	pages_manage_cta
+prep	録画用の行動ボタンをページの画面で 1 つ足しておく（API では付け直せない・計画 M4）
+cmd	thth page cta show {FB}
+two	thth page cta delete {FB} {CTA} --by {BY}
+hand	ページの画面でボタンが消えたのを見せたら Return
+end
+seg	fb-live	facebook	publish_video, Live Video API — start and end a live video on the Page.
+items	publish_video live_video_api
+prep	ページのフォロワーが 100 人以上かを確かめる（2024-06-10 からの条件）。ffmpeg の配信の命令を用意する
+twooff	thth live create {FB} --title {TITLE} --by {BY}
+off	配信の宛先（stream_url は鍵を含む）を録画の外で ffmpeg に渡し、実配信を始める（止め絵・ループは禁止）
+hand	ページでライブが見えたら Return
+two	thth live end {FB} {LIVE} --by {BY}
+end
+seg	fb-dm	facebook	pages_messaging — read the Page inbox and answer within 24 hours.
+items	pages_messaging
+real	messaging_type の綴りが【推】（計画 M4）
+prep	別のテストの口座からページにメッセージを 1 通送っておく
+cmd	thth dm list {FB}
+cmd	thth dm read {FB} {FB_PSID}
+two	thth dm send {FB} {FB_PSID} --text {REPLY} --by {BY}
+hand	Messenger で返事が届いたのを見せたら Return
+end
+seg	fb-dm-profile	facebook	pages_user_locale, pages_user_timezone, pages_user_gender — the sender's profile fields, shown on screen only.
+items	pages_user_locale pages_user_timezone pages_user_gender
+cmd	thth dm read {FB} {FB_PSID} --profile
+end
+seg	fb-human-agent	facebook	Human Agent — a person answers after 24 hours with the human_agent tag.
+items	human_agent
+real	HUMAN_AGENT の札の綴りと窓の外の断りの符丁が【推】（計画 M4）
+prep	24 時間より前に届いたメッセージを用意する
+two	thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}
+end
+seg	fb-search	facebook	Page Public Content Access — search public Pages and their posts (counts only).
+items	page_public_content_access
+cmd	thth where {FB} {WORD}
+end
+seg	fb-who	facebook	Page Public Metadata Access — public metadata of another Page.
+items	page_public_metadata_access
+cmd	thth who {FB} {FBPAGE} --profile
+end
+seg	meta-embed	facebook	Meta oEmbed Read — the embed HTML of a public Facebook post.
+items	meta_oembed_read
+cmd	thth embed {FB} {FB_URL}
+end
+seg	ig-basic	instagram	instagram_basic — the Instagram account's own media.
+items	instagram_basic
+cmd	thth posts {IG} --limit 3
+end
+seg	ig-publish	instagram	instagram_content_publish — publish an image.
+items	instagram_content_publish
+cmd	thth send {IG} --text {BODY} --media {IMAGE}
+hand	Instagram で投稿が見えたら Return
+end
+seg	ig-comments	instagram	instagram_manage_comments — read, answer and hide a comment.
+items	instagram_manage_comments
+prep	別のテストの口座から Instagram の投稿にコメントを 1 つ付けておく
+cmd	thth replies {IG} --refresh --limit 3
+cmd	thth send {IG} --text {REPLY} --reply-to {IG_COMMENT}
+cmd	thth reply hide {IG} {IG_COMMENT} --by {BY}
+end
+seg	ig-insights	instagram	instagram_manage_insights — metrics, and business discovery (counts only).
+items	instagram_manage_insights
+cmd	thth collect {IG}
+cmd	thth measured {IG} --limit 3
+cmd	thth who {IG} {IGUSER} --profile
+end
+seg	ig-like	instagram	instagram_manage_engagement — like a media object.
+items	instagram_manage_engagement
+real	IG のいいねの path（POST /{ig-media-id}/likes）が公式の参照に無く【推】（計画 M4）
+cmd	thth like {IG} {IG_MEDIA} --by {BY}
+hand	Instagram でいいねが付いたのを見せたら Return
+end
+seg	ig-dm	instagram	instagram_manage_messages — read the Instagram inbox and answer.
+items	instagram_manage_messages
+real	messaging_type の綴りが【推】（計画 M4）
+prep	別のテストの口座から Instagram に DM を 1 通送っておく
+cmd	thth dm list {IG}
+two	thth dm send {IG} {IG_PSID} --text {REPLY} --by {BY}
+hand	Instagram で返事が届いたのを見せたら Return
+end
+seg	ig-hashtag	instagram	Instagram Public Content Access — hashtag search (counts only).
+items	instagram_public_content_access
+cmd	thth where {IG} {TAG}
+end
+seg	ig-upcoming	instagram	instagram_manage_upcoming_events — the account's upcoming events.
+items	instagram_manage_upcoming_events
+cmd	thth upcoming {IG}
+end
+seg	ig-delete	instagram	instagram_manage_contents — delete the media.
+items	instagram_manage_contents
+cmd	thth retract {IG} {IG_POST} --reason {REASON}
+hand	Instagram から消えたのを見せたら Return
+end
+seg	flow-ads	ads	Reviewer flow — authorize an ad account.
+items	-
+prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく
+hand	Authorize → 広告アカウントを選び、権限の一覧を見せて許可 → 完了ページが出たら Return
+off	完了ページの secret と鍵を録画の外で控え、画面から消す
+login
+cmd	thth ads doctor {AD}
+end
+seg	ads-read	ads	ads_read — the ad account and its insights.
+items	ads_read
+cmd	thth ads show {AD}
+cmd	thth ads insights {AD}
+end
+seg	ads-manage	ads	ads_management, pages_manage_ads — boost a Page post (created paused), then stop.
+items	ads_management pages_manage_ads
+cmd	thth ads boost {AD} --post {AD_POST} --lifetime {BUDGET} --end {END} --by {BY}
+hand	広告マネージャに止めた形で出たのを見せたら Return
+cmd	thth ads stop {AD} --by {BY}
+end
+seg	ads-catalog	ads	catalog_management — the product catalogs and their items.
+items	catalog_management
+cmd	thth ads catalog list {AD}
+cmd	thth ads catalog products {AD} --catalog {CATALOG}
+end
+seg	ads-leads	ads	leads_retrieval — leads of a lead form (shown on screen only).
+items	leads_retrieval
+prep	リード広告のテストのフォームに 1 件入れておく
+cmd	thth ads leads {AD}
+end
+seg	ads-network	ads	read_audience_network_insights — Audience Network results.
+items	read_audience_network_insights
+cmd	thth ads network {AD}
+end
+seg	ads-shop	ads	commerce_account_read_settings — the shop's settings.
+items	commerce_account_read_settings
+cmd	thth ads shop {AD}
+end
+seg	ads-mcp	ads	ads_mcp_management — connect the official ads MCP server with THTH's app.
+items	ads_mcp_management
+hand	Claude Code で claude mcp add --transport http --client-id <THTH の app id> meta-ads https://mcp.facebook.com/ads を打ち、認可して報告の道具を 1 つ呼んだら Return
+end

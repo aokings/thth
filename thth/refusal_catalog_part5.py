@@ -910,4 +910,47 @@ ENTRIES = {
         "doors": _C,
         "since": "5.12.6",
     },
+    # ------------------------------------------------------------------
+    # 計画 Meta 全部盛り M5 の (e): 提出の前の点検（`thth admin appreview check`・`thth/appreview.py`）
+    # ------------------------------------------------------------------
+    "appreview_no_recent_call": {
+        "kind": "refusal",
+        "why": ("提出の 30 日以内に成功した呼び出しの記録が無い権限があります（Meta は申請する権限ごとに 30 日以内の"
+                "成功を 1 回求めます。THTH が成功を記録しない権限は、記録が無いものとして数えています）。"),
+        "fix": ("thth admin appreview script に出るその権限の区間の命令を、権限を持つ口座で 1 回打ってから、"
+                "thth admin appreview check を打ち直してください"),
+        "command": "thth admin appreview script",
+        "better": "録画の日に区間の順で打つと、30 日の条件と録画が一度にそろいます",
+        "doors": _C,
+        "since": "5.12.6",
+    },
+    "appreview_no_door": {
+        "kind": "refusal",
+        "why": "申請に入れる権限か機能のうち、THTH に呼ぶ口が無いものがあります（録画に映せず、30 日の呼び出しも作れません）。",
+        "fix": ("口を作って thth/appreview.py の SEGMENTS に区間を足すか、計画 §1.10 の判断で申請から外して "
+                "PLANNED から消してください"),
+        "command": "thth admin appreview script",
+        "better": "口は読むだけの最小の形にすると、録画が短く済み、審査の問いも減ります",
+        "doors": _C,
+        "since": "5.12.6",
+    },
+    "appreview_privacy_missing": {
+        "kind": "refusal",
+        "why": "privacy の頁に、その権限が扱うデータの語がありません（審査員は privacy と録画を突き合わせます）。",
+        "fix": ("tools/build_site.py の privacy にその媒体と用途の段を足し（要る語は thth admin appreview script --json の"
+                " privacy_words）、thth admin appreview check を打ち直してください"),
+        "command": "thth admin appreview check",
+        "better": "段を足すときに保存するもの・しないものを並べて書くと、審査員の問いが減ります",
+        "doors": _C,
+        "since": "5.12.6",
+    },
+    "appreview_privacy_unreadable": {
+        "kind": "cannot_say",
+        "why": "privacy の頁の文を読めないので、語の有無を言えません。",
+        "fix": "--privacy で生成した privacy の頁のファイルを渡すか、repo の中で打ち直してください",
+        "command": "thth admin appreview check --privacy callback/public/privacy/index.html",
+        "better": "deploy の前に生成した頁を渡すと、出す前の文で確かめられます",
+        "doors": _C,
+        "since": "5.12.6",
+    },
 }

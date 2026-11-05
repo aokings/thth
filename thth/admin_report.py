@@ -377,6 +377,9 @@ def register(sub):
     # 権限の不使用の見張り（計画 Meta 全部盛り M5）。口の中身は `thth/permission_watch_cli.py` に閉じる。
     from . import permission_watch_cli
     permission_watch_cli.register_admin(commands)
+    # 審査の台本と提出の前の点検（計画 Meta 全部盛り M5 の (d)(e)）。口の中身は `thth/appreview_cli.py` に閉じる。
+    from . import appreview_cli
+    appreview_cli.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

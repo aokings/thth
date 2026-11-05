@@ -124,6 +124,8 @@ COMMANDS += ['admin meta watch', 'admin meta ledger', 'admin meta set', 'admin m
 COMMANDS += ['embed', 'upcoming', 'ads catalog list', 'ads catalog products', 'ads leads', 'ads network', 'ads shop']
 # 段 M4（書く最小の口・二段確認）: ページの行動ボタン・ライブ・DM（--json は 1 つの値・断りは {"ok": false, …}）。
 COMMANDS += ['page cta', 'live', 'dm']
+# 段 M5 の (d)(e)（審査の台本と提出の前の点検）: --json は 1 つの値（check は赤でも 1 つの値・rc 2）。
+COMMANDS += ['admin appreview script', 'admin appreview check']
 
 
 def test_json_table_covers_every_parser():
