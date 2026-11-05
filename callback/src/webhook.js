@@ -8,12 +8,18 @@
 //   合えば変化（entry × changes）を 1 行ずつにほどいて `WebhookInbox` に積み、すぐ 200 を返す。
 //   重複（Meta は失敗のあと 36 時間まで送り直す・同じ通知が 2 度来る）は
 //   `object|entry.id|entry.time|field|変化の id|verb` の SHA-256 で弾く。
-// - 受ける欄は FB ページの `feed`・`mention` と、IG の `mentions`（試す・G-8）。IG の `comments`・
-//   `live_comments` は Advanced Access が要るので受けない（数だけ `dropped` に残す）。
+// - 受ける欄は FB ページの `feed`・`mention`、IG の `mentions`・`comments`・`story_insights`、Threads の
+//   `replies`・`mentions`・`delete`・`publish`（計画 Meta 全部盛り 段 M2）。IG の `live_comments` は
+//   受けない（数だけ `dropped` に残す）。
+// - Threads は use case ごとのアプリの secret で署名される見込みなので、`THREADS_APP_SECRET` があれば
+//   その鍵でも照合する。その鍵で通るのは Threads の通知だけ（ページと IG の通知は 403）。
+// - **M2 で足した欄の本文と相手の名前は thth.me に置かない**（`kept`）。privacy の置き場と保持の項に
+//   thth.me の Webhook の控えが無いので、id と時刻だけを積み、本文は VM が口座の鍵で媒体から読む。
 // - VM の `thth worker` が署名つき relay（`/relay/v/webhook/meta/{pull,ack}`）で取りに来る
 //   （`person.js` の `relayRequest`）。
 //
-// 秘密の値はどこにも書かない・log に出さない。名前だけ: META_APP_SECRET・META_WEBHOOK_VERIFY_TOKEN。
+// 秘密の値はどこにも書かない・log に出さない。名前だけ: META_APP_SECRET・THREADS_APP_SECRET・
+// META_WEBHOOK_VERIFY_TOKEN。
 import {digest, reply} from './relay.js';
 
 // 1 回の通知の上限。Meta は最大 1000 件を束ねて送る（保証なし）。1 件 1〜2 KB で 2 MiB に収まる。
@@ -23,7 +29,9 @@ export const CHANGES_MAX = 10_000;
 // 1 つの変化の中身（JSON）の上限。越えたら中身を落として `oversize: true` だけ積む（id は残る）。
 export const VALUE_MAX = 32_768;
 // object → 受ける欄。ここに無い欄は積まずに数える。
-export const OBJECTS = Object.freeze({page: Object.freeze(['feed', 'mention']), instagram: Object.freeze(['mentions'])});
+export const OBJECTS = Object.freeze({page: Object.freeze(['feed', 'mention']),
+  instagram: Object.freeze(['mentions', 'comments', 'story_insights']),
+  threads: Object.freeze(['replies', 'mentions', 'delete', 'publish'])});
 export const webhookStub = env => env.WEBHOOK_INBOX.getByName('meta-webhook-v1');
 const ENTRY_ID = /^[0-9]{1,32}$/;
 const encoder = new TextEncoder();
@@ -46,6 +54,12 @@ export async function signatureValid(raw, header, secret) {
   const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, raw));
   const given = Uint8Array.from(match[1].toLowerCase().match(/../g), pair => parseInt(pair, 16));
   return same(mac, given);
+}
+
+// どの鍵の署名か（'meta'・'threads'・合わなければ null）。
+async function signer(raw, header, env) {
+  if (await signatureValid(raw, header, env.META_APP_SECRET)) return 'meta';
+  return await signatureValid(raw, header, env.THREADS_APP_SECRET) ? 'threads' : null;
 }
 
 async function rawBody(request, max) {
@@ -73,6 +87,32 @@ function changeId(value) {
   return null;
 }
 
+// Threads の通知は `object` の無い平らな形（`target_id`・`time`・`values`）でも来る見込みなので、
+// ページの通知と同じ `entry` の形にそろえる。本物の形は Dashboard の購読のあとに確かめる。
+export function normalized(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || 'object' in payload || !('values' in payload)) return payload;
+  const target = Number.isSafeInteger(payload.target_id) ? String(payload.target_id) : payload.target_id;
+  return {object: 'threads', entry: [{id: target, time: payload.time,
+    changes: Array.isArray(payload.values) ? payload.values : [payload.values]}]};
+}
+
+const pick = (value, names) => Object.fromEntries(names.filter(name => typeof value[name] === 'string' || Number.isSafeInteger(value[name]))
+  .map(name => [name, value[name]]));
+const refId = value => {
+  const id = value && typeof value === 'object' ? value.id : value;
+  return typeof id === 'string' && id ? id : Number.isSafeInteger(id) ? String(id) : undefined;
+};
+
+// thth.me に積む中身。M2 で足した欄は本文・相手の名前・リンクを落とす（上の注）。ほかの欄はそのまま。
+function kept(object, field, value) {
+  if (object === 'threads') return {...pick(value, ['id', 'timestamp', 'media_type', 'deleted_at']),
+    replied_to: refId(value.replied_to), root_post: refId(value.root_post)};
+  if (object === 'instagram' && field === 'comments') return {...pick(value, ['id', 'parent_id']), media: refId(value.media)};
+  if (object === 'instagram' && field === 'story_insights')
+    return Object.fromEntries(Object.entries(value).filter(([name, v]) => name === 'media_id' ? typeof v === 'string' : Number.isFinite(v)));
+  return value;
+}
+
 // 署名の合った通知を 1 変化 1 行にほどく。形の分からないものは積まずに数える（`dropped`）。
 // 戻り値 {rows, dropped}。rows の各行: key・object・entry_id・time・field・value（JSON の文字列か null）・oversize。
 export async function changes(payload) {
@@ -88,10 +128,10 @@ export async function changes(payload) {
       const value = change && typeof change === 'object' ? change.value : null;
       if (!change || !fields.includes(change.field) || !value || typeof value !== 'object' || Array.isArray(value)) { dropped++; continue; }
       if (rows.length >= CHANGES_MAX) { dropped++; continue; }
-      const text = JSON.stringify(value);
-      const id = changeId(value) ?? 'h' + await digest(text);
+      const id = changeId(value) ?? 'h' + await digest(JSON.stringify(value));
       const verb = typeof value.verb === 'string' ? value.verb : '';
       const key = await digest([payload.object, entry.id, String(entry.time), change.field, id, verb].join('|'));
+      const text = JSON.stringify(kept(payload.object, change.field, value));
       const oversize = encoder.encode(text).length > VALUE_MAX;
       rows.push({key, object: payload.object, entry_id: entry.id, time: entry.time, field: change.field,
         value: oversize ? null : text, oversize});
@@ -121,9 +161,11 @@ export async function webhookRequest(request, env, url) {
     if (url.search) return reply(400, {error: 'invalid_request'});
     let raw;
     try { raw = await rawBody(request, WEBHOOK_BODY_MAX); } catch { return reply(413, {error: 'too_large'}); }
-    if (!await signatureValid(raw, request.headers.get('x-hub-signature-256'), env.META_APP_SECRET)) return reply(403, {error: 'forbidden'});
+    const by = await signer(raw, request.headers.get('x-hub-signature-256'), env);
+    if (!by) return reply(403, {error: 'forbidden'});
     let payload;
-    try { payload = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(raw)); } catch { return reply(400, {error: 'invalid_request'}); }
+    try { payload = normalized(JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(raw))); } catch { return reply(400, {error: 'invalid_request'}); }
+    if (by === 'threads' && payload?.object !== 'threads') return reply(403, {error: 'forbidden'});
     const flat = await changes(payload);
     const result = await webhookStub(env).receive(flat.rows, flat.dropped);
     return reply(result.status, result.body);

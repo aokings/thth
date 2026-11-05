@@ -4,14 +4,18 @@
 VM の `thth worker` が 30 秒ごとに署名つき relay（`/relay/v/webhook/meta/pull`）で取りに来て、
 `state/<口座>/inbox/<YYYY-MM-DD>.ndjson` に落とし、落とした分を `ack` で Worker から消す。
 
-- 口座への振り分けは `entry.id` → 台帳（ページは `page_id`・IG は `ig_user_id`）。**知らない id は捨てて数だけ残す**
-  （`thth webhook status` の `unrouted`）。止めた口座の分も捨てて数える（止めた口座に新しい記録を作らない）。
+- 口座への振り分けは `entry.id` → 台帳（ページは `page_id`・IG は `ig_user_id`・Threads は `.token` の `user_id`）。
+  **知らない id は捨てて数だけ残す**（`thth webhook status` の `unrouted`）。止めた口座の分も捨てて数える
+  （止めた口座に新しい記録を作らない）。
 - 読む側: `FacebookAdapter.inbox()`・`mentions()`（言及・訪問者の投稿）と `webhook_replies()`（自分の投稿への
   コメント。`collect` が返信の台帳に写す）。Meta は呼ばない。
+- Threads（計画 Meta 全部盛り 段 M2）: Worker は本文を積まない（id と時刻だけ）ので、`ThreadsAdapter.webhook_replies()`
+  の行の本文は、`collect` が台帳に写すときに口座の鍵で読み直す（`webhook_fill`）。巡回が正本のままで、減らさない。
 - 購読: `thth webhook subscribe <口座>` が `POST /{page-id}/subscribed_apps`（ページの鍵・`pages_manage_metadata`）。
   **今の欄を読んでから足す・外さない。** IG（Facebook ログインの道）は親のページの購読で IG の通知も有効になる
-  （L2: 「ページの欄をどれか 1 つ購読する」）ので、同じ口で `feed` を足す。IG の `mentions` の欄はアプリの
-  管理画面で選ぶ（masaru）。IG の `comments`・`live_comments` は Advanced Access が要るので段 6 では扱わない。
+  （L2: 「ページの欄をどれか 1 つ購読する」）ので、同じ口で `feed` を足す。IG の `comments`・`mentions`・
+  `story_insights` はページの欄ではなく、アプリの管理画面で選ぶ（`DASHBOARD_FIELDS`・masaru）。`live_comments` は扱わない。
+  Threads の欄も管理画面で選ぶだけなので、Meta に購読の要求を出さず、権限を確かめて口座を記録する。
 - **過去の分は Meta から取り直せない。** Meta は失敗のあと 36 時間まで送り直し、それを越えた分は捨てる。
   VM から取り込めなかった時間・Worker で取り込む前に消えた数（7 日）・満杯で断った数を `outages.ndjson` に残し、
   `thth events` の `webhook_down` に出す。
@@ -34,10 +38,15 @@ from pathlib import Path
 
 from . import accounts, admin_log, jst, relay, server_files
 
-# 媒体 → 購読するページの欄。IG はページの欄を 1 つ購読すると IG の通知も有効になる（上の注）。
-SUBSCRIBE_FIELDS = {"facebook": ("feed", "mention"), "instagram": ("feed",)}
-OBJECT_BY_MEDIUM = {"facebook": "page", "instagram": "instagram"}
-ID_KEY = {"facebook": "page_id", "instagram": "ig_user_id"}
+# 媒体 → 購読する欄。IG はページの欄を 1 つ購読すると IG の通知も有効になる（上の注）。
+SUBSCRIBE_FIELDS = {"facebook": ("feed", "mention"),
+                    "instagram": ("feed", "comments", "mentions", "story_insights"),
+                    "threads": ("replies", "mentions", "delete", "publish")}
+# そのうちアプリの管理画面で選ぶ欄（Graph の購読の要求には送らない）。
+DASHBOARD_FIELDS = {"instagram": ("comments", "mentions", "story_insights"),
+                    "threads": SUBSCRIBE_FIELDS["threads"]}
+OBJECT_BY_MEDIUM = {"facebook": "page", "instagram": "instagram", "threads": "threads"}
+ID_KEY = {"facebook": "page_id", "instagram": "ig_user_id", "threads": "user_id"}
 OBJECTS = frozenset(OBJECT_BY_MEDIUM.values())
 # 取り込みの間隔（`thth worker` は 2 秒ごとに回るので、ここで間を空ける）。Worker の RELAY_JOB_LIMIT は 180/分。
 PULL_EVERY_SECONDS = 30
@@ -60,6 +69,12 @@ WORKER_COUNTERS = ("received", "duplicates", "dropped", "expired", "overflow", "
 
 class WebhookError(ValueError):
     """取り込み・購読ができなかった（理由の符丁を持つ）。"""
+
+
+def _refuse(code: str, account: str):
+    """目録の符丁で断る（1 行目は `符丁: なぜ`・3 つは `cmd_subscribe` が `refusal.emit` で出す）。"""
+    from . import refusal
+    raise WebhookError(f"{code}: {refusal.parts(code, account=account)['why']}")
 
 
 def home() -> Path:
@@ -195,6 +210,15 @@ def _store(account: str, items: list, now) -> int:
 
 # ------------------------------------------------------------------ 振り分け
 
+def _entry_id(cfg: dict, medium: str) -> str:
+    """通知の宛先の id。Threads は `.token` の `user_id` が先（`ThreadsAdapter.from_account` と同じ順）。"""
+    if medium == "threads":
+        token = accounts.load_token(cfg)
+        recorded = token.get("user_id") if isinstance(token, dict) else None
+        return str(recorded or cfg.get("user_id") or "")
+    return str(cfg.get(ID_KEY[medium]) or "")
+
+
 def routes() -> dict:
     """`(object, entry_id)` → `(口座, 止めているか)`。同じ id を 2 つの口座が持てば `(None, False)`（捨てて数える）。"""
     from . import leave_gate
@@ -203,10 +227,10 @@ def routes() -> dict:
         try:
             with leave_gate.recovery(name):
                 cfg = accounts.load_account(name)
-            medium = cfg.get("media")
-            if medium not in OBJECT_BY_MEDIUM:
-                continue
-            entry = str(cfg.get(ID_KEY[medium]) or "")
+                medium = cfg.get("media")
+                if medium not in OBJECT_BY_MEDIUM:
+                    continue
+                entry = _entry_id(cfg, medium)
             if not ENTRY_ID.fullmatch(entry):
                 continue
             stopped = leave_gate.stopped(name)
@@ -356,18 +380,28 @@ def _app_id():
 
 
 def subscribe(account: str, *, by: str) -> dict:
-    """ページに THTH のアプリの Webhook を購読させる（足すだけ・外さない）。止めた口座は断る。"""
+    """口座の Webhook を購読する（足すだけ・外さない）。止めた口座は断る。
+
+    Graph の欄が無い媒体（Threads）は Meta に要求を出さず、権限を確かめて記録するだけ。"""
     admin_log.actor(by)
     from . import adapters, leave_gate
     leave_gate.require_active(account)
     cfg = accounts.load_account(account)
     medium = cfg.get("media")
     if medium not in SUBSCRIBE_FIELDS:
-        raise WebhookError("webhook_unsupported_medium: Webhook の購読は facebook・instagram の口座だけです"
-                           f"（この口座は {medium}）")
-    entry = str(cfg.get(ID_KEY[medium]) or "")
+        _refuse("webhook_unsupported_medium", account)
+    entry = _entry_id(cfg, medium)
+    if not ENTRY_ID.fullmatch(entry):
+        _refuse("webhook_account_id_missing", account)
     adapter = adapters.make_adapter(cfg, accounts.load_token(cfg))
-    result = adapter.subscribe_webhooks(SUBSCRIBE_FIELDS[medium], app_id=_app_id())
+    graph_fields = tuple(f for f in SUBSCRIBE_FIELDS[medium] if f not in DASHBOARD_FIELDS.get(medium, ()))
+    if graph_fields:
+        result = adapter.subscribe_webhooks(graph_fields, app_id=_app_id())
+    else:
+        adapter.require_webhook_scopes(SUBSCRIBE_FIELDS[medium])
+        before = list((subscriptions().get(account) or {}).get("fields") or [])
+        result = {"page_id": "", "fields": list(SUBSCRIBE_FIELDS[medium]), "before": before,
+                  "added": [f for f in SUBSCRIBE_FIELDS[medium] if f not in before]}
     record = {"medium": medium, "object": OBJECT_BY_MEDIUM[medium], "entry_id": entry,
               "page_id": str(cfg.get("page_id") or ""), "fields": result["fields"],
               "wanted": list(SUBSCRIBE_FIELDS[medium]), "subscribed_at": jst.iso(), "by": by}
@@ -437,18 +471,27 @@ def cmd_subscribe(args) -> int:
               "（購読していません）", file=sys.stderr)
         return 2
     except (WebhookError, accounts.AccountError, base.AdapterError, ValueError, OSError) as exc:
-        from . import redact
+        from . import redact, refusal
+        code = refusal.code_of(str(exc))
+        if code in ("webhook_unsupported_medium", "webhook_account_id_missing"):
+            return refusal.emit(args, code, rc=1)
         print(f"{args.account}: webhook_subscribe_failed: {redact.redact(str(exc))}", file=sys.stderr)
         return 1
     if args.json:
         _print(result, True)
         return 0
     added = "・".join(result["added"]) or "（足す欄なし・もう購読済み）"
-    print(f"{args.account}: ページ {result['page_id']} の Webhook を購読しました。欄: {'・'.join(result['fields'])}"
-          f"（今回足した欄: {added}）")
-    if result["medium"] == "instagram":
-        print("  IG の mentions は、アプリの管理画面（Webhooks → Instagram）で mentions の欄を選んだときだけ届きます。"
+    if result["medium"] == "threads":
+        print(f"{args.account}: Threads の Webhook の口座を記録しました。欄: {'・'.join(result['fields'])}"
+              f"（今回足した欄: {added}・Meta への要求はありません）")
+        print("  欄はアプリの管理画面（Webhooks → Threads）で選んだときだけ届きます。"
               "届いたかは thth webhook status で見ます")
+    else:
+        print(f"{args.account}: ページ {result['page_id']} の Webhook を購読しました。欄: {'・'.join(result['fields'])}"
+              f"（今回足した欄: {added}）")
+    if result["medium"] == "instagram":
+        print("  IG の comments・mentions・story_insights は、アプリの管理画面（Webhooks → Instagram）で欄を選んだ"
+              "ときだけ届きます（comments は Advanced Access が要ります）。届いたかは thth webhook status で見ます")
     print("  届いた通知は thth worker が取り込み、thth replies・thth mentions・thth events に出ます。")
     return 0
 
@@ -493,9 +536,9 @@ def cmd_status(args) -> int:
 
 
 def register(sub) -> None:
-    parser = sub.add_parser("webhook", help="Meta の Webhook（FB の feed・mention）の購読と取り込みの様子")
+    parser = sub.add_parser("webhook", help="Meta の Webhook（Facebook・Instagram・Threads）の購読と取り込みの様子")
     ops = parser.add_subparsers(required=True)
-    p = ops.add_parser("subscribe", help="ページに Webhook を購読させる（足すだけ・外さない）")
+    p = ops.add_parser("subscribe", help="口座の Webhook を購読する（足すだけ・外さない）")
     p.add_argument("account")
     p.add_argument("--by", required=True)
     p.add_argument("--json", action="store_true")

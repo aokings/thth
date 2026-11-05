@@ -33,6 +33,7 @@
   // migration v7-rename-person の renamed_classes で中身はそのまま）。回数制限は名前だけ改め、namespace_id は変えない。
   // Meta 計画 段 6: Meta の Webhook の受け口 /webhook/meta（DO は WebhookInbox・migration v9-webhook）。
   // secret は META_APP_SECRET（署名の照合）と META_WEBHOOK_VERIFY_TOKEN（購読の確認）。新しい回数制限は作らない。
+  // 計画 Meta 全部盛り 段 M2: THREADS_APP_SECRET（Threads の通知の署名の照合・任意）。
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
