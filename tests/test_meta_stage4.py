@@ -183,8 +183,9 @@ def test_命令の一覧は読む7つと書く9つだけ_読む命令に書く�
         if isinstance(action, argparse._SubParsersAction):
             verbs |= set(action.choices)
     # 5.6.3: estimate（出す前の見積もり・GET だけ）と skill（手順の skill の場所・網に出ない）を読む側に足した。
+    # 設計 広告の資格と遠くの道 段 5: leave（退出・Meta には書かない）を足した。
     assert set(ads_cli.READ_VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect",
-                                       "estimate", "skill", "catalog", "leads", "network", "shop"}
+                                       "estimate", "skill", "catalog", "leads", "network", "shop", "leave"}
     assert set(ads_cli.WRITE_VERBS) == {"boost", "activate", "extend", "pause", "stop", "budget", "end", "watch",
                                         "resume"}
     assert verbs == set(ads_cli.VERBS)

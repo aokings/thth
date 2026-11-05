@@ -304,6 +304,56 @@ def test_広告の口座の鍵の取り消しと発行し直し(world, tmp_path,
     assert activity.owners(credentials)[name] == {name: "meta-review"}, "取り消しても持ち主のまま（発行し直せる）"
 
 
+def test_ads_leaveで台帳と鍵と資格情報の行が消える(world, tmp_path, monkeypatch, capsys):
+    """設計 広告の資格と遠くの道 段 5: 鍵を結んだので消す道も要る（`thth account leave` の最小版）。"""
+    from thth import api_requests, leave_gate
+    from thth import relay as relay_mod
+    root = world[0]
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    revoked = []
+
+    def worker(kind, subject, operation, body):
+        assert (kind, subject, operation, body) == ("account", name, "revoke", {})
+        revoked.append(subject)
+        return {"status": "revoked"}
+    monkeypatch.setattr(relay_mod, "signed_request", worker)
+    ledger.stop(name, "owner", by="masaru")  # adaccount_state/<名前>/ に物がある形
+    token_path = ledger.load(name)["token"]
+    assert api_requests.key_table(name, credentials)
+    assert cli.main(["ads", "leave", name, "--by", "masaru", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["phase"] == "completed" and result["remote"] == "unconfirmed_manual"
+    assert result["deleted"]["ledger"] == 1 and result["deleted"]["token"] == 1 and result["deleted"]["state"] >= 1
+    assert not (root / "adaccounts" / (name + ".json")).exists() and not (root / "adaccount_state" / name).exists()
+    import os
+    assert not os.path.exists(token_path)
+    assert leave_gate.stopped(name), "退出の印は残る（同じ名前を使い直させない）"
+    rows = json.loads(credentials.read_text())["credentials"]
+    assert not [r for r in rows if name in (r.get("accounts") or {})], "招待で足した資格の行が消える"
+    assert api_requests.key_table(name, credentials) == []
+    events, _ = admin_log.read(account=name, event="account_removed")
+    assert len(events) == 1 and events[0]["medium"] == "ads"
+    # 打ち直しても同じ結果（Worker にもう一度は頼まない・変更ログも 1 行のまま）。
+    assert cli.main(["ads", "leave", name, "--by", "masaru", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == result and revoked == [name]
+    assert len(admin_log.read(account=name, event="account_removed")[0]) == 1
+
+
+def test_ads_leaveはWorkerに届かなければ止めたまま消さない(world, tmp_path, monkeypatch, capsys):
+    from thth import leave_gate
+    from thth import relay as relay_mod
+    root = world[0]
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    monkeypatch.setattr(relay_mod, "signed_request",
+                        lambda *a: (_ for _ in ()).throw(relay_mod.RelayError("synthetic")))
+    assert cli.main(["ads", "leave", name, "--by", "masaru"]) == 2
+    assert "leave_incomplete" in capsys.readouterr().err
+    assert leave_gate.stopped(name) and (root / "adaccounts" / (name + ".json")).exists()
+    assert [r for r in json.loads(credentials.read_text())["credentials"] if name in (r.get("accounts") or {})]
+
+
 def test_広告の口座の要約と鍵の表をWorkerへ押し上げる(world, tmp_path, monkeypatch):
     credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
     name = row["account"]

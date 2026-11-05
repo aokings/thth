@@ -65,7 +65,9 @@ from . import graphread, graphwrite, guide, ledger, watch
 
 # **命令の全部**（`tests/test_meta_stage5.py` がこの集合と parser の一致を縛る）。
 READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect", "estimate", "skill",
-              "catalog", "leads", "network", "shop")
+              "catalog", "leads", "network", "shop",
+              # 設計 広告の資格と遠くの道 段 5: 退出（Meta には書かない・`add` と同じく手元の台帳と資格の操作）。
+              "leave")
 # 段 5 の書く命令。Meta に書くのは `ops.py` の決まった関数だけ（`graphwrite.ALLOWED_CALLERS`）。
 # `watch` は指定に達したら `ops.stop` を呼ぶので書く側。`resume` は止めの印を外す唯一の例外（masaru 11/02）。
 WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end", "watch", "resume")
@@ -149,6 +151,28 @@ def cmd_add(args) -> int:
         return 0
     print(f"書きました: {path}（上限は 0・ads_enabled と production は false。上げるのは VM の台帳を直接書く）")
     print(f"次の一手: thth ads auth {name} --by <名前>（許可の画面で広告アカウントに印）→ thth ads show {name}")
+    return 0
+
+
+# ------------------------------------------------------------------ leave
+
+def cmd_leave(args) -> int:
+    """`thth ads leave <名前> --by <名前>`（止める → thth.me の鍵を無効に → 台帳・鍵・状態を消す → 資格の行を消す）。"""
+    from .. import relay
+    from . import leave
+    try:
+        result = leave.run(args.name, by=args.by)
+    except (OSError, ValueError, accounts.AccountError, relay.RelayError, admin_log.AdminLogError) as exc:
+        detail = " ".join(str(exc).split())[:200] or type(exc).__name__
+        if getattr(args, "json", False):
+            print(json.dumps({"adaccount": args.name, "completed": False, "reason": "leave_incomplete",
+                              "detail": detail}, ensure_ascii=False))
+        return _fail(f"leave_incomplete: {detail}。止めた状態のまま残しています。同じ thth ads leave を打ち直してください")
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    print(f"local_complete: {args.name}（台帳・鍵・状態と thth.me の鍵を消しました）")
+    print("remote_unconfirmed: Meta の側の許可は本人が外してください（Facebook の設定 → ビジネス連携で THTH を削除）")
     return 0
 
 
@@ -1037,6 +1061,11 @@ def register(sub) -> None:
     p_add.add_argument("--by", required=True)
     p_add.add_argument("--json", action="store_true")
     p_add.set_defaults(func=cmd_add)
+    p_leave = verbs.add_parser("leave", help="広告の口座の退出（止める→thth.me の鍵を無効に→台帳・鍵・状態と資格の行を消す）")
+    p_leave.add_argument("name")
+    p_leave.add_argument("--by", required=True)
+    p_leave.add_argument("--json", action="store_true")
+    p_leave.set_defaults(func=cmd_leave)
     p_auth = verbs.add_parser("auth", help="ユーザーの長い鍵を広告の口座の .token に（端末から・MCP からはできない）")
     p_auth.add_argument("name")
     p_auth.add_argument("--by", required=True)

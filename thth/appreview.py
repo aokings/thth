@@ -50,7 +50,8 @@ SLOTS = {
     "BODY2": "Instagram のストーリーズに共有する Threads の投稿の本文（th-publish の本文と別の文）", "REPLY": "返信の本文",
     "REASON": "取り下げの理由", "TH_POST": "th-publish で出した Threads の投稿の id",
     "FB_POST": "fb-publish で出したページの投稿の id", "IG_POST": "ig-publish で出した Instagram の投稿の id",
-    "AD_POST": "宣伝するページの投稿の id（消していないもの）", "FB_COMMENT": "ページのコメントの id",
+    "AD_STORY": "宣伝するページの投稿の object_story_id（<ページの id>_<投稿の数字>・消していないもの）",
+    "AD_PAGE": "リードのフォームのあるページの id（数字）", "FB_COMMENT": "ページのコメントの id",
     "IG_COMMENT": "Instagram のコメントの id", "IG_MEDIA": "いいねを付ける Instagram の投稿（media）の id",
     "IMAGE": "Instagram に出す画像（jpeg）のパス", "FB_PSID": "ページの受信箱の会話の id（thth dm list に出る）",
     "IG_PSID": "Instagram の受信箱の会話の id（thth dm list に出る）",
@@ -213,23 +214,28 @@ SEGMENTS = (
          ("two", "thth retract {IG} {IG_POST} --reason {REASON} --by {BY}"),
          ("hand", "Instagram から消えたのを見せたら Return")),
     # ---------------------------------------------------------------- 広告
-    # 広告の招待は資格の行を作らず、`thth login` の鍵が広告の台帳に結ばれない（遠くの道に出ていない・計画 §4）。
-    # 広告の区間は login せず、運営者の台帳のある手元の thth で撮る（`appreview_rec.sh` の REC_LOCAL_THTH）。
-    _seg("flow-ads", "ads", "Reviewer flow — an ad account, shown from the operator's ledger.", [],
-         ("prep", "広告の区間（flow-ads・ads-*）は thth login を使わず、運営者の台帳（adaccounts/）のある手元の thth で撮る: "
-                  "REC_LOCAL_THTH にその thth の命令を渡しておく（例 REC_LOCAL_THTH='python3 -m thth'）"),
+    # 設計 広告の資格と遠くの道（2026-11-06）: 広告の招待も資格の行を作り、`thth login` の鍵が広告の台帳に結ばれる。
+    # 鍵は口座 1 つなので、IG と同じく広告の区間の前に広告の招待で login をやり直す。審査員の台帳に結んだページは
+    # 無いので、boost は --object-story-id、leads は --page を明示する。配信を始める口（activate）は遠くの道に無い。
+    _seg("flow-ads", "ads", "Reviewer flow — an ad account, with Facebook Login for Business.", [],
+         ("prep", _LOGIN_PREP + "（広告の招待・Facebook ページ・Instagram の招待とは別の 1 本）"),
+         ("hand", "Authorize → Facebook ログイン for Business で広告アカウントを選び、権限の一覧を見せて許可 → "
+                  "完了ページが出たら Return"),
+         ("off", _OFF_SECRET), ("login",),
          ("cmd", "thth ads doctor {AD}")),
     _seg("ads-read", "ads", "ads_read — the ad account and its insights.", ["ads_read"],
          ("cmd", "thth ads show {AD}"), ("cmd", "thth ads insights {AD}")),
     _seg("ads-manage", "ads", "ads_management, pages_manage_ads — boost a Page post (created paused), then stop.",
          ["ads_management", "pages_manage_ads"],
-         ("cmd", "thth ads boost {AD} --post {AD_POST} --lifetime {BUDGET} --end {END} --by {BY}"),
+         ("prep", "審査の間だけ運営者が VM の台帳で production と 1 操作の上限を上げておく（ads_enabled と月の上限は 0 のまま・"
+                  "上げないと boost は ads_not_production で断られる）"),
+         ("cmd", "thth ads boost {AD} --object-story-id {AD_STORY} --lifetime {BUDGET} --end {END} --by {BY}"),
          ("hand", "広告マネージャに止めた形で出たのを見せたら Return"),
          ("cmd", "thth ads stop {AD} --by {BY}")),
     _seg("ads-catalog", "ads", "catalog_management — the product catalogs and their items.", ["catalog_management"],
          ("cmd", "thth ads catalog list {AD}"), ("cmd", "thth ads catalog products {AD} --catalog {CATALOG}")),
     _seg("ads-leads", "ads", "leads_retrieval — leads of a lead form (shown on screen only).", ["leads_retrieval"],
-         ("prep", "リード広告のテストのフォームに 1 件入れておく"), ("cmd", "thth ads leads {AD}")),
+         ("prep", "リード広告のテストのフォームに 1 件入れておく"), ("cmd", "thth ads leads {AD} --page {AD_PAGE}")),
     _seg("ads-network", "ads", "read_audience_network_insights — Audience Network results.",
          ["read_audience_network_insights"], ("cmd", "thth ads network {AD}")),
     _seg("ads-shop", "ads", "commerce_account_read_settings — the shop's settings.",
