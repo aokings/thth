@@ -213,6 +213,34 @@ def test_小さいファイルでも15日前の行は次に書くときに消え
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
 
+def _write_rows(account, *ats):
+    os.makedirs(accounts.state_dir_for(account), mode=0o700, exist_ok=True)
+    with open(os.path.join(accounts.state_dir_for(account), meter.FILE), "w", encoding="utf-8") as stream:
+        for at in ats:
+            stream.write(json.dumps({"at": jst.iso(at), "account": account, "command": "send",
+                                     "outcome": "ok", "code": None, "marks": []}) + "\n")
+
+
+def test_順の崩れた古い行は日が変わる1行で消える(two):
+    """時計が戻ると先頭だけでは古い行が見えない（監査 5.12.1 後回し 2）。"""
+    now = jst.now_jst()
+    _write_rows("kopicha-threads", now - datetime.timedelta(days=1), now - datetime.timedelta(days=20),
+                now - datetime.timedelta(days=1))
+    meter.note("kopicha-threads", command="send", outcome="ok", now=now)
+    rows = meter.read("kopicha-threads")
+    assert len(rows) == 3
+    assert all(jst.parse(row["at"]) >= now - datetime.timedelta(days=meter.KEEP_DAYS) for row in rows)
+
+
+def test_同じ日の行は詰めない_毎回全体を書き直さない(two):
+    now = jst.now_jst()
+    _write_rows("kopicha-threads", now - datetime.timedelta(days=1), now - datetime.timedelta(days=20), now)
+    path, _before = _raw("kopicha-threads")
+    inode = os.stat(path).st_ino
+    meter.note("kopicha-threads", command="send", outcome="ok", now=now)
+    assert os.stat(path).st_ino == inode and len(meter.read("kopicha-threads")) == 4
+
+
 def test_MCPのサーバ型も控える_許された口座だけ(user_server):  # noqa: F811
     _root, _path, _value, server = user_server
     denied = server.call_tool("thth_draft_put", {"account": "first", "file": "x.md", "text": SECRET})

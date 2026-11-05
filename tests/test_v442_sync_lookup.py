@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 
 from tests.conftest import init_git_pair, run_git, run_thth, write_queue_file
@@ -146,3 +147,43 @@ def test_lint_reads_a_file_that_really_has_the_account_name(isolated_account):
     result = run_thth(["lint", isolated_account["name"]])
     assert result.returncode == 0, result.stderr
     assert "lint_takes_no_account" not in result.stderr
+
+
+# 5.12.4（監査 5.12.1 後回し 1）: 口座名の判定は引数の全部を見る・末尾の `/` は見ない。
+def test_lint_with_account_name_second_refuses_without_pulling(isolated_account):
+    rel = os.path.join("docs", "sns", "queue", "ok.md")
+    write_queue_file(isolated_account["queue_dir"], "ok.md",
+                     body="## threads\n\n本文です。\n", fm_overrides={"account": isolated_account["name"]})
+    result = run_thth(["lint", rel, isolated_account["name"]], cwd=isolated_account["repo_dir"])
+    assert result.returncode == 2
+    assert result.stderr.startswith("lint_takes_no_account: thth lint は口座名を取りません")
+    assert "1 つ目" not in result.stderr and "取り込" not in result.stderr
+
+
+def test_lint_with_account_name_and_trailing_slash_refuses(isolated_account):
+    result = run_thth(["lint", isolated_account["name"] + "/"])
+    assert result.returncode == 2
+    assert result.stderr.startswith("lint_takes_no_account: ")
+    assert f"{isolated_account['name']}/" not in result.stderr and "取り込" not in result.stderr
+
+
+# 監査 5.12.1 の気づき「柵の穴」: 口座名と同じ名のフォルダが repo の根にあれば、それを lint する。
+def test_lint_reads_a_folder_that_really_has_the_account_name(isolated_account):
+    folder = os.path.join(isolated_account["repo_dir"], isolated_account["name"])
+    write_queue_file(folder, "in-folder.md", body="## threads\n\n本文です。\n",
+                     fm_overrides={"account": isolated_account["name"]})
+    for typed in (isolated_account["name"], isolated_account["name"] + "/"):
+        result = run_thth(["lint", typed])
+        assert result.returncode == 0, result.stderr
+        assert "lint_takes_no_account" not in result.stderr
+
+
+# 監査 5.12.1 後回し 3: MCP の thth_lint に口座名を渡したら、通すにはは MCP の口の文。
+def test_mcp_lint_with_account_name_says_the_mcp_way(isolated_account, monkeypatch):
+    from tests.test_mcp import _load_server_module
+    monkeypatch.chdir(isolated_account["repo_dir"])
+    result = _load_server_module().call_tool("thth_lint", {"file": isolated_account["name"]})
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["error"] == "lint_takes_no_account"
+    assert "thth_lint の file に原稿のパス" in payload["fix"]
+    assert "thth lint <" not in payload["fix"] + payload["better"]

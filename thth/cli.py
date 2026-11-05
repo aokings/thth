@@ -80,10 +80,12 @@ def cmd_lint(args) -> int:
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
     # 5.12.1: `thth lint <口座> <原稿>` と打つと口座名をパスとして探し、全口座の repo の取り込みの
     # 結果まで並べていた（運用の知らせ）。口座名で、その名前のファイルが無いときは取り込む前に断る。
-    if args.file and _account_name_not_file(args.file[0]):
+    # 5.12.4: 順を逆に打っても同じなので、1 つ目だけでなく引数の全部を見る（監査 5.12.1）。
+    typed = next((item for item in args.file or () if _account_name_not_file(item)), None)
+    if typed is not None:
         from . import refusal
         payload = {"error": "lint_takes_no_account"}  # 棚卸し（tools/count_refusals.py）は JSON の欄で数える
-        return refusal.emit(args, payload["error"], payload=payload, account=args.file[0], rc=2)
+        return refusal.emit(args, payload["error"], payload=payload, account=typed.rstrip("/"), rc=2)
     paths, note = _expand_targets(args.file, only_draft=False, purpose="lint")
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
@@ -339,10 +341,14 @@ def _translate_local_path(path: str, purpose: str | None = None, account=None) -
 
 
 def _account_name_not_file(item) -> bool:
-    """台帳の口座名で、その名前のファイルが今の場所にも台帳の repo の根にも無い（`thth lint` の 1 つ目・5.12.1）。
+    """台帳の口座名で、その名前のファイルが今の場所にも台帳の repo の根にも無い（`thth lint` の引数・5.12.1）。
 
-    同じ名前のファイルが本当にあれば False（そのまま lint する）。"""
-    if not isinstance(item, str) or "/" in item or os.path.exists(item):
+    末尾の `/` は見ない（`thth lint kopicha-threads/`・5.12.4）。同じ名前のファイルが本当にあれば
+    False（そのまま lint する）。"""
+    if not isinstance(item, str):
+        return False
+    item = item.rstrip("/")
+    if "/" in item or os.path.exists(item):
         return False
     try:
         names = accounts_mod.list_account_names()
