@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -80,6 +81,15 @@ def owners(credentials_path) -> dict:
             continue
         if accounts.is_invite_account(cfg) and relay.PERSON.fullmatch(name):
             out.setdefault(name, {})[name] = cfg.get("project")
+    # 広告の招待の口座は資格情報の行を持たない（`invites._try_credential`）。台帳から持ち主を引く。
+    from .ads import ledger as ads_ledger
+    for name in ads_ledger.list_names():
+        try:
+            cfg = ads_ledger.load(name)
+        except (accounts.AccountError, OSError, ValueError):
+            continue
+        if accounts.is_invite_account(cfg) and relay.PERSON.fullmatch(name):
+            out.setdefault(name, {})[name] = cfg.get("project")
     return out
 
 
@@ -119,8 +129,30 @@ def _credential_summary(credentials_path, account, project, person):
             "expires_at": str(row.get("expires_at", ""))[:40], "revoked": row.get("revoked") is not False}
 
 
+def _is_adaccount(account) -> bool:
+    """広告の招待の口座か（台帳が `adaccounts/` にだけある）。"""
+    from .ads import ledger as ads_ledger
+    return os.path.exists(ads_ledger.path_for(account)) and account not in accounts.list_account_names()
+
+
+def _ads_summary(person, account, credentials_path) -> dict:
+    """広告の口座の要約（公開の数も上限も持たないので 0。止まっているかと鍵だけを見せる）。"""
+    from .ads import ledger as ads_ledger
+    cfg = ads_ledger.load(account)
+    stopped = ads_ledger.stopped(account)
+    at = jst.parse((stopped or {}).get("stopped_at"))
+    return {"account": account, "generated_at": jst.iso(), "scheduled": False,
+            "limits": {key: 0 for key in ("daily_max_posts", "daily_max_retracts", "burst_count",
+                                          "burst_minutes", "hold_minutes", "min_interval_hours")},
+            "stopped": None if stopped is None else {"reason": stopped.get("reason"), "at": jst.iso(at) if at else None},
+            "today": {"posts": 0, "retracts": 0},
+            "credential": _credential_summary(credentials_path, account, cfg.get("project"), person), "rows": []}
+
+
 def summary(person, account, credentials_path, *, now=None) -> dict:
     from . import account_settings, burst_queue, server_writes, queuefile
+    if _is_adaccount(account):
+        return _ads_summary(person, account, credentials_path)
     cfg = accounts.load_account(account)
     row = account_settings.status(account, now=now)
     rows = []
@@ -303,7 +335,11 @@ def apply(person, action, credentials_path) -> dict:
     try:
         if not owns(credentials_path, person, account):
             return {"id": action_id, "outcome": "failed", "reason": "not_owner"}
-        if kind == "stop":
+        if kind == "stop" and _is_adaccount(account):
+            from .ads import ledger as ads_ledger
+            if ads_ledger.stopped(account) is None:
+                ads_ledger.stop(account, "owner", by=person, via="http")
+        elif kind == "stop":
             if guard.stopped(account) is None:
                 guard.stop(account, "owner", actor=person, via="http")
         elif kind == "resume":

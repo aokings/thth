@@ -78,6 +78,7 @@ FIX_VIEWS = {
     "invites.NEXT": (
         "invite_media_unsupported", "invalid_instance", "invalid_project", "invalid_label", "invalid_expires",
         "invite_project_in_owner_group", "invite_account_exists", "invite_not_found", "invite_already_used",
+        "invite_asset_missing", "invite_asset_ambiguous", "invite_review_scopes_unsupported",
         "invite_not_open", "invite_tty_required", "invite_registration_rejected", "invite_registration_unknown",
         "invite_revoke_unknown", "invite_remote_created_audit_unconfirmed", "invite_remote_created_delivery_failed",
         "admin_draft_invite_account_only", "admin_draft_credential_missing", "admin_draft_invalid_draft",

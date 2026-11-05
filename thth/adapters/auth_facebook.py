@@ -228,16 +228,7 @@ class FacebookAuthProfile(AuthProfile):
         `auth_instagram.py`）も同じ道でページの鍵を取り、そのあとにページの IG を照合する。
         """
         from .. import oauth
-        short = graph_get("/oauth/access_token", {
-            "client_id": self.client_id, "redirect_uri": CALLBACK,
-            "client_secret": self.client_secret, "code": secret(code_value)})
-        short_token = _token_value(short, "short")
-        long_ = graph_get("/oauth/access_token", {
-            "grant_type": "fb_exchange_token", "client_id": self.client_id,
-            "client_secret": self.client_secret, "fb_exchange_token": short_token})
-        long_token = _token_value(long_, "long")
-
-        pages = self._pages(long_token, log)
+        pages = self._pages(self._long_token(code_value), log)
         if not pages:
             raise FlowError("facebook_no_pages: 許可の画面でページが 1 つも選ばれていません。"
                             "ページに印を付けて認可し直してください。既存のトークンはそのままです")
@@ -254,6 +245,21 @@ class FacebookAuthProfile(AuthProfile):
             raise FlowError("facebook_page_not_granted: 台帳のページが許可されていません。"
                             "許可の画面でそのページに印を付けるか、台帳の page_id を直してください（"
                             + fb.PAGE_ID_HINT + "）")
+        return self._checked_page(page, page_id)
+
+    def _long_token(self, code_value):
+        """code → 短い鍵 → 長い鍵（ユーザーの鍵・保存しない）。"""
+        short = graph_get("/oauth/access_token", {
+            "client_id": self.client_id, "redirect_uri": CALLBACK,
+            "client_secret": self.client_secret, "code": secret(code_value)})
+        short_token = _token_value(short, "short")
+        long_ = graph_get("/oauth/access_token", {
+            "grant_type": "fb_exchange_token", "client_id": self.client_id,
+            "client_secret": self.client_secret, "fb_exchange_token": short_token})
+        return _token_value(long_, "long")
+
+    def _checked_page(self, page, page_id):
+        """ページの鍵を `/debug_token` と `/me` で確かめる。`(page の行, 鍵, debug の data か None, /me の答え)`。"""
         page_token = _token_value(page, "page")
 
         debug = self._debug(page_token)
@@ -307,3 +313,42 @@ class FacebookAuthProfile(AuthProfile):
         if isinstance(data_access, int) and not isinstance(data_access, bool):
             token["data_access_expires_at"] = data_access
         return token
+
+
+class InviteAssetError(FlowError):
+    """招待の認可で、口座にする資産が 1 つに決まらない。`invite_reason` を招待のページへ返す（鍵は保存しない）。"""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.invite_reason = reason
+
+
+def one_asset(rows):
+    """許可された資産がちょうど 1 つならそれを返す。招待 1 本で口座は 1 つ（どれを使うかをこちらで決めない）。"""
+    if not rows:
+        raise InviteAssetError("invite_asset_missing")
+    if len(rows) > 1:
+        raise InviteAssetError("invite_asset_ambiguous")
+    return rows[0]
+
+
+class FacebookInviteAuthProfile(FacebookAuthProfile):
+    """招待リンクの認可。台帳の `page_id` は先に無く、許可の画面で選ばれたページから作る。"""
+
+    @classmethod
+    def for_invite(cls, scopes):
+        from .. import appenv
+        app_id, app_secret, config_id = appenv.load_meta_app_env(log=lambda _line: None)
+        secret(app_secret)
+        profile = cls(app_id, app_secret, CALLBACK, list(scopes))
+        profile.config_id = config_id
+        return profile
+
+    @leave_gate.configured("account_cfg")
+    def exchange(self, code_value, session, account_cfg, *, log):
+        row = one_asset(self._pages(self._long_token(code_value), log))
+        page_id = str(row.get("id") or "")
+        if not fb.PAGE_ID.fullmatch(page_id):
+            raise FlowError("facebook_accounts_invalid: ページの id が読めません")
+        page, page_token, debug, me = self._checked_page(row, page_id)
+        return self._token_record(page_id, page, page_token, debug, me)

@@ -31,6 +31,28 @@ MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
                    'write:favourites']
 
 
+# 未承認の権限（計画 Meta 全部盛り申請 §1 の表・判断 ①②③⑤ は入れる）。承認までは旗で閉じる（masaru 11/05）:
+# 既定の招待には足さず、録画と審査の招待（`thth admin invite create --review-scopes`）だけが求める。
+# 未承認の権限を外の人に求めると、認可そのものが通らないことがある。
+# 構成（`config_id`）があるときは構成の側の一覧が効く。
+THREADS_REVIEW_SCOPES = ("threads_share_to_instagram",)
+META_INVITE_EXTRA = {
+    "facebook": ("pages_manage_ads", "pages_manage_cta", "publish_video", "pages_messaging",
+                 "pages_utility_messaging"),
+    "instagram": ("instagram_manage_engagement", "instagram_manage_messages", "pages_read_user_content",
+                  "threads_business_basic"),
+    "ads": ("catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list"),
+}
+
+
+def meta_invite_scopes(media, review=False):
+    """招待の口座が持つはずの権限（`facebook`・`instagram`・`ads`）。doctor の突き合わせの相手もこれ。"""
+    from .adapters import facebook, instagram
+    from .ads import auth as ads_auth
+    base = {"facebook": facebook.SCOPES, "instagram": instagram.SCOPES, "ads": ads_auth.SCOPES}[media]
+    return [*base, *META_INVITE_EXTRA[media]] if review else list(base)
+
+
 def mastodon_guidance(account):
     return ('Mastodon に必要な scope: ' + ' '.join(MASTODON_SCOPES) +
             f'。まず thth auth {account} --by … で再認可してください。手入力の逃げ道は thth token set {account} --stdin --by …（管理者が発行した access token）です')

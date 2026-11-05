@@ -43,7 +43,10 @@ HASH = re.compile(r"[0-9a-f]{64}\Z")
 # Mastodon は 3.22.0 から（点検 §B-20）。instance は運営者が招待を作るときに決める。
 # Bluesky は招待しない（App Password を thth.me のページで受けることになり、「トークンは
 # このページを通りません」が崩れる。atproto の OAuth で入れるまでは運営者が用意する）。
-MEDIA = ("threads", "mastodon")
+# Facebook・Instagram・広告は 5.13.0 から（計画 Meta 全部盛り申請 M1）。認可は Facebook ログイン for Business で、
+# どのページ・IG・広告アカウントかは許可の画面で本人が選ぶ（招待を作るときには決めない）。
+META_MEDIA = ("facebook", "instagram", "ads")
+MEDIA = ("threads", "mastodon", *META_MEDIA)
 DEFAULT_DAYS = 30
 MAX_DAYS = 90
 LABEL_MAX = 80
@@ -52,14 +55,16 @@ PROJECT_MAX = accounts.NAME_MAX - len("inv--") - 6
 # 招待の状態。`registering`/`unknown`/`failed` は Worker への登録の途中・不明・拒否。
 STATUSES = ("registering", "open", "authorizing", "used", "revoked", "expired", "failed", "unknown")
 OPEN = ("registering", "unknown", "open", "authorizing")
-# 招待の認可で求める権限。申請の範囲（`docs/計画_Meta申請_2026-09-25.md`）に合わせて
-# `threads_share_to_instagram` は外す——申請しない権限を外の人に求めると、審査前は
-# 認可そのものが通らないことがある。招待のページはこの一覧をそのまま見せる。
-def invite_scopes(media="threads"):
+# 招待の認可で求める権限。招待のページはこの一覧をそのまま見せる。未承認の権限
+# （`threads_share_to_instagram`・Meta の足し分）は既定では求めない——審査前に外の人に求めると、
+# 認可そのものが通らないことがある。録画と審査の招待だけ `review=True`（`--review-scopes`）で開ける。
+def invite_scopes(media="threads", review=False):
     from . import scopes
     if media == "mastodon":
         return list(scopes.MASTODON_SCOPES)
-    return [name for name in scopes.DEFAULT_SCOPES if name != "threads_share_to_instagram"]
+    if media in META_MEDIA:
+        return scopes.meta_invite_scopes(media, review)
+    return [name for name in scopes.DEFAULT_SCOPES if review or name not in scopes.THREADS_REVIEW_SCOPES]
 
 
 def instance_of(value):
@@ -75,6 +80,7 @@ def instance_of(value):
 REASONS = frozenset((
     "invite_media_unsupported", "invalid_instance", "invalid_project", "invalid_label", "invalid_expires",
     "invite_project_in_owner_group", "invite_account_exists", "invite_not_found",
+    "invite_asset_missing", "invite_asset_ambiguous", "invite_review_scopes_unsupported",
     "invite_store_unavailable", "invite_log_unavailable", "invite_already_used",
     "invite_not_open", "invite_tty_required", "invite_registration_rejected",
     "invite_registration_unknown", "invite_revoke_unknown",
@@ -114,6 +120,8 @@ def _valid(record):
     if jst.parse(record.get("at")) is None or not isinstance(record.get("by"), str):
         return False
     if type(record.get("expires_at")) is not int or type(record.get("production")) is not bool:
+        return False
+    if type(record.get("review_scopes", False)) is not bool:
         return False
     # 3.12.0 の招待の記録に残っている `approval` は読まない（3.13.0 で承認ページを外した）。
     label = record.get("label")
@@ -162,9 +170,11 @@ def check_project(project):
 def _account_free(name):
     """口座名がまだどこにも無い（台帳も停止の記録も無い）か。"""
     from . import account_cli, leave_gate
+    from .ads import ledger as ads_ledger
     if leave_gate.stopped(name):
         return False
-    return not os.path.lexists(os.path.join(account_cli.target_accounts_dir(), name + ".json"))
+    return not (os.path.lexists(os.path.join(account_cli.target_accounts_dir(), name + ".json"))
+                or os.path.lexists(ads_ledger.path_for(name)))
 
 
 def terminal():
@@ -179,11 +189,13 @@ def public(record):
     return {key: record.get(key) for key in keys}
 
 
-def create(*, media, project, label=None, expires=None, production=False, by, instance=None):
+def create(*, media, project, label=None, expires=None, production=False, by, instance=None, review_scopes=False):
     """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。"""
     admin_log.actor(by)
     if media not in MEDIA:
         raise error("invite_media_unsupported")
+    if review_scopes and media == "mastodon":
+        raise error("invite_review_scopes_unsupported")
     if media == "mastodon":
         instance = instance_of(instance)
     elif instance is not None:
@@ -216,13 +228,15 @@ def create(*, media, project, label=None, expires=None, production=False, by, in
                       code_hash=code_hash, media=media, instance=instance, project=project, label=label,
                       production=production, expires_at=expires_at, status="registering",
                       account=account, reason=None, approver_set=False, updated_at=jst.iso())
+        if review_scopes:
+            record["review_scopes"] = True
         # 先に手元へ「作ろうとしている」を残す（Worker に届いたか分からなくても
         # revoke で後始末できるように）。
         with STORE.locked() as directory:
             STORE.write(directory, record)
         try:
             remote = {"media": media, "production": production, "expires_at": expires_at,
-                      "scopes": invite_scopes(media)}
+                      "scopes": invite_scopes(media, review_scopes)}
             if instance is not None:
                 remote["instance"] = instance
             value = relay.signed_request("invite", code_hash, "create", remote)
@@ -248,7 +262,8 @@ def create(*, media, project, label=None, expires=None, production=False, by, in
             with admin_log.transaction():
                 admin_log.append("invite_created", subject(invite_id), {"media": media}, by=by,
                                  diff={"invite": ["absent", "present"], "production": [None, production],
-                                       "expires_days": [None, days]})
+                                       "expires_days": [None, days],
+                                       **({"review_scopes": [None, True]} if review_scopes else {})})
         except private_store.LOG_ERRORS:
             raise error("invite_remote_created_audit_unconfirmed") from None
         return public(record)
@@ -316,7 +331,10 @@ INVITE_REDIRECT_URI = "https://thth.me/callback/"
 THREADS_HANDLE = re.compile(r"[A-Za-z0-9_.]{1,64}\Z")
 # Mastodon の verify_credentials の `acct`（その instance の利用者なのでドメインは付かない）。
 MASTODON_HANDLE = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
-HANDLES = {"threads": THREADS_HANDLE, "mastodon": MASTODON_HANDLE}
+# Meta の 3 媒体の handle は数字の id（ページ・IG・広告アカウント。名前は変えられるので照合に使わない）。
+META_HANDLE = re.compile(r"[0-9]{1,32}\Z")
+HANDLES = {"threads": THREADS_HANDLE, "mastodon": MASTODON_HANDLE,
+           **{media: META_HANDLE for media in META_MEDIA}}
 _next_poll = {}
 
 
@@ -356,7 +374,8 @@ def _active(record):
     # 3.14.0 §3.3: 完了ページで出したアシスタントの鍵の hash を受け取るまで（`key_synced`）。
     return (record["status"] == "used" and now_ms() < record["expires_at"]
             and not (record.get("remote_ready") and record.get("approver_set")
-                     and (record.get("credential_sha256") and record.get("key_synced") or not _credentials.get())))
+                     and (record.get("credential_sha256") and record.get("key_synced") or not _credentials.get()
+                          or record["media"] == "ads")))
 
 
 def process(invite_id):
@@ -468,13 +487,29 @@ def _profile(record):
         profile = MastodonInviteAuthProfile.prepare(_expanded(_ledger(record)), by=record["by"])
         profile.validate()
         return profile
+    review = record.get("review_scopes") is True
+    if record["media"] in META_MEDIA:
+        profile = _meta_profile(record["media"]).for_invite(invite_scopes(record["media"], review))
+        profile.validate()
+        return profile
     from . import appenv
     from .adapters.auth_threads import ThreadsInviteAuthProfile
     app_id, app_secret = appenv.load_app_env(log=lambda _: None)
     redact.register_secret(app_secret)
-    profile = ThreadsInviteAuthProfile(app_id, app_secret, INVITE_REDIRECT_URI, invite_scopes())
+    profile = ThreadsInviteAuthProfile(app_id, app_secret, INVITE_REDIRECT_URI, invite_scopes("threads", review))
     profile.validate()
     return profile
+
+
+def _meta_profile(media):
+    if media == "facebook":
+        from .adapters.auth_facebook import FacebookInviteAuthProfile
+        return FacebookInviteAuthProfile
+    if media == "instagram":
+        from .adapters.auth_instagram import InstagramInviteAuthProfile
+        return InstagramInviteAuthProfile
+    from .ads.auth import AdsInviteAuthProfile
+    return AdsInviteAuthProfile
 
 
 def _start(directory, record):
@@ -553,16 +588,24 @@ def _code(value):
 def _recovered(directory, record):
     """口座は書けたのに、記録を used にする前に常駐が止まった。台帳から続ける。"""
     try:
-        cfg = accounts.load_account(record["account"])
+        cfg = _load_ledger(record)
     except accounts.AccountError:
         return False
-    if cfg.get("invite_id") != record["invite_id"] or not isinstance(cfg.get("handle"), str) \
-            or not HANDLES[record["media"]].fullmatch(cfg["handle"]):
+    handle = cfg.get("act_id") if record["media"] == "ads" else cfg.get("handle")
+    if cfg.get("invite_id") != record["invite_id"] or not isinstance(handle, str) \
+            or not HANDLES[record["media"]].fullmatch(handle):
         return False
     _forget_session(directory, record["invite_id"])
-    _save(directory, record, status="used", reason=None, handle=cfg["handle"], remote_ready=False, approver_set=False)
+    _save(directory, record, status="used", reason=None, handle=handle, remote_ready=False, approver_set=False)
     _announce(directory, record)
     return True
+
+
+def _load_ledger(record):
+    if record["media"] == "ads":
+        from .ads import ledger as ads_ledger
+        return ads_ledger.load(record["account"])
+    return accounts.load_account(record["account"])
 
 
 def _authorizing(directory, record):
@@ -586,27 +629,44 @@ def _authorizing(directory, record):
     _complete(directory, record, session, code)
 
 
-def _ledger(record, *, handle="", user_id=""):
+def _ledger(record, *, handle="", user_id="", page_id=None):
     """招待の口座の台帳（`account add` と同じ雛形・置き場は `docs/運用_招待する側.md` のとおり）。"""
     from . import account_cli
     name = record["account"]
     media = record.get("media", "threads")
     data = account_cli.build_ledger(name, media=media, project=record["project"],
                                     repo_dir=f"$THTH_ROOT/repos/_server/{name}",
-                                    instance=record.get("instance"),
+                                    instance=record.get("instance"), handle=handle if media in META_MEDIA else None,
+                                    page_id=page_id,
                                     redirect_uri=INVITE_REDIRECT_URI if media == "threads" else None)
     data.update(handle=handle, user_id=user_id, env=f"$THTH_ROOT/secrets/{name}.env",
                 token=f"$THTH_ROOT/secrets/{name}.token", production=record["production"],
                 scheduled=False, invite_id=record["invite_id"],
                 provenance=admin_log.provenance(record["by"], via="invite"))
+    if record.get("review_scopes") is True:
+        data["review_scopes"] = True
+    return data
+
+
+def _ads_ledger(record, act_id):
+    """広告の招待の台帳。**`production`・`ads_enabled` は false・上限は 0 のまま**（招待の `--production` でも
+    上げない・上げるのは VM の台帳を直接書く手だけ・`ads/ledger.py` の D-1）。`media` は台帳の欄に無いので写しに足す。"""
+    from .ads import ledger as ads_ledger
+    name = record["account"]
+    data = ads_ledger.build(name, act_id=act_id, project=record["project"])
+    data.update(token=f"$THTH_ROOT/secrets/{name}.token", invite_id=record["invite_id"],
+                provenance=admin_log.provenance(record["by"], via="invite"))
+    if record.get("review_scopes") is True:
+        data["review_scopes"] = True
     return data
 
 
 def _expanded(data):
     value = accounts.AccountConfig(data)
-    value._thth_account_name = data["account"]
+    value._thth_account_name = data.get("account") or data["adaccount"]
     for key in ("repo_dir", "env", "token"):
-        value[key] = accounts._expand(value[key])
+        if key in data:
+            value[key] = accounts._expand(value[key])
     return value
 
 
@@ -614,6 +674,8 @@ def _account_exists(record, user_id, username):
     """同じ口座が既に台帳にあるか（handle・user_id・token の user_id で見る）。
     Mastodon は同じ instance の中だけを比べる（別の instance の同名は別の人）。"""
     from . import oauth
+    if record["media"] == "ads":
+        return _adaccount_exists(user_id)
     for name in accounts.list_account_names():
         try:
             cfg = accounts.load_account(name)
@@ -638,16 +700,30 @@ def _account_exists(record, user_id, username):
     return False
 
 
+def _adaccount_exists(act_id):
+    from .ads import ledger as ads_ledger
+    for name in ads_ledger.list_names():
+        try:
+            if ads_ledger.load(name).get("act_id") == act_id:
+                return True
+        except accounts.AccountError:
+            continue
+    return False
+
+
 def _complete(directory, record, session, code):
     """認可の code を VM で token に換え、口座を用意して Worker に知らせる。"""
     from . import appenv, oauth
+    ads = record["media"] == "ads"
     try:
         profile = _profile(record)
-        exchange_cfg = _expanded(_ledger(record))
+        exchange_cfg = _expanded({"adaccount": record["account"]} if ads else _ledger(record))
         token = profile.exchange(code, session, exchange_cfg, log=lambda _: None)
-    except (oauth.OAuthError, appenv.AppEnvError, accounts.AccountError, OSError, ValueError):
-        return _back_to_open(directory, record, "auth_failed")
-    user_id, username = token.get("user_id"), token.get("username")
+    except (oauth.OAuthError, appenv.AppEnvError, accounts.AccountError, OSError, ValueError) as exc:
+        # 資産が 1 つに決まらないときは、その理由を招待のページへ（本人が選び直せる）。
+        return _back_to_open(directory, record, getattr(exc, "invite_reason", "auth_failed"))
+    # 広告の鍵の `user_id` は Meta の利用者の id のまま。口座の印は広告アカウントの id。
+    user_id, username = (token.get("act_id"),) * 2 if ads else (token.get("user_id"), token.get("username"))
     if (not isinstance(username, str) or not HANDLES[record["media"]].fullmatch(username)
             or not isinstance(user_id, str)):
         return _back_to_open(directory, record, "auth_failed")
@@ -659,20 +735,23 @@ def _complete(directory, record, session, code):
     except InviteError:
         return _back_to_open(directory, record, "unavailable")
     token["auth_via"] = "relay"
-    data = _ledger(record, handle=username, user_id=user_id)
+    data = _ads_ledger(record, user_id) if ads else _ledger(record, handle=username, user_id=user_id,
+                                                            page_id=token.get("page_id"))
     try:
         _create_account(record, data, token)
     except (InviteError, OSError, ValueError, accounts.AccountError, admin_log.AdminLogError):
         return _back_to_open(directory, record, "unavailable")
     _forget_session(directory, record["invite_id"])
     _save(directory, record, status="used", reason=None, handle=username, remote_ready=False, approver_set=False)
-    _initialize_repo(record, data)
+    if not ads:  # 広告の口座に記録の repo と doctor の観測は無い（`thth ads doctor` は読むだけ）。
+        _initialize_repo(record, data)
     _try_credential(directory, record)
-    try:
-        from . import doctor
-        doctor.record_auth(record["account"], _expanded(data), token, log=lambda _: None)
-    except Exception:
-        pass
+    if not ads:
+        try:
+            from . import doctor
+            doctor.record_auth(record["account"], _expanded(data), token, log=lambda _: None)
+        except Exception:
+            pass
     _announce(directory, record)
     _push_activity(record)
 
@@ -709,9 +788,11 @@ def _create_account(record, data, token):
     """token（0600）と台帳（0600・O_EXCL）を書き、変更ログに残す。ログに書けなければ両方戻す。"""
     import json
     from . import account_cli, leave_gate, secrets_fs
+    from .ads import ledger as ads_ledger
     name = record["account"]
+    ads = record["media"] == "ads"
     expanded = _expanded(data)
-    ledger_path = os.path.join(account_cli.target_accounts_dir(), name + ".json")
+    ledger_path = ads_ledger.path_for(name) if ads else os.path.join(account_cli.target_accounts_dir(), name + ".json")
     token_path = expanded["token"]
     created = []
 
@@ -732,18 +813,26 @@ def _create_account(record, data, token):
             os.chmod(token_dir, 0o700)
         secrets_fs.atomic_write_json(token_path, token, mode=0o600)
         created.append(token_path)
-        os.makedirs(account_cli.target_accounts_dir(), exist_ok=True)
-        fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        created.append(ledger_path)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(data, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
+        if ads:
+            ads_ledger.write_new(name, data)
+            created.append(ledger_path)
+            # 通貨と時間帯を写す（JPY 以外は書く操作を断る印が付く・`thth ads auth` と同じ）。
+            ads_ledger.mirror_account_facts(name, currency=token.get("currency"),
+                                            timezone_name=token.get("timezone_name"))
+        else:
+            os.makedirs(account_cli.target_accounts_dir(), exist_ok=True)
+            fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            created.append(ledger_path)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
         by = record["by"]
-        admin_log.append("account_added", name, data, by=by,
+        logged = {**data, "media": record["media"]}
+        admin_log.append("account_added", name, logged, by=by,
                          diff={**admin_log.difference({}, data), "via_invite": [None, record["invite_id"]]})
         if data["production"]:
-            admin_log.append("production_enabled", name, data, by=by, diff={"production": [False, True]})
-        admin_log.append("token_set", name, data, by=by,
+            admin_log.append("production_enabled", name, logged, by=by, diff={"production": [False, True]})
+        admin_log.append("token_set", name, logged, by=by,
                          diff={"token": ["absent", "present"], "auth_via": [None, "relay"],
                                "via_invite": [None, record["invite_id"]]})
         admin_log.append("invite_used", subject(record["invite_id"]), {"media": record["media"]}, by=by,
@@ -828,7 +917,9 @@ def _new_bearer():
 
 def _try_credential(directory, record):
     path = _credentials.get()
-    if not path or record.get("credential_sha256"):
+    # 広告の口座に資格情報の行を足さない: 常駐と report は起動のたびに行の口座を `accounts/` で検査するので、
+    # `adaccounts/` にしかない名前の行が 1 つあると全部が止まる（遠くの道も広告には無い）。
+    if not path or record.get("credential_sha256") or record["media"] == "ads":
         return
     try:
         digest = add_credential(path, record)
@@ -1111,7 +1202,8 @@ def _fail(reason):
 def cmd_create(args):
     try:
         row = create(media=args.media, project=args.project, label=args.label, expires=args.expires,
-                     production=bool(args.production), by=args.by, instance=args.instance)
+                     production=bool(args.production), by=args.by, instance=args.instance,
+                     review_scopes=bool(args.review_scopes))
     except InviteError as exc:
         return _fail(str(exc))
     except ValueError as exc:
@@ -1165,6 +1257,8 @@ def cmd_list(args):
               + (f" {row['instance']}" if row.get("instance") else "") + f"  {row['account']}  "
               f"期限 {_when(row['expires_at'])}  production={str(row['production']).lower()}"
               + (f"  {row['label']}" if row.get("label") else ""))
+        if row.get("reason") in NEXT:  # 本人が選び直す断りは、運営者にも次の一手を見せる。
+            print(f"  {row['reason']}: {NEXT[row['reason']]}")
     if broken:
         print(f"読めない招待の記録: {broken} 件", file=sys.stderr)
     return 0
@@ -1174,12 +1268,15 @@ def register_admin(commands):
     parser = commands.add_parser("invite", help="招待リンク（期限つき・1 回きり・URL は tty に 1 回だけ）")
     operations = parser.add_subparsers(dest="invite_operation", required=True)
     p = operations.add_parser("create", help="招待を作る（URL は tty に 1 回だけ）")
-    p.add_argument("--media", required=True, help="threads か mastodon")
+    p.add_argument("--media", required=True, help="threads・mastodon・facebook・instagram・ads のどれか")
     p.add_argument("--instance", default=None, help="mastodon のとき: https://… の instance（3.22.0）")
     p.add_argument("--project", required=True)
     p.add_argument("--label", default=None, help="控えのメモ（1 行・Worker には送らない）")
     p.add_argument("--expires", default=f"{DEFAULT_DAYS}d", help=f"1d〜{MAX_DAYS}d（既定 {DEFAULT_DAYS}d）")
-    p.add_argument("--production", action="store_true", help="作る口座を production: true に（審査員向け）")
+    p.add_argument("--production", action="store_true",
+                   help="作る口座を production: true に（審査員向け・ads は上げない）")
+    p.add_argument("--review-scopes", action="store_true", dest="review_scopes",
+                   help="未承認の権限まで求める（録画と審査の招待だけ・承認までは付けない）")
     p.add_argument("--by", required=True)
     p.set_defaults(func=cmd_create)
     p = operations.add_parser("revoke", help="招待を取り消す")

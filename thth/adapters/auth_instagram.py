@@ -81,3 +81,35 @@ class InstagramAuthProfile(auth_facebook.FacebookAuthProfile):
         })
         return token
 
+
+# 招待で IG を探すとき、ページごとに 1 回読む上限（越えたら「1 つに絞って」と断る）。
+INVITE_PAGES_MAX = 25
+
+
+class InstagramInviteAuthProfile(auth_facebook.FacebookInviteAuthProfile):
+    """招待リンクの認可。許可されたページのうち、Instagram のプロ口座がつながっているものを 1 つ選ぶ。"""
+    media = "instagram"
+
+    def _linked(self, page):
+        """ページにつながる IG（`{id, username}`）か None。"""
+        token = auth_facebook._token_value(page, "page")
+        body = auth_facebook.graph_get(f"/{page.get('id')}", self._with_proof({
+            "fields": "instagram_business_account{id,username}", "access_token": token}))
+        business = body.get("instagram_business_account")
+        return business if isinstance(business, dict) and ig.IG_ID.fullmatch(str(business.get("id") or "")) else None
+
+    @leave_gate.configured("account_cfg")
+    def exchange(self, code_value, session, account_cfg, *, log):
+        pages = [row for row in self._pages(self._long_token(code_value), log)
+                 if fb.PAGE_ID.fullmatch(str(row.get("id") or ""))]
+        if len(pages) > INVITE_PAGES_MAX:
+            raise auth_facebook.InviteAssetError("invite_asset_ambiguous")
+        linked = [(row, business) for row in pages for business in (self._linked(row),) if business]
+        row, business = auth_facebook.one_asset(linked)
+        page_id, ig_user_id = str(row["id"]), str(business["id"])
+        page, page_token, debug, me = self._checked_page(row, page_id)
+        token = self._token_record(page_id, page, page_token, debug, me)
+        token.update({"user_id": ig_user_id, "username": ig_user_id, "page_id": page_id,
+                      "ig_username": business.get("username") if isinstance(business.get("username"), str) else None})
+        return token
+
