@@ -494,6 +494,12 @@ def cmd_add(args) -> int:
 
     dst_dir = target_accounts_dir()
     path = os.path.join(dst_dir, f"{name}.json")
+    # 名前は 2 つの置き場（`accounts/`・`adaccounts/`）で一意（設計 広告の資格と遠くの道 案 B）。資格の行は
+    # 名前だけを持つので、広告の口座と同じ名前の口座を作ると常駐の検査がその名前の行を断る。
+    from .ads import ledger as ads_ledger
+    from . import refusal
+    if accounts_mod.name_is_safe(name) and os.path.lexists(ads_ledger.path_for(name)):
+        return refusal.emit(args, "account_registry_ambiguous", account=name)
     previous = {}
     if os.path.exists(path):
         if not getattr(args, "force", False):

@@ -12,7 +12,8 @@ slot	REASON	取り下げの理由
 slot	TH_POST	th-publish で出した Threads の投稿の id
 slot	FB_POST	fb-publish で出したページの投稿の id
 slot	IG_POST	ig-publish で出した Instagram の投稿の id
-slot	AD_POST	宣伝するページの投稿の id（消していないもの）
+slot	AD_STORY	宣伝するページの投稿の object_story_id（<ページの id>_<投稿の数字>・消していないもの）
+slot	AD_PAGE	リードのフォームのあるページの id（数字）
 slot	FB_COMMENT	ページのコメントの id
 slot	IG_COMMENT	Instagram のコメントの id
 slot	IG_MEDIA	いいねを付ける Instagram の投稿（media）の id
@@ -235,9 +236,12 @@ items	instagram_manage_contents
 two	thth retract {IG} {IG_POST} --reason {REASON} --by {BY}
 hand	Instagram から消えたのを見せたら Return
 end
-seg	flow-ads	ads	Reviewer flow — an ad account, shown from the operator's ledger.
+seg	flow-ads	ads	Reviewer flow — an ad account, with Facebook Login for Business.
 items	-
-prep	広告の区間（flow-ads・ads-*）は thth login を使わず、運営者の台帳（adaccounts/）のある手元の thth で撮る: REC_LOCAL_THTH にその thth の命令を渡しておく（例 REC_LOCAL_THTH='python3 -m thth'）
+prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく（広告の招待・Facebook ページ・Instagram の招待とは別の 1 本）
+hand	Authorize → Facebook ログイン for Business で広告アカウントを選び、権限の一覧を見せて許可 → 完了ページが出たら Return
+off	完了ページの secret と鍵を録画の外で控え、画面から消す
+login
 cmd	thth ads doctor {AD}
 end
 seg	ads-read	ads	ads_read — the ad account and its insights.
@@ -247,7 +251,8 @@ cmd	thth ads insights {AD}
 end
 seg	ads-manage	ads	ads_management, pages_manage_ads — boost a Page post (created paused), then stop.
 items	ads_management pages_manage_ads
-cmd	thth ads boost {AD} --post {AD_POST} --lifetime {BUDGET} --end {END} --by {BY}
+prep	審査の間だけ運営者が VM の台帳で production と 1 操作の上限を上げておく（ads_enabled と月の上限は 0 のまま・上げないと boost は ads_not_production で断られる）
+cmd	thth ads boost {AD} --object-story-id {AD_STORY} --lifetime {BUDGET} --end {END} --by {BY}
 hand	広告マネージャに止めた形で出たのを見せたら Return
 cmd	thth ads stop {AD} --by {BY}
 end
@@ -259,7 +264,7 @@ end
 seg	ads-leads	ads	leads_retrieval — leads of a lead form (shown on screen only).
 items	leads_retrieval
 prep	リード広告のテストのフォームに 1 件入れておく
-cmd	thth ads leads {AD}
+cmd	thth ads leads {AD} --page {AD_PAGE}
 end
 seg	ads-network	ads	read_audience_network_insights — Audience Network results.
 items	read_audience_network_insights

@@ -67,8 +67,10 @@ from .server_reads import REASONS as READ_REASONS
 from .hatena_conflict import REASONS as CONFLICT_REASONS
 # 計画 Meta 全部盛り: 遠くの道の Meta の口（`thth/server_meta.py`・手元の `thth dm` などと同じ符丁）。
 from .server_meta import REASONS as META_REASONS
+# 設計 広告の資格と遠くの道: 遠くの道の広告の口（`thth/server_ads.py`・手元の `thth ads` と同じ符丁）。
+from .server_ads import REASONS as ADS_REASONS
 SAFE_ERRORS = (SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
-               | READ_REASONS | INFLIGHT_REASONS | CONFLICT_REASONS | META_REASONS)
+               | READ_REASONS | INFLIGHT_REASONS | CONFLICT_REASONS | META_REASONS | ADS_REASONS)
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
@@ -79,8 +81,12 @@ def error(reason, detail=None):
     raise exc
 
 
-def current(context, account, *, write=False):
-    """Reauthenticate the trusted capability; no request field creates identity."""
+def current(context, account, *, write=False, kind=accounts.ACCOUNT_KIND):
+    """Reauthenticate the trusted capability; no request field creates identity.
+
+    `kind` は口の種類（設計 広告の資格と遠くの道 案 B）。広告の口（`server_ads`）は `adaccount` を渡し、台帳が
+    `adaccounts/` にある名前だけを通す。ほかの口は今までどおり `accounts/` の台帳（広告の名前は落ちる）。
+    """
     if type(context) is ReportContext:
         from .report_service import check_excluded
         check_excluded(context,account)
@@ -106,7 +112,14 @@ def current(context, account, *, write=False):
         try:leave_gate.check_busy(account)
         except accounts.AccountLeaving:error('account_leaving')
         error('account_stopped')
-    cfg = accounts.load_account(account)
+    if kind == accounts.ADACCOUNT_KIND:
+        if accounts.ledger_kind(account) != kind: error('scope_unavailable')
+        from .ads import ledger as ads_ledger
+        cfg = dict(ads_ledger.load(account), media=ads_ledger.MEDIA)
+    else:
+        # 口座の口は広告の台帳の名前を通さない（`load_account` が落ちる副作用に頼らず、ここで明示に断る）。
+        if accounts.ledger_kind(account) not in (None, kind): error('scope_unavailable')
+        cfg = accounts.load_account(account)
     if cfg.get('project') != context.allowed_accounts[account]: error('scope_unavailable')
     return cfg
 
@@ -734,6 +747,9 @@ def serve(context, request, *, via):
     # 計画 Meta 全部盛り: doctor・dm・live・page cta・like・edit・reply hide（MCP には出さない・`WRITE_OPERATIONS` の外）。
     from . import server_meta
     if operation in server_meta.OPERATIONS: return server_meta.execute(context,request)
+    # 設計 広告の資格と遠くの道 §3: 広告の読む口と、お金が動かない書く 3 つ（MCP には出さない）。
+    from . import server_ads
+    if operation in server_ads.OPERATIONS: return server_ads.execute(context,request)
     error('unsupported_operation')
 
 

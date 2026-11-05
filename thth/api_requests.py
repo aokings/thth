@@ -118,7 +118,7 @@ def _size(value) -> int:
 # --------------------------------------------------------------------------
 
 def _failure(exc) -> dict:
-    from . import server_meta, server_writes
+    from . import server_ads, server_meta, server_writes
     code = str(exc)
     if code not in server_writes.SAFE_ERRORS:
         return {"error": "request_failed"}
@@ -130,7 +130,8 @@ def _failure(exc) -> dict:
         out["reason"] = detail
     elif code == "publication_unconfirmed" and detail in server_writes.UNCONFIRMED_REASONS:
         out["reason"] = detail
-    elif (code in ("invalid_request", "upstream_unavailable") or code in server_meta.REASONS) \
+    elif (code in ("invalid_request", "upstream_unavailable") or code in server_meta.REASONS
+          or code in server_ads.REASONS) \
             and isinstance(detail, str) and detail:
         # 読む口が添えた 1 行（秘密・URL・path は `server_reads.short` で落としてある）。
         from .server_reads import short
@@ -197,8 +198,9 @@ def handle(person, item, credentials_path):
             # 行っている間は印の lock を持たない（公開は口座の lock を別に取る）。
             result = _run(person, item, credentials_path)
             # 印には本文・相手・配信の宛先を書かない（Meta の口・`server_meta.for_record`）。答えは 1 回だけ渡す。
-            from . import server_meta
-            record["result"] = server_meta.for_record(item["operation"], result)
+            from . import server_ads, server_meta
+            record["result"] = server_ads.for_record(item["operation"],
+                                                  server_meta.for_record(item["operation"], result))
             record["status"] = "done"
             try:
                 with server_files.lock_at(fd, ".lock"):

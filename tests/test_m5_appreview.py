@@ -393,3 +393,19 @@ def test_日付は記録の時刻から数える():
     at = NOW - datetime.timedelta(days=29, hours=23)
     view = {"permissions": [{"permission": "threads_basic", "last_success_at": jst.iso(at)}]}
     assert appreview.evaluate(view, TEXT, now=NOW, rows=subset("threads_basic"))["ok"]
+
+
+def test_広告の区間はloginの道で撮り_遠くの道に出ない命令を使わない():
+    """設計 広告の資格と遠くの道 段 5: 広告の招待も鍵が結ばれるので、IG と同じく広告の招待で login し直す。"""
+    from thth import remote
+    by_id = {segment["id"]: segment for segment in appreview.SEGMENTS}
+    assert ("login",) in by_id["flow-ads"]["steps"]
+    assert not any("REC_LOCAL_THTH" in str(step) for step in by_id["flow-ads"]["steps"])
+    for segment in appreview.SEGMENTS:
+        if segment["medium"] != "ads":
+            continue
+        for command in appreview.segment_commands(segment):
+            words = command.split()
+            key = " ".join(words[1:4]) if words[2] == "catalog" else " ".join(words[1:3])
+            assert key in remote.ADS_COMMANDS, f"{segment['id']}: {command} は遠くの道に無い"
+            assert "--post " not in command, "審査員の台帳に結んだページは無い（--object-story-id）"

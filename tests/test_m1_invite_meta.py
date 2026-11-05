@@ -213,28 +213,27 @@ def test_広告の招待が口座を作りads_doctorが通り_productionでも�
     assert rows["debug_token"]["ok"] is True and rows["debug_token"]["missing"] == []
 
 
-def test_広告の招待は資格情報の行を足さず_常駐の検査を壊さない(world, tmp_path):
-    """`accounts/` に無い名前の行が 1 つあると、常駐の毎巡の `validate_environment` が全部を止める。"""
-    root, tty, _, relay, _, _ = world
-    credentials = credentials_file(root, tmp_path)
-    before = credentials.read_bytes()
-    row, digest = make(tty, media="ads")
-    worker = world[2]
-    worker.click(digest)
-    invites.run_once(credentials)
-    url = urllib.parse.urlsplit(worker.invites[digest]["authorize_url"])
-    params = dict(urllib.parse.parse_qsl(url.query))
-    world[4].granted = params["scope"].split(",")
-    relay.deliver(params["state"])
-    invites.run_once(credentials)
+def test_広告の招待で資格情報の行が1件増え_常駐の毎巡が止まらない(world, tmp_path, monkeypatch):
+    """設計 広告の資格と遠くの道 段 2（前は「行を足さない」を縛っていた試験を反転）。行の形は口座と同じ:
+    `{名前: project}`・scope user・writes true・actor は口座名。常駐の検査は `adaccounts/` の台帳で見る。"""
+    from thth import worker as worker_mod
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
     record = invites.STORE.get(row["invite_id"])
-    assert record["status"] == "used" and "credential_sha256" not in record
-    assert credentials.read_bytes() == before
+    assert record["status"] == "used" and record["credential_sha256"]
+    rows = json.loads(credentials.read_text())["credentials"]
+    added = [r for r in rows if r.get("accounts") == {row["account"]: "meta-review"}]
+    assert len(rows) == 2 and len(added) == 1
+    assert {k: added[0][k] for k in ("scope", "writes", "actor", "revoked")} == {
+        "scope": "user", "writes": True, "actor": row["account"], "revoked": False}
+    assert added[0]["sha256"] == record["credential_sha256"]
+    worker_mod.run_once(credentials)  # 常駐の毎巡（検査は全行）が止まらない
     with invites.STORE.locked() as directory:
         invites._save(directory, record, remote_ready=True, approver_set=True)
     token = invites._credentials.set(str(credentials))
     try:
-        assert invites._active(invites.STORE.get(row["invite_id"])) is False, "見届けが済んだら巡回から外れる"
+        latest = invites.STORE.get(row["invite_id"])
+        assert invites._active(latest) is True, "完了ページの鍵の hash を受け取るまで巡回する（口座と同じ）"
+        assert invites._active(dict(latest, key_synced=True)) is False, "見届けが済んだら巡回から外れる"
     finally:
         invites._credentials.reset(token)
 
@@ -246,6 +245,152 @@ def credentials_file(root, tmp_path):
         "scope": "admin"}]}))
     path.chmod(0o600)
     return path
+
+
+def ads_flow(world, tmp_path, monkeypatch):
+    """常駐の資格情報のファイルを渡して広告の招待を通す（本番の形: 台帳の置き場の差し替えなし）。"""
+    root, tty, worker, relay, meta, _ = world
+    monkeypatch.delenv("THTH_ACCOUNTS_DIR", raising=False)
+    (root / "accounts").mkdir(mode=0o700, exist_ok=True)
+    credentials = credentials_file(root, tmp_path)
+    row, digest = make(tty, media="ads")
+    worker.click(digest)
+    invites.run_once(credentials)
+    url = urllib.parse.urlsplit(worker.invites[digest]["authorize_url"])
+    params = dict(urllib.parse.parse_qsl(url.query))
+    meta.granted = params["scope"].split(",")
+    relay.deliver(params["state"])
+    invites.run_once(credentials)
+    return credentials, row, digest
+
+
+def test_広告の招待でも完了ページの鍵のhashに差し替える(world, tmp_path, monkeypatch):
+    from thth import api_requests
+    from thth import relay as relay_mod
+    credentials, row, digest = ads_flow(world, tmp_path, monkeypatch)
+    fake = world[2]
+    fake.invites[digest]["status"] = "done"
+    key = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+
+    def status(kind, subject, operation, body):
+        value = fake(kind, subject, operation, body)
+        return {**value, "key_sha256": key} if operation == "status" else value
+    monkeypatch.setattr(relay_mod, "signed_request", status)
+    invites.run_once(credentials)
+    name = row["account"]
+    mine = [r for r in json.loads(credentials.read_text())["credentials"] if r.get("accounts") == {name: "meta-review"}]
+    assert [r["sha256"] for r in mine] == [key] and mine[0]["revoked"] is False
+    latest = invites.STORE.get(row["invite_id"])
+    assert latest["credential_sha256"] == key and latest["key_synced"] is True
+    (event,) = admin_log.read(event="credential_rotated")[0]
+    assert event["account"] == name and event["medium"] == "ads"
+    assert [r["sha256"] for r in api_requests.key_table(name, credentials)] == [key]
+
+
+def test_広告の口座の鍵の取り消しと発行し直し(world, tmp_path, monkeypatch):
+    """`thth login` の根（設計 §1.3 の 3）: /activity の rotate・revoke が広告の台帳でも効く。"""
+    from thth import api_requests
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    new = hashlib.sha256(b"rotated").hexdigest()
+    done = activity.apply(name, {"id": "r" * 43, "account": name, "kind": "rotate", "sha256": new}, credentials)
+    assert done["outcome"] == "done", done
+    assert [r["sha256"] for r in api_requests.key_table(name, credentials)] == [new]
+    (event,) = admin_log.read(event="credential_rotated")[0]
+    assert event["medium"] == "ads"
+    done = activity.apply(name, {"id": "v" * 43, "account": name, "kind": "revoke"}, credentials)
+    assert done["outcome"] == "done", done
+    assert api_requests.key_table(name, credentials) == []
+    assert activity.owners(credentials)[name] == {name: "meta-review"}, "取り消しても持ち主のまま（発行し直せる）"
+
+
+def test_ads_leaveで台帳と鍵と資格情報の行が消える(world, tmp_path, monkeypatch, capsys):
+    """設計 広告の資格と遠くの道 段 5: 鍵を結んだので消す道も要る（`thth account leave` の最小版）。"""
+    from thth import api_requests, leave_gate
+    from thth import relay as relay_mod
+    root = world[0]
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    revoked = []
+
+    def worker(kind, subject, operation, body):
+        assert (kind, subject, operation, body) == ("account", name, "revoke", {})
+        revoked.append(subject)
+        return {"status": "revoked"}
+    monkeypatch.setattr(relay_mod, "signed_request", worker)
+    ledger.stop(name, "owner", by="masaru")  # adaccount_state/<名前>/ に物がある形
+    token_path = ledger.load(name)["token"]
+    assert api_requests.key_table(name, credentials)
+    assert cli.main(["ads", "leave", name, "--by", "masaru", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["phase"] == "completed" and result["remote"] == "unconfirmed_manual"
+    assert result["deleted"]["ledger"] == 1 and result["deleted"]["token"] == 1 and result["deleted"]["state"] >= 1
+    assert not (root / "adaccounts" / (name + ".json")).exists() and not (root / "adaccount_state" / name).exists()
+    import os
+    assert not os.path.exists(token_path)
+    assert leave_gate.stopped(name), "退出の印は残る（同じ名前を使い直させない）"
+    rows = json.loads(credentials.read_text())["credentials"]
+    assert not [r for r in rows if name in (r.get("accounts") or {})], "招待で足した資格の行が消える"
+    assert api_requests.key_table(name, credentials) == []
+    events, _ = admin_log.read(account=name, event="account_removed")
+    assert len(events) == 1 and events[0]["medium"] == "ads"
+    # 打ち直しても同じ結果（Worker にもう一度は頼まない・変更ログも 1 行のまま）。
+    assert cli.main(["ads", "leave", name, "--by", "masaru", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == result and revoked == [name]
+    assert len(admin_log.read(account=name, event="account_removed")[0]) == 1
+
+
+def test_ads_leaveはWorkerに届かなければ止めたまま消さない(world, tmp_path, monkeypatch, capsys):
+    from thth import leave_gate
+    from thth import relay as relay_mod
+    root = world[0]
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    monkeypatch.setattr(relay_mod, "signed_request",
+                        lambda *a: (_ for _ in ()).throw(relay_mod.RelayError("synthetic")))
+    assert cli.main(["ads", "leave", name, "--by", "masaru"]) == 2
+    assert "leave_incomplete" in capsys.readouterr().err
+    assert leave_gate.stopped(name) and (root / "adaccounts" / (name + ".json")).exists()
+    assert [r for r in json.loads(credentials.read_text())["credentials"] if name in (r.get("accounts") or {})]
+
+
+def test_広告の口座の要約と鍵の表をWorkerへ押し上げる(world, tmp_path, monkeypatch):
+    credentials, row, _digest = ads_flow(world, tmp_path, monkeypatch)
+    name = row["account"]
+    sent = []
+
+    def sync(kind, subject, operation, body):
+        sent.append((kind, subject, operation, json.loads(json.dumps(body))))
+        return {"actions": [], "requests": []}
+    from thth import relay as relay_mod
+    monkeypatch.setattr(relay_mod, "signed_request", sync)
+    activity._next_sync.clear()
+    activity._legacy.clear()
+    activity.run_once(credentials)
+    (call,) = [c for c in sent if c[0] == "activity" and c[1] == name]
+    body = call[3]
+    assert [a["account"] for a in body["accounts"]] == [name]
+    assert body["accounts"][0]["credential"]["revoked"] is False
+    assert [k["account"] for k in body["keys"]] == [name]
+
+
+def test_段0_広告の名前の行が1つあると常駐の毎巡が止まる(world, tmp_path, monkeypatch):
+    """設計 広告の資格と遠くの道 段 0: `adaccounts/` の名前の行を手で 1 つ足すと、今の main では常駐の毎巡の
+    `validate_environment` が `invalid_report_environment` で全部を止める（段 1 のあと緑）。"""
+    from thth import worker as worker_mod
+    root, tty, _, _, _, _ = world
+    monkeypatch.delenv("THTH_ACCOUNTS_DIR")  # 常駐の検査は置き場の差し替えを断る（本番の形）
+    (root / "accounts").mkdir(mode=0o700, exist_ok=True)
+    row, digest = make(tty, media="ads")
+    authorize(world, digest)
+    credentials = credentials_file(root, tmp_path)
+    worker_mod.run_once(credentials)  # 管理者の行だけなら通る（足す前の確かめ）
+    config = json.loads(credentials.read_text())
+    config["credentials"].append({"sha256": "c" * 64, "expires_at": "2099-01-01T00:00:00+09:00", "revoked": False,
+                                  "accounts": {row["account"]: "meta-review"}, "scope": "user", "writes": True,
+                                  "actor": row["account"]})
+    credentials.write_text(json.dumps(config))
+    worker_mod.run_once(credentials)
 
 
 def test_広告の口座の要約はWorkerの形で_止める操作は広告の止めの印を書く(world, tmp_path):

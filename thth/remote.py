@@ -433,10 +433,15 @@ REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured",
 
 
 # `--remote` を子の命令（`bookmark add`・`page cta`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
-REMOTE_CHILD_PARSERS = ("bookmark", "page")
+REMOTE_CHILD_PARSERS = ("bookmark", "page",
+                        # 設計 広告の資格と遠くの道 段 4: `thth ads <verb> --remote`（子の命令に旗を足す）。
+                        "ads")
 
 
 def command_key(command, args) -> str:
+    if command == "ads":
+        verb = str(getattr(args, "ads_verb", "") or "")
+        return f"ads catalog {getattr(args, 'catalog_verb', '')}" if verb == "catalog" else "ads " + verb
     if command == "bookmark":
         return "bookmark " + str(getattr(args, "verb", "") or "")
     if command in ("dm", "live", "reply"):
@@ -454,6 +459,8 @@ def command_key(command, args) -> str:
 
 
 def _account(key, args):
+    if key.startswith("ads "):
+        return getattr(args, "name", None)
     if key.startswith("account "):
         return getattr(args, "name", None)
     if key == "topics search":
@@ -480,7 +487,11 @@ def has_ledger(account) -> bool:
     if not accounts.name_is_safe(account):
         return True  # 名前の断りは手元の道の 1 か所（`validate_name`）に任せる
     try:
-        return os.path.exists(os.path.join(accounts.accounts_dir(), account + ".json"))
+        if os.path.exists(os.path.join(accounts.accounts_dir(), account + ".json")):
+            return True
+        # 広告の口座の台帳（`adaccounts/<名前>.json`）も手元の台帳（設計 広告の資格と遠くの道 段 4）。
+        from .ads import ledger as ads_ledger
+        return os.path.exists(ads_ledger.path_for(account))
     except Exception:  # noqa: BLE001 — 置き場が読めないなら手元の道が言う
         return True
 
@@ -502,7 +513,10 @@ def route(args, command):
     as_json = bool(getattr(args, "json", False) or getattr(args, "as_json", False))
     run = COMMANDS.get(key)
     if run is None:
-        return refuse(RemoteError("remote_unsupported", rc=2), as_json=as_json)
+        # 広告の出さない口は「手元の台帳で打つ」でなく「運営者に頼む」の断り（設計 広告の資格と遠くの道 §5 (2)）。
+        refused = (RemoteError("ads_remote_unsupported", rc=2) if key.startswith("ads ")
+                   else RemoteError("remote_unsupported", rc=2))
+        return refuse(refused, as_json=as_json)
     if not isinstance(account, str) or not account:
         return refuse(RemoteError("invalid_request", reason="口座を指定してください", rc=2), as_json=as_json)
     try:
@@ -1458,6 +1472,79 @@ COMMANDS.update({
 })
 
 
+# --------------------------------------------------------------------------
+# 広告（設計 広告の資格と遠くの道 2026-11-06 §3・段 4・VM は `thth/server_ads.py`）
+# --------------------------------------------------------------------------
+
+# 遠くの道に出す広告の口（読む 9・お金が動かない書く 3）。人向けの画面は手元の `thth ads` と同じ関数。
+ADS_COMMANDS = ("ads doctor", "ads show", "ads insights", "ads estimate", "ads catalog list", "ads catalog products",
+                "ads leads", "ads network", "ads shop", "ads boost", "ads pause", "ads stop")
+# 出さない広告の口（配信を始める・延ばす・止めの印を外す・台帳と鍵を書く）。`ads_remote_unsupported` で断る。
+# `ads add` は入れない（新しい名前には台帳がまだ無いので、手元の道の台帳を書く命令を巻き込む）。
+ADS_UNSUPPORTED = frozenset(("ads activate", "ads extend", "ads resume", "ads end", "ads budget", "ads watch",
+                             "ads auth", "ads collect", "ads accounts", "ads leave"))
+UNSUPPORTED = UNSUPPORTED | ADS_UNSUPPORTED
+
+
+def _ads_targeting(text):
+    """`--targeting @ファイル` は手元の機械のファイル。中身を送る（VM のファイルは読ませない）。"""
+    if isinstance(text, str) and text.startswith("@"):
+        try:
+            with open(text[1:], encoding="utf-8") as f:
+                return f.read()
+        except (OSError, UnicodeDecodeError):
+            raise RemoteError("invalid_request", reason="--targeting のファイルを読めません", rc=2) from None
+    return text
+
+
+def _ads_operation(args):
+    verb = getattr(args, "ads_verb", "")
+    if verb == "catalog":
+        return "ads_catalog_" + str(getattr(args, "catalog_verb", ""))
+    return "ads_" + str(verb)
+
+
+def _ads(args, account):
+    """`thth ads <verb> <名前>` を thth.me の鍵で VM に頼む。`--by` は送らない（鍵の持ち主が記録される）。"""
+    from .ads import cli as ads_cli
+    operation = _ads_operation(args)
+    # 手元だけの旗（`--offline` は VM の snapshot・`--post` は台帳のページの投稿）は黙って捨てずに断る。
+    _refuse_unread(args, "ads " + operation[len("ads_"):].replace("_", " "),
+                   {"offline": "--offline", "post": "--post"})
+    get = lambda name: getattr(args, name, None)  # noqa: E731
+    fields = {
+        "ads_insights": lambda: dict(preset=get("preset"), since=get("since"), until=get("until"),
+                                     level=get("level"), breakdown=get("by")),
+        "ads_estimate": lambda: dict(targeting=_ads_targeting(get("targeting")), goal=get("goal")),
+        "ads_catalog_products": lambda: dict(catalog=get("catalog"), limit=get("limit")),
+        "ads_leads": lambda: dict(page=get("page"), form=get("form"), limit=get("limit")),
+        "ads_network": lambda: dict(since=get("since"), until=get("until")),
+        "ads_boost": lambda: dict(object_story_id=get("object_story_id"), lifetime=get("lifetime"),
+                                  start=get("start"), end=get("end"), platforms=get("platforms"),
+                                  objective=get("objective"), url_tags=get("url_tags"),
+                                  utm_campaign=get("utm_campaign"), landing_url=get("landing_url")),
+        "ads_pause": lambda: dict(all=True if get("all") else None, ids=list(get("id")) if get("id") else None),
+    }.get(operation, dict)()
+    value = call(operation, account, **fields)
+    show = {"ads_doctor": ads_cli.render_doctor, "ads_show": ads_cli.render_show,
+            "ads_insights": ads_cli.render_insights, "ads_estimate": ads_cli.render_estimate,
+            "ads_catalog_list": ads_cli.render_catalog_list, "ads_catalog_products": ads_cli.render_catalog_products,
+            "ads_leads": ads_cli.render_leads, "ads_network": ads_cli.render_network,
+            "ads_shop": ads_cli.render_shop, "ads_boost": ads_cli.render_boost, "ads_pause": ads_cli.render_pause,
+            "ads_stop": ads_cli.render_stop}[operation]
+    if getattr(args, "json", False):
+        print(json.dumps(value, ensure_ascii=False))
+    else:
+        show(value)
+    # rc は手元と同じ: doctor は × が 1 つで 1、書く口は結果が failed・unconfirmed なら 3。
+    if operation == "ads_doctor":
+        return 1 if any(isinstance(r, dict) and r.get("ok") is False for r in value.get("rows") or []) else 0
+    return 3 if value.get("result") in ("failed", "unconfirmed") else 0
+
+
+COMMANDS.update({key: _ads for key in ADS_COMMANDS})
+
+
 def register(sub) -> None:
     """`thth login` / `thth logout` と遠くの道の旗（`build_parser()` から 1 行で）。
 
@@ -1475,6 +1562,7 @@ def register(sub) -> None:
         if isinstance(action, argparse_subparsers()) and "cta" in action.choices:
             action.choices["cta"].add_argument("--remote", action="store_true",
                                                help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
+    _register_ads(choices.get("ads"))
     for name in ("dm", "live", "edit", "reply"):
         _tell(sub, name, "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
         _tell(sub, name, "wait", "thth.me の道: 使えない（付けると断る）")
@@ -1536,6 +1624,32 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_login)
     q = sub.add_parser("logout", help="保存した thth.me の鍵を消す")
     q.set_defaults(func=cmd_logout)
+
+
+def _register_ads(ads) -> None:
+    """`thth ads <verb>` の遠くの道に出す 12 の口（`ADS_COMMANDS`）にだけ `--remote` を足す。
+
+    出さない口（activate・resume など）の引数は変えない（`tests/test_meta_stage5_1102.py` が resume の引数を縛る）。
+    台帳が無く `thth login` 済みなら、旗が無くても `ads_remote_unsupported` で前向きに断る（`route`）。
+    """
+    if ads is None:
+        return
+    remote_help = "台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）"
+    for action in ads._actions:
+        if not isinstance(action, argparse_subparsers()):
+            continue
+        for verb, parser in action.choices.items():
+            children = {"ads " + verb: parser}
+            for child in parser._actions:
+                if isinstance(child, argparse_subparsers()):   # catalog list|products
+                    children = {f"ads {verb} {name}": sub for name, sub in child.choices.items()}
+            for key, target in children.items():
+                if key not in ADS_COMMANDS:
+                    continue
+                target.add_argument("--remote", action="store_true", help=remote_help)
+                for option in target._actions:
+                    if option.dest == "by" and verb in ("boost", "pause", "stop"):
+                        option.help = "打った人の名前（thth.me の道: 読まない・鍵の持ち主が記録される）"
 
 
 def _tell(sub, command, dest, text) -> None:

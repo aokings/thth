@@ -23,7 +23,8 @@
   書かない（`for_record`）。答えは 1 回だけ Worker に渡り、利用者の端末に届く。
 
 MCP には出さない（`server_writes.WRITE_OPERATIONS` に入れない＝MCP の道具の表は変わらない）。
-広告（`thth ads …`）は出していない: 広告の招待は資格の行を作らず、鍵が口座に結ばれない（`invites._try_credential`）。
+広告（`thth ads …`）は別の口 `thth/server_ads.py`（設計 広告の資格と遠くの道 2026-11-06）。この口は `accounts/` の
+台帳の名前だけを通す（`current` の既定の `kind`）。
 """
 from __future__ import annotations
 
