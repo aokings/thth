@@ -126,6 +126,8 @@ COMMANDS += ['embed', 'upcoming', 'ads catalog list', 'ads catalog products', 'a
 COMMANDS += ['page cta', 'live', 'dm']
 # 段 M5 の (d)(e)（審査の台本と提出の前の点検）: --json は 1 つの値（check は赤でも 1 つの値・rc 2）。
 COMMANDS += ['admin appreview script', 'admin appreview check']
+# 設計 広告の資格と遠くの道 段 5: 広告の口座の退出（--json は 1 つの値・断りは {"completed": false, …}）。
+COMMANDS += ['ads leave']
 
 
 def test_json_table_covers_every_parser():

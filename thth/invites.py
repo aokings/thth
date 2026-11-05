@@ -374,8 +374,7 @@ def _active(record):
     # 3.14.0 §3.3: 完了ページで出したアシスタントの鍵の hash を受け取るまで（`key_synced`）。
     return (record["status"] == "used" and now_ms() < record["expires_at"]
             and not (record.get("remote_ready") and record.get("approver_set")
-                     and (record.get("credential_sha256") and record.get("key_synced") or not _credentials.get()
-                          or record["media"] == "ads")))
+                     and (record.get("credential_sha256") and record.get("key_synced") or not _credentials.get())))
 
 
 def process(invite_id):
@@ -917,9 +916,9 @@ def _new_bearer():
 
 def _try_credential(directory, record):
     path = _credentials.get()
-    # 広告の口座に資格情報の行を足さない: 常駐と report は起動のたびに行の口座を `accounts/` で検査するので、
-    # `adaccounts/` にしかない名前の行が 1 つあると全部が止まる（遠くの道も広告には無い）。
-    if not path or record.get("credential_sha256") or record["media"] == "ads":
+    # 広告の口座にも行を足す（設計 広告の資格と遠くの道 段 2）: 常駐と report の検査は行の名前の置き場で種類を
+    # 決め、`adaccounts/` の台帳も同じ門で見る（`report_isolation._validate_adaccount`）。行の形は口座と同じ。
+    if not path or record.get("credential_sha256"):
         return
     try:
         digest = add_credential(path, record)

@@ -36,6 +36,11 @@
 **鍵の期限**（段 5・本番 10/31）: 広告の鍵（ユーザーの鍵）は `/debug_token` が `expires_at=0`（期限なし）を
 返した。`token_limits()` は「鍵の期限」と「データに触れる期限（`data_access_expires_at`）」の**早いほう**を
 効く期限にする（0 は期限なし）。残り 14 日の柵（`activate`・maintain）はこの効く期限で見る。
+
+**名前と資格の行**（設計 広告の資格と遠くの道 2026-11-06・案 B）: 資格の行（`accounts: {名前: project}`）は口座と
+同じ形で、名前がどちらの置き場にあるかで種類を決める（`accounts.ledger_kind`）。**名前は `accounts/` と
+`adaccounts/` の 2 つの置き場で一意**（両方にあれば常駐の検査が `account_registry_ambiguous` で断る）。遠くの道
+（`thth/server_ads.py`）はこの台帳の旗・上限・止めの印を手元と同じ関数で見るだけで、書き換える口は無い。
 """
 from __future__ import annotations
 

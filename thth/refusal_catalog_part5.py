@@ -55,7 +55,7 @@ ENTRIES = {
         "fix": "全部止めるなら --all、一部なら --id <id> を（何度でも）付けて打ち直してください。",
         "command": "thth ads pause <名前> --all --by <名前>",
         "better": "thth ads show で動いている物の id を見てから選ぶと、止めたい物だけを確実に止められます。",
-        "doors": _C,
+        "doors": (*_C, "remote"),
     },
     "ads_time_range_invalid": {
         "kind": "refusal",
@@ -63,7 +63,7 @@ ENTRIES = {
         "fix": "--since <YYYY-MM-DD> を足して打ち直してください（--since だけなら終わりは今日になります）。",
         "command": "thth ads insights <名前> --since <日付> --until <日付>",
         "better": "決まった区切りでよければ --preset last_30d などを使うと、日付を打たずに済みます。",
-        "doors": _C,
+        "doors": (*_C, "remote"),
     },
     "invalid_adaccount_name": {
         "kind": "refusal",
@@ -754,7 +754,7 @@ ENTRIES = {
         "fix": "`thth ads show` の「ほかの欄」に business が出るかを見て、出なければ広告アカウントをビジネスに結びつけてください",
         "command": "thth ads show <名前>",
         "better": "台帳の business_id に書いておくと、毎回の問い合わせが 1 回減ります",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
         "since": "5.12.6",
     },
     "ads_page_unknown": {
@@ -763,7 +763,7 @@ ENTRIES = {
         "fix": "--page にページの id を付けて打ち直してください",
         "command": "thth ads leads <名前> --page <ページの id>",
         "better": "1 つのページだけを使う口座は、台帳の pages を 1 つにしておくと --page を省けます",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
         "since": "5.12.6",
     },
     "ads_form_other_page": {
@@ -772,7 +772,7 @@ ENTRIES = {
         "fix": "--form を外して打ち、一覧に出る id を選び直してください",
         "command": "thth ads leads <名前>",
         "better": "件数が 0 のフォームは読まなくて済むので、一覧の件数を先に見ると呼び出しが減ります",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
         "since": "5.12.6",
     },
     "ads_catalog_other_business": {
@@ -781,7 +781,7 @@ ENTRIES = {
         "fix": "`thth ads catalog list` に出る id を選び直してください",
         "command": "thth ads catalog list <名前>",
         "better": "商品数が 0 のカタログは読まなくて済むので、一覧の商品数を先に見ると呼び出しが減ります",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
         "since": "5.12.6",
     },
     # 計画 Meta 全部盛り M4（書く最小の口・thth/meta_write.py・thth/meta_mention.py）。since は版上げのときに直す。

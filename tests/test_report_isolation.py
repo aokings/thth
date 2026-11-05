@@ -147,3 +147,71 @@ def test_entry_vanishing_during_walk_is_tolerated(dedicated, monkeypatch):
 
     monkeypatch.setattr(os, "walk", racing_walk)
     validate_environment(str(dedicated), {"demo": "project"})
+
+
+# --------------------------------------------------------------------------
+# 設計 広告の資格と遠くの道（2026-11-06）段 0・段 1: 行の口座が `adaccounts/` の台帳でも同じ門で見る
+# --------------------------------------------------------------------------
+
+def _adledger(root, name="demo-ads", project="project", **extra):
+    from thth.ads import ledger as ads_ledger
+    data = ads_ledger.build(name, act_id="1234567890", project=project)
+    data.update({"token": str(root / "secrets" / (name + ".token")), **extra})
+    (root / "adaccounts").mkdir(exist_ok=True)
+    (root / "adaccounts" / (name + ".json")).write_text(json.dumps(data))
+    return data
+
+
+def test_広告の台帳の名前の行が常駐と報告の口を止めない(dedicated):
+    """段 0 で赤（`accounts/<名前>.json` が無いので invalid_report_environment）→ 段 1 で緑。"""
+    _adledger(dedicated)
+    validate_environment(str(dedicated), {"demo": "project", "demo-ads": "project"})
+    validate_environment(str(dedicated), {"demo-ads": "project"})
+
+
+def test_広告の台帳の置き場のsymlinkは断る(dedicated, tmp_path):
+    _adledger(dedicated)
+    outside = tmp_path / "outside"
+    outside.write_text("SECRET_CANARY")
+    (dedicated / "adaccounts" / "other.json").symlink_to(outside)
+    with pytest.raises(IsolationError, match="unsafe_report_tree") as exc:
+        validate_environment(str(dedicated), {"demo-ads": "project"})
+    assert "SECRET_CANARY" not in str(exc.value)
+
+
+def test_広告の状態の置き場のsymlinkは断る(dedicated, tmp_path):
+    _adledger(dedicated)
+    state = dedicated / "adaccount_state" / "demo-ads"
+    state.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (state / "guard").symlink_to(target)
+    with pytest.raises(IsolationError, match="unsafe_report_tree"):
+        validate_environment(str(dedicated), {"demo-ads": "project"})
+
+
+def test_広告の台帳のprojectが行と違えばaccount_scope_mismatch(dedicated):
+    _adledger(dedicated, project="other")
+    with pytest.raises(IsolationError, match="account_scope_mismatch"):
+        validate_environment(str(dedicated), {"demo-ads": "project"})
+
+
+def test_両方の置き場にある名前は断る(dedicated):
+    _adledger(dedicated, name="demo")
+    with pytest.raises(IsolationError, match="account_registry_ambiguous"):
+        validate_environment(str(dedicated), {"demo": "project"})
+    with pytest.raises(accounts.AccountError, match="account_registry_ambiguous"):
+        accounts.ledger_kind("demo")
+
+
+def test_tokenがrootの外ならresource_outside_root(dedicated, tmp_path):
+    _adledger(dedicated, token=str(tmp_path / "other-tenant.token"))
+    with pytest.raises(IsolationError, match="resource_outside_root"):
+        validate_environment(str(dedicated), {"demo-ads": "project"})
+
+
+def test_どちらの置き場にも無い名前は今までどおり断る(dedicated):
+    with pytest.raises(IsolationError, match="invalid_report_environment"):
+        validate_environment(str(dedicated), {"nobody": "project"})
+    assert accounts.ledger_kind("nobody") is None
+    assert accounts.ledger_kind("demo") == "account"

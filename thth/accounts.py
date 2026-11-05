@@ -606,6 +606,31 @@ def load_account(name: str) -> dict:
     return out
 
 
+ACCOUNT_KIND = "account"      # `accounts/<名前>.json`（SNS の口座）
+ADACCOUNT_KIND = "adaccount"  # `adaccounts/<名前>.json`（広告の口座・`thth/ads/ledger.py`）
+AMBIGUOUS = "account_registry_ambiguous"
+LEDGER_KIND_REFUSALS = frozenset(("account_registry_ambiguous",))  # 目録の棚卸し（AST）が数える集合
+
+
+def ledger_kind(name: str) -> str | None:
+    """名前の台帳がどちらの置き場にあるか（設計 広告の資格と遠くの道 案 B）。無ければ None。
+
+    資格の行（`accounts: {名前: project}`）の形は変えず、台帳の置き場で口座の種類を決める。**両方の置き場に
+    同じ名前があれば `account_registry_ambiguous` で断る**（どちらの柵で見るか決められない・fail-closed）。
+    読めるかは見ない（symlink も「ある」に数える。中身の検査は読む側の門）。
+    """
+    validate_name(name)
+    from .ads import ledger as ads_ledger
+    in_accounts = os.path.lexists(os.path.join(accounts_dir_info()["path"], f"{name}.json"))
+    in_ads = os.path.lexists(os.path.join(ads_ledger.adaccounts_dir(), f"{name}.json"))
+    if in_accounts and in_ads:
+        raise AccountError(f"{AMBIGUOUS}: {name} の台帳が accounts/ と adaccounts/ の両方にあります。"
+                           "どちらか片方を別の名前に移してください")
+    if in_accounts:
+        return ACCOUNT_KIND
+    return ADACCOUNT_KIND if in_ads else None
+
+
 def state_dir_for(account_name: str) -> str:
     return os.path.join(thth_root(), "state", account_name)
 
