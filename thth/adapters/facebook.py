@@ -708,7 +708,9 @@ class FacebookAdapter(base.Adapter):
         except urllib.error.HTTPError as e:
             err = graph_error(e)
             message = self._scrub(err.get("message") or e.reason or "")[:170]
-            if err.get("error_subcode") in WINDOW_CLOSED_SUBCODES:
+            # subcode は【推】。本物で違っても、code 10 と窓の外の文なら窓の断りにする（権限の不足と取り違えない）。
+            outside = err.get("code") == 10 and "outside of allowed window" in str(err.get("message") or "").lower()
+            if err.get("error_subcode") in WINDOW_CLOSED_SUBCODES or outside:
                 raise AdapterError(f"messaging_window_closed: {what}: Meta が窓の外と答えました（HTTP {e.code} {message}）",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):

@@ -334,7 +334,8 @@ def cmd_live(args) -> int:
     if not live_id:
         _refuse("invalid_request", "終えるライブの id を渡してください（thth live create が返した id）", rc=2)
     status = _read("ライブ", lambda: adapter.live_status(live_id))
-    if status.get("owner") and status["owner"] != str(account_cfg.get("page_id") or ""):
+    # 持ち主が返らないときも止める（分からないまま終えない）。
+    if status.get("owner") != str(account_cfg.get("page_id") or "") or not status.get("owner"):
         _refuse("live_not_this_page", f"ライブ {live_id} はこの口座のページのものではありません（何もしていません）",
                 rc=1)
     digest = digest_of("live_end", args.account, live_id, status.get("status"))
@@ -436,6 +437,8 @@ def cmd_dm(args) -> int:
         print(f"  読むとき: thth dm read {args.account} <会話の id>")
         return 0
     if args.action == "read":
+        if getattr(args, "profile", False) and media != "facebook":
+            _refuse("meta_write_unsupported", "相手の属性（--profile）は Facebook ページの 1 対 1 の会話だけです")
         _need(args, adapter_cls, token, [permission])
         adapter = _adapter(account_cfg, token)
         convo = _read("会話", lambda: adapter.dm_messages(args.target))

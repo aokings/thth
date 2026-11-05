@@ -370,12 +370,29 @@ def test_一段目のあとに窓が閉じたら二段目は通らない(m4, cap
     assert rc == 1 and "messaging_window_closed" in err and writes(m4) == []
 
 
-def test_Metaが窓の外と答えたらmessaging_window_closedで済んだと言わない(m4, capsys):
-    m4["state"]["send"] = (400, {"error": {"message": "(#10) This message is sent outside of allowed window.",
-                                           "code": 10, "error_subcode": 2018278}})
+# subcode は【推】。本物で違う・無いときも、code 10 と窓の外の文なら窓の断り（権限の不足と取り違えない・確かめ役 11/05）。
+@pytest.mark.parametrize("subcode", [2018278, None, 1234567])
+def test_Metaが窓の外と答えたらmessaging_window_closedで済んだと言わない(m4, capsys, subcode):
+    error = {"message": "(#10) This message is sent outside of allowed window.", "code": 10}
+    if subcode is not None:
+        error["error_subcode"] = subcode
+    m4["state"]["send"] = (400, {"error": error})
     (rc, out, err), _ = two_steps(capsys, "dm", "send", FB_ACCOUNT, FB_CONVO, "--text", OUTBOUND, "--by", "m")
     assert rc == 1 and "messaging_window_closed" in out and "meta_write_permission_missing" not in out
     assert "dm_send" not in found(FB_ACCOUNT)
+
+
+def test_持ち主の分からないライブは終えない(m4, capsys):
+    m4["routes"][("GET", V + f"/{LIVE}")] = (200, {"id": LIVE, "status": "LIVE", "title": "試しの配信"})
+    rc, _out, err = main(capsys, "live", "end", FB_ACCOUNT, LIVE, "--by", "m")
+    assert rc == 1 and "live_not_this_page" in err
+    assert writes(m4) == []
+
+
+def test_Instagramの相手の属性は網に出る前に断り読んだ記録も残さない(m4, capsys):
+    rc, _out, err = main(capsys, "dm", "read", IG_ACCOUNT, IG_CONVO, "--profile")
+    assert rc == 2 and "meta_write_unsupported" in err
+    assert m4["calls"] == [] and "dm_read" not in found(IG_ACCOUNT)
 
 
 def test_相手から始まっていない会話には返さない():
