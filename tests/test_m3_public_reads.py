@@ -214,6 +214,17 @@ def test_越える語が1つでもあれば1語も呼ばない(m3, capsys):
     assert rc == 2 and m3["calls"] == []
 
 
+def test_projectは1口座の枠の断りで全体を落とさない(m3, capsys):
+    # 確かめ役（Fable 11/05）の指摘: --project の中の IG が 30 種を越えると、FB の答えまで消えていた。
+    fill()
+    rc, out, err = main(capsys, "where", "--project", "nigamilab", "thirtyfirst", "--json")
+    assert rc == 0, err
+    body = json.loads(out)
+    assert IG_ACCOUNT not in body["by_account"] and FB_ACCOUNT in body["by_account"]
+    assert any(line.startswith(f"{IG_ACCOUNT}: ig_hashtag_limit") for line in body["cannot_say"])
+    assert "thirtyfirst" not in json.loads(pathlib.Path(meta_public._hashtag_path(IG_ACCOUNT)).read_text())["tags"]
+
+
 def test_同じタグは30種のあとも数えない(m3, capsys):
     fill()
     rc, _out, err = main(capsys, "where", IG_ACCOUNT, "#T3")

@@ -850,12 +850,19 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     by_account: dict = {}
     notes: list = []
     for name in names:
-        node, reason = _account_node(name, words, search_type=search_type,
-                                     limit=limit, now=now, since=since,
-                                     exclude_engaged=exclude_engaged, max_per_author=max_per_author,
-                                     also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
-                                     suggest=suggest, tag_mode=tag, author=author,
-                                     filters=filters, until=until, media_type=media, keep=keep)
+        try:
+            node, reason = _account_node(name, words, search_type=search_type,
+                                         limit=limit, now=now, since=since,
+                                         exclude_engaged=exclude_engaged, max_per_author=max_per_author,
+                                         also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
+                                         suggest=suggest, tag_mode=tag, author=author,
+                                         filters=filters, until=until, media_type=media, keep=keep)
+        except PublicRefused as exc:
+            # 単一 account はそのまま断る（断りの 3 行と次の時刻）。`--project` は 1 口座の断り
+            # （IG のタグの 7 日 30 種など）で全体を落とさず、その口座だけ cannot_say に回す。
+            if project is None:
+                raise
+            node, reason = None, f"{name}: {exc.code}: {exc}"
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
