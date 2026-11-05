@@ -15,10 +15,17 @@ export function invitePage(status,body,refresh=null){
 }
 
 const contact=t('<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.');
-// 招待の媒体の名前（3.22.0 から Mastodon も）。Mastodon は instance の host を添える。
-const service=d=>d.media==='mastodon'?'Mastodon':'Threads';
+// 招待の媒体の名前（3.22.0 から Mastodon も・5.13.0 から Meta の 3 媒体も）。Mastodon は instance の host を添える。
+const SERVICE={mastodon:'Mastodon',facebook:'Facebook',instagram:'Instagram',ads:'Meta Ads'};
+const service=d=>SERVICE[d.media]??'Threads';
 const host=d=>{try{return new URL(d.instance).host;}catch{return '';}};
+// Meta の 3 媒体は、招待 1 本で口座 1 つ。どの資産かは許可の画面（Facebook ログイン）で本人が選ぶ。
+const ASSET={facebook:['Facebook ページ','Facebook Page'],instagram:['Instagram のプロ口座がつながったページ','Page linked to an Instagram professional account'],ads:['広告アカウント','ad account']};
+const pick=d=>{const a=ASSET[d.media];return a?t(`許可の画面（Facebook ログイン）で、使う${a[0]}を <strong>1 つだけ</strong>選んでください。`,`On the permission screen (Facebook Login), select <strong>exactly one</strong> ${a[1]}.`):'';};
+const asset=(d,i)=>(ASSET[d.media]??['',''])[i];
 const REASON={
+  invite_asset_missing:d=>t(`許可の画面で${asset(d,0)}が選ばれていなかったか、見つかりませんでした。もう一度押して、1 つ選んでください。選べるものが無ければ、先に Meta の画面で用意すると進めます。`,`No ${asset(d,1)} was selected or found on the permission screen. Please try again and select one. If there is none to select, create it in Meta first.`),
+  invite_asset_ambiguous:d=>t(`${asset(d,0)}が 2 つ以上許可されました。招待 1 本で使えるのは 1 つです。もう一度押して、1 つだけに印を付けてください。別のものも使うなら、運営者に招待をもう 1 本頼めます。`,`More than one ${asset(d,1)} was allowed. One invitation covers one. Please try again and select only one. To use another, ask the operator for one more invitation.`),
   auth_expired:t('前回の認可は 10 分の期限を過ぎました。もう一度押してください。','The previous authorization expired after 10 minutes. Please try again.'),
   auth_failed:t('前回の認可を完了できませんでした。もう一度押してください。続くときは','The previous authorization could not be completed. Please try again. If it continues: ')+contact,
   account_exists:d=>t(`その ${service(d)} アカウントは既に THTH にあります。別のアカウントで認可するか、`,`That ${service(d)} account is already registered. Use another account, or: `)+contact,
@@ -31,14 +38,17 @@ function openPage(d){
   const said=REASON[d.reason];
   const reason=said?`<p class="err">${typeof said==='function'?said(d):said}</p>`:'';
   const name=service(d);
-  const mode=d.production
+  // 広告の口座は招待の種類によらず、読むだけで始まる（作る・始めるは運営者が上限を入れてから）。
+  const mode=d.media==='ads'
+    ?t('このアカウントは読むだけで始まります。広告を作る・始める操作は、運営者が上限を入れるまで動きません。','This account starts read-only. Creating or starting ads stays off until the operator sets limits.')
+    :d.production
     ?t(`このアカウントは、頼まれたときに本当に ${name} へ投稿します。`,`This account publishes to ${name} for real when asked.`)
     :t(`このアカウントはテスト用です（頼まれても ${name} には出しません）。`,`This account is a dry run (nothing is published to ${name}).`);
   const where=d.media==='mastodon'?`<dt>${t('サーバー','Server')}</dt><dd><code>${escape(host(d))}</code></dd>`:'';
   return invitePage(200,`${steps(1,service(d))}<h1>${t('THTH への招待','You’re invited to THTH')}</h1>
 <p class="lead">${t('THTH は、SNS を調べ・投稿し・予約する CLI ツールです。あなたの CLI か AI アシスタントが代わりに打ちます。','THTH is a CLI tool to research, post and schedule on social media. Your CLI or AI assistant runs it for you.')}</p>${reason}
 <h2>${t('流れ（3 段・数分）','How it works (3 steps, a few minutes)')}</h2><ol>
-<li>${t(`${name} で認可します。トークンはこのページを通りません。`,`Authorize with ${name}. The token never passes through this page.`)}</li>
+<li>${t(`${name} で認可します。トークンはこのページを通りません。`,`Authorize with ${name}. The token never passes through this page.`)}${pick(d)}</li>
 <li>${t('アカウントのシークレットが 1 度だけ出ます。パスワード管理に保存します。','Your account secret is shown once. Save it in a password manager.')}</li>
 <li>${t('ターミナルで <code>thth login</code> を打ち、ブラウザで許可します。','Run <code>thth login</code> in a terminal and allow it in the browser.')}</li></ol>
 <p>${t('投稿・返信・削除は、あなたの CLI か AI アシスタントが頼んだときだけ行います。止める・上限を変えるのは /activity で。','Posts, replies and deletions happen only when your CLI or AI assistant asks. You can stop the account or change limits on /activity.')}</p>
@@ -65,7 +75,7 @@ function renderView(d){
   }
   if(d.status==='ready'){
     return invitePage(200,`${steps(2,service(d))}<h1>${t('用意ができました','Your account is ready')}</h1>
-<dl class="facts"><dt>${service(d)}</dt><dd>@${escape(d.handle)}${d.media==='mastodon'?'@'+escape(host(d)):''}</dd><dt>${t('アカウント名','Account name')}</dt><dd><code>${escape(d.account)}</code></dd></dl>
+<dl class="facts"><dt>${service(d)}</dt><dd>${ASSET[d.media]?'':'@'}${escape(d.handle)}${d.media==='mastodon'?'@'+escape(host(d)):''}</dd><dt>${t('アカウント名','Account name')}</dt><dd><code>${escape(d.account)}</code></dd></dl>
 <p>${t('次のボタンで<strong>アカウントのシークレット</strong>を出します。<strong class="once">出るのは 1 度だけです。</strong>パスワード管理を開いてから押してください。','The next button shows your <strong>account secret</strong>. <strong class="once">It is shown only once.</strong> Open your password manager before you press it.')}</p>
 <form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">${t('シークレットを表示する','Show the account secret')}</button></form>`);
   }

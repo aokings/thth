@@ -138,6 +138,47 @@ test('Mastodon の招待（3.22.0）: instance は https の origin・権限は 
   assert.equal((await signed('invite',threads.id,'authorize',{authorize_url:mastodonUrl(opaque()),expires_at:expires})).status,400);
 });
 
+const META_SCOPES={facebook:['pages_show_list','pages_manage_posts','read_insights','business_management','public_profile'],
+  instagram:['instagram_basic','pages_show_list','threads_business_basic'],ads:['ads_read','ads_management','leads_retrieval','catalog_management','ads_mcp_management']};
+const dialogUrl=(state,origin='https://www.facebook.com/v26.0/dialog/oauth',redirect='https%3A%2F%2Fthth.me%2Fcallback%2F')=>
+  origin+'?client_id=1&redirect_uri='+redirect+'&state='+state+'&response_type=code&config_id=42';
+
+test('Meta の招待（5.13.0）: 媒体ごとの言葉・権限の形・認可 URL は Facebook ログインの画面だけ',async()=>{
+  const expires_at=Date.now()+30*86_400_000,expires=Date.now()+600_000;
+  for(const body of [{media:'facebook',production:false,expires_at,scopes:SCOPES.map(s=>'evil:'+s)},
+    {media:'facebook',production:false,expires_at,scopes:['read:accounts']},
+    {media:'ads',production:false,expires_at,scopes:['ads_read'],instance:MASTODON}])
+    assert.equal((await signed('invite',hash(opaque()),'create',body)).status,400,JSON.stringify(body));
+  for(const [media,name] of [['facebook','Facebook'],['instagram','Instagram'],['ads','Meta Ads']]){
+    const inv=await invite({media,scopes:META_SCOPES[media]}),page=await(await view(inv)).text();
+    assert.ok(page.includes(name+' で認可する')&&page.includes('1 つだけ')&&!page.includes('Threads で認可'),media);
+    for(const scope of META_SCOPES[media])assert.ok(page.includes('<code>'+scope+'</code>'),scope);
+    assert.equal(page.includes('本当に'),media!=='ads',media);
+    await press(inv,'start');
+    const state=opaque();
+    for(const bad of [authorizeUrl(state),mastodonUrl(state),dialogUrl(state,'https://evil.example/v26.0/dialog/oauth'),dialogUrl(state,'https://www.facebook.com.evil.example/v26.0/dialog/oauth'),
+      dialogUrl(state,'https://www.facebook.com/v26.0/other'),dialogUrl(state,undefined,'https%3A%2F%2Fevil.example%2F'),dialogUrl('short')])
+      assert.equal((await signed('invite',inv.id,'authorize',{authorize_url:bad,expires_at:expires})).status,400,bad);
+    assert.equal((await signed('invite',inv.id,'authorize',{authorize_url:dialogUrl(state),expires_at:expires})).status,200);
+    assert.ok((await(await view(inv)).text()).includes(name+' の認可ページを開く'));
+    assert.equal((await signed('invite',inv.id,'complete',{person:'inv-m-'+media,account:'inv-m-'+media,handle:'61596075596464'})).status,200);
+    assert.ok((await(await view(inv)).text()).includes(`<dt>${name}</dt><dd>61596075596464</dd>`),media);
+  }
+  // Threads の招待には Facebook の画面を通さない。
+  const threads=await invite();await press(threads,'start');
+  assert.equal((await signed('invite',threads.id,'authorize',{authorize_url:dialogUrl(opaque()),expires_at:expires})).status,400);
+});
+
+test('Meta の招待の断り: 資産が決まらなければ、なぜ・通す道・もっと良くを見せて押し直せる',async()=>{
+  for(const [reason,words] of [['invite_asset_missing',['選ばれていなかった','1 つ選んで','先に Meta の画面で']],['invite_asset_ambiguous',['2 つ以上','1 つだけに印','招待をもう 1 本']]]){
+    const inv=await invite({media:'facebook',scopes:META_SCOPES.facebook});await press(inv,'start');
+    assert.equal((await signed('invite',inv.id,'reset',{reason})).status,200);
+    const html=await(await view(inv)).text();for(const word of words)assert.ok(html.includes(word),word);
+    assert.ok(html.includes('Facebook ページ')&&html.includes('value="start"'));
+    assert.equal((await press(inv,'start')).status,303);
+  }
+});
+
 test('やり直し（reset）: 理由を見せて open に戻る・同じ招待をもう一度押せる',async()=>{
   const inv=await invite();await press(inv,'start');
   assert.equal((await signed('invite',inv.id,'reset',{reason:'nonsense'})).status,400);

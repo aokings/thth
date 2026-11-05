@@ -9,14 +9,18 @@ export const STALL_MS=120_000;        // 押してから 2 分進まなければ
 export const AUTH_MS=600_000;         // 認可 URL の寿命（VM の session と同じ 10 分）
 export const MAX_MS=90*86_400_000;    // 招待の期限は最長 90 日
 const SKEW_MS=60_000;
-export const RESET_REASONS=['auth_expired','auth_failed','account_exists','unavailable'];
-// 招待の媒体（3.22.0 から Mastodon も・点検 §B-20）。権限の名前の形は媒体ごと。
-export const MEDIA=['threads','mastodon'];
-const SCOPE={threads:/^threads_[a-z_]{1,40}$/,mastodon:/^(?:read|write):[a-z_]{1,40}$/};
+export const RESET_REASONS=['auth_expired','auth_failed','account_exists','unavailable','invite_asset_missing','invite_asset_ambiguous'];
+// 招待の媒体（3.22.0 から Mastodon も・点検 §B-20。5.13.0 から Facebook・Instagram・広告も）。権限の名前の形は媒体ごと。
+export const META_MEDIA=['facebook','instagram','ads'];
+export const MEDIA=['threads','mastodon',...META_MEDIA];
+const META_SCOPE=/^(?:pages|instagram|ads|threads|leads|catalog|business|publish|read|public)_[a-z_]{1,40}$/;
+const SCOPE={threads:/^threads_[a-z_]{1,40}$/,mastodon:/^(?:read|write):[a-z_]{1,40}$/,facebook:META_SCOPE,instagram:META_SCOPE,ads:META_SCOPE};
 const HANDLE=/^[A-Za-z0-9_.]{1,64}$/;
 // VM が組む認可 URL は Threads の authorize か、招待を作ったときに決めた Mastodon の
-// instance の /oauth/authorize だけ（戻り先は thth.me/callback/）。ほかの行き先へは送らない。
+// instance の /oauth/authorize か、Meta の 3 媒体の Facebook ログインの画面だけ（戻り先は
+// thth.me/callback/）。ほかの行き先へは送らない。
 const AUTHORIZE=/^https:\/\/(?:www\.)?threads\.(?:net|com)\/oauth\/authorize\?[^\s"'<>\\]*$/;
+const DIALOG=/^https:\/\/www\.facebook\.com\/v[0-9]{1,3}\.[0-9]{1,3}\/dialog\/oauth\?[^\s"'<>\\]*$/;
 const CALLBACK='https://thth.me/callback/';
 
 // Mastodon の instance は https の origin そのもの（path・query・userinfo なし）。
@@ -32,6 +36,8 @@ export function validAuthorize(url,row={media:'threads'}){
     if(row.media==='mastodon'){
       if(!validInstance(row.instance)||parsed.origin!==row.instance||parsed.pathname!=='/oauth/authorize'||
          parsed.searchParams.getAll('redirect_uri').join()!==CALLBACK)return null;
+    }else if(META_MEDIA.includes(row.media)){
+      if(!DIALOG.test(url)||parsed.searchParams.getAll('redirect_uri').join()!==CALLBACK)return null;
     }else if(!AUTHORIZE.test(url))return null;
     const states=parsed.searchParams.getAll('state');
     return states.length===1&&STATE_PATTERN.test(states[0])?states[0]:null;}catch{return null;}
