@@ -461,6 +461,10 @@ def subscribe(account: str, *, by: str) -> dict:
             server_files.replace_at(fd, "subscriptions.json", server_files.encode(subs), private=True)
     admin_log.append("webhook_subscribed", account, cfg, by=by,
                      diff={"subscribed_fields": [result["before"], result["fields"]]})
+    if graph_fields:
+        # Meta に要求を出して成功したときだけ（Threads は要求が無い）。命令の名前・媒体・結果だけを runs に。
+        from . import meta_public
+        meta_public.record_read(account, "webhook_subscribe", medium, True)
     return {"account": account, "medium": medium, **result}
 
 

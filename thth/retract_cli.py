@@ -112,6 +112,12 @@ class LocationFailed(Exception):
         self.kind = kind
 
 
+def _record_location(account_name: str, media, ok: bool) -> None:
+    """runs に 1 行（命令の名前・媒体・結果だけ。検索の語と場所は入れない）。`permission_watch` が数える。"""
+    from . import meta_public
+    meta_public.record_read(account_name, "location_search", media, ok)
+
+
 def location_rows(account_name: str, query: str) -> list:
     """場所の候補を引く（CLI とサーバの読む口が共有）。断りは `LocationFailed`。"""
     try:
@@ -133,10 +139,14 @@ def location_rows(account_name: str, query: str) -> list:
             "<account>", account_name), "not_granted")
     try:
         adapter = adapters_mod.make_adapter(account_cfg, token)
-        return adapter.location_search(query, limit=LOCATION_LIMIT)
+        rows = adapter.location_search(query, limit=LOCATION_LIMIT)
+        _record_location(account_name, account_cfg.get("media"), True)
+        return rows
     except adapter_base.PermissionMissing as e:
+        _record_location(account_name, account_cfg.get("media"), False)
         raise LocationFailed(2, _not_granted(account_name, e), "not_granted") from None
     except Exception as e:
+        _record_location(account_name, account_cfg.get("media"), False)
         raise LocationFailed(1, "場所の検索に失敗しました: " + redact_mod.redact(str(e)),
                              "upstream") from None
 

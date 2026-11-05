@@ -74,7 +74,7 @@ PERMISSIONS = {
     "threads_content_publish": _p("threads", WRITE, "post"),
     "threads_delete": _p("threads", WRITE, "retract"),
     "threads_keyword_search": _p("threads", READ, "where"),
-    "threads_location_tagging": _p("threads", READ),
+    "threads_location_tagging": _p("threads", READ, "location_search"),
     "threads_manage_insights": _p("threads", READ, "collect_posts"),
     "threads_manage_mentions": _p("threads", READ, "collect", "mentions"),
     "threads_manage_replies": _p("threads", WRITE, "reply"),
@@ -87,7 +87,7 @@ PERMISSIONS = {
     "pages_read_engagement": _p("facebook", READ, "collect"),
     "pages_read_user_content": _p("facebook", READ, "collect_posts"),
     "read_insights": _p("facebook", READ, "collect_posts"),
-    "pages_manage_metadata": _p("facebook", READ),
+    "pages_manage_metadata": _p("facebook", READ, "webhook_subscribe"),
     "pages_manage_posts": _p("facebook", WRITE, "post", "retract"),
     "pages_manage_engagement": _p("facebook", WRITE, "reply"),
     "pages_manage_ads": _p(ADS, WRITE, "ads_op"),
@@ -102,16 +102,16 @@ PERMISSIONS = {
     "instagram_manage_contents": _p("instagram", WRITE, "retract"),
     "instagram_manage_engagement": _p("instagram", WRITE, "ig_like"),
     "instagram_manage_messages": _p("instagram", WRITE, "dm_list", "dm_read", "dm_send"),
-    "threads_business_basic": _p("instagram", READ),
+    "threads_business_basic": _p("instagram", READ, "connected_threads_user"),
     "ads_read": _p(ADS, READ, "ads_snapshot"),
     "ads_management": _p(ADS, WRITE, "ads_op"),
-    "catalog_management": _p(ADS, READ),
-    "leads_retrieval": _p(ADS, READ),
-    "ads_mcp_management": _p(ADS, READ),
+    "catalog_management": _p(ADS, READ, "ads_catalog"),
+    "leads_retrieval": _p(ADS, READ, "ads_leads"),
+    "ads_mcp_management": _p(ADS, READ),     # 口が無い（外の公式の広告 MCP で使う・THTH の記録に残らない）
     # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ。
     "instagram_manage_upcoming_events": _p("instagram", READ, "upcoming_events"),
-    "read_audience_network_insights": _p(ADS, READ),
-    "commerce_account_read_settings": _p(ADS, READ),
+    "read_audience_network_insights": _p(ADS, READ, "ads_network"),
+    "commerce_account_read_settings": _p(ADS, READ, "ads_shop"),
     # 計画 Meta 全部盛り M4: `thth dm read --profile` が 1 欄ずつ読む相手の属性（招待の一覧に足すかは M0 で決める）。
     "pages_user_locale": _p("facebook", READ, "dm_profile"),
     "pages_user_timezone": _p("facebook", READ, "dm_profile"),
@@ -128,7 +128,11 @@ ADS_KEEPALIVE_READS = frozenset({"ads_read"})
 
 RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION,
                # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
-               "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like")
+               "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like",
+               # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
+               # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
+               "location_search", "webhook_subscribe", "connected_threads_user",
+               "ads_catalog", "ads_leads", "ads_network", "ads_shop")
 # 知らせの重さの順（1 口座に 1 行だけ載るので、重いものを載せて残りの数を添える）。
 NOTICE_REFUSALS = ("data_access_expired", "duc_overdue", "permission_unused", "data_access_expiring",
                    "duc_due_soon", "ads_tier_at_risk", "ads_tier_ready")
