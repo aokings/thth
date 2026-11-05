@@ -136,6 +136,15 @@ def readiness(cfg):
         return {"user_configured": False, "admin_configured": False, "smtp_configured": False}
 
 
+def hub_reads_stuck():
+    """hub が `thth board --json` の `stuck` を読むという宣言（`notifications.json` の `hub_reads_stuck`・5.12.4）。"""
+    try:
+        config = _load(config_path(), {})
+    except (OSError, ValueError, TypeError):
+        return False
+    return isinstance(config, dict) and config.get("hub_reads_stuck") is True
+
+
 def _send(s, recipient, event, account):
     message = EmailMessage()
     message["From"] = s["sender"]
@@ -822,8 +831,10 @@ def cmd_notifications(args):
             else:
                 with open(args.input, encoding="utf-8") as f:
                     data = json.load(f)
-            if not isinstance(data, dict) or set(data) - {"user_email", "admin_email", "smtp"}:
+            if not isinstance(data, dict) or set(data) - {"user_email", "admin_email", "smtp", "hub_reads_stuck"}:
                 raise ValueError("invalid_config")
+            if "hub_reads_stuck" in data and not isinstance(data["hub_reads_stuck"], bool):
+                raise ValueError("invalid_hub_reads_stuck")
             if "user_email" in data and (cfg is None or not address(data["user_email"])):
                 raise ValueError("invalid_user_email")
             if "admin_email" in data and not address(data["admin_email"]):
@@ -847,6 +858,10 @@ def cmd_notifications(args):
                     current["admin_email"] = data["admin_email"]
                 if "smtp" in data:
                     current["smtp"] = data["smtp"]
+                if data.get("hub_reads_stuck") is True:
+                    current["hub_reads_stuck"] = True
+                elif "hub_reads_stuck" in data:
+                    current.pop("hub_reads_stuck", None)
                 _save(path, current)
             print("通知設定を private file に保存しました。宛先・認証値は表示しません。")
             return 0
@@ -909,6 +924,8 @@ def register(sub):
 
 def summary(cfg, state_dir):
     result = readiness(cfg)
+    if hub_reads_stuck():
+        result["hub_reads_stuck"] = True
     result["tested_current_configuration"] = False
     try:
         test = _load(Path(state_dir) / "notification-test.json", {})

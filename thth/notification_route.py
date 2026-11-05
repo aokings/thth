@@ -11,12 +11,17 @@ timer に載る（`scheduled`・既定 true）account が止まったとき、�
 9/21 の 46 本の停止は、どちらが設定されていても通知されなかった（run が成功扱い
 だった・A1 で直す）。ここは「経路そのものが無い」を黙らないための口。
 
+3 つ目の経路は hub（5.12.4）。`notifications.json` に `hub_reads_stuck: true` の宣言があれば、
+止まりは hub が `thth board --json` の `stuck` で読むので、宛先が無くても欠けているとは言わない
+（返りに鍵 `hub` が足され、`cannot_say` は None）。宣言が無ければ鍵も文も今までのまま。
+
 URL・宛先・認証値は返さない（有無だけ）。
 """
 from __future__ import annotations
 
 NO_ROUTE = "no_notification_route"
 PARTIAL = "notification_route_partial"
+HUB_LINE = "止まりは hub が読みます（thth board --json の stuck・notifications.json の hub_reads_stuck）"
 
 
 def scheduled(cfg) -> bool:
@@ -24,7 +29,7 @@ def scheduled(cfg) -> bool:
 
 
 def status(cfg) -> dict:
-    """`{"healthcheck": bool, "incident": bool, "cannot_say": 静的な符丁 | None}`。"""
+    """`{"healthcheck": bool, "incident": bool, "cannot_say": 静的な符丁 | None}`（宣言があれば `"hub": True` も）。"""
     from . import healthcheck, incident
     try:
         has_healthcheck = healthcheck.configured_url(cfg) is not None
@@ -33,6 +38,8 @@ def status(cfg) -> dict:
     ready = incident.readiness(cfg)
     has_incident = bool(ready.get("smtp_configured")
                         and (ready.get("user_configured") or ready.get("admin_configured")))
+    if incident.hub_reads_stuck():
+        return {"healthcheck": has_healthcheck, "incident": has_incident, "hub": True, "cannot_say": None}
     if not has_healthcheck and not has_incident:
         reason = NO_ROUTE
     elif not has_healthcheck:

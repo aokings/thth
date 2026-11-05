@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 
 from tests.conftest import init_git_pair, run_git, run_thth, write_queue_file
@@ -122,6 +123,44 @@ def test_relative_path_does_not_pull_unrelated_repo(isolated_account_factory, tm
     assert main["name"]
 
 
+# 5.12.4: フォルダの付かない名前は親がどの repo でも根になる。打ち間違いで全口座の repo を動かさない。
+def test_bare_typo_pulls_no_repo(isolated_account):
+    _push_new_draft(isolated_account, "later.md")
+    before = run_git(isolated_account["repo_dir"], ["rev-parse", "HEAD"]).stdout.strip()
+    result = run_thth(["lint", "typo-name.md"])
+    assert result.returncode == 2
+    assert "VM の repo に無いパスです" in result.stderr
+    assert "取り込" not in result.stderr
+    assert run_git(isolated_account["repo_dir"], ["rev-parse", "HEAD"]).stdout.strip() == before
+
+
+# repo の根の原稿を名前だけで指す使い方は、その名前が在る repo だけを取り込んで今までどおり通る。
+def test_bare_name_of_root_draft_pulls_only_its_repo(isolated_account_factory, tmp_path):
+    from tests.conftest import init_real_repo
+    main = isolated_account_factory()
+    other_repo = init_real_repo(tmp_path, "unrelated")
+    isolated_account_factory(name="other-threads", repo_dir=other_repo)
+    write_queue_file(main["repo_dir"], "root-draft.md", body="## threads\n\n本文です。\n",
+                     fm_overrides={"account": main["name"]})
+    _push_new_draft({"repo_dir": other_repo, "name": "other-threads"}, "x.md")
+    other_before = run_git(other_repo, ["rev-parse", "HEAD"]).stdout.strip()
+    from thth import cli
+    assert cli._repos_for_lookup(["root-draft.md"]) == {os.path.realpath(main["repo_dir"]): main["name"]}
+    assert run_thth(["lint", "root-draft.md"]).returncode == 0
+    assert run_git(other_repo, ["rev-parse", "HEAD"]).stdout.strip() == other_before
+
+
+def test_bare_name_equal_to_queue_dir_pulls_that_repo(isolated_account_factory, tmp_path):
+    from tests.conftest import init_real_repo
+    from thth import cli
+    main = isolated_account_factory()
+    other_repo = init_real_repo(tmp_path, "unrelated")
+    isolated_account_factory(name="other-threads", repo_dir=other_repo, queue_dir="drafts")
+    assert cli._repos_for_lookup(["drafts"]) == {os.path.realpath(other_repo): "other-threads"}
+    assert cli._repos_for_lookup(["./drafts/"]) == {os.path.realpath(other_repo): "other-threads"}
+    assert main["name"]
+
+
 # 5.12.1（運用の知らせ）: `thth lint <口座> <原稿>` は口座名をパスとして探し、全口座の取り込みの結果を
 # 並べていた。口座名で、その名前のファイルが無ければ取り込む前に 1 つの断りを返す。
 def test_lint_with_account_name_first_refuses_once_without_pulling(isolated_account):
@@ -146,3 +185,43 @@ def test_lint_reads_a_file_that_really_has_the_account_name(isolated_account):
     result = run_thth(["lint", isolated_account["name"]])
     assert result.returncode == 0, result.stderr
     assert "lint_takes_no_account" not in result.stderr
+
+
+# 5.12.4（監査 5.12.1 後回し 1）: 口座名の判定は引数の全部を見る・末尾の `/` は見ない。
+def test_lint_with_account_name_second_refuses_without_pulling(isolated_account):
+    rel = os.path.join("docs", "sns", "queue", "ok.md")
+    write_queue_file(isolated_account["queue_dir"], "ok.md",
+                     body="## threads\n\n本文です。\n", fm_overrides={"account": isolated_account["name"]})
+    result = run_thth(["lint", rel, isolated_account["name"]], cwd=isolated_account["repo_dir"])
+    assert result.returncode == 2
+    assert result.stderr.startswith("lint_takes_no_account: thth lint は口座名を取りません")
+    assert "1 つ目" not in result.stderr and "取り込" not in result.stderr
+
+
+def test_lint_with_account_name_and_trailing_slash_refuses(isolated_account):
+    result = run_thth(["lint", isolated_account["name"] + "/"])
+    assert result.returncode == 2
+    assert result.stderr.startswith("lint_takes_no_account: ")
+    assert f"{isolated_account['name']}/" not in result.stderr and "取り込" not in result.stderr
+
+
+# 監査 5.12.1 の気づき「柵の穴」: 口座名と同じ名のフォルダが repo の根にあれば、それを lint する。
+def test_lint_reads_a_folder_that_really_has_the_account_name(isolated_account):
+    folder = os.path.join(isolated_account["repo_dir"], isolated_account["name"])
+    write_queue_file(folder, "in-folder.md", body="## threads\n\n本文です。\n",
+                     fm_overrides={"account": isolated_account["name"]})
+    for typed in (isolated_account["name"], isolated_account["name"] + "/"):
+        result = run_thth(["lint", typed])
+        assert result.returncode == 0, result.stderr
+        assert "lint_takes_no_account" not in result.stderr
+
+
+# 監査 5.12.1 後回し 3: MCP の thth_lint に口座名を渡したら、通すにはは MCP の口の文。
+def test_mcp_lint_with_account_name_says_the_mcp_way(isolated_account, monkeypatch):
+    from tests.test_mcp import _load_server_module
+    monkeypatch.chdir(isolated_account["repo_dir"])
+    result = _load_server_module().call_tool("thth_lint", {"file": isolated_account["name"]})
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["error"] == "lint_takes_no_account"
+    assert "thth_lint の file に原稿のパス" in payload["fix"]
+    assert "thth lint <" not in payload["fix"] + payload["better"]

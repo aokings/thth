@@ -80,10 +80,12 @@ def cmd_lint(args) -> int:
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
     # 5.12.1: `thth lint <口座> <原稿>` と打つと口座名をパスとして探し、全口座の repo の取り込みの
     # 結果まで並べていた（運用の知らせ）。口座名で、その名前のファイルが無いときは取り込む前に断る。
-    if args.file and _account_name_not_file(args.file[0]):
+    # 5.12.4: 順を逆に打っても同じなので、1 つ目だけでなく引数の全部を見る（監査 5.12.1）。
+    typed = next((item for item in args.file or () if _account_name_not_file(item)), None)
+    if typed is not None:
         from . import refusal
         payload = {"error": "lint_takes_no_account"}  # 棚卸し（tools/count_refusals.py）は JSON の欄で数える
-        return refusal.emit(args, payload["error"], payload=payload, account=args.file[0], rc=2)
+        return refusal.emit(args, payload["error"], payload=payload, account=typed.rstrip("/"), rc=2)
     paths, note = _expand_targets(args.file, only_draft=False, purpose="lint")
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
@@ -339,10 +341,14 @@ def _translate_local_path(path: str, purpose: str | None = None, account=None) -
 
 
 def _account_name_not_file(item) -> bool:
-    """台帳の口座名で、その名前のファイルが今の場所にも台帳の repo の根にも無い（`thth lint` の 1 つ目・5.12.1）。
+    """台帳の口座名で、その名前のファイルが今の場所にも台帳の repo の根にも無い（`thth lint` の引数・5.12.1）。
 
-    同じ名前のファイルが本当にあれば False（そのまま lint する）。"""
-    if not isinstance(item, str) or "/" in item or os.path.exists(item):
+    末尾の `/` は見ない（`thth lint kopicha-threads/`・5.12.4）。同じ名前のファイルが本当にあれば
+    False（そのまま lint する）。"""
+    if not isinstance(item, str):
+        return False
+    item = item.rstrip("/")
+    if "/" in item or os.path.exists(item):
         return False
     try:
         names = accounts_mod.list_account_names()
@@ -407,6 +413,8 @@ def _repos_for_lookup(items, account=None) -> dict:
     `account` を渡されたらその口座の repo だけ。手元（Mac）の絶対パスは読み替えた先の
     repo、VM の絶対パスはそれを含む repo。相対パスは、その親のフォルダが在るか、
     台帳の queue_dir で始まる repo だけ（打ち間違いで全口座の repo を動かさない）。
+    フォルダの付かない名前は親がどの repo でも根になるので、その名前が在るか queue_dir と
+    同じ repo だけ（5.12.4）。
     """
     repos = {}
     for name in accounts_mod.list_account_names():
@@ -436,8 +444,12 @@ def _repos_for_lookup(items, account=None) -> dict:
             continue
         rel = os.path.normpath(item).replace(os.sep, '/')
         for root, (name, queue_dir) in repos.items():
-            parent = os.path.dirname(os.path.join(root, rel))
-            if os.path.isdir(parent) or (queue_dir and rel.startswith(queue_dir + '/')):
+            if '/' not in rel:
+                found = rel == queue_dir or os.path.exists(os.path.join(root, rel))
+            else:
+                found = (os.path.isdir(os.path.dirname(os.path.join(root, rel)))
+                         or (queue_dir and rel.startswith(queue_dir + '/')))
+            if found:
                 wanted.setdefault(root, name)
     return wanted
 
@@ -4455,7 +4467,9 @@ def cmd_board(args) -> int:
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
             incident_status = row.get("incident_notifications", {})
-            print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured")) else "設定不足")
+            hub_reads = incident_status.get("hub_reads_stuck")
+            print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured"))
+                                 else "宛先なし（止まりは hub が読む）" if hub_reads else "設定不足")
                   + f" / 未完了メール={incident_status.get('mail_pending', '?')} repo={incident_status.get('repo_pending', '?')} outbox={incident_status.get('outbox', '?')}")
             # 最後に送った運用通知（設計 3.3.1 §5）。届いたかどうかを人が受信箱と照合する。
             if incident_status.get("outbox") == "ok":
@@ -4463,7 +4477,9 @@ def cmd_board(args) -> int:
                       + incident_mod.last_sent_line(incident_status.get("last_sent")))
             notification_configured = row.get("notification_configured")
             notification_delivery = row.get("notification_delivery")
-            if notification_configured is False:
+            if hub_reads and notification_delivery not in ("failed", "delivered"):
+                print("  死活通知: なし（止まりは hub が読む）")
+            elif notification_configured is False:
                 print("  死活通知: **未設定**（最後の run は通知を送っていません）")
             elif notification_delivery == "failed":
                 print("  死活通知: **配送失敗**"

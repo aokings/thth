@@ -20,7 +20,8 @@
 だけ控える。だから率の分母は「書く・送る・置く命令と lint」で、読む命令の断りは数だけ別に出す。
 
 大きさと期間: `KEEP_DAYS`（14 日・直近 7 日とその前の 7 日を比べるため）より古い行は書くときに落とす
-（先頭の 1 行だけ見て、14 日より古ければ詰める・毎回全体は書き直さない）。
+（先頭の 1 行だけ見て、14 日より古ければ詰める・毎回全体は書き直さない）。時計が戻って行の順が崩れると
+先頭だけでは見えないので、最後の行と日が変わる 1 行でも詰める（詰めると時刻の順に並び直る）。
 ファイルが `MAX_BYTES` を超えたら、14 日の内の新しい `MAX_ROWS` 行に詰め直す。置き場は口座の state の中
 なので、`thth account leave` で state ごと消える。
 
@@ -181,6 +182,8 @@ def note(account, *, command, outcome, code=None, marks=(), now=None) -> bool:
     directory = accounts.state_dir_for(account)
     os.makedirs(directory, mode=0o700, exist_ok=True)
     target = _path(account)
+    at = jst.parse(row["at"])
+    new_day = _day_changes(target, at)
     line = (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
@@ -188,10 +191,27 @@ def note(account, *, command, outcome, code=None, marks=(), now=None) -> bool:
     finally:
         os.close(fd)
     os.chmod(target, 0o600)
-    at = jst.parse(row["at"])
-    if os.path.getsize(target) > MAX_BYTES or _head_is_stale(target, at):
+    if os.path.getsize(target) > MAX_BYTES or new_day or _head_is_stale(target, at):
         _compact(account, at)
     return True
+
+
+def _day_changes(target, at) -> bool:
+    """控えの最後の行と日が違うか（末尾だけ読む。空なら False・読めない末尾は詰めて落とす）。"""
+    try:
+        with open(target, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 1024))
+            rows = stream.read().splitlines()
+    except OSError:
+        return False
+    if not rows:
+        return False
+    try:
+        last = jst.parse(json.loads(rows[-1])["at"])
+    except (ValueError, TypeError, KeyError):
+        return True
+    return last is None or last.date() != at.date()
 
 
 def _head_is_stale(target, now) -> bool:
