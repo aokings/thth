@@ -213,21 +213,27 @@ def _read_only(args, call, render, action) -> int:
     return 0
 
 
+# 人向けの画面（手元の道と遠くの道 `thth/remote.py` が同じ関数を使う・設計 広告の資格と遠くの道 段 4）。
+# 引数は答えの JSON だけ（`args` を見ない）。
+
+def render_catalog_list(value):
+    print(f"商品カタログ {len(value['catalogs'])} 件（{value['adaccount']}）")
+    for row in value["catalogs"]:
+        print(f"  {row['id']}  {row['name']}  商品 {row['product_count']}")
+
+
+def render_catalog_products(value):
+    print(f"商品 {len(value['products'])} 件（カタログ {value['catalog']}・先頭の 1 頁）")
+    for row in value["products"]:
+        print(f"  {row.get('id')}  {row.get('retailer_id') or '—'}  {row.get('name') or '—'}")
+
+
 def cmd_catalog(args) -> int:
     if args.catalog_verb == "list":
-        def render(value):
-            print(f"商品カタログ {len(value['catalogs'])} 件（{args.name}）")
-            for row in value["catalogs"]:
-                print(f"  {row['id']}  {row['name']}  商品 {row['product_count']}")
-        return _read_only(args, lambda reader: {"catalogs": reader.catalogs()}, render, "ads_catalog")
-
-    def render_products(value):
-        print(f"商品 {len(value['products'])} 件（カタログ {args.catalog}・先頭の 1 頁）")
-        for row in value["products"]:
-            print(f"  {row.get('id')}  {row.get('retailer_id') or '—'}  {row.get('name') or '—'}")
+        return _read_only(args, lambda reader: {"catalogs": reader.catalogs()}, render_catalog_list, "ads_catalog")
     return _read_only(args, lambda reader: {"catalog": args.catalog,
                                             "products": reader.catalog_products(args.catalog, args.limit)},
-                      render_products, "ads_catalog")
+                      render_catalog_products, "ads_catalog")
 
 
 def _lead_page(reader, wanted) -> str:
@@ -244,39 +250,45 @@ def _lead_page(reader, wanted) -> str:
     return pages[0]
 
 
+def render_leads(value):
+    if value.get("forms") is not None:
+        print(f"リードのフォーム {len(value['forms'])} 件（ページ {value['page']}）")
+        for row in value["forms"]:
+            print(f"  {row['id']}  {row['status']}  件数 {row['leads_count']}  {row['name']}")
+        return
+    print(f"リード {len(value['leads'])} 件（フォーム {value['form']}・先頭の 1 頁・端末に出すだけで残しません）")
+    for row in value["leads"]:
+        print(f"  {row['created_time']}  {row['id']}  {json.dumps(row['fields'], ensure_ascii=False)}")
+
+
 def cmd_leads(args) -> int:
     def call(reader):
         page = _lead_page(reader, args.page)
         if args.form:
             return {"page": page, "form": args.form, "leads": reader.leads(page, args.form, args.limit)}
         return {"page": page, "forms": reader.lead_forms(page)}
+    return _read_only(args, call, render_leads, "ads_leads")
 
-    def render(value):
-        if "forms" in value:
-            print(f"リードのフォーム {len(value['forms'])} 件（ページ {value['page']}）")
-            for row in value["forms"]:
-                print(f"  {row['id']}  {row['status']}  件数 {row['leads_count']}  {row['name']}")
-            return
-        print(f"リード {len(value['leads'])} 件（フォーム {value['form']}・先頭の 1 頁・端末に出すだけで残しません）")
-        for row in value["leads"]:
-            print(f"  {row['created_time']}  {row['id']}  {json.dumps(row['fields'], ensure_ascii=False)}")
-    return _read_only(args, call, render, "ads_leads")
+
+def render_network(value):
+    print(f"Audience Network の数（{value['adaccount']}・省略 {value['omitted']} 行）")
+    for row in value["rows"]:
+        print(f"  {row['metric']}  {row['value']}")
 
 
 def cmd_network(args) -> int:
-    def render(value):
-        print(f"Audience Network の数（{args.name}・省略 {value['omitted']} 行）")
-        for row in value["rows"]:
-            print(f"  {row['metric']}  {row['value']}")
-    return _read_only(args, lambda reader: reader.audience_network(args.since, args.until), render, "ads_network")
+    return _read_only(args, lambda reader: reader.audience_network(args.since, args.until), render_network,
+                      "ads_network")
+
+
+def render_shop(value):
+    print(f"ショップの設定 {len(value['shops'])} 件（{value['adaccount']}）")
+    for row in value["shops"]:
+        print(f"  {row.get('id')}  {row.get('cta') or '—'}  {row.get('shop_setup') or '—'}")
 
 
 def cmd_shop(args) -> int:
-    def render(value):
-        print(f"ショップの設定 {len(value['shops'])} 件（{args.name}）")
-        for row in value["shops"]:
-            print(f"  {row.get('id')}  {row.get('cta') or '—'}  {row.get('shop_setup') or '—'}")
-    return _read_only(args, lambda reader: {"shops": reader.shop_settings()}, render, "ads_shop")
+    return _read_only(args, lambda reader: {"shops": reader.shop_settings()}, render_shop, "ads_shop")
 
 
 # ------------------------------------------------------------------ show
@@ -299,6 +311,38 @@ def _tree_view(tree) -> dict:
         by_status[key] = counts
     return {"complete": tree.get("complete"), "by_effective_status": by_status,
             "active_ids": watch.active_ids(tree)}
+
+
+def render_show(v):
+    led = v["ledger"]
+    print(f"広告の口座 {v['adaccount']}  act_{led['act_id']}  project {led['project']}")
+    print(f"  台帳: 通貨 {led['currency'] or '未'}・時間帯 {led['timezone_name'] or '未'}・"
+          f"ads_enabled {led['ads_enabled']}・production {led['production']}・上限 {led['ceilings']}"
+          f"（{v['unit']}）")
+    print(f"  書く操作: {'断る（' + led['writes_refused'] + '）' if led['writes_refused'] else '柵つき（boost は PAUSED・activate は 2 段）'}"
+          f"・止め {led['stopped']['reason'] if led['stopped'] else 'なし'}")
+    tok = v["token"]
+    print(f"  鍵: {tok['state']}・{watch.token_text(tok)}")
+    if v.get("account"):
+        a = v["account"]
+        print(f"  Meta: {a['name']}・通貨 {a['currency']}・時間帯 {a['timezone_name']}・"
+              f"account_status {a['account_status']}・amount_spent {a['amount_spent']}・"
+              f"spend_cap {a['spend_cap']}" + ("（0 = 上限なし。管理画面で入れる）" if a["spend_cap"] == 0 else ""))
+        extras = v.get("account_extras") or {}
+        print("  ほかの欄: " + "・".join(f"{k} {extras[k]}" for k in extras if k != "unavailable")
+              + (f"（読めなかった: {','.join(extras['unavailable'])}）" if extras.get("unavailable") else ""))
+        if v.get("ledger_mismatch"):
+            print(f"  注意: 台帳と Meta が違う欄: {','.join(v['ledger_mismatch'])}")
+        t = v["tree"]
+        print(f"  木: {t['by_effective_status']}" + ("" if t["complete"] else "（全部は読めていない）"))
+        _render_delivery(v.get("delivery") or {})
+        _render_pixels(v)
+    elif v.get("snapshot"):
+        s = v["snapshot"]
+        print(f"  最後の読み: {s.get('observed_at')}" + (f"（読めなかった: {s.get('error')}）" if s.get("error") else ""))
+    for row in v["events"]:
+        print(f"  要対応 {row['kind']}: {row['summary']}")
+    _render_steps(v.get("next_steps"))
 
 
 def cmd_show(args) -> int:
@@ -341,37 +385,7 @@ def cmd_show(args) -> int:
     value["events"] = watch.events(args.name, cfg, basis, now=now,
                                    make=lambda kind, ref, summary, **extra: {"kind": kind, "summary": summary})
 
-    def render(v):
-        led = v["ledger"]
-        print(f"広告の口座 {v['adaccount']}  act_{led['act_id']}  project {led['project']}")
-        print(f"  台帳: 通貨 {led['currency'] or '未'}・時間帯 {led['timezone_name'] or '未'}・"
-              f"ads_enabled {led['ads_enabled']}・production {led['production']}・上限 {led['ceilings']}"
-              f"（{v['unit']}）")
-        print(f"  書く操作: {'断る（' + led['writes_refused'] + '）' if led['writes_refused'] else '柵つき（boost は PAUSED・activate は 2 段）'}"
-              f"・止め {led['stopped']['reason'] if led['stopped'] else 'なし'}")
-        tok = v["token"]
-        print(f"  鍵: {tok['state']}・{watch.token_text(tok)}")
-        if v.get("account"):
-            a = v["account"]
-            print(f"  Meta: {a['name']}・通貨 {a['currency']}・時間帯 {a['timezone_name']}・"
-                  f"account_status {a['account_status']}・amount_spent {a['amount_spent']}・"
-                  f"spend_cap {a['spend_cap']}" + ("（0 = 上限なし。管理画面で入れる）" if a["spend_cap"] == 0 else ""))
-            extras = v.get("account_extras") or {}
-            print("  ほかの欄: " + "・".join(f"{k} {extras[k]}" for k in extras if k != "unavailable")
-                  + (f"（読めなかった: {','.join(extras['unavailable'])}）" if extras.get("unavailable") else ""))
-            if v.get("ledger_mismatch"):
-                print(f"  注意: 台帳と Meta が違う欄: {','.join(v['ledger_mismatch'])}")
-            t = v["tree"]
-            print(f"  木: {t['by_effective_status']}" + ("" if t["complete"] else "（全部は読めていない）"))
-            _render_delivery(v.get("delivery") or {})
-            _render_pixels(v)
-        elif v.get("snapshot"):
-            s = v["snapshot"]
-            print(f"  最後の読み: {s.get('observed_at')}" + (f"（読めなかった: {s.get('error')}）" if s.get("error") else ""))
-        for row in v["events"]:
-            print(f"  要対応 {row['kind']}: {row['summary']}")
-        _render_steps(v.get("next_steps"))
-    _emit(value, args.json, render)
+    _emit(value, args.json, render_show)
     return 0
 
 
@@ -425,6 +439,28 @@ ENGAGEMENT_NOTE = ("engagement は Meta の actions から: reactions=post_react
                    "小数 2 桁の文字列・0 件や不明なら null）。actions・outbound_clicks_raw は Meta の生の行")
 
 
+def render_insights(v):
+    period = f"{v['since']}〜{v['until']}" if v["since"] else v["preset"]
+    print(f"成績 {v['adaccount']}  {period}・{v['level']}（通貨 {v['currency'] or '未'}）"
+          + (f"・内訳 {v['breakdown']}" if v.get("breakdown") else ""))
+    if v.get("breakdown"):
+        _render_breakdown(v)
+        return
+    for row in v["rows"]:
+        head = f"{row.get('name') or row.get('id')}  " if v["level"] != "account" else ""
+        print(f"  {head}spend {row['spend']}（最小単位 {row['spend_minor']}）・impressions {row['impressions']}・"
+              f"clicks {row['clicks']}（広告のどこかを押した数・リンクとは限らない）・reach {row['reach']}"
+              f"（{row['date_start']}〜{row['date_stop']}）")
+        for line in graphread.engagement_text(row, v["currency"]):
+            print(f"    {line}")
+    if not v["rows"]:
+        print("  行がありません（この期間に配信が無い）")
+        if v.get("note"):
+            print(f"  注意: {v['note']}")
+    print(f"  成績の読みの使用率: {v['ads_insights_util_pct']}%")
+    _render_steps(v.get("next_steps"))
+
+
 def cmd_insights(args) -> int:
     since, until = args.since, args.until
     if until is not None and since is None:
@@ -460,27 +496,7 @@ def cmd_insights(args) -> int:
         value["note"] = ("この期間は今日を含みません（Meta の last_7d などは昨日まで）。今日の分は --preset today か "
                          "--preset maximum で読む")
 
-    def render(v):
-        period = f"{v['since']}〜{v['until']}" if v["since"] else v["preset"]
-        print(f"成績 {v['adaccount']}  {period}・{v['level']}（通貨 {v['currency'] or '未'}）"
-              + (f"・内訳 {v['breakdown']}" if v.get("breakdown") else ""))
-        if v.get("breakdown"):
-            _render_breakdown(v)
-            return
-        for row in v["rows"]:
-            head = f"{row.get('name') or row.get('id')}  " if v["level"] != "account" else ""
-            print(f"  {head}spend {row['spend']}（最小単位 {row['spend_minor']}）・impressions {row['impressions']}・"
-                  f"clicks {row['clicks']}（広告のどこかを押した数・リンクとは限らない）・reach {row['reach']}"
-                  f"（{row['date_start']}〜{row['date_stop']}）")
-            for line in graphread.engagement_text(row, v["currency"]):
-                print(f"    {line}")
-        if not v["rows"]:
-            print("  行がありません（この期間に配信が無い）")
-            if v.get("note"):
-                print(f"  注意: {v['note']}")
-        print(f"  成績の読みの使用率: {v['ads_insights_util_pct']}%")
-        _render_steps(v.get("next_steps"))
-    _emit(value, args.json, render)
+    _emit(value, args.json, render_insights)
     return 0
 
 
@@ -522,6 +538,24 @@ def _targeting(text):
     return value
 
 
+def render_estimate(v):
+    r, d = v["reach"], v["delivery"]
+    print(f"見積もり {v['adaccount']}（読むだけ・目的 {v['goal']}）")
+    if r.get("unavailable"):
+        print(f"  狙う相手の大きさ: 読めませんでした（{r['unavailable']}）")
+    else:
+        print(f"  狙う相手の大きさ: {r.get('users_lower_bound')}〜{r.get('users_upper_bound')} 人")
+    if d.get("unavailable"):
+        print(f"  予算あたりの見込み: 読めませんでした（{d['unavailable']}）")
+    elif not d.get("confident"):
+        print("  予算あたりの見込み: Meta に確度の高い予測がありません")
+    else:
+        for point in d["daily_outcomes_curve"][:10]:
+            print("  1 日 " + "・".join(f"{k} {point[k]}" for k in point))
+    print(f"  注意: {v['note']}")
+    _render_steps(v["next_steps"])
+
+
 def cmd_estimate(args) -> int:
     """出す前の見積もり（読むだけ）: 狙う相手の大きさ（reachestimate）と予算あたりの見込み（delivery_estimate）。"""
     try:
@@ -540,23 +574,7 @@ def cmd_estimate(args) -> int:
                      "daily_outcomes_curve は確度の高い予測があるときだけ中身がある（confident=false なら見込みなし）")
     value["next_steps"] = [guide.skill_step()]
 
-    def render(v):
-        r, d = v["reach"], v["delivery"]
-        print(f"見積もり {v['adaccount']}（読むだけ・目的 {v['goal']}）")
-        if r.get("unavailable"):
-            print(f"  狙う相手の大きさ: 読めませんでした（{r['unavailable']}）")
-        else:
-            print(f"  狙う相手の大きさ: {r.get('users_lower_bound')}〜{r.get('users_upper_bound')} 人")
-        if d.get("unavailable"):
-            print(f"  予算あたりの見込み: 読めませんでした（{d['unavailable']}）")
-        elif not d.get("confident"):
-            print("  予算あたりの見込み: Meta に確度の高い予測がありません")
-        else:
-            for point in d["daily_outcomes_curve"][:10]:
-                print("  1 日 " + "・".join(f"{k} {point[k]}" for k in point))
-        print(f"  注意: {v['note']}")
-        _render_steps(v["next_steps"])
-    _emit(value, args.json, render)
+    _emit(value, args.json, render_estimate)
     return 0
 
 
@@ -731,20 +749,22 @@ def doctor_rows(name, *, now=None) -> list:
     return rows
 
 
+def render_doctor(v):
+    print(f"広告の口座の点検 {v['adaccount']}（読むだけ）")
+    for r in v["rows"]:
+        mark = {True: "○", False: "×", None: "？"}[r["ok"]]
+        print(f"  {mark} {r['label']}: {r['detail']}")
+    _render_steps(v["next_steps"])
+
+
 def cmd_doctor(args) -> int:
     rows = doctor_rows(args.name)
     bad = [r for r in rows if r["ok"] is False]
 
     steps = next((r["next_steps"] for r in rows if r.get("key") == "pixel"), None) or [guide.skill_step()]
 
-    def render(v):
-        print(f"広告の口座の点検 {v['adaccount']}（読むだけ）")
-        for r in v["rows"]:
-            mark = {True: "○", False: "×", None: "？"}[r["ok"]]
-            print(f"  {mark} {r['label']}: {r['detail']}")
-        _render_steps(v["next_steps"])
     _emit({"adaccount": args.name, "ok": not bad, "rows": rows, "skill": guide.skill_ref(), "next_steps": steps},
-          args.json, render)
+          args.json, render_doctor)
     return 1 if bad else 0
 
 
@@ -798,27 +818,29 @@ def _amount(text):
     return value
 
 
+def render_boost(v):
+    c = v["created"]
+    print(f"作りました（全部 PAUSED・お金は動いていません）: キャンペーン {c['campaign_id']}・広告セット "
+          f"{c['adset_id']}・クリエイティブ {c['creative_id']}・広告 {c['ad_id']}")
+    p = v["plan"]
+    print(f"  投稿 {p['object_story_id']}・通しの予算 {p['lifetime_minor']}（最小単位）・{p['start']} 〜 {p['end']}"
+          f"・出し先 {','.join(p['platforms'])}・目的 {p['objective']}"
+          + ("" if p.get("objective_verified") else "（この目的は本番未確認。管理画面で中身を見てから始める）"))
+    if p.get("url_tags"):
+        print(f"  リンクの印（url_tags）: {p['url_tags']}")
+    _render_steps(v.get("next_steps"))
+    print(f"次の一手: {v['next']}")
+
+
 def cmd_boost(args) -> int:
     from . import ops
     platforms = tuple(p.strip() for p in (args.platforms or "facebook").split(",") if p.strip())
 
-    def render(v):
-        c = v["created"]
-        print(f"作りました（全部 PAUSED・お金は動いていません）: キャンペーン {c['campaign_id']}・広告セット "
-              f"{c['adset_id']}・クリエイティブ {c['creative_id']}・広告 {c['ad_id']}")
-        p = v["plan"]
-        print(f"  投稿 {p['object_story_id']}・通しの予算 {p['lifetime_minor']}（最小単位）・{p['start']} 〜 {p['end']}"
-              f"・出し先 {','.join(p['platforms'])}・目的 {p['objective']}"
-              + ("" if p.get("objective_verified") else "（この目的は本番未確認。管理画面で中身を見てから始める）"))
-        if p.get("url_tags"):
-            print(f"  リンクの印（url_tags）: {p['url_tags']}")
-        _render_steps(v.get("next_steps"))
-        print(f"次の一手: {v['next']}")
     return _write_call(args, lambda: ops.boost(
         args.name, by=args.by, via=args.via, post=args.post, object_story_id=args.object_story_id,
         lifetime_minor=args.lifetime, start=args.start, end=args.end, platforms=platforms,
         objective=args.objective, url_tags=args.url_tags, landing_url=args.landing_url,
-        utm_campaign=args.utm_campaign), render)
+        utm_campaign=args.utm_campaign), render_boost)
 
 
 def _render_stage(v, verb):
@@ -860,31 +882,35 @@ def cmd_extend(args) -> int:
                        lambda v: _render_stage(v, "延ばす"))
 
 
+def render_pause(v):
+    print(f"止めました（status=PAUSED）: {len(v['targets'])} 件" + (f"・失敗 {v['failed']}" if v["failed"] else ""))
+    if v["failed"]:
+        print("管理画面で止めてください（失敗した物があります）")
+
+
 def cmd_pause(args) -> int:
     from . import ops
     if not args.all and not args.id:
         return _fail("ads_target_missing: --all か --id <id> が要ります")
 
-    def render(v):
-        print(f"止めました（status=PAUSED）: {len(v['targets'])} 件" + (f"・失敗 {v['failed']}" if v["failed"] else ""))
-        if v["failed"]:
-            print("管理画面で止めてください（失敗した物があります）")
     return _write_call(args, lambda: ops.pause(args.name, by=args.by, via=args.via, all_=args.all,
-                                               ids=tuple(args.id or ())), render)
+                                               ids=tuple(args.id or ())), render_pause)
+
+
+def render_stop(v):
+    if v["confirmed"]:
+        print(f"止まりました（Meta から読み直して全部 PAUSED を確かめた）・記録 {v['op_id']}")
+    else:
+        print("止まったと確かめられません。管理画面で止めてください")
+        print(f"hub に送る 1 行: {v['hub_line']}")
+    for step, value in v["steps"].items():
+        print(f"  {step}: {value}")
 
 
 def cmd_stop(args) -> int:
     from . import ops
 
-    def render(v):
-        if v["confirmed"]:
-            print(f"止まりました（Meta から読み直して全部 PAUSED を確かめた）・記録 {v['op_id']}")
-        else:
-            print("止まったと確かめられません。管理画面で止めてください")
-            print(f"hub に送る 1 行: {v['hub_line']}")
-        for step, value in v["steps"].items():
-            print(f"  {step}: {value}")
-    return _write_call(args, lambda: ops.stop(args.name, by=args.by, via=args.via), render)
+    return _write_call(args, lambda: ops.stop(args.name, by=args.by, via=args.via), render_stop)
 
 
 def cmd_watch(args) -> int:

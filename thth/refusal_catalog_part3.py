@@ -1727,6 +1727,15 @@ ENTRIES = {
         "doors": ("cli",),
         "since": "5.12.6",
     },
+    "ads_remote_unsupported": {
+        "kind": "refusal",
+        "why": "配信を始める・延ばす・止めの印を外す・台帳と鍵を書く広告の命令は、thth.me の鍵の道からは受けていません（hub の承認の番号と VM の台帳が要るため）。",
+        "fix": "運営者に hub で頼んでください。読む・PAUSED で作る・止めるはこの道で打てます（thth ads show・boost・pause・stop）",
+        "command": "thth ads show <口座>",
+        "better": "thth ads boost で PAUSED のまま作っておけば、運営者は承認のあと activate を打つだけで済みます",
+        "doors": ("remote",),
+        "since": "5.12.6",
+    },
     "window_open": {
         "kind": "cannot_say",
         "why": None,

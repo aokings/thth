@@ -29,7 +29,7 @@ ENTRIES = {
         "fix": "広告マネージャで口座の状態（支払い・審査）を管理者に確かめてもらい、有効に戻ってから打ち直してください。",
         "command": "thth ads show <名前>",
         "better": "待つ間は thth ads insights で過去の成績を読み、次の配信の形を練っておけます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_adaccount_not_granted": {
         "kind": "refusal",
@@ -69,7 +69,7 @@ ENTRIES = {
         "fix": "--lifetime に 0 より大きい整数を入れて打ち直してください（例 --lifetime <額>）。",
         "command": "thth ads boost <名前> --post <post_id> --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "額は thth ads estimate の見込みと thth ads budget show の残りを見てから決めると安心です。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_budget_unreadable": {
         "kind": "refusal",
@@ -85,7 +85,7 @@ ENTRIES = {
         "fix": "--start と --end の間を days_max の日数の内側に縮めて打ち直してください。",
         "command": "thth ads budget show <名前>",
         "better": "短い期間で出して成績を見てから thth ads extend で延ばすと、確かめながら進められます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_disabled": {
         "kind": "refusal",
@@ -93,7 +93,7 @@ ENTRIES = {
         "fix": "広告を使うかは管理者の判断です。必要なら管理者に台帳の ads_enabled を確かめてもらってください。",
         "command": "thth ads doctor <名前>",
         "better": "待つ間も thth ads show・insights は読めるので、過去の成績から次の配信を練っておけます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_end_time_missing": {
         "kind": "refusal",
@@ -109,7 +109,7 @@ ENTRIES = {
         "fix": "--end <時刻> を足して打ち直してください。",
         "command": "thth ads boost <名前> --post <post_id> --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "まず短めの終了日で出し、伸びたら thth ads extend で延ばすと確かめながら進められます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_id_invalid": {
         "kind": "refusal",
@@ -117,7 +117,7 @@ ENTRIES = {
         "fix": "thth ads show で id を写して --id に入れ直すか、--all で口座の動いている物を全部止めてください。",
         "command": "thth ads pause <名前> --all --by <名前>",
         "better": "id は thth ads show --json の値をそのまま渡すと、写し間違いが起きません。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_instagram_unlinked": {
         "kind": "refusal",
@@ -125,14 +125,14 @@ ENTRIES = {
         "fix": "今回は --platforms facebook で出すか、管理者に thth ads add で --ig <口座> を結んでもらってください。",
         "command": "thth ads boost <名前> --post <post_id> --platforms facebook --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "まず Facebook で反応を見て、IG を結んだあと同じ投稿で比べると違いが分かります。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_landing_url_invalid": {
         "kind": "refusal",
         "why": "誘導先（--landing-url か台帳の landing_url）が http(s):// で始まる URL になっていません。",
         "fix": "--landing-url に https:// から始まる URL を入れて打ち直してください。",
         "better": "誘導先は自分のサイトの頁にすると、UTM の印で訪問まで結んで読めます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_lifetime_over_ceiling": {
         "kind": "refusal",
@@ -140,7 +140,7 @@ ENTRIES = {
         "fix": "--lifetime を上限の内側に下げるか、広告セットを分けずに額を上限の内側に収めて打ち直してください。",
         "command": "thth ads budget show <名前>",
         "better": "上限の内側で出して成績を見てから、承認を得て extend で足すと確かめながら進められます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_not_earlier": {
         "kind": "refusal",
@@ -156,7 +156,7 @@ ENTRIES = {
         "fix": "thth ads auth をやり直し、許可の画面で広告の読み取りを許してください。",
         "command": "thth ads auth <名前> --by <名前>",
         "better": "やり直したあと thth ads doctor を打つと、権限がそろったかを一度で確かめられます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_not_higher": {
         "kind": "refusal",
@@ -188,7 +188,7 @@ ENTRIES = {
         "fix": "本番で使うかは管理者の判断です。必要なら管理者に台帳の production を確かめてもらってください。",
         "command": "thth ads doctor <名前>",
         "better": "待つ間に thth ads estimate で狙う相手の大きさを見積もっておけます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_not_stopped": {
         "kind": "refusal",
@@ -211,7 +211,7 @@ ENTRIES = {
         "why": "--object-story-id は <ページID>_<投稿の数字> の形で受け取ります。",
         "fix": "ページの投稿の id を <ページID>_<投稿の数字> の形に直して打ち直してください。",
         "better": "THTH で出した投稿なら --post <post_id> で指すと、形を組み立てずに済みます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_objective_invalid": {
         "kind": "refusal",
@@ -219,14 +219,14 @@ ENTRIES = {
         "fix": "--objective を engagement・traffic・reach のどれかにして打ち直してください。",
         "command": "thth ads boost <名前> --post <post_id> --objective engagement --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "サイトへ誘うなら traffic と UTM の印を組み合わせると、訪問まで結んで読めます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_platform_unsupported": {
         "kind": "refusal",
         "why": "広告の出し先は今は facebook・instagram だけです（threads は後の段）。",
         "fix": "--platforms を facebook か facebook,instagram にして打ち直してください。",
         "better": "Threads の投稿は通常の投稿で伸びを見ておくと、出し先が増えたときに比べられます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_post_invalid": {
         "kind": "refusal",
@@ -234,7 +234,7 @@ ENTRIES = {
         "fix": "thth posts で結んだページの口座の投稿の id を確かめ、--post に入れ直してください。",
         "command": "thth posts <口座>",
         "better": "伸びた投稿を thth after で選んでから広告に回すと、効きやすくなります。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_post_not_found": {
         "kind": "refusal",
@@ -279,7 +279,7 @@ ENTRIES = {
         "why": "時刻が読めないか、終了・期限が開始や今より前になっています。",
         "fix": "時刻を ISO 8601（例 2026-11-01T10:00+09:00）か now にし、終了は開始と今より後にしてください。",
         "better": "時差を付けて書くと、どの時間帯の時刻かで迷わずに済みます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_token_app_mismatch": {
         "kind": "refusal",
@@ -295,7 +295,7 @@ ENTRIES = {
         "fix": "thth ads auth を最初からやり直して、新しい鍵を受け取ってください。",
         "command": "thth ads auth <名前> --by <名前>",
         "better": "thth ads doctor をときどき打つと、期限の近さを切れる前に知れます。",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
     },
     "ads_token_expiry_unknown": {
         "kind": "refusal",
@@ -311,7 +311,7 @@ ENTRIES = {
         "fix": "thth ads auth をやり直して、新しい鍵を受け取ってください。",
         "command": "thth ads auth <名前> --by <名前>",
         "better": "やり直したあと thth ads doctor で権限と期限がそろったかを確かめると安心です。",
-        "doors": ("cli",),
+        "doors": (*("cli",), "remote"),
     },
     "ads_token_missing": {
         "kind": "refusal",
@@ -319,7 +319,7 @@ ENTRIES = {
         "fix": "thth ads auth で認可して鍵を受け取ってから、打ち直してください。",
         "command": "thth ads auth <名前> --by <名前>",
         "better": "認可のあと thth ads doctor を打つと、読めるところまで一度で確かめられます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_token_user_mismatch": {
         "kind": "refusal",
@@ -350,14 +350,14 @@ ENTRIES = {
         "why": "--url-tags（か台帳の url_tags）が key=value&key=value の形になっていません。",
         "fix": "utm_source=facebook&utm_medium=paid&utm_campaign=<名前> の形に直して打ち直してください。",
         "better": "--url-tags を省くと既定の UTM が付き、媒体ごとの訪問をそろえて読めます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_utm_campaign_invalid": {
         "kind": "refusal",
         "why": "--utm-campaign は原稿のファイル名（拡張子なし・英数字と _ . -）で受け取ります。",
         "fix": "原稿のファイル名から拡張子を外し、英数字と _ . - だけの値にして打ち直してください。",
         "better": "原稿のファイル名にそろえると、投稿と広告の訪問を同じ名前で並べて読めます。",
-        "doors": _CM,
+        "doors": (*_CM, "remote"),
     },
     "ads_watch_invalid": {
         "kind": "refusal",
