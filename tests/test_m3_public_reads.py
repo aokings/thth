@@ -445,6 +445,16 @@ def test_VMの読む口はCLIと同じ形でembedを返す(served):
         "embed": {"html": HTML, "provider_name": "Threads"}, "storage": "display_only"}
 
 
+def test_VMの読む口のembedもrunsに1行を残す(served):
+    # 遠くの道でも手元と同じ記録（審査の 30 日の呼び出しに数える・11/06）。命令の名前と結果だけ。
+    from thth import accounts
+    server_call(served, "embed", url="https://www.threads.net/@a/post/AAA")
+    rows = [json.loads(line) for path in pathlib.Path(accounts.state_dir_for("alpha")).glob("runs-*.ndjson")
+            for line in path.read_text().splitlines() if line.strip()]
+    mine = [r for r in rows if r.get("action") == "embed"]
+    assert mine and mine[-1]["status"] == "ok" and HTML not in json.dumps(mine)
+
+
 def test_VMの読む口も他の媒体のURLを断る(served):
     with pytest.raises(ReportServiceError) as caught:
         execute_report(served["context"], {"operation": "embed", "account": "alpha", "url": "https://evil.example/"})

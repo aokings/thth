@@ -376,7 +376,10 @@ def _embed(account, request, cfg):
     try:
         embed = reads._fetch(account, capability='embed', call=lambda adapter: adapter.oembed(url))
     except reads.ReadFailed as failed:
+        meta_public.record_read(account, 'embed', cfg.get('media'), False)
         _refuse(failed.kind, failed.message)
+    # 遠くの道でも手元の `thth embed` と同じ 1 行（審査の 30 日の呼び出しに数える）。
+    meta_public.record_read(account, 'embed', cfg.get('media'), True)
     return meta_public.embed_json(account, url, embed)
 
 
@@ -386,7 +389,9 @@ def _upcoming_events(account, request, cfg):
     try:
         events = reads._fetch(account, capability='upcoming_events', call=lambda adapter: adapter.upcoming_events())
     except reads.ReadFailed as failed:
+        meta_public.record_read(account, 'upcoming_events', 'instagram', False)
         _refuse(failed.kind, failed.message)
+    meta_public.record_read(account, 'upcoming_events', 'instagram', True)
     return meta_public.upcoming_json(account, events)
 
 
