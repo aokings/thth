@@ -1558,7 +1558,7 @@ ENTRIES = {
         "command": "thth webhook status",
         "better": "通知の口が無い媒体は `thth collect` の巡回が返信を拾うので、そのまま使えます",
         "doors": ("cli",),
-        "since": "5.13.0",
+        "since": "5.12.6",
     },
     "webhook_account_id_missing": {
         "kind": "refusal",
@@ -1567,7 +1567,7 @@ ENTRIES = {
         "command": "thth auth <口座>",
         "better": "認可のあとに `thth doctor <口座>` まで通しておくと、id と権限をまとめて確かめられます",
         "doors": ("cli",),
-        "since": "5.13.0",
+        "since": "5.12.6",
     },
     "window_open": {
         "kind": "cannot_say",

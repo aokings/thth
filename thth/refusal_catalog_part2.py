@@ -690,7 +690,7 @@ ENTRIES = {
         "fix": "招待された人に、もう一度押して許可の画面で 1 つ選ぶよう伝えてください（招待はそのまま使えます）",
         "better": "Instagram はプロ口座をページにつないでから認可すると、1 回で通ります",
         "doors": ("cli",),
-        "since": "5.13.0",
+        "since": "5.12.6",
     },
     "invite_asset_ambiguous": {
         "kind": "refusal",
@@ -698,7 +698,7 @@ ENTRIES = {
         "fix": "招待された人に、もう一度押して許可の画面で 1 つだけに印を付けるよう伝えてください（招待はそのまま使えます）",
         "better": "2 つ目の資産も使う人には、資産ごとに招待を 1 本ずつ作ると、口座と資産が 1 対 1 で追えます",
         "doors": ("cli",),
-        "since": "5.13.0",
+        "since": "5.12.6",
     },
     "invite_review_scopes_unsupported": {
         "kind": "refusal",
@@ -707,7 +707,7 @@ ENTRIES = {
         "command": "thth admin invite create --media mastodon --instance <URL> --project <project> --by <名前>",
         "better": "--review-scopes は Meta の録画と審査の招待だけに付けると、既定の招待の認可が止まりません",
         "doors": ("cli",),
-        "since": "5.13.0",
+        "since": "5.12.6",
     },
     "invite_not_found": {
         "kind": "refusal",
