@@ -81,6 +81,12 @@ ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
                               DATA_ACCESS_EXPIRING, DATA_ACCESS_EXPIRED,
                               ADS_TOKEN_EXPIRING, ADS_NOT_GRANTED})
 
+# board の `stuck` に載せる鍵の状態（5.12.3）。`no_token`・`config_error` は `thth run` の止まりが
+# 言い、データの期限は `thth events` が言うので、ここには入れない（同じ話を 2 回言わない）。
+TOKEN_INCIDENT_CODES = {REFRESH_FAILED: "token_refresh_failed", EXPIRED: "token_expired",
+                        EXPIRING: "token_expiring", TOKEN_INCOMPLETE: "token_incomplete",
+                        UNREADABLE: "token_unreadable"}
+
 # **次の一手は媒体が知っている**（`Adapter.TOKEN_SETUP_HINT`・独立監査 1・
 # P2-4・2026-09-13）。ここの文言は `thth maintain` だけでなく **board と
 # `thth account` にもそのまま出る**（どちらも `inspect()` の `message` を
@@ -432,6 +438,8 @@ def run_maintain(account: str | None = None, *, check: bool = False,
 
         rows.append(row)
         _record(name, row, now=now)
+        if not check:
+            _report_token(name, row)
 
     # 広告の口座（段 4）。更新の口が無いので、述べるだけ（`check` に関わらず何も書き換えない）。
     for name in ad_names:
@@ -463,6 +471,24 @@ def run_maintain(account: str | None = None, *, check: bool = False,
             log(f"人の手が要るアカウントが {len(attention)} 件あります。")
 
     return 1 if attention else 0
+
+
+def _report_token(account_name: str, row: dict) -> None:
+    """鍵の止まりの状態を控える（メールは出さない）。控えの失敗で maintain を落とさない（次の回に控え直す）。
+
+    載せない要確認（`TOKEN_INCIDENT_CODES` の外）では、鍵が戻ったとは言えないので何も動かさない。
+    """
+    if needs_attention(row) and row["state"] not in TOKEN_INCIDENT_CODES:
+        return
+    from . import incident, leave_gate
+    try:
+        with leave_gate.lease(account_name):
+            incident.note_token(account_name, TOKEN_INCIDENT_CODES.get(row["state"]),
+                                state_dir=accounts_mod.state_dir_for(account_name))
+    except accounts_mod.AccountStopped:
+        return
+    except Exception:
+        print("鍵の止まりを控えられませんでした: token_incident_pending", file=sys.stderr)
 
 
 def _record(account_name: str, row: dict, *, now) -> None:

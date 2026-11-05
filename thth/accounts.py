@@ -812,6 +812,7 @@ def load_token(account_cfg: dict, *, refresh_x: bool = True) -> dict | None:
 
 
 _X_REFRESHING = contextvars.ContextVar("thth_x_refreshing", default=False)
+TOKEN_REFRESH_FAILURE_FILE = "token-refresh-failure.json"
 
 
 def _refresh_x_if_due(account_cfg: dict, token) -> bool:
@@ -837,11 +838,43 @@ def _refresh_x_if_due(account_cfg: dict, token) -> bool:
         return False
     reset = _X_REFRESHING.set(True)
     try:
-        return auth_x.run_refresh(name, log=lambda _line: None) == 0
+        if auth_x.run_refresh(name, log=lambda _line: None) == 0:
+            return True
     except Exception:  # 更新の失敗で読む口を止めない（呼び手が 401 を受ける）
-        return False
+        pass
     finally:
         _X_REFRESHING.reset(reset)
+    from . import admin_log
+    if admin_log._active_fd.get() is None:  # 入れ子の管理の処理は断られただけで、失敗ではない
+        _note_token_refresh_failure(name, jst.now_jst())
+    return False
+
+
+def _note_token_refresh_failure(name: str, now) -> None:
+    """読む口の自動更新の失敗を、時刻だけ残す（次の `thth run` の運用通知が読む）。
+
+    理由の文は残さない（例外の文に値が混ざらないように）。記録の失敗で読む口を止めない。
+    """
+    from . import jst
+    path = os.path.join(state_dir_for(name), TOKEN_REFRESH_FAILURE_FILE)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"at": jst.iso(now)}, f)
+        os.replace(path + ".tmp", path)
+    except (OSError, ValueError):
+        pass
+
+
+def token_refresh_failed_at(state_dir: str):
+    """読む口の自動更新が最後に失敗した時刻（無い・読めないなら None）。読むだけ。"""
+    from . import jst
+    try:
+        with open(os.path.join(state_dir, TOKEN_REFRESH_FAILURE_FILE), encoding="utf-8") as f:
+            row = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return jst.parse(row.get("at")) if isinstance(row, dict) else None
 
 
 def token_exists(account_cfg: dict) -> bool:

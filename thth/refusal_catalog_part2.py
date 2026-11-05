@@ -10,6 +10,15 @@ ENTRIES = {
         "no_better": "internal",
         "doors": ("mcp", "remote", "dashboard"),
     },
+    "incident_outbox_unreadable": {
+        "kind": "cannot_say",
+        "why": "運用通知の記録を読めないため、止まっているかどうかを言えません。",
+        "fix": "state/<口座>/incident-outbox.json の形を確かめて直してください",
+        "command": "thth notifications status <口座>",
+        "better": "運用通知の記録は手で書き換えず道具に任せると、壊れずに済みます",
+        "doors": ("cli",),
+        "since": "5.12.3",
+    },
     "inflight_unresolved": {
         "kind": "refusal",
         "why": "媒体に問い合わせても前の公開の結果が決まらず、次の公開を止めています（inflight）。",

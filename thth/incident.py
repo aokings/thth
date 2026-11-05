@@ -36,6 +36,8 @@ RETENTION = datetime.timedelta(days=30)
 # 30 日以内でも、送り終えた事象がこの数を超えたら古い順に畳む。
 RETENTION_CAP = 50
 ROLES = ("user", "admin")
+# maintain が outbox を待つ秒数（毎日 1 回なので、run の通知と重なっても 1 日遅らせない）。
+TOKEN_LOCK_WAIT_SECONDS = 60
 FIELDS = {"thth_run_state", "thth_run_at", "thth_run_reason", "thth_run_action", "thth_incident_id", "thth_run_detail", "thth_run_next"}
 
 
@@ -356,6 +358,12 @@ def _validate(row):
     version = row.get("fingerprint_version")
     if version is not None and (type(version) is not int or version < 1):
         raise ValueError("invalid_outbox")
+    # 鍵の止まり（5.12.3）。今の符丁と始まった時刻。旧い outbox には無い。
+    token = row.get("token_incident")
+    if token is not None and token not in healthcheck.TOKEN_CODES:
+        raise ValueError("invalid_outbox")
+    if row.get("token_since") is not None and not jst.parse(row.get("token_since")):
+        raise ValueError("invalid_outbox")
     # 最後に SMTP が受領した運用通知（設計 3.3.1 §5）。旧い outbox には無い。
     sent = row.get("last_sent")
     if sent is not None and (
@@ -537,6 +545,130 @@ def _reapproval_transition(row, diag, *, reapproval, ready):
     return changed
 
 
+def _token_transition(row, code) -> bool:
+    """鍵の止まりの状態を控える（`code` は今の符丁・None は使える状態）。
+
+    **事象は積まない**——鍵の止まりはメールにせず、board の `stuck` が読むだけ（masaru 11/05）。
+    符丁が変わっても `token_since` は最初に止まった時刻のまま。
+    """
+    previous = row.get("token_incident")
+    if previous == code:
+        return False
+    row["token_incident"] = code
+    row["token_since"] = None if code is None else row.get("token_since") or jst.iso(jst.now_jst())
+    return True
+
+
+def _run_token_code(account, row, state_dir):
+    """run の刻みで見た鍵の止まり。読む口の自動更新の失敗を拾い、鍵が戻っていれば解く。
+
+    鍵の値は読まない（期限と時刻だけ・API も叩かない）。何も言えないときは今の符丁のまま。
+    """
+    from . import maintain
+    current = row.get("token_incident")
+    failed_at = accounts.token_refresh_failed_at(state_dir)
+    if failed_at is None and current is None:
+        return None
+    try:
+        view = maintain.inspect(account, now=jst.now_jst())
+    except Exception:
+        return current
+    if view["state"] == maintain.OK:
+        return None
+    obtained = jst.parse(view.get("obtained_at"))
+    if failed_at is not None and (obtained is None or failed_at >= obtained):
+        return "token_refresh_failed"
+    return current
+
+
+def note_token(account, code, *, state_dir):
+    """`thth maintain` の鍵の状態を outbox に控える（`code` は `TOKEN_CODES` か、使える状態の None）。
+
+    **account ロックは取らない**（`maintain.py`: inflight で止まった口座でも鍵は見る）。
+    repo にもメールにも触れないので outbox のロックだけで足りる。
+    """
+    if not accounts.name_is_safe(account):
+        return "invalid_account"
+    if code is not None and code not in healthcheck.TOKEN_CODES:
+        raise ValueError("invalid_diagnostic")
+    path = Path(state_dir) / STATE_FILE
+    if code is None and not path.exists():
+        return "quiet"  # 止まったことのない口座に outbox を作らない
+    outbox_lock = lock.AccountLock(str(Path(state_dir) / "incident.lock"))
+    lock.acquire(outbox_lock, TOKEN_LOCK_WAIT_SECONDS)
+    try:
+        row = _load(path, {"version": 1, "last": None, "events": []})
+        _validate(row)
+        if _token_transition(row, code):
+            _save(path, row)
+        return "recorded"
+    finally:
+        outbox_lock.release()
+
+
+def _stop_chain(row):
+    """最後の本物の復旧より後の run の止まり（古い順）。原稿が変わって積み直された分も 1 つの止まり。"""
+    chain = []
+    for event in reversed(row["events"]):
+        if event["state"] == "recovered" and event["reason"] == "healthy":
+            break
+        if _is_run_stop(event):
+            chain.append(event)
+    return chain[::-1]
+
+
+def _held_chain(row):
+    chain = []
+    for event in reversed(row["events"]):
+        if event["state"] == "recovered" and event["reason"] == healthcheck.HELD_CLEARED:
+            break
+        if event["state"] == "blocked" and healthcheck.is_held_code(event["reason"]):
+            chain.append(event)
+    return chain[::-1]
+
+
+def _stuck_row(account, code, since, *, what=None, action=None):
+    text = healthcheck.next_action_text(action or healthcheck.next_action_for(code))
+    return {"code": code, "since": since, "what": what or healthcheck.reason_text(code),
+            "fix": text.replace("<account>", account)}
+
+
+def _earlier(first, second):
+    return min((value for value in (first, second) if value), key=jst.parse, default=None)
+
+
+def stuck(account, state_dir):
+    """board の `stuck`: 今も解けていない止まり（無ければ None）。読むだけ・何も書かない。
+
+    run の止まりは `row["last"]`（偽の復旧を直した同じ判定の結果）で見るので、何も試みなかった
+    run では消えない。`since` は最初に止まった時刻。公開の 401 に鍵の止まりが重なっていれば、
+    根の鍵の符丁で言う。宛先・本文・原稿名・鍵の値は入れない。
+    """
+    try:
+        row = _load(Path(state_dir) / STATE_FILE, None)
+        if row is None:
+            return None
+        _validate(row)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return _stuck_row(account, "incident_outbox_unreadable", None)
+    token = row.get("token_incident")
+    chain = _stop_chain(row) if row["last"] == "fail" else []
+    if chain:
+        code, since = chain[-1]["reason"], chain[0]["at"]
+        unauthorized = re.fullmatch(r"(?:container|publish)_http_401", code)
+        if token and unauthorized:
+            return _stuck_row(account, token, _earlier(since, row.get("token_since")))
+        return _stuck_row(account, code, since, action="retry_token_refresh" if unauthorized else None)
+    if token:
+        return _stuck_row(account, token, row.get("token_since"))
+    held = _held_chain(row) if row.get("held", 0) > 0 and row.get("held_notified") else []
+    if held:
+        return _stuck_row(account, "approved_but_held", held[0]["at"],
+                          what=healthcheck.reason_text(held[-1]["reason"]),
+                          action=healthcheck.next_action_for(held[-1]["reason"]))
+    return None
+
+
 def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confirm_due=None):
     """Invoked after core locks release; lock order repo -> account -> outbox.
 
@@ -621,7 +753,8 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confi
         held_changed = _held_transition(row, diag, ready=ready)
         notice_changed = _reapproval_transition(row, diag, reapproval=reapproval, ready=ready)
         confirm_changed = _confirm_due_transition(row, diag, confirm_due=confirm_due, ready=ready)
-        if held_changed or notice_changed or confirm_changed:
+        token_changed = _token_transition(row, _run_token_code(account, row, state_dir))
+        if held_changed or notice_changed or confirm_changed or token_changed:
             persist()
         s = settings(cfg) if ready else None
         blocked_roles = set()
