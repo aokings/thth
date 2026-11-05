@@ -308,6 +308,7 @@ class FacebookAdapter(base.Adapter):
         # 量の制限を残す口座（`from_account` が台帳の名前を入れる）。None なら残さず、待ちも見ない。
         self.usage_account = None
         self.granted_scopes = None
+        self.expected_scopes = SCOPES
         self.auth_account = "<account>"
         # `.token` に保存したデータの期限（`thth auth` が書いた値・doctor が今の値と比べる）。
         self.recorded_data_access_expires_at = None
@@ -342,6 +343,10 @@ class FacebookAdapter(base.Adapter):
             adapter.granted_scopes = frozenset(scopes)
         adapter.auth_account = cfg.get("account") or "<account>"
         from .. import accounts as accounts_mod
+        if accounts_mod.is_invite_account(cfg):
+            # 招待の口座は招待で求めた一覧と突き合わせる（doctor）。
+            from .. import scopes as scopes_mod
+            adapter.expected_scopes = scopes_mod.meta_invite_scopes(MEDIUM, cfg.get("review_scopes") is True)
         if accounts_mod.name_is_safe(cfg.get("account")):
             adapter.usage_account = cfg["account"]
             adapter.webhook_account = cfg["account"]
@@ -986,10 +991,10 @@ class FacebookAdapter(base.Adapter):
             scopes = data.get("scopes")
             if isinstance(scopes, list) and all(isinstance(s, str) for s in scopes):
                 granted = set(scopes)
-                missing = [s for s in SCOPES if s not in granted]
+                missing = [s for s in self.expected_scopes if s not in granted]
                 expires = data.get("expires_at")
                 detail = (f"{len(scopes)} 個・expires_at={expires}"
-                          + (f"・足りない={','.join(missing)}" if missing else "・求めた権限はすべて有り"))
+                          + (f"・足りない={','.join(missing)}（NOT_GRANTED）" if missing else "・求めた権限はすべて有り"))
                 row(self.DEBUG_TOKEN_KEY, "鍵の権限（/debug_token）", "（全権限）",
                     not missing, detail, scopes=sorted(scopes), missing=missing)
             else:

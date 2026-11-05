@@ -167,6 +167,7 @@ class InstagramAdapter(fb.FacebookAdapter):
         super().__init__(base_url=base_url, access_token=access_token, page_id=page_id,
                          timeout=timeout, app_secret=app_secret)
         self.ig_user_id = str(ig_user_id or "")
+        self.expected_scopes = SCOPES
         # threads_media と同じ名で持つ（`media_delivery` の journal の instance は base_url）。
         self.user_id = self.ig_user_id
 
@@ -208,6 +209,10 @@ class InstagramAdapter(fb.FacebookAdapter):
             adapter.granted_scopes = frozenset(scopes)
         adapter.auth_account = cfg.get("account") or "<account>"
         from .. import accounts as accounts_mod
+        if accounts_mod.is_invite_account(cfg):
+            # 招待の口座は招待で求めた一覧と突き合わせる（doctor）。
+            from .. import scopes as scopes_mod
+            adapter.expected_scopes = scopes_mod.meta_invite_scopes(MEDIUM, cfg.get("review_scopes") is True)
         if accounts_mod.name_is_safe(cfg.get("account")):
             adapter.usage_account = cfg["account"]
         secret = meta_graph.load_app_secret()
@@ -655,9 +660,9 @@ class InstagramAdapter(fb.FacebookAdapter):
             scopes = data.get("scopes")
             if isinstance(scopes, list) and all(isinstance(s, str) for s in scopes):
                 granted = set(scopes)
-                missing = [s for s in SCOPES if s not in granted]
+                missing = [s for s in self.expected_scopes if s not in granted]
                 detail = (f"{len(scopes)} 個・expires_at={data.get('expires_at')}"
-                          + (f"・足りない={','.join(missing)}" if missing else "・求めた権限はすべて有り"))
+                          + (f"・足りない={','.join(missing)}（NOT_GRANTED）" if missing else "・求めた権限はすべて有り"))
                 row(self.DEBUG_TOKEN_KEY, "鍵の権限（/debug_token）", "（全権限）",
                     not missing, detail, scopes=sorted(scopes), missing=missing)
             else:

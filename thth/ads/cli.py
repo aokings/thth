@@ -52,6 +52,7 @@ import os
 import sys
 
 from .. import accounts, admin_log, jst, redact
+from .. import scopes as meta_scopes
 from ..meta import errors as meta_errors
 from ..meta import tokens as meta_tokens
 from ..meta import usage as meta_usage
@@ -562,7 +563,10 @@ def doctor_rows(name, *, now=None) -> list:
         if scopes is None:
             row("debug_token", "鍵の権限（/debug_token）", None, "応答に scopes の一覧がありません")
         else:
-            missing = [s for s in EXPECTED_SCOPES if s not in scopes]
+            # 招待の口座は招待で求めた一覧と突き合わせる（`--review-scopes` の招待は未承認の権限まで）。
+            expected = (meta_scopes.meta_invite_scopes(ledger.MEDIA, cfg.get("review_scopes") is True)
+                        if accounts.is_invite_account(cfg) else EXPECTED_SCOPES)
+            missing = [s for s in expected if s not in scopes]
             ok = "ads_read" in scopes and (debug or {}).get("is_valid") is not False
             row("debug_token", "鍵の権限（/debug_token）", ok,
                 (f"NOT_GRANTED: {','.join(missing)}" if missing else "求めた権限はすべて有り")

@@ -144,7 +144,7 @@ def _label(row) -> str:
     return f"{row.get('name') or '（名前なし）'} act_{row.get('act_id') or '?'}（{row.get('currency') or '?'}）"
 
 
-def _token_record(cfg, long_body, long_token, debug, account_row, *, config_id, via) -> dict:
+def _token_record(cfg, long_body, long_token, debug, account_row, *, config_id, via, requested=None) -> dict:
     scopes = meta_tokens.scopes_of(debug)
     now = int(time.time())
     token = {
@@ -161,7 +161,7 @@ def _token_record(cfg, long_body, long_token, debug, account_row, *, config_id, 
         "auth_via": via,
     }
     if scopes is None and not config_id:
-        token["scopes"] = list(SCOPES)
+        token["scopes"] = list(requested or SCOPES)
     expires_at = meta_tokens.int_field(debug, "expires_at")
     if expires_at == 0:
         # 本番 10/31: 広告の鍵は `/debug_token` が expires_at=0（期限なし）を返した。効く期限は
@@ -187,15 +187,30 @@ def _token_record(cfg, long_body, long_token, debug, account_row, *, config_id, 
     return token
 
 
-def _grant(cfg, code_value, app_id, app_secret, log):
-    """code → 短い鍵 → 長い鍵 → `/me/adaccounts` の照合 → `/debug_token`。"""
+def _long_token(code_value, app_id, app_secret):
+    """code → 短い鍵 → 長い鍵。`(長い鍵の応答, 長い鍵)`。"""
     short = afb.graph_get("/oauth/access_token", {
         "client_id": app_id, "redirect_uri": CALLBACK, "client_secret": app_secret, "code": secret(code_value)})
     short_token = afb._token_value(short, "short")
     long_body = afb.graph_get("/oauth/access_token", {
         "grant_type": "fb_exchange_token", "client_id": app_id, "client_secret": app_secret,
         "fb_exchange_token": short_token})
-    long_token = afb._token_value(long_body, "long")
+    return long_body, afb._token_value(long_body, "long")
+
+
+def _checked_debug(long_token, app_id, app_secret):
+    debug = _debug(long_token, app_id, app_secret)
+    if debug is not None:
+        if debug.get("is_valid") is False:
+            raise FlowError("ads_token_invalid: /debug_token が無効と言いました")
+        if debug.get("app_id") not in (None, app_id):
+            raise FlowError("ads_token_app_mismatch: 別のアプリの鍵です")
+    return debug
+
+
+def _grant(cfg, code_value, app_id, app_secret, log):
+    """code → 短い鍵 → 長い鍵 → `/me/adaccounts` の照合 → `/debug_token`。"""
+    long_body, long_token = _long_token(code_value, app_id, app_secret)
     rows = _adaccounts(long_token, app_secret)
     target = next((r for r in rows if r.get("act_id") == cfg["act_id"]
                    or r.get("id") == "act_" + cfg["act_id"]), None)
@@ -207,13 +222,24 @@ def _grant(cfg, code_value, app_id, app_secret, log):
         raise FlowError("ads_adaccount_not_granted: 台帳の広告アカウントが許可されていません。許可の画面で"
                         "その広告アカウントに印を付けるか、台帳の act_id を直してください（広告マネージャの URL の"
                         " act= の数字）")
-    debug = _debug(long_token, app_id, app_secret)
-    if debug is not None:
-        if debug.get("is_valid") is False:
-            raise FlowError("ads_token_invalid: /debug_token が無効と言いました")
-        if debug.get("app_id") not in (None, app_id):
-            raise FlowError("ads_token_app_mismatch: 別のアプリの鍵です")
-    return long_body, long_token, debug, target
+    return long_body, long_token, _checked_debug(long_token, app_id, app_secret), target
+
+
+class AdsInviteAuthProfile(afb.FacebookInviteAuthProfile):
+    """招待リンクの認可。台帳の `act_id` は先に無く、許可された広告アカウントから作る。
+
+    鍵（`token`）の `act_id` が口座の印。`user_id` は Meta の利用者の id のまま（`run_exchange` が照合に使う）。
+    """
+    media = ledger.MEDIA
+
+    def exchange(self, code_value, session, account_cfg, *, log):
+        long_body, long_token = _long_token(code_value, self.client_id, self.client_secret)
+        target = afb.one_asset(_adaccounts(long_token, self.client_secret))
+        if not isinstance(target.get("act_id"), str) or not ledger.ACT_ID_RE.fullmatch(target["act_id"]):
+            raise FlowError("ads_adaccounts_invalid: 広告アカウントの id が読めません")
+        debug = _checked_debug(long_token, self.client_id, self.client_secret)
+        return _token_record({"act_id": target["act_id"]}, long_body, long_token, debug, target,
+                             config_id=self.config_id, via="relay", requested=self.scopes)
 
 
 def _save(name, cfg, token, target, *, by, via, log) -> dict:
