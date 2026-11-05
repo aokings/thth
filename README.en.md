@@ -32,7 +32,7 @@ Japanese: [README.md](README.md) · Site: https://thth.me · Docs index: [docs/R
 
 ### If you were invited
 
-Open the invitation link from the operator (gotoq) and authorize with Threads. Then, in a terminal:
+Open the invitation link from the operator (gotoq) and authorize with the invited service (Threads, Mastodon, a Facebook Page or Instagram). Then, in a terminal:
 
 ```bash
 pip install thth

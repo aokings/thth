@@ -61,7 +61,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 
 ### 招待された人
 
-運営（gotoq）から届いた招待リンクを開き、Threads で認可します。そのあとターミナルで次を打ちます。
+運営（gotoq）から届いた招待リンクを開き、招待の媒体（Threads・Mastodon・Facebook ページ・Instagram）で認可します。そのあとターミナルで次を打ちます。
 
 ```bash
 pip install thth
