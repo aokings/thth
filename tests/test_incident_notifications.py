@@ -416,3 +416,155 @@ def test_account_add_email_requires_private_ledger_location(tmp_path, monkeypatc
     assert json.loads(path.read_text())["notification_email"] == "user@example.org"
     assert path.stat().st_mode & 0o777 == 0o600
     assert "user@example.org" not in capsys.readouterr().out
+
+
+# ---- 偽の復旧（11/03〜05 の kopicha-x）: 試みなかった run は公開の失敗の止まりを解かない
+
+def _failed(s):
+    """公開が 401 で断られた run（inflight は消えていて、原稿は approved のまま）。"""
+    return SimpleNamespace(file=str(s.path), mode="production", action="post", exit_code=1, post_id=None,
+                           error="x_publish_http_401")
+
+
+def _idle():
+    """静かな時間帯などで何も試みなかった run。"""
+    return SimpleNamespace(file=None, mode="production", action="none", exit_code=0, post_id=None)
+
+
+def _posted(s):
+    return SimpleNamespace(file=str(s.path), mode="production", action="post", exit_code=0, post_id="1", error=None)
+
+
+def _run(s, state, result, reason="publish_http_401"):
+    incident.notify("demo", s.cfg, diag(s, state, reason), state_dir=s.state, result=result)
+
+
+def _states(s):
+    return [(e["state"], e["reason"]) for e in row(s)["events"]]
+
+
+def test_11月3日の並びは止まり1回と本物の復旧1回だけ(setup):
+    """失敗→何もしない run→失敗→何もしない run→成功。"""
+    s = setup
+    _run(s, "fail", _failed(s))
+    _run(s, "success", _idle())
+    _run(s, "fail", _failed(s))
+    _run(s, "success", _idle())
+    assert _states(s) == [("blocked", "publish_http_401")]
+    assert row(s)["last"] == "fail"
+    _run(s, "success", _posted(s))
+    assert _states(s) == [("blocked", "publish_http_401"), ("recovered", "healthy")]
+    assert row(s)["last"] == "success"
+
+
+def test_次の原稿の公開でも解ける(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    other = SimpleNamespace(file=str(s.path.with_name("two.md")), mode="production", action="post",
+                            exit_code=0, post_id="2", error=None)
+    _run(s, "success", other)
+    assert _states(s)[-1] == ("recovered", "healthy")
+
+
+def test_スレッド連投の公開でも解ける(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    _run(s, "success", SimpleNamespace(file=None, mode="production", action="posted", exit_code=0, post_id=None))
+    assert _states(s)[-1] == ("recovered", "healthy")
+
+
+def test_手のsendの成功はsentの記録で解ける(setup, monkeypatch):
+    import datetime
+    from thth import jst, sent
+    s = setup
+    _run(s, "fail", _failed(s))
+    later = jst.parse(row(s)["events"][0]["at"]) + datetime.timedelta(minutes=1)
+    monkeypatch.setattr(sent, "latest_sent", lambda state_dir: (later, {}))
+    _run(s, "success", _idle())
+    assert _states(s)[-1] == ("recovered", "healthy")
+
+
+def test_止まりより前のsentの記録では解けない(setup, monkeypatch):
+    import datetime
+    from thth import jst, sent
+    s = setup
+    _run(s, "fail", _failed(s))
+    earlier = jst.parse(row(s)["events"][0]["at"]) - datetime.timedelta(minutes=1)
+    monkeypatch.setattr(sent, "latest_sent", lambda state_dir: (earlier, {}))
+    _run(s, "success", _idle())
+    assert len(_states(s)) == 1
+
+
+def test_rehearsalの公開の結果は証拠にならない(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    _run(s, "success", SimpleNamespace(file=None, mode="rehearsal", action="post", exit_code=0, post_id="1"))
+    assert len(_states(s)) == 1
+
+
+def test_止まった原稿が取り下げられたら閉じる(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    s.path.write_text(s.path.read_text().replace("status: approved", "status: withdrawn"))
+    _run(s, "success", _idle())
+    assert _states(s)[-1] == ("recovered", "healthy")
+
+
+@pytest.mark.parametrize("reason", ["repo_sync_failed", "account_locked"])
+def test_試みの前の止まりは今までどおりsuccessで解ける(setup, reason):
+    s = setup
+    _run(s, "fail", SimpleNamespace(file=None, mode="production", action="none", exit_code=2), reason)
+    _run(s, "success", _idle())
+    assert _states(s) == [("blocked", reason), ("recovered", "healthy")]
+
+
+def test_inflightが残る止まりは解いたあとのsuccessで解ける(setup):
+    s = setup
+    from thth import core
+    fingerprint = core._current_fingerprint(str(s.path), "threads")
+    inflight.write(s.state, file=str(s.path), started="2026-09-18T10:00:00+09:00", approved_fingerprint=fingerprint)
+    _run(s, "fail", SimpleNamespace(file=str(s.path), mode="production", action="inflight", exit_code=1), "publish_http_500")
+    inflight.clear(s.state)
+    _run(s, "success", _idle())
+    assert _states(s)[-1] == ("recovered", "healthy")
+
+
+def test_古い記録の止まりも次の失敗で公開待ちになる(setup):
+    """5.12.3 より前に積んだ blocked（印なし）が開いたまま版が上がったとき。"""
+    s = setup
+    _run(s, "fail", SimpleNamespace(file=str(s.path), mode="production"))
+    assert "awaiting_publish" not in row(s)["events"][0]
+    _run(s, "fail", _failed(s))
+    _run(s, "success", _idle())
+    assert len(_states(s)) == 1
+
+
+def test_止まりの間のheldの知らせでoutboxが壊れない(setup):
+    s = setup
+    _run(s, "fail", _failed(s))
+    held = healthcheck.Diagnostic("demo", "held", None, None, "x", "x", "approved_but_held: stale 1", "none")
+    incident.notify("demo", s.cfg, held, state_dir=s.state, result=_idle())
+    assert [e[0] for e in _states(s)] == ["blocked", "blocked"]
+    assert row(s)["last"] == "fail"
+    _run(s, "success", _posted(s))
+    events = row(s)["events"]
+    assert (events[2]["state"], events[2]["reason"]) == ("recovered", "healthy")
+    assert events[2]["file"] == events[0]["file"]  # 結ぶ相手は held でなく run の止まり
+
+
+def test_開いた止まりは30日を過ぎても畳まない(setup):
+    import datetime
+    from thth import jst
+    s = setup
+    _run(s, "fail", _failed(s))
+    path = Path(s.state) / incident.STATE_FILE
+    value = row(s)
+    old = jst.iso(jst.now_jst() - datetime.timedelta(days=40))
+    value["events"][0].update(at=old, repo="no_source")
+    value["events"] += [{**incident._new_event("notice", "reapproval_required: 1"), "at": old,
+                         "accepted": dict(value["events"][0]["accepted"])} for _ in range(2)]
+    incident._save(path, value)
+    _run(s, "success", _idle())
+    kept = row(s)
+    assert [e["state"] for e in kept["events"]] == ["blocked", "notice"]
+    incident._validate(kept)

@@ -41,7 +41,12 @@ _KNOWN_REASONS = {
     # `publish_hold`）。止めた印が読めないときも止まっている側に倒す。次の一手は人が
     # X の画面で直してから `thth account resume <account> --by <名前>`。
     "x_not_permitted", "publish_hold_unreadable",
+    # 鍵の止まり（5.12.3）。メールの事象にはせず、board の `stuck` だけが言う（`incident.stuck`）。
+    "token_refresh_failed", "token_expired", "token_expiring", "token_incomplete", "token_unreadable",
+    "incident_outbox_unreadable",
 }
+TOKEN_CODES = frozenset({"token_refresh_failed", "token_expired", "token_expiring",
+                         "token_incomplete", "token_unreadable"})
 _KNOWN_EXCEPTIONS = {
     "TimeoutError": "exception_timeout",
     "ConnectionError": "exception_connection",
@@ -283,6 +288,12 @@ def sanitize_reason(raw, *, action: str | None = None,
 def next_action_for(reason: str) -> str:
     if reason == "missing_token" or reason == "permission_missing":
         return "run_thth_auth"
+    if reason == "token_refresh_failed":
+        return "retry_token_refresh"
+    if reason in TOKEN_CODES:
+        return "redo_token_auth"
+    if reason == "incident_outbox_unreadable":
+        return "repair_incident_outbox"
     if reason.startswith("text_mismatch_"):
         return "inspect_queue_and_inflight"
     if reason == "inflight_unresolved":
@@ -326,6 +337,12 @@ def reason_text(reason: str) -> str:
         "x_not_permitted": ("X がこのアカウントの書き込みを断りました（アカウント側の制限）。"
                             "自動の投稿を止めています"),
         "publish_hold_unreadable": "自動の投稿を止めた印が読めないため、止まっている側に倒しています",
+        "token_refresh_failed": "鍵（アクセストークン）の更新が失敗しています。鍵が切れると投稿も採取も 401 で止まります",
+        "token_expired": "鍵（アクセストークン）の期限が切れています。投稿も採取も止まります",
+        "token_expiring": "鍵（アクセストークン）がまもなく切れますが、更新できていません",
+        "token_incomplete": "鍵のファイルに足りない項目があり、この鍵では投稿できません",
+        "token_unreadable": "鍵のファイルを読めず、この鍵では投稿できません",
+        "incident_outbox_unreadable": "運用通知の記録を読めないため、止まっているかどうかを言えません",
         "exception_process_error": "定期実行が予期しない例外で停止しました",
         "unknown": "停止理由を安全に特定できませんでした",
     }
@@ -374,6 +391,13 @@ def next_action_text(action: str) -> str:
         "fix_account_then_resume": ("X の画面でアカウントの制限（ロック・確認の求め）を解いてから、"
                                     "thth account resume <account> --by <名前> で自動の投稿を"
                                     "再開してください（再開までは投げ直しません）"),
+        "retry_token_refresh": ("thth refresh <account> で鍵の更新を試し直してください。直らなければ"
+                                "認可をやり直してください（thth auth <account> --by <名前>）。"
+                                "原稿は承認のまま残り、鍵が戻れば次の run で出ます"),
+        "redo_token_auth": ("認可をやり直してください（入れ方は thth doctor <account> で確かめられます）。"
+                            "原稿は承認のまま残り、鍵が戻れば次の run で出ます"),
+        "repair_incident_outbox": ("state/<account>/incident-outbox.json の形を確かめて直してください"
+                                   "（thth notifications status <account> で読めるか分かります）"),
         "inspect_running_process": "実行中プロセスと timer の重複を確認してください",
         "inspect_timer_log": "timer のログで例外の発生箇所を確認してください",
         "inspect_board_and_timer_log": "thth board と timer のログを確認してください",

@@ -566,6 +566,8 @@ def board_summary(now=None) -> dict:
             # endpoint は check の秘密なので board は env を読まない。最後の run が
             # 安全な状態ファイルへ残した「設定有無・配送結果」だけを表示する。
             "incident_notifications": incident_mod.summary(account_cfg, state_dir),
+            # 今も解けていない止まり（無ければ None・hub が読む）。読むだけ。
+            "stuck": incident_mod.stuck(name, state_dir),
             "inflight_started": (inflight_diagnostic.since
                                   if inflight_diagnostic else None),
             "inflight_reason": (inflight_diagnostic.reason
