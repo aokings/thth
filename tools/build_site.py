@@ -349,15 +349,16 @@ def build_privacy() -> str:
         "posts. Replies and metrics are not collected.</li>")
     add("  <li>Facebook Pages: the Page's ID and name; the posts THTH published and their metrics (Page insights: "
         "views, engagements, media views); daily follower counts; comments on the Page's posts and mentions of the "
-        "Page; on request, the Page's call-to-action button, live videos and the Messenger inbox (described "
-        "below).</li>")
+        "Page; on request, hiding or unhiding a comment (<code>thth reply hide</code>), the Page's call-to-action button, "
+        "live videos and the Messenger inbox (described below).</li>")
     add("  <li>Instagram: for a professional account linked to a Page, the account's ID and username; its posts and "
         "their metrics (insights); daily reach and follower counts; comments on its posts; the ID of the Threads "
         "account linked to it (read once); on request, hashtag search, the events the account hosts, likes the "
-        "owner gives (<code>thth like</code>, recorded with the media ID so they can be undone) and the Direct inbox "
-        "(described below).</li>")
+        "owner gives (<code>thth like</code>, recorded with the media ID so they can be undone) and the Direct inbox, "
+        "that is, its direct messages (described below).</li>")
     add("  <li>Ad accounts: the ad account's ID, name, currency, spend cap and amount spent; the status and insight "
-        "numbers of its campaigns, ad sets and ads; on request, the business's product catalogs and the Page's lead "
+        "numbers of its campaigns, ad sets and ads; on request, a boost of a Page post (created paused), lowering a "
+        "budget, the business's Audience Network numbers, its shop settings, its product catalogs and the Page's lead "
         "forms (described under Ads, catalogs and leads).</li>")
     add("</ul>")
     add("<p>Meta's permissions for Instagram, product catalogs and Threads ads expire 90 days after the user was last "
@@ -713,14 +714,16 @@ def build_privacy() -> str:
     add("  <li>X: 承認された投稿の公開、依頼による投稿の削除、アカウント自身の最近の投稿の読み取り。返信と"
         "インサイトは集めません。</li>")
     add("  <li>Facebook ページ: ページの ID と名前、THTH が出した投稿とそのインサイト（表示・反応・メディアの表示）、"
-        "日ごとのフォロワー数、投稿へのコメントとページへの言及、求めたときの行動ボタン・ライブ・Messenger の受信箱"
+        "日ごとのフォロワー数、投稿へのコメントとページへの言及、求めたときのコメントを隠す・戻す（<code>thth reply hide</code>）・"
+        "行動ボタン・ライブ・Messenger の受信箱"
         "（下に書きます）。</li>")
     add("  <li>Instagram（ページに紐づくプロ口座）: 口座の ID とユーザー名、投稿とそのインサイト、日ごとのリーチと"
         "フォロワー数、投稿へのコメント、結びついた Threads の口座の ID（1 回読みます）、求めたときのハッシュタグ検索・"
         "主催する予定・持ち主が付けるいいね（<code>thth like</code>・取り消せるようメディアの ID と一緒に記録）・"
-        "Direct の受信箱（下に書きます）。</li>")
+        "Direct の受信箱（ダイレクトメッセージ・下に書きます）。</li>")
     add("  <li>Meta の広告: 広告アカウントの ID・名前・通貨・spend_cap・消費額、キャンペーン・広告セット・広告の状態と"
-        "成績の数、求めたときのビジネスの商品カタログとページのリードのフォーム（下の「広告・カタログ・リード」）。</li>")
+        "成績の数、求めたときのページの投稿の宣伝（止めた状態で作る）・予算を下げる・ビジネスの Audience Network の数・"
+        "ショップの設定・商品カタログとページのリードのフォーム（下の「広告・カタログ・リード」）。</li>")
     add("</ul>")
     add("<p>Instagram・商品カタログ・Threads 広告の Meta の権限には、利用者が最後に使ってから 90 日のデータアクセスの"
         "期限があります。THTH は切れる前に運営者に知らせ、持ち主がもう一度認可して延ばします。運営者は年 1 回、Meta の "
