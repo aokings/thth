@@ -101,7 +101,12 @@ def for_record(operation, result):
     """依頼の印（`requests/<id>.json`）に書く形。本文・相手・宛先は落とし、落とした欄の名前を `not_kept` に。"""
     if operation not in OPERATIONS or type(result) is not dict:
         return result
-    dropped = sorted(name for name in SECRET_FIELDS if result.get(name) is not None)
+    dropped = [name for name in SECRET_FIELDS if result.get(name) is not None]
+    # 断りの文は Meta の `error.message` を写すことがあり、相手の id や本文が反響しうる（確かめ役 11/06）。
+    # 答え（端末へ 1 回）には残し、印には符丁だけを書く。
+    if result.get('error') and result.get('reason') is not None:
+        dropped.append('reason')
+    dropped = sorted(dropped)
     if not dropped:
         return result
     return {**result, **{name: None for name in dropped}, 'not_kept': dropped}

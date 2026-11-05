@@ -307,6 +307,42 @@ def test_遠くの道のdm_sendは一段目と違うdigestで断られ網に出�
     assert writes(far) == []
 
 
+def test_Metaの断りの文は依頼の印に残さない(far, capsys):
+    # Meta の error.message は相手の id や本文を反響しうる。印（最長 150 秒）には符丁だけ（確かめ役 11/06）。
+    marker = "反響した目印 5551"
+    far["routes"][("POST", V + f"/{PAGE}/messages")] = (400, {"error": {"message": f"(#100) bad {marker}",
+                                                                      "code": 100}})
+    (rc, out, err), _ = two_steps(capsys, "dm", "send", "alpha", FB_CONVO, "--text", OUTBOUND, "--by", "m")
+    assert rc != 0
+    records = [r for r in requests_records(far) if isinstance(r.get("result"), dict) and r["result"].get("error")]
+    assert records and all(r["result"].get("reason") is None and "reason" in r["result"]["not_kept"]
+                           for r in records)
+    nothing_kept(far, marker)
+
+
+WRITE_ARGV = [
+    ("dm", "send", "alpha", FB_CONVO, "--text", "x"),
+    ("live", "create", "alpha", "--title", "t"),
+    ("live", "end", "alpha", LIVE),
+    ("page", "cta", "delete", "alpha", CTA),
+    ("like", "beta", IG_MEDIA),
+    ("unlike", "beta", IG_MEDIA),
+    ("edit", "alpha", POST, "--text", "x"),
+    ("reply", "hide", "alpha", COMMENT),
+    ("reply", "unhide", "alpha", COMMENT),
+]
+
+
+@pytest.mark.parametrize("argv", WRITE_ARGV, ids=lambda a: " ".join(a[:2]))
+def test_読む資格だけの鍵では書く口は一段目も通らない(far, capsys, argv):
+    # 確かめ役 11/06: execute を write=False 固定に壊しても緑だった穴を塞ぐ。
+    far["value"]["credentials"][0]["writes"] = False
+    save_config(far)
+    rc, out, err = cli(capsys, *argv, "--remote", "--json")
+    assert rc != 0 and "writes_not_allowed" in out + err, out + err
+    assert writes(far) == []
+
+
 def test_CLIはdigestを作らずVMの一段目のdigestを渡すだけ(far, capsys):
     rc, out, _err = cli(capsys, "dm", "send", "alpha", FB_CONVO, "--text", OUTBOUND, "--remote", "--json")
     digest = json.loads(out)["digest"]
