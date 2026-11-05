@@ -130,9 +130,8 @@ def _credential_summary(credentials_path, account, project, person):
 
 
 def _is_adaccount(account) -> bool:
-    """広告の招待の口座か（台帳が `adaccounts/` にだけある）。"""
-    from .ads import ledger as ads_ledger
-    return os.path.exists(ads_ledger.path_for(account)) and account not in accounts.list_account_names()
+    """広告の口座か（台帳が `adaccounts/` にだけある・`accounts.ledger_kind`）。両方にあれば断る。"""
+    return accounts.ledger_kind(account) == accounts.ADACCOUNT_KIND
 
 
 def _ads_summary(person, account, credentials_path) -> dict:
@@ -227,8 +226,19 @@ def _rewrite_credentials(credentials_path, change, event, account, person, diff)
         with admin_log.transaction(rollback=rollback):
             _replace_credentials(path, data)
             report_http.load_credentials(path)
-            admin_log.append(event, account, accounts.load_account(account), by=person, via="http", diff=diff)
+            admin_log.append(event, account, _ledger(account), by=person, via="http", diff=diff)
     return True
+
+
+def _ledger(account) -> dict:
+    """鍵の操作が見る台帳（設計 広告の資格と遠くの道 案 B: 名前の置き場で種類を決める）。
+
+    広告の口座は `adaccounts/<名前>.json`（変更ログの媒体は `ads`）。どちらにも無ければ口座の台帳の断り。
+    """
+    if _is_adaccount(account):
+        from .ads import ledger as ads_ledger
+        return {**ads_ledger.load(account), "media": ads_ledger.MEDIA}
+    return accounts.load_account(account)
 
 
 def _single(config, account, project, person):
@@ -245,7 +255,7 @@ def rotate(credentials_path, account, person, sha256):
     """その口座だけの鍵を新しい hash に差し替える（無ければ 1 件足す）。前の鍵はその場で使えなくなる。"""
     if not isinstance(sha256, str) or not HEX64.fullmatch(sha256):
         raise ValueError("invalid_action")
-    project = accounts.load_account(account).get("project")
+    project = _ledger(account).get("project")
     old = []
 
     def change(config):
@@ -291,7 +301,7 @@ def _follow_invite(account, old, sha256):
 
 def revoke(credentials_path, account, person):
     """その口座だけの鍵を取り消す（行は残して revoked: true）。"""
-    project = accounts.load_account(account).get("project")
+    project = _ledger(account).get("project")
 
     def change(config):
         rows = [row for row in _single(config, account, project, person) if row.get("revoked") is False]
