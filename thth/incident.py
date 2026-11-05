@@ -313,6 +313,16 @@ def _repo_write(cfg, account, event, persist):
     event["repo"] = "written"
 
 
+def _is_run_stop(event) -> bool:
+    """`thth run` の止まりの事象か（held の知らせは別の筋で解ける）。"""
+    return event["state"] == "blocked" and not healthcheck.is_held_code(event["reason"])
+
+
+def _open_run_event(row):
+    """開いている止まりの事象（いちばん新しい run の blocked）。無ければ None。"""
+    return next((e for e in reversed(row["events"]) if _is_run_stop(e)), None)
+
+
 def _validate(row):
     if not isinstance(row, dict) or row.get("version") != 1 or not isinstance(row.get("events"), list) or row.get("last") not in {None, "success", "fail"}:
         raise ValueError("invalid_outbox")
@@ -329,7 +339,8 @@ def _validate(row):
         for role, value in e["accepted"].items():
             if role not in {"user", "admin"} or not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
                 raise ValueError("invalid_outbox")
-    if row["last"] == "fail" and (not row["events"] or row["events"][-1]["state"] != "blocked"):
+    # 止まりの間にも held・notice の事象は積まれるので、末尾でなく開いた止まりの有無を見る。
+    if row["last"] == "fail" and _open_run_event(row) is None:
         raise ValueError("invalid_outbox")
     # 承認済みなのに出られない本数（前回の run の値・設計 3.3.0 A1）と、最後に
     # 数えた run の指紋の版（A3）。旧い outbox には無い（0・未記録として読む）。
@@ -368,16 +379,77 @@ def _mark_sent(row, event):
                         "roles": sorted(event["accepted"])}
 
 
-def _prunable(row, now) -> bool:
-    """いちばん古い事象を畳んでよいか（送り終えていて、30 日を過ぎたか数が溢れた）。"""
+def _prunable(row, now, index=0) -> bool:
+    """`index` の事象を畳んでよいか（送り終えていて、30 日を過ぎたか数が溢れた）。"""
     events = row["events"]
-    if len(events) <= 1:
+    if len(events) <= index + 1:
         return False
-    first = events[0]
+    first = events[index]
     if len(first["accepted"]) != 2 or first["repo"] not in {"written", "no_source"}:
         return False
     at = jst.parse(first.get("at"))
     return len(events) > RETENTION_CAP or at is None or now - at > RETENTION
+
+
+def _prune(row, now):
+    """送り終えた古い事象を畳む。開いた止まりは 30 日を過ぎても残し、その次から畳む
+    （復旧と結ぶ相手で、消すと `_validate` が outbox を壊れたと読んで通知が止まる）。"""
+    keep = _open_run_event(row) if row["last"] == "fail" else None
+    while row["events"]:
+        index = 1 if row["events"][0] is keep else 0
+        if not _prunable(row, now, index):
+            return
+        row["events"].pop(index)
+
+
+def _attempt_left_no_trace(account, state_dir, result) -> bool:
+    """公開を試みて断られ、止まりの印（inflight など）が何も残らなかった run か。
+
+    原稿は approved のまま queue に残り、次に時刻が来た run が出し直す（`core` の
+    「実際には出ていない」失敗）。だから試みなかった run が通っても、解けたとは言えない。
+    """
+    if getattr(result, "action", None) not in {"post", "failed"}:
+        return False
+    return not healthcheck.has_blocking_state(account, state_dir)
+
+
+def _published_after(event, state_dir, result) -> bool:
+    """止まりのあとに公開が成功したか（この run の結果か、`sent` の記録・手の `thth send` も入る）。"""
+    if getattr(result, "exit_code", None) == 0 and getattr(result, "mode", None) == "production":
+        action = getattr(result, "action", None)
+        if action == "posted" or (action == "post" and getattr(result, "post_id", None)):
+            return True
+    from . import sent
+    try:
+        sent_at = sent.latest_sent(state_dir)[0]
+    except (OSError, ValueError, TypeError):
+        return False
+    blocked_at = jst.parse(event.get("at"))
+    return sent_at is not None and blocked_at is not None and sent_at > blocked_at
+
+
+def _source_withdrawn(cfg, event) -> bool:
+    """止まった原稿が queue から退いたか（消した・取り下げた）。出し直すものが無いので止まりは閉じる。
+
+    原稿を特定できない事象・repo を読めないときは言えないので False。
+    """
+    file = event.get("file")
+    if not file or not cfg or accounts.repo_state(cfg) != accounts.REPO_OK:
+        return False
+    try:
+        return queuefile.parse(str(Path(accounts.resolved_repo_dir(cfg)) / file)).get("status") != "approved"
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _still_awaiting_publish(row, cfg, state_dir, result) -> bool:
+    """公開の失敗の止まりが、まだ解けていないか。解けるのは公開が成功したか原稿が退いたときだけ。"""
+    event = _open_run_event(row) if row["last"] == "fail" else None
+    return bool(event and event.get("awaiting_publish")
+                and not _published_after(event, state_dir, result)
+                and not _source_withdrawn(cfg, event))
 
 
 def _new_event(state, reason, file=None):
@@ -471,6 +543,8 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confi
     `diag.state` は `fail`・`success`・`held`（3.3.0 A1）。`held` は run 自体は
     成功しているので、停止（fail）の遷移は `success` として進め（前の停止が
     直っていれば recovered を出す）、そのあとで held の本数の遷移を見る。
+    公開が断られて印の残らない止まり（`awaiting_publish`）だけは、success でも解かない
+    （`_still_awaiting_publish`）。inflight・同期・ロックの止まりは今までどおり success で解ける。
     `reapproval` は再承認が要る本数（承認済みの approval_stale・A3。`None` は
     数えていない）。指紋の版が前回の記録から上がっていれば 1 回だけ `notice`。
     """
@@ -503,9 +577,11 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confi
             pass
         identity = hashlib.sha256(json.dumps([diag.since, source(cfg, state_dir, result), thread_identity], ensure_ascii=False).encode()).hexdigest()
         changed_incident = run_state == "fail" and row["last"] == "fail" and row.get("identity") != identity
-        if row["last"] != run_state or changed_incident:
+        # 試みなかった run の success は、公開の失敗の止まりを解かない（11/03 の偽の復旧）。
+        awaiting = run_state == "success" and _still_awaiting_publish(row, cfg, state_dir, result)
+        if not awaiting and (row["last"] != run_state or changed_incident):
             if run_state == "fail" or row["last"] == "fail":
-                prior = row["events"][-1] if row["events"] else None
+                prior = _open_run_event(row)
                 file = source(cfg, state_dir, result) if run_state == "fail" else prior["file"]
                 event = {"id": uuid.uuid4().hex, "state": "blocked" if run_state == "fail" else "recovered",
                          "at": jst.iso(jst.now_jst()), "reason": run_reason,
@@ -536,6 +612,11 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confi
             row["last"] = run_state
             row["identity"] = identity
             persist()
+        if run_state == "fail" and _attempt_left_no_trace(account, state_dir, result):
+            event = _open_run_event(row)
+            if not event.get("awaiting_publish"):
+                event["awaiting_publish"] = True
+                persist()
         ready = readiness(cfg)["smtp_configured"]
         held_changed = _held_transition(row, diag, ready=ready)
         notice_changed = _reapproval_transition(row, diag, reapproval=reapproval, ready=ready)
@@ -587,9 +668,7 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confi
 
         # Keep the last transition for recovery linkage, prune only fully handled history.
         # 送り終えた事象も 30 日は残す（設計 3.3.1 §5・送ったかどうかを後から言うため）。
-        now = jst.now_jst()
-        while _prunable(row, now):
-            row["events"].pop(0)
+        _prune(row, jst.now_jst())
         persist()
         return "processed" if ready else "not_configured"
 
