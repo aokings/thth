@@ -95,6 +95,14 @@ AD_TREE_FIELDS = ("id,name,campaign_id,adset_id,status,effective_status,"
                   "creative{id,object_story_id,source_instagram_media_id}")
 ID_RE = re.compile(r"[0-9]{1,32}")
 ADACCOUNTS_FIELDS = "id,account_id,name,currency,timezone_name,account_status"
+# 計画 Meta 全部盛り M3（読むだけ・保存しない）。L2: reference/product-catalog・guides/lead-ads/retrieving・
+# audience-network/optimization/report-api/guide-v2。`leadgen_forms` と `commerce_merchant_settings` の欄は未確認。
+CATALOG_FIELDS = "id,name,product_count"
+PRODUCT_FIELDS = "id,name,retailer_id"
+LEAD_FORM_FIELDS = "id,name,status,leads_count"
+LEAD_FIELDS = "id,created_time,field_data"
+AUDIENCE_METRICS = ["fb_ad_network_imp", "fb_ad_network_click", "fb_ad_network_revenue"]
+SHOP_FIELDS = "id,cta,shop_setup"
 # `date_preset`（L2: insights の参照の一覧から、THTH が使う物だけ）。`maximum` は全期間（最大 37 か月・
 # developers.facebook.com/docs/marketing-api/reference/ad-account/insights）。
 PRESETS = ("today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month", "last_month", "maximum")
@@ -707,6 +715,81 @@ class Reader:
         """鍵で見える広告アカウント（`/me/adaccounts`）。"""
         rows, _ = self._list("/me/adaccounts", {"fields": ADACCOUNTS_FIELDS})
         return [adaccount_row(row) for row in rows]
+
+    # ------------------------------------------------------------------ 計画 Meta 全部盛り M3（読むだけ）
+
+    def business_id(self) -> str:
+        """台帳の `business_id`。無ければ広告アカウントの `business` を訊く（台帳には書かない）。"""
+        value = self.cfg.get("business_id")
+        if not value:
+            business = self._get("/" + self.act, {"fields": "business"}).get("business")
+            value = business.get("id") if isinstance(business, dict) else None
+        if not isinstance(value, str) or not ID_RE.fullmatch(value):
+            raise AdsReadError("ads_business_unknown")
+        return value
+
+    def catalogs(self) -> list:
+        """ビジネスの商品カタログ（`/{business}/owned_product_catalogs`）。名前と商品数だけ。"""
+        rows, _ = self._list(f"/{self.business_id()}/owned_product_catalogs", {"fields": CATALOG_FIELDS})
+        return [{"id": str(row.get("id")), "name": str(row.get("name"))[:200] if row.get("name") is not None else None,
+                 "product_count": row.get("product_count") if type(row.get("product_count")) is int else None}
+                for row in rows if row.get("id")]
+
+    def catalog_products(self, catalog_id: str, limit: int) -> list:
+        """カタログの商品（`/{catalog}/products`・1 頁だけ）。ビジネスのカタログでなければ断る。"""
+        if not any(row["id"] == catalog_id for row in self.catalogs()):
+            raise AdsReadError("ads_catalog_other_business")
+        body = self._get(f"/{catalog_id}/products", {"fields": PRODUCT_FIELDS, "limit": limit})
+        return [{key: str(row[key])[:200] for key in PRODUCT_FIELDS.split(",") if row.get(key) is not None}
+                for row in _data(body)]
+
+    def lead_forms(self, page_id: str) -> list:
+        """ページのリードのフォーム（`/{page}/leadgen_forms`）。名前と件数だけ。"""
+        if not ID_RE.fullmatch(page_id):
+            raise AdsReadError("ads_id_invalid")
+        rows, _ = self._list(f"/{page_id}/leadgen_forms", {"fields": LEAD_FORM_FIELDS})
+        return [{"id": str(row.get("id")), "name": str(row.get("name"))[:200] if row.get("name") is not None else None,
+                 "status": row.get("status") if isinstance(row.get("status"), str) else None,
+                 "leads_count": row.get("leads_count") if type(row.get("leads_count")) is int else None}
+                for row in rows if row.get("id")]
+
+    def leads(self, page_id: str, form_id: str, limit: int) -> list:
+        """フォームのリード（`/{form}/leads`・1 頁だけ）。**名前・連絡先が入る。戻り値は端末へ出すだけで、
+        snapshot・台帳・runs のどこにも渡さない**（`tests/test_m3_public_reads.py` が縛る）。"""
+        if not any(row["id"] == form_id for row in self.lead_forms(page_id)):
+            raise AdsReadError("ads_form_other_page")
+        body = self._get(f"/{form_id}/leads", {"fields": LEAD_FIELDS, "limit": limit})
+        return [{"id": str(row.get("id")), "created_time": row.get("created_time"),
+                 "fields": {str(item.get("name")): item.get("values") for item in row.get("field_data") or []
+                            if isinstance(item, dict)}}
+                for row in _data(body)]
+
+    def audience_network(self, since: str | None, until: str | None) -> dict:
+        """Audience Network の数（`/{business}/adnetworkanalytics`・同期の読みは 8 日まで）。"""
+        params = {"metrics": json.dumps(AUDIENCE_METRICS), "aggregation_period": "total"}
+        for key, value in (("since", since), ("until", until)):
+            if value is not None:
+                if not DATE_RE.fullmatch(value):
+                    raise AdsReadError("ads_date_invalid")
+                params[key] = value
+        first = (_data(self._get(f"/{self.business_id()}/adnetworkanalytics", params)) or [{}])[0]
+        results = first.get("results") if isinstance(first.get("results"), list) else []
+        omitted = first.get("omitted_results") if isinstance(first.get("omitted_results"), list) else []
+        return {"rows": [{"metric": row.get("metric"), "time": row.get("time"), "value": row.get("value")}
+                         for row in results if isinstance(row, dict)], "omitted": len(omitted)}
+
+    def shop_settings(self) -> list:
+        """ビジネスのショップの設定（`/{business}/commerce_merchant_settings`）。**欄と path は本物で未確認。**"""
+        rows, _ = self._list(f"/{self.business_id()}/commerce_merchant_settings", {"fields": SHOP_FIELDS})
+        return [{key: row[key] for key in SHOP_FIELDS.split(",") if isinstance(row.get(key), str)} for row in rows]
+
+
+def _data(body: dict) -> list:
+    """`data` が object の並びのときだけ「取れた」（無い・形違いは 0 件と混ぜない）。"""
+    rows = body.get("data")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise AdsReadError("ads_list_invalid")
+    return rows
 
 
 def adaccount_row(row: dict) -> dict:

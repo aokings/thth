@@ -185,6 +185,10 @@ def _is_permission_error(err: dict | None, message: str) -> bool:
     return False
 
 
+OEMBED_FEATURE = "Threads oEmbed Read"
+OEMBED_KEYS = ("html", "type", "version", "width", "height", "provider_name", "provider_url", "author_name")
+
+
 def _read_error(e: urllib.error.HTTPError) -> tuple:
     """HTTPError の本文から Meta の `error` と `message` を読む（読めなければ空）。"""
     message = ""
@@ -285,6 +289,8 @@ class ThreadsAdapter(base.Adapter):
     # `thread_read`（T1-1）: `fetch_post()` が `GET /{id}`（`threads_basic`）で
     # 根を 1 件引ける。
     CAPABILITIES = CAPABILITIES | frozenset({"thread_read"})
+    # 計画 Meta 全部盛り M3: 公開の投稿の埋め込み（`oembed()`・`thth embed`）。
+    CAPABILITIES = CAPABILITIES | frozenset({"embed"})
     # 再投稿（設計 3.15.0 段 0・L2 2026-10-09）: `POST /v1.0/{threads_id}/repost` →
     # `{"id": 再投稿の id}`（いまの権限で通った・他人の投稿も）。取り消しは
     # `DELETE /v1.0/{再投稿の id}`（`threads_delete`）。**いいねは API に無い。**
@@ -1762,6 +1768,26 @@ class ThreadsAdapter(base.Adapter):
         止めない・本番 P1 2026-09-14）。
         """
         return self.mentions(since=since)
+
+    def oembed(self, url: str) -> dict:
+        """公開の投稿の埋め込み（`GET /v1.0/oembed`・計画 Meta 全部盛り M3）。**path は本物で未確認。**
+
+        機能 Threads oEmbed Read は権限でないので `_read()`（`_require_scope` を踏む）を通さない。
+        """
+        from ..meta import errors as meta_errors
+        what = "埋め込み"
+        try:
+            body = self._get("/v1.0/oembed", {"url": url})
+        except urllib.error.HTTPError as e:
+            err, message = _read_error(e)
+            if _is_permission_error(err, message):
+                raise meta_errors.feature_required(what, OEMBED_FEATURE, f"HTTP {e.code}") from None
+            raise base.AdapterError(f"{what}: HTTP {e.code} {redact_mod.redact(message)}".strip()) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise base.AdapterError(f"{what}: {redact_mod.redact(str(e))}") from None
+        if not isinstance(body, dict) or not isinstance(body.get("html"), str) or not body["html"]:
+            raise base.AdapterError(f"{what}: 応答に html がありません（取れたことにしません）")
+        return {key: body[key] for key in OEMBED_KEYS if key in body}
 
     def profile_lookup(self, username: str) -> dict:
         """`GET /profile_lookup?username=…`（`threads_profile_discovery`・**L2**）。

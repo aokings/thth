@@ -119,6 +119,10 @@ thth ads insights <広告の口座> --preset last_7d --by age-gender
 - 減らす: `thth ads budget lower <広告の口座> --adset <id> --lifetime <額>`。早く終える: `thth ads end <広告の口座> <adset_id> --end <時刻|now> --by <名前>`。
 - 今月の見積もり: `thth ads budget show <広告の口座>`（Meta の請求書ではない）。
 
+## 8.5 ビジネスの資産を読む（保存しない）
+
+`thth ads catalog list|products <広告の口座>`・`thth ads leads <広告の口座> [--form <id>]`・`thth ads network`・`thth ads shop`。**リードは名前・連絡先が入る。写す前に人に確かめる。**
+
 ## 9. 人への報告
 
 1 本ごとに、次を短く渡す: 目的・期間・使った額（`spend`）・表示とリーチ・反応の内訳・サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）と 1 件あたり・**0 か不明か**（不明ならその理由と `next_steps` の一手）・止めたか。数は `thth ads insights … --json` の値をそのまま書き、推して埋めない。

@@ -41,11 +41,15 @@ from . import jst, read_window
 from . import redact as redact_mod
 from . import runs as runs_mod
 from . import map_store as map_store_mod
+from . import meta_public as meta_public_mod
+from . import refusal
 from . import threads_read_cli as threads_read_cli_mod
 from . import where_keep as where_keep_mod
 from .adapters import base as adapter_base
 
 CAPABILITY = "keyword_search"
+# Instagram のハッシュタグ・Facebook のページの検索（計画 Meta 全部盛り M3・`_public_node()`）。
+PUBLIC_CAPABILITY = "public_search"
 
 MIN_WORDS = 1
 MAX_WORDS = 5
@@ -295,6 +299,15 @@ class WhereError(Exception):
     """
 
 
+class PublicRefused(WhereError):
+    """IG のハッシュタグの柵の断り（`code` は目録の符丁・`next_at` は通るようになる時刻）。"""
+
+    def __init__(self, refused):
+        super().__init__(str(refused))
+        self.code = refused.code
+        self.next_at = refused.next_at
+
+
 def _reject(message: str) -> None:
     raise WhereError(message)
 
@@ -361,7 +374,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                   also=None, aggregate_mode=False,
                   lexicon=None, suggest=False, tag_mode=False,
                   author=None, filters=(), until=None,
-                  media_type=None) -> tuple[dict | None, Exception | str | None]:
+                  media_type=None, keep=False) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -386,6 +399,18 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     except accounts_mod.AccountError as e:
         return None, e
     media = account_cfg.get("media")
+    if PUBLIC_CAPABILITY in adapters_mod.capabilities_for(media):
+        unusable = [flag for flag, on in (
+            ("--since", since is not None), ("--until", until is not None), ("--media", bool(media_type)),
+            ("--tag", tag_mode), ("--author", bool(author)), ("--exclude-engaged", exclude_engaged),
+            ("--max-per-author", max_per_author is not None), ("--also", bool(also)),
+            ("--aggregate", aggregate_mode), ("--suggest", suggest), ("--keep", keep),
+            ("--ja・--question・--no-replies", bool(filters))) if on]
+        if unusable:
+            return None, (f"{account_name}: {'・'.join(unusable)} は {media} の検索では使えません"
+                          f"（本文を読まない口なので、語・--recent・--limit だけを受けます）")
+        return _public_node(account_name, account_cfg, words, recent=search_type == "RECENT",
+                            limit=limit, now=now)
     if CAPABILITY not in adapters_mod.capabilities_for(media):
         return None, (f"{account_name}: この媒体（{media}）では語による検索"
                       f"（{CAPABILITY}）は未対応です")
@@ -626,6 +651,55 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     return node, None
 
 
+def _public_node(account_name: str, account_cfg: dict, words: list, *, recent: bool, limit, now):
+    """Instagram のハッシュタグ・Facebook のページの検索の節（計画 Meta 全部盛り M3）。
+
+    **本文・画像を頼まない口**: 行は id・リンク・時刻・数（FB はページの名前）だけで、どこにも保存しない。
+    今の `where` の節と同じ形で返す（画面と遠くの道をそのまま使う）。自分の履歴は重ねない。
+    IG は 7 日 30 種を網に出る前に数える（越えれば `meta_public.Refused`・1 語も呼ばない）。
+    """
+    media = account_cfg.get("media")
+    token = accounts_mod.load_token(account_cfg)
+    if not adapters_mod.adapter_class(media).has_token(token):
+        return None, f"{account_name}: token が無いので検索できません"
+    adapter = adapters_mod.make_adapter(account_cfg, token)
+    limit = limit if limit is not None else DEFAULT_LIMIT
+    cannot_say: list = []
+    extra: dict = {}
+    terms = {word: word for word in words}
+    try:
+        if media == "instagram":
+            terms = {word: meta_public_mod.hashtag(word) for word in words}
+            extra["hashtag_window"] = meta_public_mod.reserve_hashtags(account_name, list(terms.values()), now=now)
+    except meta_public_mod.Refused as exc:
+        raise PublicRefused(exc) from None
+    by_word: dict = {}
+    for word, term in terms.items():
+        try:
+            rows = adapter.public_search(term, recent=recent, limit=limit)
+        except adapter_base.PermissionMissing as e:
+            cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
+            continue
+        except RuntimeError as e:   # `AdapterError` も `RuntimeError` の子
+            cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
+            continue
+        stamps = sorted((row["timestamp"] for row in rows if row.get("timestamp")), reverse=True)
+        entry = {"posts": [{"post_id": row.get("post_id"), "permalink": row.get("permalink"),
+                            "timestamp": row.get("timestamp"), "author": row.get("author"), "author_key": None,
+                            "text": None, "preview": None, "media_type": row.get("media_type"),
+                            "likes": row.get("likes"), "replies": row.get("comments"), "reply_count": row.get("comments"),
+                            "has_replies": None, "replied": None, "author_followers": None, "author_posts": None}
+                           for row in rows],
+                 "material": {"q": word, "n": len(rows), "authors": {"distinct": None},
+                              "latest_timestamp": stamps[0] if stamps else None, "medium": media},
+                 "my_history": None, "dropped": {}, "window": {"since": None, "basis": "public_search"}}
+        if not rows:
+            entry[ZERO_OR_FILTERED] = zero_or_filtered(media)
+        by_word[word] = entry
+    return {"medium": media, "by_word": by_word, "by_tag": [], "you_and_them": {},
+            "cannot_say": cannot_say, "storage": "display_only", **extra}, None
+
+
 def _period_days(rows: list, floor, now) -> int | None:
     """「直近 n 日」の n。`--since` があればその幅、無ければ取れた最古の投稿から今まで。"""
     import math
@@ -781,7 +855,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
                                      also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
                                      suggest=suggest, tag_mode=tag, author=author,
-                                     filters=filters, until=until, media_type=media)
+                                     filters=filters, until=until, media_type=media, keep=keep)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -878,7 +952,12 @@ def _render_human(result: dict) -> None:
                 print(f"    {mark}{stamp}  @{post['author'] or '—'}"
                      f"（{post['author_key'] or '—'}）"
                      f"{'  ' + followers if followers else ''}")
-                threads_read_cli_mod.print_full_text(post.get("text"), indent="      ")
+                if node.get("storage") == "display_only":
+                    # Instagram・Facebook は本文を読まない口（`_public_node()`）。数だけを出す。
+                    print(f"      いいね={threads_read_cli_mod._dash(post.get('likes'))}"
+                          f"  コメント={threads_read_cli_mod._dash(post.get('replies'))}")
+                else:
+                    threads_read_cli_mod.print_full_text(post.get("text"), indent="      ")
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
                 print(f"      post_id: {post['post_id']}")
@@ -1143,6 +1222,8 @@ def cmd_where(args) -> int:
         else:
             print(str(e), file=sys.stderr)
         return 1
+    except PublicRefused as e:
+        return refusal.emit(args, e.code, line=str(e), next_at=e.next_at)
     except WhereError as e:
         print(str(e), file=sys.stderr)
         return 2

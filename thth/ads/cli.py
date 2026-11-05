@@ -11,6 +11,11 @@
     thth ads estimate <名前> --targeting <JSON|@ファイル> [--goal LINK_CLICKS|…] [--json]
                                                 出す前の見積もり（狙う相手の大きさ・予算あたりの見込み・読むだけ）
     thth ads skill [--print] [--json]          広告の手順の skill（thth-ads）の場所と全文
+    thth ads catalog list <名前> [--json]      商品カタログと商品数（計画 Meta 全部盛り M3 の 4 つは読むだけ・保存しない）
+    thth ads catalog products <名前> --catalog <id> [--limit N] [--json]
+    thth ads leads <名前> [--page <id>] [--form <id>] [--limit N] [--json]   リードは端末に出すだけ
+    thth ads network <名前> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]   Audience Network の数
+    thth ads shop <名前> [--json]              ショップの設定
 
 **広告の手順は skill thth-ads**（`thth ads skill --print`）。広告の命令の次の一手とエラーの文は、先頭にそれを示す。
 
@@ -51,7 +56,7 @@ import json
 import os
 import sys
 
-from .. import accounts, admin_log, jst, redact
+from .. import accounts, admin_log, jst, redact, refusal
 from .. import scopes as meta_scopes
 from ..meta import errors as meta_errors
 from ..meta import tokens as meta_tokens
@@ -59,7 +64,8 @@ from ..meta import usage as meta_usage
 from . import graphread, graphwrite, guide, ledger, watch
 
 # **命令の全部**（`tests/test_meta_stage5.py` がこの集合と parser の一致を縛る）。
-READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect", "estimate", "skill")
+READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect", "estimate", "skill",
+              "catalog", "leads", "network", "shop")
 # 段 5 の書く命令。Meta に書くのは `ops.py` の決まった関数だけ（`graphwrite.ALLOWED_CALLERS`）。
 # `watch` は指定に達したら `ops.stop` を呼ぶので書く側。`resume` は止めの印を外す唯一の例外（masaru 11/02）。
 WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end", "watch", "resume")
@@ -67,6 +73,9 @@ VERBS = READ_VERBS + WRITE_VERBS
 # MCP に出す道具（**activate・extend・budget・end は出さない**・段 5 の 7）。
 MCP_TOOLS = ("thth_ads_show", "thth_ads_boost", "thth_ads_pause", "thth_ads_stop")
 EXPECTED_SCOPES = ("ads_read", "ads_management", "business_management")
+# 計画 Meta 全部盛り M3 の読む口の断り（`graphread.AdsReadError` の符丁のうち 3 つを出すもの）。
+READ_REFUSALS = ("ads_business_unknown", "ads_page_unknown", "ads_form_other_page", "ads_catalog_other_business")
+LIST_DEFAULT = 25
 
 
 def _fail(reason, *, json_output=False) -> int:
@@ -169,6 +178,90 @@ def cmd_accounts(args) -> int:
                   f"  account_status={row['account_status']}")
     _emit({"adaccount": args.name, "adaccounts": rows}, args.json, render)
     return 0
+
+
+# ------------------------------------------------------------------ 計画 Meta 全部盛り M3（読むだけ・保存しない）
+
+def _read_only(args, call, render) -> int:
+    """読むだけの口の枠: 読んで出すだけ（snapshot にも台帳にも書かない）。"""
+    try:
+        _cfg, _token, reader = _reader(args.name)
+        value = call(reader)
+    except graphread.AdsReadError as exc:
+        if exc.code in READ_REFUSALS:
+            print(guide.skill_line(), file=sys.stderr)
+            return refusal.emit(args, exc.code)
+        return _fail(_error_text(exc))
+    except (accounts.AccountError, meta_errors.RateLimited, ValueError) as exc:
+        return _fail(_error_text(exc))
+    _emit({"adaccount": args.name, "storage": "display_only", **value}, args.json, render)
+    return 0
+
+
+def cmd_catalog(args) -> int:
+    if args.catalog_verb == "list":
+        def render(value):
+            print(f"商品カタログ {len(value['catalogs'])} 件（{args.name}）")
+            for row in value["catalogs"]:
+                print(f"  {row['id']}  {row['name']}  商品 {row['product_count']}")
+        return _read_only(args, lambda reader: {"catalogs": reader.catalogs()}, render)
+
+    def render_products(value):
+        print(f"商品 {len(value['products'])} 件（カタログ {args.catalog}・先頭の 1 頁）")
+        for row in value["products"]:
+            print(f"  {row.get('id')}  {row.get('retailer_id') or '—'}  {row.get('name') or '—'}")
+    return _read_only(args, lambda reader: {"catalog": args.catalog,
+                                            "products": reader.catalog_products(args.catalog, args.limit)},
+                      render_products)
+
+
+def _lead_page(reader, wanted) -> str:
+    """`--page` か、台帳に結びつけたページの id（1 つに決まらなければ断る）。"""
+    if wanted:
+        return wanted
+    pages = []
+    for name in reader.cfg.get("pages") or []:
+        page_id = accounts.load_account(name).get("page_id")
+        if page_id:
+            pages.append(str(page_id))
+    if len(pages) != 1:
+        raise graphread.AdsReadError("ads_page_unknown")
+    return pages[0]
+
+
+def cmd_leads(args) -> int:
+    def call(reader):
+        page = _lead_page(reader, args.page)
+        if args.form:
+            return {"page": page, "form": args.form, "leads": reader.leads(page, args.form, args.limit)}
+        return {"page": page, "forms": reader.lead_forms(page)}
+
+    def render(value):
+        if "forms" in value:
+            print(f"リードのフォーム {len(value['forms'])} 件（ページ {value['page']}）")
+            for row in value["forms"]:
+                print(f"  {row['id']}  {row['status']}  件数 {row['leads_count']}  {row['name']}")
+            return
+        print(f"リード {len(value['leads'])} 件（フォーム {value['form']}・先頭の 1 頁・端末に出すだけで残しません）")
+        for row in value["leads"]:
+            print(f"  {row['created_time']}  {row['id']}  {json.dumps(row['fields'], ensure_ascii=False)}")
+    return _read_only(args, call, render)
+
+
+def cmd_network(args) -> int:
+    def render(value):
+        print(f"Audience Network の数（{args.name}・省略 {value['omitted']} 行）")
+        for row in value["rows"]:
+            print(f"  {row['metric']}  {row['value']}")
+    return _read_only(args, lambda reader: reader.audience_network(args.since, args.until), render)
+
+
+def cmd_shop(args) -> int:
+    def render(value):
+        print(f"ショップの設定 {len(value['shops'])} 件（{args.name}）")
+        for row in value["shops"]:
+            print(f"  {row.get('id')}  {row.get('cta') or '—'}  {row.get('shop_setup') or '—'}")
+    return _read_only(args, lambda reader: {"shops": reader.shop_settings()}, render)
 
 
 # ------------------------------------------------------------------ show
@@ -947,6 +1040,35 @@ def register(sub) -> None:
     p_col.add_argument("name", nargs="?", default=None)
     p_col.add_argument("--json", action="store_true")
     p_col.set_defaults(func=cmd_collect)
+    p_cat = verbs.add_parser("catalog", help="商品カタログ（読むだけ・保存しない）")
+    cat_verbs = p_cat.add_subparsers(dest="catalog_verb", required=True)
+    c_list = cat_verbs.add_parser("list", help="ビジネスのカタログと商品数")
+    c_list.add_argument("name", metavar="NAME")
+    c_list.add_argument("--json", action="store_true")
+    c_list.set_defaults(func=cmd_catalog)
+    c_products = cat_verbs.add_parser("products", help="カタログの商品（先頭の 1 頁）")
+    c_products.add_argument("name", metavar="NAME")
+    c_products.add_argument("--catalog", required=True, metavar="ID", help="thth ads catalog list に出る id")
+    c_products.add_argument("--limit", type=int, default=LIST_DEFAULT, choices=range(1, 101), metavar="1-100")
+    c_products.add_argument("--json", action="store_true")
+    c_products.set_defaults(func=cmd_catalog)
+    p_leads = verbs.add_parser("leads", help="リードのフォームの一覧・フォームのリード（読むだけ・端末に出すだけで残さない）")
+    p_leads.add_argument("name", metavar="NAME")
+    p_leads.add_argument("--page", default=None, metavar="ID", help="ページの id（台帳のページが 1 つなら省ける）")
+    p_leads.add_argument("--form", default=None, metavar="ID", help="このフォームのリードを読む（無ければフォームの一覧）")
+    p_leads.add_argument("--limit", type=int, default=LIST_DEFAULT, choices=range(1, 101), metavar="1-100")
+    p_leads.add_argument("--json", action="store_true")
+    p_leads.set_defaults(func=cmd_leads)
+    p_net = verbs.add_parser("network", help="Audience Network の数（読むだけ・保存しない）")
+    p_net.add_argument("name", metavar="NAME")
+    p_net.add_argument("--since", default=None, metavar="YYYY-MM-DD", help="既定は過去 7 日（同期の読みは 8 日まで）")
+    p_net.add_argument("--until", default=None, metavar="YYYY-MM-DD")
+    p_net.add_argument("--json", action="store_true")
+    p_net.set_defaults(func=cmd_network)
+    p_shop = verbs.add_parser("shop", help="ショップの設定（読むだけ・保存しない）")
+    p_shop.add_argument("name", metavar="NAME")
+    p_shop.add_argument("--json", action="store_true")
+    p_shop.set_defaults(func=cmd_shop)
 
     def by_via(q):
         q.add_argument("--by", required=True)

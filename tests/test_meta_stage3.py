@@ -53,7 +53,8 @@ def test_REGISTRYにinstagramが載り境界の語彙に収まる():
     assert cls is ig.InstagramAdapter
     assert set(cls.CAPABILITIES) <= base.KNOWN_CAPABILITIES
     assert cls.capabilities() == {"recent_posts", "thread_read", "views", "account_insights", "carousel",
-                                  "hide_reply", "comment_control", "quota"}
+                                  "hide_reply", "comment_control", "quota", "embed", "public_search",
+                                  "profile_lookup", "upcoming_events"}
     assert "edit_post" not in cls.CAPABILITIES
     assert cls.TOKEN_NO_EXPIRY is True and cls.AUTH_NEEDS_APP_ENV is True and cls.META_GRAPH is True
     assert cls.DELETE_PERMISSION == "instagram_manage_contents"

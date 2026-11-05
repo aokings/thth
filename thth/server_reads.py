@@ -39,9 +39,12 @@ OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         # 4.1（設計 S4 §20.9）: まとめて承認したブックマークの札の状態（読むだけ・媒体は呼ばない）。
                         'bookmark_batch_status',
                         # 5.0 段 2: 会話の中のダッシュボードの中身（読むだけ・既存の読む口を束ねる・媒体は呼ばない）。
-                        'dashboard'))
+                        'dashboard',
+                        # 計画 Meta 全部盛り M3: 審査員は `thth login` の道で打つ（読むだけ・保存しない）。
+                        'embed', 'upcoming_events'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
-REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
+REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable',
+                     'ig_hashtag_limit', 'ig_hashtag_invalid', 'ig_hashtag_ledger_unreadable', 'embed_url_invalid'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
 UPSTREAM_DETAILS = frozenset(('standard_access', 'collect_failed'))
 
@@ -73,6 +76,8 @@ _FIELDS = {
     'article_reactions': (('article', 'delivery', 'comments'), ('article',)),
     'bookmark_batch_status': (('batch',), ()),
     'dashboard': (('level', 'id', 'full'), ()),
+    'embed': (('url',), ('url',)),
+    'upcoming_events': ((), ()),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -82,7 +87,7 @@ _TYPES = {
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
     'days': int, 'until': str, 'media': str, 'after': str,
     'article': str, 'delivery': str, 'draft': bool, 'comments': bool, 'batch': str,
-    'level': str, 'id': str, 'full': bool,
+    'level': str, 'id': str, 'full': bool, 'url': str,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -361,6 +366,30 @@ def _profile(account, request, cfg):
     return reads.profile_json(account, profile)
 
 
+def _embed(account, request, cfg):
+    from . import meta_public
+    from . import threads_read_cli as reads
+    try:
+        url = meta_public.check_embed_url(cfg.get('media'), request['url'])
+    except meta_public.Refused as exc:
+        error(exc.code)
+    try:
+        embed = reads._fetch(account, capability='embed', call=lambda adapter: adapter.oembed(url))
+    except reads.ReadFailed as failed:
+        _refuse(failed.kind, failed.message)
+    return meta_public.embed_json(account, url, embed)
+
+
+def _upcoming_events(account, request, cfg):
+    from . import meta_public
+    from . import threads_read_cli as reads
+    try:
+        events = reads._fetch(account, capability='upcoming_events', call=lambda adapter: adapter.upcoming_events())
+    except reads.ReadFailed as failed:
+        _refuse(failed.kind, failed.message)
+    return meta_public.upcoming_json(account, events)
+
+
 def _location_search(account, request, cfg):
     from . import retract_cli
     query = request['query']
@@ -480,6 +509,8 @@ def _where(account, request, cfg):
             suggest=request.get('suggest', False), tag=request.get('tag', False),
             author=request.get('author'), keep=request.get('keep', False), ja=request.get('ja', False),
             question=request.get('question', False), no_replies=request.get('no_replies', False))
+    except where_cli.PublicRefused as exc:
+        error(exc.code, next_at=exc.next_at)
     except where_cli.WhereError as exc:
         _invalid(exc)
     # 自由文の理由（媒体の断り・path）は 1 行に落とす。本文と指す先はそのまま（保存しない）。
@@ -642,7 +673,7 @@ _HANDLERS = {
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
     'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,
-    'who_is_this': _who, 'schedule_list': _schedule_list,
+    'who_is_this': _who, 'schedule_list': _schedule_list, 'embed': _embed, 'upcoming_events': _upcoming_events,
 }
 
 

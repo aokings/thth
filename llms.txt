@@ -34,9 +34,12 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
   least `--min-n` (default 20) comparable posts inside `--window-days`
   (default 30). `cannot_say` is a correct answer, not an error — exit 0. Same
   tool over MCP as `before_you_post`.
-- The read-only lookups (`thth where`, `thth thread`, `thth who`) save
-  nothing; all that persists is the engagement ledger (your own acts and
-  reactions).
+- The read-only lookups (`thth where`, `thth thread`, `thth who`, `thth embed`,
+  `thth upcoming`) save nothing; all that persists is the engagement ledger
+  (your own acts and reactions). On Instagram `thth where` searches hashtags
+  (30 different tags per 7 days, so the tag and its time are kept for 7 days)
+  and on Facebook it searches Pages: ids, links and counts only, never post
+  text or images.
 - Invited accounts (the thth.me key route after `thth login`) use the same
   commands with a few differences: `thth send` without `--production` only
   lints (and leaves a draft), `thth retract` is two-step (`--confirm <digest>`)

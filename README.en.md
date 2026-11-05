@@ -127,6 +127,8 @@ All subcommands `thth --help` lists, one line each:
 - `topics` — keyword search (`--search`), and how much each topic was seen
 - `where` — where to engage next: search results with your own history layered on top
 - `where-log` — per-search-term numbers kept with `where … --keep` (hit rates, aggregates; numbers below 5 are missing)
+- `embed` — embed HTML for a public Threads, Facebook or Instagram post (oEmbed; shown, not stored)
+- `upcoming` — upcoming events hosted by an Instagram account (shown, not stored)
 - `thread` — read a post's branch on the spot; nothing is saved
 - `who` — pseudonymous history of how often you crossed paths with someone; never what was said
 - `profile` — look up a public profile (Threads)
