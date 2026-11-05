@@ -507,7 +507,8 @@ def build_privacy() -> str:
     add("<ul>")
     add("  <li>The platform API of each connected account.</li>")
     add("  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, the owner's "
-        "activity page, attachment transfer and data deletion requests.</li>")
+        "activity page, attachment transfer, data deletion requests, and the notifications Meta sends for "
+        "connected Facebook Pages and Instagram accounts.</li>")
     add("  <li>Operational notices by email through the operator's mail server, when configured: account "
         "name, draft file name, state, time and a reason. No post text.</li>")
     add("  <li>A liveness monitor, when configured: account name, run state, draft file name and a reason. "
@@ -554,6 +555,9 @@ def build_privacy() -> str:
     add("  <li>Command requests on thth.me/api/v1: at most 120 seconds; their results: at most 10 minutes.</li>")
     add("  <li>Sign-in to the activity page: 10 minutes.</li>")
     add("  <li>Attachment objects on R2: deleted 24 hours after creation.</li>")
+    add("  <li>Notifications from Meta held on thth.me (for example a comment or mention on a connected Page, "
+        "which can include its text and the sender's name): until the operator's server collects them, at most "
+        "7 days.</li>")
     add("  <li>Data deletion requests on thth.me: 30 days.</li>")
     add("  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>")
     add("  <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a "
@@ -584,7 +588,7 @@ def build_privacy() -> str:
         "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
         "the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in "
         "for the command. Revision: adds the per-search-term figures kept on request (<code>thth where … "
-        "--keep</code>). Revision: adds the per-account command record.</p>")
+        "--keep</code>). Revision: adds the per-account command record. Revision: adds the notifications from Meta held on thth.me.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -747,7 +751,7 @@ def build_privacy() -> str:
     add("<ul>")
     add("  <li>接続したアカウントのSNSの API。</li>")
     add("  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可コードの一時保管、オーナーのアクティビティ、添付の"
-        "受け渡し、データ削除の依頼。</li>")
+        "受け渡し、データ削除の依頼、接続した Facebook ページと Instagram について Meta が送る通知。</li>")
     add("  <li>運用通知のメール（設定したときだけ）。運営者のメールサーバーから、アカウント名・原稿のファイル名・"
         "状態・時刻・理由を送ります。本文は含みません。</li>")
     add("  <li>死活監視（設定したときだけ）。アカウント名・実行の状態・原稿のファイル名・理由を送ります。本文は"
@@ -787,6 +791,8 @@ def build_privacy() -> str:
     add("  <li>thth.me/api/v1 の依頼: 最長 120 秒。その結果: 最長 10 分。</li>")
     add("  <li>アクティビティに入った状態: 10 分。</li>")
     add("  <li>R2 の添付: 置いてから 24 時間で削除。</li>")
+    add("  <li>thth.me に置く Meta からの通知（接続したページへのコメントや言及など。本文と送り手の名前を含むことがあります）: "
+        "運営者のサーバーが受け取るまで、最長 7 日。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
     add("  <li>送った運用通知（サーバーの通知の記録）: 30日（最大50件）。</li>")
     add("  <li>運営者のサーバーのトピックマップの日々の集計: 最大180日（日単位で削除）。退会と依頼でも削除。</li>")
@@ -809,7 +815,7 @@ def build_privacy() -> str:
         "退会と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: トピックマップの集計の保存（キーワード検索・世間の層）を追記しました。"
         "改訂: プラザとサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、ガード・"
         "オーナーのアクティビティ・API キーを書きました。改訂: コマンドの経路（thth.me/api/v1）を足しました。改訂: コマンドのブラウザでの"
-        "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。改訂: 口座ごとの命令の控えを足しました。</p>")
+        "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。改訂: 口座ごとの命令の控えを足しました。改訂: thth.me に置く Meta からの通知を足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
