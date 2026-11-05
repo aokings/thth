@@ -918,7 +918,9 @@ ENTRIES = {
         "why": ("提出の 30 日以内に成功した呼び出しの記録が無い権限があります（Meta は申請する権限ごとに 30 日以内の"
                 "成功を 1 回求めます。THTH が成功を記録しない権限は、記録が無いものとして数えています）。"),
         "fix": ("thth admin appreview script に出るその権限の区間の命令を、権限を持つ口座で 1 回打ってから、"
-                "thth admin appreview check を打ち直してください"),
+                "thth admin appreview check を打ち直してください。THTH が成功を記録しない権限と、まだ口の無い権限"
+                "（check が「記録に残らない」と出すもの）は、1 回打っても記録に残らないので、Meta の Dashboard の"
+                "API の呼び出しの欄で確かめてください"),
         "command": "thth admin appreview script",
         "better": "録画の日に区間の順で打つと、30 日の条件と録画が一度にそろいます",
         "doors": _C,

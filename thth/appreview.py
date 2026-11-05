@@ -41,12 +41,13 @@ MEDIA_LABEL = {"threads": "Threads", "facebook": "Facebook ページ", "instagra
 CHECK_REFUSALS = ("appreview_no_recent_call", "appreview_no_door", "appreview_privacy_missing")
 PRIVACY_REFUSALS = ("appreview_privacy_unreadable",)
 STEP_KINDS = ("prep", "hand", "off", "login", "cmd", "two", "twooff")
-SLOT = re.compile(r"\{([A-Z][A-Z_]*)\}")
+SLOT = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 
 # 型の穴 → 撮る前に聞く文（`appreview_rec.sh` が tty に出す・既定のあるものは聞かない）。
 SLOTS = {
     "TH": "Threads の口座名", "FB": "Facebook ページの口座名", "IG": "Instagram の口座名",
-    "AD": "広告の台帳の名前", "BY": "記録に残す名前", "BODY": "投稿の本文", "REPLY": "返信の本文",
+    "AD": "広告の台帳の名前", "BY": "記録に残す名前", "BODY": "投稿の本文",
+    "BODY2": "Instagram のストーリーズに共有する Threads の投稿の本文（th-publish の本文と別の文）", "REPLY": "返信の本文",
     "REASON": "取り下げの理由", "TH_POST": "th-publish で出した Threads の投稿の id",
     "FB_POST": "fb-publish で出したページの投稿の id", "IG_POST": "ig-publish で出した Instagram の投稿の id",
     "AD_POST": "宣伝するページの投稿の id（消していないもの）", "FB_COMMENT": "ページのコメントの id",
@@ -97,13 +98,15 @@ SEGMENTS = (
          ("cmd", "thth location search {TH} {PLACE}")),
     _seg("th-share-ig", "threads", "threads_share_to_instagram — share a post to the linked Instagram stories.",
          ["threads_share_to_instagram"],
-         ("cmd", "thth send {TH} --text {BODY} --share-to-instagram"),
+         # th-publish と同じ {BODY} だと、同じ口座の直近 30 日の同じ本文として duplicate_text で断られる（別の穴 {BODY2}）
+         ("cmd", "thth send {TH} --text {BODY2} --share-to-instagram"),
          ("hand", "Instagram のストーリーズに出たのを（映して）見せたら Return")),
     _seg("th-embed", "threads", "Threads oEmbed Read — the embed HTML of a public post.", ["threads_oembed_read"],
          ("cmd", "thth embed {TH} {TH_URL}")),
     _seg("th-delete", "threads", "threads_delete — delete the post, then confirm in the Threads app.",
          ["threads_delete"],
-         ("cmd", "thth retract {TH} {TH_POST} --reason {REASON}"), ("hand", "スマホで投稿が消えたのを見せたら Return")),
+         ("two", "thth retract {TH} {TH_POST} --reason {REASON} --by {BY}"),
+         ("hand", "スマホで投稿が消えたのを見せたら Return")),
     # ---------------------------------------------------------------- Facebook ページと Instagram の審査員の流れ
     _seg("flow-meta", "facebook", "Reviewer flow — Facebook Login for Business, a Page and its Instagram account.",
          ["pages_show_list", "business_management", "public_profile", "threads_business_basic"],
@@ -120,7 +123,8 @@ SEGMENTS = (
          ["pages_manage_posts"],
          ("cmd", "thth send {FB} --text {BODY}"), ("hand", "ページに投稿が出たのを見せたら Return"),
          ("two", "thth edit {FB} {FB_POST} --text {EDITED} --by {BY}"),
-         ("cmd", "thth retract {FB} {FB_POST} --reason {REASON}"), ("hand", "ページから消えたのを見せたら Return")),
+         ("two", "thth retract {FB} {FB_POST} --reason {REASON} --by {BY}"),
+         ("hand", "ページから消えたのを見せたら Return")),
     _seg("fb-mention", "facebook", "Page Mentioning — mention another Page in a Page post.", ["page_mentioning"],
          ("cmd", "thth send {FB} --text {MENTION}"), ("hand", "ページの投稿で言及が見えたら Return")),
     _seg("fb-comments", "facebook",
@@ -197,7 +201,8 @@ SEGMENTS = (
     _seg("ig-upcoming", "instagram", "instagram_manage_upcoming_events — the account's upcoming events.",
          ["instagram_manage_upcoming_events"], ("cmd", "thth upcoming {IG}")),
     _seg("ig-delete", "instagram", "instagram_manage_contents — delete the media.", ["instagram_manage_contents"],
-         ("cmd", "thth retract {IG} {IG_POST} --reason {REASON}"), ("hand", "Instagram から消えたのを見せたら Return")),
+         ("two", "thth retract {IG} {IG_POST} --reason {REASON} --by {BY}"),
+         ("hand", "Instagram から消えたのを見せたら Return")),
     # ---------------------------------------------------------------- 広告
     _seg("flow-ads", "ads", "Reviewer flow — authorize an ad account.", [],
          ("prep", _LOGIN_PREP),
@@ -258,6 +263,7 @@ FEATURE_DOORS = {"marketing_api_access_tier": "thth admin meta ledger（15 日�
                  "ads_management_standard_access": "thth ads show"}
 
 _TH, _FB, _IG, _AD, _MSG = "Threads:", "Facebook Pages:", "Instagram:", "Ad accounts:", "Messenger"
+MEDIA_TAGS = (_TH, _FB, _IG, _AD, _MSG)   # 先頭にあれば、その媒体の項（段落か箇条）の中で残りの語を探す
 # privacy の頁にあるはずの語（全部要る・大文字小文字は見ない）。媒体の語は今の privacy の「Threads: …」の項の形。
 PRIVACY_WORDS = {
     "threads_basic": (_TH,), "threads_content_publish": (_TH, "publish"), "threads_delete": (_TH, "delet"),
@@ -401,9 +407,16 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+_HEADING_MARK = "\x01"   # 見出しの行の頭の印（`_strip` が付け、`_scopes` が読む）
+
+
 def _strip(text) -> str:
+    """タグを外した文。段落・箇条・見出しの切れ目は改行に残す（媒体の項の中で語を探すため）。"""
     text = re.sub(r"<(script|style)\b.*?</\1>", " ", text, flags=re.S | re.I)
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", text)))
+    text = re.sub(r"<h[1-6]\b[^>]*>", "\n" + _HEADING_MARK, text, flags=re.I)
+    text = re.sub(r"</?(?:p|li|ul|ol|h[1-6]|div|section|tr|br|table|blockquote)\b[^>]*>", "\n", text, flags=re.I)
+    lines = (re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", line))) for line in text.split("\n"))
+    return "\n".join(line.strip() for line in lines if line.strip())
 
 
 def privacy_text(path=None):
@@ -431,18 +444,61 @@ def _recent(row, now) -> bool:
     return at is not None and (now - at) < datetime.timedelta(days=CALL_DAYS)
 
 
+def _unrecorded(name) -> bool:
+    """1 回打っても THTH の記録に残らない権限か（`PERMISSIONS` の evidence が空、または `PLANNED`）。"""
+    if name in watch.PERMISSIONS:
+        return not watch.PERMISSIONS[name]["evidence"]
+    return name in PLANNED
+
+
+def _scopes(text) -> list:
+    """privacy の文を「項」に分ける（小文字にしてある）。段落・箇条の 1 つが 1 つの項。見出しは、その見出しの下の
+    段落・箇条を足した項も 1 つ作る（「Messenger …」の見出しの下に語が書かれる形のため）。"""
+    scopes, heading = [], None
+    for line in text.lower().split("\n"):
+        if line.startswith(_HEADING_MARK):
+            heading = [line[1:]]
+            scopes.append(line[1:])
+            scopes.append(heading)          # 下の項を足していく（あとで 1 つの文にする）
+        else:
+            scopes.append(line)
+            if heading is not None:
+                heading.append(line)
+    return [" ".join(scope) if isinstance(scope, list) else scope for scope in scopes]
+
+
+def _privacy_missing(words, text, lowered) -> list:
+    """足りない語。先頭が媒体の語（`MEDIA_TAGS`）なら、その語のある項の中で残りの語を探す（Threads の項から語が
+    消えても Bluesky の項にあれば通る、を許さない）。その語のある項が無ければ、頁全体で足りない語を返す。"""
+    if not words:
+        return []
+    if words[0] not in MEDIA_TAGS:
+        return [word for word in words if word.lower() not in lowered]
+    tag = words[0].lower()
+    best = None
+    for scope in _scopes(text):
+        if tag not in scope:
+            continue
+        missing = [word for word in words if word.lower() not in scope]
+        if best is None or len(missing) < len(best):
+            best = missing
+    if best is None:
+        return [word for word in words if word.lower() not in lowered]
+    return best
+
+
 def evaluate(view, text, *, now=None, rows=None) -> dict:
     """3 つの点検（読むだけ）。`view` は `permission_watch.build()`、`text` は privacy の文（None は読めない）。"""
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     rows = items() if rows is None else rows
     records = {row["permission"]: row for row in view.get("permissions", [])}
-    lowered = text.lower() if isinstance(text, str) else None
+    lowered = text.lower().replace(_HEADING_MARK, "") if isinstance(text, str) else None
     found = {code: [] for code in CHECK_REFUSALS}
     out = []
     for row in rows:
         record = records.get(row["name"])
         call = None if row["type"] == "feature" else _recent(record, now)
-        missing = None if lowered is None else [word for word in row["privacy_words"] if word.lower() not in lowered]
+        missing = None if lowered is None else _privacy_missing(row["privacy_words"], text, lowered)
         state = {"name": row["name"], "type": row["type"], "media": row["media"], "door": bool(row["doors"]),
                  "recent_call": call, "last_success_at": record.get("last_success_at") if record else None,
                  "recorded_by_thth": bool(row["name"] in watch.PERMISSIONS
@@ -456,6 +512,12 @@ def evaluate(view, text, *, now=None, rows=None) -> dict:
         if missing:
             found["appreview_privacy_missing"].append(row["name"])
     problems = [{"code": code, "level": "red", "names": hit} for code, hit in found.items() if hit]
+    for problem in problems:
+        if problem["code"] == "appreview_no_recent_call":
+            # 1 回打っても記録に残らない権限（記録を残さない・PLANNED）は、Dashboard の呼び出しの欄で確かめる
+            unrecorded = [name for name in problem["names"] if _unrecorded(name)]
+            if unrecorded:
+                problem["unrecorded"] = unrecorded
     if lowered is None:
         problems.append({"code": "appreview_privacy_unreadable", "level": "red", "names": []})
     return {"ok": not problems, "generated_at": jst.iso(now), "call_days": CALL_DAYS, "problems": problems,

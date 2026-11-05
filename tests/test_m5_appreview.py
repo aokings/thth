@@ -181,6 +181,44 @@ def test_録画の台本のdryは区間を選べる():
     assert "区間の数: 2" in done.stdout and "== 区間 fb-live" not in done.stdout
 
 
+def test_知らない区間のidは名前を出してrc2で断る():
+    for mode in ("--dry", "--segments"):
+        done = _bash(mode, "th-basic", "th-nope", "zzz")
+        assert done.returncode == 2, (mode, done.stdout, done.stderr)
+        assert "th-nope" in done.stdout and "zzz" in done.stdout
+        assert "区間の数" not in done.stdout and "== 区間" not in done.stdout
+
+
+def test_取り下げの区間は二段で_byが付く():
+    """`thth retract` は手元の道も遠くの道も二段確認で、手元の道では --by が要る。cmd のままだと一段目で止まり消えない。"""
+    found = [(segment["id"], step) for segment in appreview.SEGMENTS for step in segment["steps"]
+             if len(step) > 1 and step[1].startswith("thth retract")]
+    assert {sid for sid, _ in found} == {"th-delete", "fb-publish", "ig-delete"}
+    for sid, step in found:
+        assert step[0] == "two" and "--by {BY}" in step[1], (sid, step)
+    text = REC.read_text(encoding="utf-8")
+    assert "retract" in text and '--by "$BY"' in text and '--confirm "$DIGEST"' in text   # 録画 0 の区間 3
+
+
+def test_Threadsのストーリーズ共有は投稿の本文と別の穴():
+    commands = {segment["id"]: appreview.segment_commands(segment) for segment in appreview.SEGMENTS}
+    assert "{BODY2}" in commands["th-share-ig"][0] and "{BODY}" not in commands["th-share-ig"][0]
+    assert "BODY2" in appreview.SLOTS
+    assert "{BODY}" in commands["th-publish"][0]
+    assert "REC_V_BODY2" in REC.read_text(encoding="utf-8")
+
+
+def test_二段目の前には人の手を待つ所がある():
+    """seg_two が二段目の前に seg_pause を置く（dry は「[人の手]」で見せる）。二段の数だけ出る。"""
+    done = _bash("--dry")
+    assert done.returncode == 0, done.stderr
+    two = sum(1 for segment in appreview.SEGMENTS for step in segment["steps"] if step[0] in ("two", "twooff"))
+    assert two >= 8
+    assert done.stdout.count("[人の手] 一段目の中身を確かめ、二段目を打ってよければ Return") == two
+    body = REC.read_text(encoding="utf-8").split("seg_two() {")[1].split("\nseg_step()")[0]
+    assert body.index("seg_pause '一段目の中身を確かめ") < body.index('show "${ARGS[@]}" --confirm')
+
+
 # ---------------------------------------------------------------- (e) 提出の前の点検
 
 ITEMS = ("threads_basic", "pages_manage_cta", "threads_oembed_read")
@@ -232,6 +270,34 @@ def test_privacyに語が無ければ赤で_大文字小文字は見ない():
                                 now=NOW, rows=subset(*ITEMS))
     assert result["problems"] == [{"code": "appreview_privacy_missing", "level": "red", "names": ["pages_manage_cta"]}]
     assert result["items"][1]["privacy_missing"] == ["Facebook Pages:", "call-to-action"]
+
+
+def test_媒体の語のある権限は_その媒体の項の中で語を探す():
+    """Threads の項から metrics が消えても、Bluesky の項に metrics があれば通る、を許さない。"""
+    rows = subset("threads_manage_insights")
+    page = "<li>Threads: the account's posts.</li>\n<li>Bluesky: its posts and their metrics.</li>"
+    result = appreview.evaluate(fake_view(threads_manage_insights=1), appreview._strip(page), now=NOW, rows=rows)
+    assert result["problems"] == [{"code": "appreview_privacy_missing", "level": "red",
+                                   "names": ["threads_manage_insights"]}]
+    assert result["items"][0]["privacy_missing"] == ["metrics"]
+    page = "<li>Threads: the account's posts and their metrics.</li>\n<li>Bluesky: its posts.</li>"
+    assert appreview.evaluate(fake_view(threads_manage_insights=1), appreview._strip(page), now=NOW, rows=rows)["ok"]
+
+
+def test_媒体の語は見出しの下の段落も項に数える():
+    rows = subset("pages_messaging")
+    page = ("<h2>Messenger and Instagram Direct</h2><p>Replies go out within 24 hours.</p>"
+            "<h2>Other</h2><p>unrelated</p>")
+    assert appreview.evaluate(fake_view(pages_messaging=1), appreview._strip(page), now=NOW, rows=rows)["ok"]
+    page = "<h2>Messenger</h2><p>nothing here.</p><h2>Other</h2><p>within 24 hours</p>"
+    result = appreview.evaluate(fake_view(pages_messaging=1), appreview._strip(page), now=NOW, rows=rows)
+    assert result["items"][0]["privacy_missing"] == ["24 hours"]
+
+
+def test_媒体の語の無い権限は頁全体で探す():
+    page = appreview._strip("<p>Threads: posts.</p>\n<p>Posts can be shown with embed.</p>")
+    assert appreview.evaluate(fake_view(), page, now=NOW, rows=subset("threads_oembed_read"))["items"][0][
+        "privacy_missing"] == []
 
 
 def test_privacyが読めなければ言えないと言う():
@@ -299,7 +365,8 @@ def test_checkは網に出ず何も書かない(world, few, monkeypatch, capsys)
 
 def test_今の表では口の無い権限と申請の前の呼び出しが赤になる():
     """偽の state（PERMISSIONS の全部を昨日使った）と偽の privacy（全部の語）で、残る赤は口の無いものだけ。"""
-    every = " ".join(word for words in appreview.PRIVACY_WORDS.values() for word in words)
+    # 媒体の語のある権限は媒体の項の中で探すので、偽の privacy は「権限ごとに 1 つの箇条」で全部の語を書く
+    every = "\n".join(" ".join(words) for words in appreview.PRIVACY_WORDS.values() if words)
     view = fake_view(**{name: 1 for name in pw.PERMISSIONS})
     result = appreview.evaluate(view, every, now=NOW)
     codes = {problem["code"]: problem["names"] for problem in result["problems"]}
@@ -308,6 +375,18 @@ def test_今の表では口の無い権限と申請の前の呼び出しが赤�
     assert set(codes["appreview_no_recent_call"]) == set(appreview.PLANNED)   # 認可が求めないので呼べない
     assert "appreview_privacy_missing" not in codes
     assert appreview.CALL_DAYS == 30
+
+
+def test_記録に残らない権限は赤の中でそう分けて言う():
+    """evidence の空の権限と PLANNED は、1 回打っても記録に残らない（Dashboard の呼び出しの欄で確かめる）。"""
+    assert pw.PERMISSIONS["threads_basic"]["evidence"] and not pw.PERMISSIONS["pages_utility_messaging"]["evidence"]
+    names = ("threads_basic", "pages_utility_messaging", "email")
+    result = appreview.evaluate(fake_view(), "", now=NOW, rows=subset(*names))
+    problem = next(p for p in result["problems"] if p["code"] == "appreview_no_recent_call")
+    assert set(problem["names"]) == set(names)
+    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "email"}
+    fix = rc.CATALOG["appreview_no_recent_call"]["fix"]["text"]
+    assert "Dashboard" in fix and "記録に残らない" in fix
 
 
 def test_日付は記録の時刻から数える():

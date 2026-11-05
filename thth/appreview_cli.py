@@ -74,7 +74,9 @@ def cmd_check(args) -> int:
         _print_json(result)
     elif not result["ok"]:
         for problem in result["problems"]:
-            hit = f" {len(problem['names'])} 件（" + "・".join(problem["names"]) + "）" if problem["names"] else ""
+            unrecorded = set(problem.get("unrecorded") or ())   # 打っても記録に残らない権限には印を付ける
+            names = [name + "（記録に残らない）" if name in unrecorded else name for name in problem["names"]]
+            hit = f" {len(problem['names'])} 件（" + "・".join(names) + "）" if names else ""
             print(f"{problem['code']}: 赤{hit}", file=sys.stderr)
             for prefix, key in ((refusal.WHY, "why"), (refusal.FIX, "fix"), (refusal.BETTER, "better")):
                 if problem[key]:

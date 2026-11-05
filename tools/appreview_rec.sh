@@ -181,6 +181,7 @@ SEG_BANNER=''; SEG_ITEMS=''; SEG_REAL=''; RECORDING=0
 [ -n "${REC_V_REPLY:-}" ] || REC_V_REPLY="$REPLY"
 [ -n "${REC_V_REASON:-}" ] || REC_V_REASON="App Review recording"
 [ -n "${REC_V_EDITED:-}" ] || REC_V_EDITED="$BODY (edited)"
+[ -n "${REC_V_BODY2:-}" ] || REC_V_BODY2="Sharing to Instagram stories ($STAMP): a second post, published from the command line."
 [ -n "${REC_V_TITLE:-}" ] || REC_V_TITLE="THTH App Review live test ($STAMP)"
 if [ "$MODE" = dry ]; then clear_all() { :; }; fi
 
@@ -251,6 +252,7 @@ seg_two() {                      # 二段確認: 一段目の digest を拾っ�
   local out digest
   if [ "$MODE" = dry ]; then
     show_line "${ARGS[@]}"
+    seg_pause '一段目の中身を確かめ、二段目を打ってよければ Return'
     if [ "$1" = twooff ]; then printf '  （二段目: --confirm <digest>・録画の外）\n'; else printf '  （二段目: --confirm <digest>）\n'; fi
     return 0
   fi
@@ -261,6 +263,9 @@ seg_two() {                      # 二段確認: 一段目の digest を拾っ�
     seg_pause '一段目の digest が見つかりません。上の出力を見て、手で打ってから Return'
     return 0
   fi
+  # 二段目は、DM の送信・行動ボタンの削除（付け直せない）・ライブの終了・取り下げ・編集など、書いたら戻せない手。
+  # 一段目の中身（相手・本文・digest）を人が見てから進む。
+  seg_pause '一段目の中身を確かめ、二段目を打ってよければ Return'
   if [ "$1" = twooff ]; then
     seg_rec_off; clear_all
     printf '（録画を止めています。答えに鍵が出ます）\n'
@@ -347,6 +352,24 @@ seg_read() {                     # $1 = list か play。区間の並びを 1 行
   [ "$1" = play ] && printf '\n区間の数: %s\n' "$n"
   return 0
 }
+
+seg_check_wanted() {             # 知らない区間の id は名前を出して断る（黙って「区間の数: 0」にしない）
+  local kind f1 known=' ' want bad=''
+  [ -r "$SEG_FILE" ] || return 0   # 並びが読めない断りは seg_read が言う
+  while IFS=$'\t' read -r -u 4 kind f1 _; do
+    [ "$kind" = seg ] && known="$known$f1 "
+  done 4< "$SEG_FILE"
+  set -f
+  for want in $WANT; do
+    case "$known" in *" $want "*) ;; *) bad="$bad $want" ;; esac
+  done
+  set +f
+  [ -z "$bad" ] || { printf '知らない区間の id です:%s\n  区間の id は bash %s --list で見られます。\n' "$bad" "$0"; return 2; }
+}
+
+case "$MODE" in
+  dry|segments) seg_check_wanted || exit 2 ;;
+esac
 
 case "$MODE" in
   list) seg_read list; exit $? ;;
@@ -498,7 +521,13 @@ show collect "$ACCOUNT"
 show measured "$ACCOUNT" --limit 3
 sleep 3
 banner "8. threads_delete — delete the post, then confirm in the Threads app."
-show retract "$ACCOUNT" "$POST" --reason "App Review recording"
+# 取り下げは二段（一段目は見せるだけ・--by が要る）。一段目の digest を拾い、中身を確かめてから二段目を打つ。
+RETRACT_OUT="$(show retract "$ACCOUNT" "$POST" --reason "App Review recording" --by "$BY" | tee /dev/tty)"
+DIGEST="$(printf '%s\n' "$RETRACT_OUT" | grep -oE -- '--confirm [A-Za-z0-9_-]+' | tail -1)"
+DIGEST="${DIGEST#--confirm }"
+[ -n "$DIGEST" ] || { rec_stop; printf '\n取り下げの一段目の digest が見つかりません。上の出力を見てください。\n'; exit 2; }
+wait_return '  [一段目の中身を確かめ、取り下げてよければ Return]'
+show retract "$ACCOUNT" "$POST" --reason "App Review recording" --by "$BY" --confirm "$DIGEST"
 wait_return '  [スマホで投稿が消えたのを見せたら Return] '
 show posts "$ACCOUNT" --limit 3
 sleep 3

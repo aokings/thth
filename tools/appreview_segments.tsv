@@ -6,6 +6,7 @@ slot	IG	Instagram の口座名
 slot	AD	広告の台帳の名前
 slot	BY	記録に残す名前
 slot	BODY	投稿の本文
+slot	BODY2	Instagram のストーリーズに共有する Threads の投稿の本文（th-publish の本文と別の文）
 slot	REPLY	返信の本文
 slot	REASON	取り下げの理由
 slot	TH_POST	th-publish で出した Threads の投稿の id
@@ -75,7 +76,7 @@ cmd	thth location search {TH} {PLACE}
 end
 seg	th-share-ig	threads	threads_share_to_instagram — share a post to the linked Instagram stories.
 items	threads_share_to_instagram
-cmd	thth send {TH} --text {BODY} --share-to-instagram
+cmd	thth send {TH} --text {BODY2} --share-to-instagram
 hand	Instagram のストーリーズに出たのを（映して）見せたら Return
 end
 seg	th-embed	threads	Threads oEmbed Read — the embed HTML of a public post.
@@ -84,7 +85,7 @@ cmd	thth embed {TH} {TH_URL}
 end
 seg	th-delete	threads	threads_delete — delete the post, then confirm in the Threads app.
 items	threads_delete
-cmd	thth retract {TH} {TH_POST} --reason {REASON}
+two	thth retract {TH} {TH_POST} --reason {REASON} --by {BY}
 hand	スマホで投稿が消えたのを見せたら Return
 end
 seg	flow-meta	facebook	Reviewer flow — Facebook Login for Business, a Page and its Instagram account.
@@ -107,7 +108,7 @@ items	pages_manage_posts
 cmd	thth send {FB} --text {BODY}
 hand	ページに投稿が出たのを見せたら Return
 two	thth edit {FB} {FB_POST} --text {EDITED} --by {BY}
-cmd	thth retract {FB} {FB_POST} --reason {REASON}
+two	thth retract {FB} {FB_POST} --reason {REASON} --by {BY}
 hand	ページから消えたのを見せたら Return
 end
 seg	fb-mention	facebook	Page Mentioning — mention another Page in a Page post.
@@ -224,7 +225,7 @@ cmd	thth upcoming {IG}
 end
 seg	ig-delete	instagram	instagram_manage_contents — delete the media.
 items	instagram_manage_contents
-cmd	thth retract {IG} {IG_POST} --reason {REASON}
+two	thth retract {IG} {IG_POST} --reason {REASON} --by {BY}
 hand	Instagram から消えたのを見せたら Return
 end
 seg	flow-ads	ads	Reviewer flow — authorize an ad account.
