@@ -413,6 +413,8 @@ def _repos_for_lookup(items, account=None) -> dict:
     `account` を渡されたらその口座の repo だけ。手元（Mac）の絶対パスは読み替えた先の
     repo、VM の絶対パスはそれを含む repo。相対パスは、その親のフォルダが在るか、
     台帳の queue_dir で始まる repo だけ（打ち間違いで全口座の repo を動かさない）。
+    フォルダの付かない名前は親がどの repo でも根になるので、その名前が在るか queue_dir と
+    同じ repo だけ（5.12.4）。
     """
     repos = {}
     for name in accounts_mod.list_account_names():
@@ -442,8 +444,12 @@ def _repos_for_lookup(items, account=None) -> dict:
             continue
         rel = os.path.normpath(item).replace(os.sep, '/')
         for root, (name, queue_dir) in repos.items():
-            parent = os.path.dirname(os.path.join(root, rel))
-            if os.path.isdir(parent) or (queue_dir and rel.startswith(queue_dir + '/')):
+            if '/' not in rel:
+                found = rel == queue_dir or os.path.exists(os.path.join(root, rel))
+            else:
+                found = (os.path.isdir(os.path.dirname(os.path.join(root, rel)))
+                         or (queue_dir and rel.startswith(queue_dir + '/')))
+            if found:
                 wanted.setdefault(root, name)
     return wanted
 

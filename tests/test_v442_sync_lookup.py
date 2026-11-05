@@ -123,6 +123,44 @@ def test_relative_path_does_not_pull_unrelated_repo(isolated_account_factory, tm
     assert main["name"]
 
 
+# 5.12.4: フォルダの付かない名前は親がどの repo でも根になる。打ち間違いで全口座の repo を動かさない。
+def test_bare_typo_pulls_no_repo(isolated_account):
+    _push_new_draft(isolated_account, "later.md")
+    before = run_git(isolated_account["repo_dir"], ["rev-parse", "HEAD"]).stdout.strip()
+    result = run_thth(["lint", "typo-name.md"])
+    assert result.returncode == 2
+    assert "VM の repo に無いパスです" in result.stderr
+    assert "取り込" not in result.stderr
+    assert run_git(isolated_account["repo_dir"], ["rev-parse", "HEAD"]).stdout.strip() == before
+
+
+# repo の根の原稿を名前だけで指す使い方は、その名前が在る repo だけを取り込んで今までどおり通る。
+def test_bare_name_of_root_draft_pulls_only_its_repo(isolated_account_factory, tmp_path):
+    from tests.conftest import init_real_repo
+    main = isolated_account_factory()
+    other_repo = init_real_repo(tmp_path, "unrelated")
+    isolated_account_factory(name="other-threads", repo_dir=other_repo)
+    write_queue_file(main["repo_dir"], "root-draft.md", body="## threads\n\n本文です。\n",
+                     fm_overrides={"account": main["name"]})
+    _push_new_draft({"repo_dir": other_repo, "name": "other-threads"}, "x.md")
+    other_before = run_git(other_repo, ["rev-parse", "HEAD"]).stdout.strip()
+    from thth import cli
+    assert cli._repos_for_lookup(["root-draft.md"]) == {os.path.realpath(main["repo_dir"]): main["name"]}
+    assert run_thth(["lint", "root-draft.md"]).returncode == 0
+    assert run_git(other_repo, ["rev-parse", "HEAD"]).stdout.strip() == other_before
+
+
+def test_bare_name_equal_to_queue_dir_pulls_that_repo(isolated_account_factory, tmp_path):
+    from tests.conftest import init_real_repo
+    from thth import cli
+    main = isolated_account_factory()
+    other_repo = init_real_repo(tmp_path, "unrelated")
+    isolated_account_factory(name="other-threads", repo_dir=other_repo, queue_dir="drafts")
+    assert cli._repos_for_lookup(["drafts"]) == {os.path.realpath(other_repo): "other-threads"}
+    assert cli._repos_for_lookup(["./drafts/"]) == {os.path.realpath(other_repo): "other-threads"}
+    assert main["name"]
+
+
 # 5.12.1（運用の知らせ）: `thth lint <口座> <原稿>` は口座名をパスとして探し、全口座の取り込みの結果を
 # 並べていた。口座名で、その名前のファイルが無ければ取り込む前に 1 つの断りを返す。
 def test_lint_with_account_name_first_refuses_once_without_pulling(isolated_account):
