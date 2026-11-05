@@ -47,7 +47,11 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
   (a past `--at` is refused), and `--media <file> --alt <text>` uploads from
   your machine. Flags the route does not read (`--community`, `--goal`,
   `--already-gone`, …) are refused rather than dropped. `thth account status`
-  shows both the safety stop and `publish_hold`.
+  shows both the safety stop and `publish_hold`. On Facebook Pages and
+  Instagram the same route also runs `thth doctor`, `thth dm`, `thth live`,
+  `thth page cta`, `thth like`/`unlike`, `thth edit` and `thth reply`
+  (hide/unhide); writes stay two-step and the server makes and checks the
+  digest. `thth ads` and `thth reply delete` are not on this route.
 - Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by gotoq` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`

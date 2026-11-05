@@ -28,7 +28,8 @@ from . import jst, secrets_fs
 from . import postid as postid_mod
 
 KINDS = ("repost", "like")
-VIAS = ("cli", "mcp")
+# `api` は thth.me の鍵の道（`thth like` の遠くの道・`thth/server_meta.py`）。
+VIAS = ("cli", "mcp", "api")
 DIR_NAME = "reactions"
 
 

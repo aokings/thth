@@ -420,21 +420,29 @@ def refuse(exc, *, as_json=False, account=None) -> int:
 COMMANDS: dict = {}
 # 台帳が無く鍵があるときに `remote_unsupported` と言う命令（運営の命令・手元の台帳の命令）。
 # ここに無い命令は、台帳が無ければ今までどおり手元の道が断る（口座でない名前を取る命令を巻き込まない）。
-UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor",
-                         "account", "account resume", "account leave"))
+UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh",
+                         "account", "account resume", "account leave",
+                         # 計画 Meta 全部盛り: 遠くの道に出していない Meta の書く口（消すと戻せない・審査の区間に無い）。
+                         "reply delete"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",
-                  "thread", "where", "who", "events", "summary", "dashboard", "embed", "upcoming")
+                  "thread", "where", "who", "events", "summary", "dashboard", "embed", "upcoming",
+                  # 計画 Meta 全部盛り（審査員の道・`thth/server_meta.py`）。
+                  "doctor", "dm", "live", "like", "unlike", "edit", "reply")
 
 
-# `--remote` を子の命令（`bookmark add`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
-REMOTE_CHILD_PARSERS = ("bookmark",)
+# `--remote` を子の命令（`bookmark add`・`page cta`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
+REMOTE_CHILD_PARSERS = ("bookmark", "page")
 
 
 def command_key(command, args) -> str:
     if command == "bookmark":
         return "bookmark " + str(getattr(args, "verb", "") or "")
+    if command in ("dm", "live", "reply"):
+        return command + " " + str(getattr(args, "action", "") or "")
+    if command == "page":
+        return f"page {getattr(args, 'page_command', '')} {getattr(args, 'action', '')}"
     if command == "account":
         verb = getattr(args, "account", None)
         return "account " + verb if verb in ("status", "set", "add", "leave", "resume", "migrate") else "account"
@@ -491,7 +499,7 @@ def route(args, command):
             return None
         if not isinstance(account, str) or not account or has_ledger(account) or not configured():
             return None
-    as_json = bool(getattr(args, "json", False))
+    as_json = bool(getattr(args, "json", False) or getattr(args, "as_json", False))
     run = COMMANDS.get(key)
     if run is None:
         return refuse(RemoteError("remote_unsupported", rc=2), as_json=as_json)
@@ -1198,6 +1206,244 @@ def _dashboard(args, account):
     return _shown(args, value, lambda v: dashboard_cli.render(v) or 0)
 
 
+# --------------------------------------------------------------------------
+# 計画 Meta 全部盛り: 審査員の道（doctor・dm・live・page cta・like・edit・reply hide）。中身は VM の
+# `thth/server_meta.py` が手元の道と同じ関数で行う。**二段確認の digest は VM が作り VM が照合する**（ここは
+# 一段目が返した digest を `--confirm` から渡すだけで、自分では作らない）。`--by` は読まない（鍵の持ち主が
+# 記録される・retract と同じ）。`--wait` は読まないので、付けると断る。
+# --------------------------------------------------------------------------
+
+def _meta_json(args) -> bool:
+    return bool(getattr(args, "json", False) or getattr(args, "as_json", False))
+
+
+def _meta_stage_one(args, value, lines, again) -> int:
+    """一段目: VM が見せた中身と digest を出し、何もしない（rc=1・手元の道と同じ）。"""
+    from . import refusals
+    refusals.mark_first_stage()
+    if _meta_json(args):
+        _print_json(value)
+        return 1
+    for line in lines:
+        print(line)
+    print(f"digest: {value.get('digest')}")
+    print(f"打つなら: {again} --confirm {value.get('digest')}")
+    return 1
+
+
+def _meta_text(args):
+    """`--text`・`--text-file`（`-` は標準入力）のどちらか。無ければ None（検査は VM の手元の関数が言う）。"""
+    text, path = getattr(args, "text", None), getattr(args, "text_file", None)
+    if text is not None and path is not None:
+        raise RemoteError("invalid_request", reason="--text と --text-file はどちらか 1 つ", rc=2)
+    if text is not None or path is None:
+        return text
+    try:
+        if path == "-":
+            return sys.stdin.read()
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        raise RemoteError("invalid_request", reason="本文のファイルを読めません", rc=2) from None
+
+
+def _quoted(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _meta_doctor(args, account):
+    """`thth doctor <口座>`（読み取りの probe だけ・VM の置き場の欄は返らない）。"""
+    from . import doctor
+    value = call("doctor", account)
+    probes = [p for p in value.get("probes") or [] if isinstance(p, dict)]
+    if _meta_json(args):
+        _print_json(value)
+    elif value.get("error"):
+        print(f"{account}: {value['error']}")
+    else:
+        print(f"{account}（{value.get('username')}・user_id={value.get('user_id')}・thth.me の鍵の道）")
+        print(doctor.recorded_scopes_line(value.get("scopes_recorded")))
+        line = doctor.debug_token_line(probes)
+        if line:
+            print(line)
+        print("")
+        for p in probes:
+            mark = "○" if p.get("ok") else ("―" if p.get("ok") is None else "×")
+            print(f"  {mark} {p.get('label')}（{p.get('permission')}）")
+            print(f"      {p.get('detail')}")
+        print("")
+        print("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
+    if value.get("error") or value.get("auth_only"):
+        return 2
+    return 1 if any(p.get("ok") is False for p in probes) else 0
+
+
+def _meta_page_cta(args, account):
+    _refuse_unread(args, "page cta", {"wait": "--wait"})
+    if args.action == "show":
+        value = call("page_cta_show", account)
+        if _meta_json(args):
+            _print_json(value)
+            return 0
+        rows = value.get("call_to_actions") or []
+        print(f"{account}  行動ボタン {len(rows)} 件")
+        for row in rows:
+            print(f"  id={row.get('id')}  {row.get('type') or '—'}  {row.get('web_url') or ''}  {row.get('status') or ''}")
+        print("  Meta の公開の口は行動ボタンを作る・直すを持たず、消すだけです（thth page cta delete）")
+        return 0
+    value = call("page_cta_delete", account, cta_id=args.cta_id, confirm=args.confirm)
+    if value.get("stage") == 1:
+        row = value.get("cta") or {}
+        return _meta_stage_one(args, value, [
+            f"消しません（確認の一段目です）: {account} 行動ボタン {args.cta_id}",
+            f"  種類: {row.get('type') or '—'}  行き先: {row.get('web_url') or '—'}",
+            "  Meta の公開の口では作り直せません。消したあとはページの画面で付け直します"],
+            f"thth page cta delete {account} {args.cta_id}")
+    return _shown(args, value, lambda v: _say(f"消しました: {account} 行動ボタン {v.get('cta_id')}"))
+
+
+def _meta_live(args, account):
+    _refuse_unread(args, "live", {"wait": "--wait"})
+    if args.action == "end":
+        value = call("live_end", account, live_id=args.live_id, confirm=args.confirm)
+        if value.get("stage") == 1:
+            live = value.get("live") or {}
+            return _meta_stage_one(args, value, [
+                f"終えません（確認の一段目です）: {account} ライブ {args.live_id}",
+                f"  題: {live.get('title') or '—'}  状態: {live.get('status') or '—'}",
+                "  終えると録画が動画としてページに残ります"], f"thth live end {account} {args.live_id}")
+        return _shown(args, value, lambda v: _say(f"終えました: {account} ライブ {v.get('live_id')}"))
+    value = call("live_create", account, title=args.title, description=args.description, confirm=args.confirm)
+    if value.get("stage") == 1:
+        return _meta_stage_one(args, value, [
+            f"作りません（確認の一段目です）: {account} ライブ配信",
+            f"  題  : {value.get('title')}", f"  説明: {value.get('description') or '—'}",
+            "  作るとすぐ「配信中」になり、宛先に映像を送るとページに出ます（止め絵・ループは使わないでください）。"
+            "終えるのは thth live end"],
+            f"thth live create {account} --title {_quoted(value.get('title'))}"
+            + (f" --description {_quoted(value['description'])}" if value.get("description") else ""))
+    target = value.get("stream_url")
+    if isinstance(target, str):
+        redact.register_secret(target)  # 配信の鍵を含む（ログ・例外の文に出さない）
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    print(f"作りました: {account} ライブ {value.get('live_id')}")
+    if isinstance(target, str):
+        print("  配信の宛先（配信の鍵を含みます・VM にも残していません・人に見せないでください）:")
+        print(f"  {target}")
+    elif "stream_url" in (value.get("not_kept") or []):
+        print("  配信の宛先は届けられませんでした（VM に残さないので出し直せません）。"
+              "下の命令で終えてから作り直してください")
+    else:
+        print("  （宛先が返りませんでした・ページの画面で確かめてください）")
+    print(f"  終えるとき: thth live end {account} {value.get('live_id')}")
+    return 0
+
+
+def _meta_names(people) -> str:
+    return "、".join((p or {}).get("name") or "（名前は返りません）" for p in people or []) or "—"
+
+
+def _meta_dm(args, account):
+    _refuse_unread(args, "dm", {"wait": "--wait"})
+    if args.action == "list":
+        value = call("dm_list", account)
+        if _meta_json(args):
+            _print_json(value)
+            return 0
+        rows = value.get("conversations") or []
+        print(f"{account}  受信箱 {len(rows)} 件（本文は出しません・保存しません）")
+        for row in rows:
+            print(f"  {row.get('updated_time') or '—'}  {_meta_names(row.get('with'))}  会話 {row.get('id')}")
+        print(f"  読むとき: thth dm read {account} <会話の id>")
+        return 0
+    if args.action == "read":
+        value = call("dm_read", account, target=args.target, profile=True if args.profile else None)
+        if _meta_json(args):
+            _print_json(value)
+            return 0
+        convo = value.get("conversation") or {}
+        print(f"{account}  会話 {convo.get('id')}  相手: {_meta_names(convo.get('with'))}（本文は画面に出すだけ・保存しません）")
+        profile = value.get("profile")
+        if isinstance(profile, dict):
+            print(f"  相手の言語 {profile.get('locale') or '—'}・時間帯 "
+                  f"{profile.get('timezone') if profile.get('timezone') is not None else '—'}"
+                  f"・性別 {profile.get('gender') or '—'}（権限が無い欄は —）")
+        for row in sorted(convo.get("messages") or [], key=lambda r: str(r.get("created_time") or "")):
+            who = _meta_names([row.get("from")]) if row.get("inbound") else "こちら"
+            print(f"  {row.get('created_time') or '—'}  {who}: {row.get('text') or ''}")
+        state = value.get("window")
+        if isinstance(state, dict):
+            print(f"  返せる窓: {state.get('closes_at')} まで（相手の最後の通 {state.get('last_inbound')}）")
+        else:
+            print("  返せる窓: 閉じています（24 時間を過ぎました。人の担当者なら --human-agent で 7 日の内）")
+        print(f"  返すとき: thth dm send {account} {convo.get('id')} --text-file <file>")
+        return 0
+    text = _meta_text(args)
+    value = call("dm_send", account, target=args.target, comment=args.comment, text=text,
+                 human_agent=True if args.human_agent else None, confirm=args.confirm)
+    if value.get("stage") == 1:
+        return _meta_stage_one(args, value, [
+            f"送りません（確認の一段目です）: {account} → {value.get('to')}",
+            f"  窓: {value.get('closes_at')} まで",
+            "--- 送る本文（保存しません） ---", value.get("text") or "", "--- ここまで ---"],
+            f"thth dm send {account} " + (f"--comment {args.comment}" if args.comment else str(args.target))
+            + " --text-file <同じ本文>" + (" --human-agent" if args.human_agent else ""))
+    return _shown(args, value, lambda v: _say(f"送りました: {account}（本文は保存していません）"))
+
+
+def _meta_reaction(args, account):
+    """`thth like|unlike <口座> <投稿>`（1 段・戻せる・手元の道と同じ）。"""
+    command = getattr(args, "reaction_command", "like")
+    _refuse_unread(args, command, {"wait": "--wait"})
+    value = call(command, account, post=args.post)
+    word = "いいねの取り消し" if command == "unlike" else "いいね"
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    if value.get("already_done"):
+        return _say(f"既に{word}しています（SNS には送っていません）: {account} {value.get('post_id')}")
+    return _say(f"{word}しました: {account} {value.get('post_id')}")
+
+
+def _meta_edit(args, account):
+    _refuse_unread(args, "edit", {"wait": "--wait"})
+    value = call("edit_post", account, post_id=args.post_id, text=_meta_text(args), reason=args.reason,
+                 confirm=args.confirm)
+    if value.get("stage") == 1:
+        return _meta_stage_one(args, value, [
+            f"直しません（確認の一段目です）: {account} post_id {args.post_id}",
+            f"  URL : {value.get('url') or '（記録にありません）'}",
+            "--- いまの本文（記録） ---", value.get("previous_text") or "",
+            "--- 直したあとの本文 ---", value.get("text") or "", "--- ここまで ---"],
+            f"thth edit {account} {args.post_id} --text-file <同じ本文のファイル>")
+    return _shown(args, value, lambda v: _say(f"直しました: {account} post_id {v.get('post_id')}（{v.get('edited_at')}）"))
+
+
+def _meta_reply(args, account):
+    """`thth reply hide|unhide <口座> <comment_id>`（1 段・戻せる）。`delete` は遠くの道に出していない。"""
+    _refuse_unread(args, "reply", {"wait": "--wait", "confirm": "--confirm"})
+    value = call("reply_" + args.action, account, comment_id=args.comment_id, reason=args.reason)
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    if value.get("changed") is False:
+        state = "隠れています" if args.action == "hide" else "見えています"
+        return _say(f"既に{state}（何もしていません）: {account} comment {args.comment_id}")
+    word = "隠しました" if args.action == "hide" else "戻しました"
+    return _say(f"{word}: {account} comment {args.comment_id}（{value.get('at')}）")
+
+
+COMMANDS.update({
+    "doctor": _meta_doctor, "page cta show": _meta_page_cta, "page cta delete": _meta_page_cta,
+    "live create": _meta_live, "live end": _meta_live,
+    "dm list": _meta_dm, "dm read": _meta_dm, "dm send": _meta_dm,
+    "like": _meta_reaction, "unlike": _meta_reaction, "edit": _meta_edit,
+    "reply hide": _meta_reply, "reply unhide": _meta_reply,
+})
+
+
 COMMANDS.update({
     "events": _events, "summary": _summary, "dashboard": _dashboard,
     "inflight": _inflight,
@@ -1223,6 +1469,18 @@ def register(sub) -> None:
             parser.add_argument("--remote", action="store_true",
                                 help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
     choices = sub.choices
+    # `thth page cta …` は子の命令に旗を足す（`thth page --remote cta` の形にしない）。
+    page = choices.get("page")
+    for action in (page._actions if page is not None else ()):
+        if isinstance(action, argparse_subparsers()) and "cta" in action.choices:
+            action.choices["cta"].add_argument("--remote", action="store_true",
+                                               help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
+    for name in ("dm", "live", "edit", "reply"):
+        _tell(sub, name, "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
+        _tell(sub, name, "wait", "thth.me の道: 使えない（付けると断る）")
+    _tell(sub, "reply", None, "thth.me の道は hide・unhide だけ（delete は手元の道）")
+    _tell(sub, "dm", None, "thth.me の道も二段・digest は VM が作って照合する")
+    _tell(sub, "live", None, "thth.me の道も二段・配信の宛先は端末に 1 回だけ返り VM に残さない")
     send = choices["send"]
     send.add_argument("--text", default=None, help="本文（1 行の文。長い本文は --text-file か標準入力）")
     send.add_argument("--dry-run", dest="dry_run", action="store_true",
@@ -1301,3 +1559,8 @@ def _tell(sub, command, dest, text) -> None:
 def argparse_suppress():
     import argparse
     return argparse.SUPPRESS
+
+
+def argparse_subparsers():
+    import argparse
+    return argparse._SubParsersAction

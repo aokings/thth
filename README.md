@@ -77,6 +77,8 @@ thth topics <アカウント> --search コーヒー
 thth send <アカウント> --text "こんにちは"
 ```
 
+Facebook ページと Instagram では `thth doctor`・`thth dm`・`thth live`・`thth page cta`・`thth like`・`thth edit`・`thth reply hide` も同じように使えます（書く命令は手元と同じ二段確認）。広告（`thth ads`）はまだこの道にありません。
+
 サーバーも Meta アプリも git も要りません。手順の全体は [招待されたら](docs/導入_招待されたら.md) にあります。
 
 ### 自分の機械で運用する人（運営者）

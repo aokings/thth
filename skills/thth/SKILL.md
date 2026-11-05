@@ -58,6 +58,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - **キーと secret を聞かない・入力しない・会話へ貼らせない。** キーは `thth login` が手元に置き、`thth` コマンドだけが使う。あなたはキーを知らなくてよい。
 - `thth login` は本人がブラウザで許可する形（3.14.2）: ターミナルに出た `https://thth.me/login/XXXX-XXXX` を本人が開き、アカウント名とアカウントのシークレット を入れて「このデバイスにキーを渡す」を押す。キーを貼る作業は無い。あなたが代わりに許可したり、secret を聞いたりしない。
 - 断りは遠くの道でも 3 行（通すには は遠くの道で打てる形）。遠くの道に無い命令と旗（`throw`・`run`・`auth`、`send --community`・`--goal`・`--confirm`、`retract --already-gone` など）は黙って捨てずに断る。止まった口座は本人が https://thth.me/activity で戻す（あなたからは戻せない）。前の公開の結果が分からない間は、本人が SNS の画面で確かめてから `thth inflight <アカウント> resolve` で解く（一段目の digest を本人が `--confirm` に渡す）。自動で再依頼・再公開しない。
+- FB と IG では `thth doctor`・`dm`・`live`・`page cta`・`like`・`edit`・`reply hide` も通る（書く命令は二段）。`ads` は無い。
 - 出す前に本文を見たいと本人が言えば、`thth send --dry-run`（lint だけ・下書きが 1 本残る）か本文をそのまま見せてから `thth_send_request` を呼ぶ。THTH の側に承認の関所は無い。
 - 添付は端末の `thth send|schedule <アカウント> --media <手元の機械のファイル> --alt <説明>`（3.21.0）。MCP の `thth_send_request` には添付の欄が無い。
 - 端末の `thth send` は `--production` が無ければ出さない（lint だけ・下書きが 1 本残る）。`thth schedule --text … --at …` はその場で予約まで行う（承認の二段は無い）。過去の `--at` は断る。
