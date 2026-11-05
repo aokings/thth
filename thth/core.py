@@ -1553,6 +1553,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         **_link_urls_kwargs(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}),
                         **({"community_id": post.community_id} if post.community_id else {}),
+                        # 計画 Meta 全部盛り M4: ストーリーズへの共有を出した印（`permission_watch` の最後に成功した日）。
+                        **({"share_to_instagram": True} if getattr(post, "share_to_instagram", False) else {}),
                         **({"announces": announced["announces"], "article_url": announced["article_url"],
                             **({"article": announced["article"]} if announced.get("article") else {})}
                            if announced is not None else {}))
@@ -1921,8 +1923,13 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                confirm: str | None = None, adapter_factory=None, log=None,
                now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
                goal: str | None = None, origin: dict | None = None,
-               community_id: str | None = None, approval: str | None = None) -> ThrowResult:
+               community_id: str | None = None, approval: str | None = None,
+               share_to_instagram: bool = False) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
+
+    **`share_to_instagram`**（計画 Meta 全部盛り M4・`--share-to-instagram`）: Threads の投稿を連携した
+    Instagram のストーリーズにも出す（`crossreshare_to_ig`）。queue の `share_to_instagram:` と同じ門（Threads
+    だけ・台帳の `instagram_linked: true`）で、真のときだけ digest に入る。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
     その場で済んでいるので `status: approved` は要らない。**その代わり、承認の
@@ -1989,6 +1996,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
             goal=goal, origin=origin, community_id=community_id, approval=approval,
+            share_to_instagram=share_to_instagram,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -1999,7 +2007,8 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
-                  goal=None, origin=None, community_id=None, approval=None) -> ThrowResult:
+                  goal=None, origin=None, community_id=None, approval=None,
+                  share_to_instagram=False) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -2095,6 +2104,36 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 return ThrowResult(exit_code=2, mode=mode, action="skip", message=msg,
                                    error="community_id_invalid")
 
+        # Instagram のストーリーズへの共有（計画 Meta 全部盛り M4）。queue の `share_to_instagram:` と同じ門
+        # （台帳の `instagram_linked: true`）に、Threads だけ・返信では使わない、を足す。**dry-run でも断る**。
+        share_value = share_to_instagram is True
+        if share_value:
+            from . import lint as lint_mod
+            problem = None
+            if media != "threads":
+                problem = f"share_to_instagram: Instagram のストーリーズへの共有は Threads の口座だけです（この口座は {media}）"
+            elif reply_to:
+                problem = "share_to_instagram: 返信はストーリーズに共有しません（--reply-to と一緒に使えません）"
+            elif not approval_mod.is_true(account_cfg.get("instagram_linked")):
+                problem = lint_mod.INSTAGRAM_NOT_LINKED
+            if problem:
+                log(problem)
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                            status="error", error="share_to_instagram_unavailable")
+                return ThrowResult(exit_code=2, mode=mode, action="skip", message=problem,
+                                   error="share_to_instagram_unavailable")
+
+        # Page Mentioning（計画 Meta 全部盛り M4）: Facebook の本文の `@[ページの id]` は数字の id だけを通す。
+        if media == "facebook":
+            from . import meta_mention
+            problem = meta_mention.problem(body)
+            if problem:
+                log(problem)
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                            status="error", error="page_mention_invalid")
+                return ThrowResult(exit_code=2, mode=mode, action="skip", message=problem,
+                                   error="page_mention_invalid")
+
         topic_value = queuefile.normalize_topic(topic)
         if topic_value is not None:
             topic_err = (queuefile.topic_error(topic_value) if media == "threads"
@@ -2128,7 +2167,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
         digest = approval_mod.compute_send_digest(
             text=effective, account=account_name, reply_to=reply_to, topic=topic_value, media_manifest=manifest,
-            community_id=community_value)
+            community_id=community_value, share_to_instagram=share_value)
 
         if mode == "rehearsal":
             # **dry-run は publish が断るものを断る**（実機 2026-09-22: 8 MB を
@@ -2152,6 +2191,13 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 log(f"トピック: {topic_value}")
             if community_value:
                 log(f"コミュニティ: {community_value}（参加していないコミュニティには X が断ります）")
+            if share_value:
+                log("Instagram のストーリーズにも出します（share_to_instagram・digest に入ります）")
+            if media == "facebook":
+                from . import meta_mention
+                mentioned = meta_mention.ids(effective)
+                if mentioned:
+                    log(f"ページへの言及: {'・'.join(mentioned)}（Meta が名前に変えます）")
             if goal_value != goals_mod.NONE:
                 log(f"目的: {goal_value}（{goals_mod.LABELS[goal_value]}・digest には入りません）")
             log(queuefile.length_line(media, effective, account_cfg))
@@ -2223,7 +2269,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
         post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
                                  hashtags_allowed=bool(account_cfg.get("hashtags", True)),
-                                 community_id=community_value)
+                                 community_id=community_value, share_to_instagram=share_value)
 
         def on_container_created(container_id):
             inflight_mod.update(state_dir, container_id=container_id)
@@ -2298,6 +2344,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             **_link_urls_kwargs(manifest),
                             **({"media":result.media} if result.media else {}),
                             **({"community_id": community_value} if community_value else {}),
+                            **({"share_to_instagram": True} if share_value else {}),
                             **({"origin": origin} if origin is not None else {}))
         except (OSError,ValueError):
             if not manifest:raise

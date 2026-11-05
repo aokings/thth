@@ -78,7 +78,7 @@ An assistant can only tighten these limits. Loosening them, resuming a stopped a
 ## What it does not keep
 
 - Search results (`topics --search`, `where`, `thread`, `who`): text and authors are shown, not saved. `where … --keep` saves only per-search-term numbers (numbers below 5 are missing; read with `where-log`). `topics --search <word> --tag --keep` (Threads, 5.7.0) saves only the number of posts that carry the word as their topic, the number of distinct authors, and the dates of the newest and oldest (numbers below 5 are missing; no exact times) in the same project-private place and under the same rules as `where … --keep` (read with `where-log`).
-- It never reads direct messages.
+- Direct messages are read only when you run `thth dm` (Facebook Page and Instagram inboxes). Text and the other person are shown, never stored; a reply is sent by a person in two steps (no automatic replies, only within 24 hours of their last message). The stream address `thth live create` returns is shown, not stored.
 - Tokens and secrets are redacted from logs and output.
 
 See the [privacy policy](https://thth.me/privacy/).
@@ -105,10 +105,13 @@ All subcommands `thth --help` lists, one line each:
 - `edit` — correct the text of a post THTH published (two-step confirmation; Facebook only; the previous text stays in the record)
 - `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook and Instagram)
 - `comments` — open or close the comments on a post (`comments open|close`; Instagram)
+- `page` — a Facebook Page's call-to-action buttons (`page cta show|delete`; delete is two-step)
+- `live` — create a Facebook Page live video and get its stream address, or end it (`live create|end`; two-step)
+- `dm` — read the Page and Instagram inboxes and reply within the 24-hour window (`dm list|read|send`; send is two-step; nothing stored)
 - `quota` — read the platform usage headers, any rate-limit wait and (Instagram) the daily publishing limit for an account (read-only; Facebook and Instagram)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH
-- `like` — like a post (Bluesky, Mastodon, X; the Threads API has no likes)
+- `like` — like a post (Bluesky, Mastodon, X, Instagram; the Threads API has no likes)
 - `unlike` — undo a like made through THTH
 - `list` — X private lists: create, add or remove a few hand-picked people (10 at most per call), read a list's posts (X only; never public lists)
 - `community` — search X Communities (`community search`; paid read, not stored). Post into one with `send --community <id>` or front-matter `community_id:` (X only; join in the X app first; not combined with replies)

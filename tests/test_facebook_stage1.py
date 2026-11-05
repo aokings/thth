@@ -304,9 +304,11 @@ def test_書く口は形の違うidを投げずに断る():
 
 def test_facebookのDELETEは投稿の取り下げとコメントの削除の2か所だけ_呼ぶのはedit_cliだけ():
     src = inspect.getsource(fb)
-    assert src.count('"DELETE"') == 2
+    # 計画 Meta 全部盛り M4: 行動ボタンの削除（`delete_page_cta`・呼ぶのは `thth/meta_write.py` だけ）を足して 3 か所。
+    assert src.count('"DELETE"') == 3
     assert '"DELETE"' in inspect.getsource(fb.FacebookAdapter.delete_post)
     assert '"DELETE"' in inspect.getsource(fb.FacebookAdapter.delete_reply)
+    assert '"DELETE"' in inspect.getsource(fb.FacebookAdapter.delete_page_cta)
     from thth import cli as cli_mod, core, collect as collect_mod, doctor, maintain, retract_cli
     for mod in (cli_mod, core, collect_mod, doctor, maintain, retract_cli):
         text = inspect.getsource(mod)

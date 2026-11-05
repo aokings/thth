@@ -220,6 +220,13 @@ KNOWN_CAPABILITIES = frozenset({
     "public_search",
     # IG の口座が主催する予定を読める（`upcoming_events()`・`thth upcoming`）。
     "upcoming_events",
+    # --- 計画 Meta 全部盛り M4（書く最小の口・`thth/meta_write.py`）
+    # ページの行動ボタンを読む・消す（`page_cta()`・`delete_page_cta()`・`thth page cta`）。
+    "page_cta",
+    # ライブ配信の宛先を作る・終える（`live_create()`・`live_end()`・`thth live`）。
+    "live_video",
+    # 受信箱を読む・24 時間の窓の中で返す・コメントへの非公開の返事（`dm_*`・`thth dm`）。
+    "direct_messages",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。

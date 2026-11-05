@@ -80,7 +80,7 @@ PERMISSIONS = {
     "threads_manage_replies": _p("threads", WRITE, "reply"),
     "threads_profile_discovery": _p("threads", READ, "who"),
     "threads_read_replies": _p("threads", READ, "collect_posts", "thread_read"),
-    "threads_share_to_instagram": _p("threads", WRITE),
+    "threads_share_to_instagram": _p("threads", WRITE, "share_to_instagram"),
     "pages_show_list": _p("facebook", READ, "auth"),
     "business_management": _p("facebook", READ, "auth"),
     "public_profile": _p("facebook", READ, "auth"),
@@ -91,17 +91,17 @@ PERMISSIONS = {
     "pages_manage_posts": _p("facebook", WRITE, "post", "retract"),
     "pages_manage_engagement": _p("facebook", WRITE, "reply"),
     "pages_manage_ads": _p(ADS, WRITE, "ads_op"),
-    "pages_manage_cta": _p("facebook", WRITE),
-    "publish_video": _p("facebook", WRITE),
-    "pages_messaging": _p("facebook", WRITE),
+    "pages_manage_cta": _p("facebook", WRITE, "page_cta_delete"),
+    "publish_video": _p("facebook", WRITE, "live_create", "live_end"),
+    "pages_messaging": _p("facebook", WRITE, "dm_list", "dm_read", "dm_send"),
     "pages_utility_messaging": _p("facebook", WRITE),
     "instagram_basic": _p("instagram", READ, "collect"),
     "instagram_content_publish": _p("instagram", WRITE, "post"),
     "instagram_manage_comments": _p("instagram", READ, "collect_posts", "reply"),
     "instagram_manage_insights": _p("instagram", READ, "collect_posts"),
     "instagram_manage_contents": _p("instagram", WRITE, "retract"),
-    "instagram_manage_engagement": _p("instagram", WRITE),
-    "instagram_manage_messages": _p("instagram", WRITE),
+    "instagram_manage_engagement": _p("instagram", WRITE, "ig_like"),
+    "instagram_manage_messages": _p("instagram", WRITE, "dm_list", "dm_read", "dm_send"),
     "threads_business_basic": _p("instagram", READ),
     "ads_read": _p(ADS, READ, "ads_snapshot"),
     "ads_management": _p(ADS, WRITE, "ads_op"),
@@ -112,6 +112,10 @@ PERMISSIONS = {
     "instagram_manage_upcoming_events": _p("instagram", READ, "upcoming_events"),
     "read_audience_network_insights": _p(ADS, READ),
     "commerce_account_read_settings": _p(ADS, READ),
+    # 計画 Meta 全部盛り M4: `thth dm read --profile` が 1 欄ずつ読む相手の属性（招待の一覧に足すかは M0 で決める）。
+    "pages_user_locale": _p("facebook", READ, "dm_profile"),
+    "pages_user_timezone": _p("facebook", READ, "dm_profile"),
+    "pages_user_gender": _p("facebook", READ, "dm_profile"),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -122,7 +126,9 @@ WATCHED_BASE = frozenset({
 # 最小の読みを打てる広告の権限（媒体の口座は各 adapter の `KEEPALIVE_READS`）。
 ADS_KEEPALIVE_READS = frozenset({"ads_read"})
 
-RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION)
+RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION,
+               # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
+               "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like")
 # 知らせの重さの順（1 口座に 1 行だけ載るので、重いものを載せて残りの数を添える）。
 NOTICE_REFUSALS = ("data_access_expired", "duc_overdue", "permission_unused", "data_access_expiring",
                    "duc_due_soon", "ads_tier_at_risk", "ads_tier_ready")
@@ -257,6 +263,8 @@ def _read_sent(state_dir, found) -> None:
         at = jst.parse(row.get("sent_at"))
         _note(found, "reply" if row.get("reply_to") else "post", at)
         _note(found, "retract", jst.parse(row.get("retracted_at")))
+        if row.get("share_to_instagram") is True:
+            _note(found, "share_to_instagram", at)
 
 
 def _held(media, token) -> set:

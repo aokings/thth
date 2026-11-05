@@ -52,7 +52,7 @@ WORDS = {("repost", False): "再投稿", ("repost", True): "再投稿の取り�
 HELP = {
     "repost": "投稿を再投稿する（Threads／Bluesky／Mastodon／X・production: true の口座だけ）",
     "unrepost": "THTH で再投稿したものを取り消す",
-    "like": "投稿にいいねする（Bluesky／Mastodon／X。Threads の API にいいねはありません）",
+    "like": "投稿にいいねする（Bluesky／Mastodon／X／Instagram。Threads の API にいいねはありません）",
     "unlike": "THTH でいいねしたものを取り消す",
 }
 MAX_BY = 256
@@ -261,7 +261,24 @@ def _locked(args, account_cfg, adapter_cls, token, state_dir, *, kind, undo, pos
                          f"{word}の応答に id がありません（記録していません・媒体の画面で確かめてください）")
         row = reactions_mod.write(state_dir, kind=kind, post_id=post_id, platform_id=reaction_id,
                                   by=by, via=via, media=media)
+    _note_meta_success(account, media, kind, undo)
     return _done(args, row, kind=kind, undo=undo, word=word, already=False, cost=cost)
+
+
+def _note_meta_success(account, media, kind, undo) -> None:
+    """Instagram のいいね（計画 Meta 全部盛り M4）は runs に 1 行（`permission_watch` の最後に成功した日）。
+
+    他の媒体の記録の形は変えない。投稿の id・誰かは入れない（反応の記録 `reactions/` が正本）。
+    """
+    if media != "instagram" or kind != "like":
+        return
+    from . import runs as runs_mod
+    try:
+        runs_mod.record_minimal(account, {"action": "ig_like", "account": account, "medium": media,
+                                          "mode": "production", "status": "ok", "error": None,
+                                          "permission": "instagram_manage_engagement"})
+    except (OSError, accounts_mod.AccountError):
+        pass
 
 
 def _done(args, row, *, kind, undo, word, already, cost) -> int:

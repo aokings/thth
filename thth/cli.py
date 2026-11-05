@@ -4133,6 +4133,7 @@ def cmd_send(args) -> int:
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
                 found_by=args.found_by, goal=getattr(args, "goal", None),
                 community_id=getattr(args, "community_id", None),
+                share_to_instagram=bool(getattr(args, "share_to_instagram", False)),
                 production_flag=args.production and not getattr(args, "dry_run", False),
                 confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
                 approval=getattr(args, "approval", None),
@@ -4144,6 +4145,10 @@ def cmd_send(args) -> int:
         # 安全装置の断り（段 B）: 目録の 3 つを足す。1 行目は安全装置の文のまま（それがなぜ）。
         from . import refusal
         guard_code = result.error if (code and result is not None and result.action == "guard") else None
+        # 計画 Meta 全部盛り M4: ストーリーズへの共有と Page Mentioning の断りにも目録の 3 つを足す。
+        from . import meta_mention
+        if code and result is not None and result.error in meta_mention.REASONS:
+            guard_code = result.error
         guard_values = {"door": "cli", "account": args.account, "next_at": getattr(result, "next_at", None),
                         "reason": getattr(result, "reason", None)}
         if as_json and result is not None:
@@ -4972,6 +4977,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--community", dest="community_id", default=None, metavar="ID",
                         help="X のコミュニティの id（数字）。X だけ・--reply-to とは同時に使えない。"
                              "参加は X の画面で先に（API に参加の口は無い）。id は thth community search で")
+    # 計画 Meta 全部盛り M4: Threads の投稿を連携した Instagram のストーリーズにも出す（`crossreshare_to_ig`）。
+    p_send.add_argument("--share-to-instagram", dest="share_to_instagram", action="store_true",
+                        help="Threads の投稿を Instagram のストーリーズにも出す（Threads だけ・台帳の "
+                             "instagram_linked: true が要る・返信には使えない・digest に入る）")
     p_send.add_argument("--production", action="store_true",
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
     p_send.add_argument("--confirm", default=None,
@@ -5122,6 +5131,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth embed`・`thth upcoming`（計画 Meta 全部盛り M3・読むだけ・保存しない）。口は `thth/meta_public.py` に閉じる。
     from . import meta_public
     meta_public.register(sub)
+    # `thth page cta`・`thth live`・`thth dm`（計画 Meta 全部盛り M4・書く最小の口・二段確認）。`thth/meta_write.py` に閉じる。
+    from . import meta_write
+    meta_write.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

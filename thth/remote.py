@@ -654,6 +654,7 @@ def _send(args, account):
     # キョンシーラボの口座で試すつもりの本文が出た（#2477）。`--confirm` は要らない（digest はサーバが
     # その場で突き合わせる）。MCP の `thth_send_request` は今までどおり呼べば出す。
     _refuse_unread(args, "send", {"community_id": "--community", "goal": "--goal", "found_by": "--found-by",
+                                  "share_to_instagram": "--share-to-instagram",
                                   "reply_to_root": "--reply-to-root",
                                   "reply_to_author_key": "--reply-to-author-key", "confirm": "--confirm"})
     has_media = bool(getattr(args, "media_files", None))

@@ -111,7 +111,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 - 検索結果（`topics --search`・`where`・`thread`・`who`）の本文と投稿者は、その場で見せるだけで保存しません。`where … --keep` のときだけ、語ごとの数（件数・問いの形・分類・also の当たり）を日付つきで project の私有の置き場に残します（5 未満は欠測・`thth where-log` で読む・3.18.0）。`topics --search <語> --tag --keep`（5.7.0）も同じ置き場・同じ決まりで、その語をトピックに付けた投稿の件数・投稿者の数・最新と最古の日付だけを残します（5 未満は欠測・正確な時刻は残さない・`thth where-log` で読む）。
 - Instagram のハッシュタグと Facebook のページの検索（`where`）・他のプロ口座とページの公開の数（`who --profile`）は、本文も画像も頼みません。数と id とリンクを見せるだけで保存しません。Instagram の 7 日 30 種を数えるために、調べたタグと時刻だけを 7 日間残します（Meta の機能の審査が通るまでは自分の口座の範囲です）。`embed`・`upcoming`・`ads catalog`・`ads leads`・`ads network`・`ads shop` も見せるだけで保存しません。
-- ダイレクトメッセージは読みません。
+- ダイレクトメッセージは、`thth dm` を打ったときだけ読みます（Facebook ページと Instagram の受信箱）。本文と相手は画面に出すだけで保存せず、返事は人が二段確認で送ります（自動の返信はしません・相手の最後の通から 24 時間の内だけ）。`thth live create` が返す配信の宛先も画面に出すだけです。
 - トークンとシークレットは、ログと出力から伏せます。
 
 詳しくは [プライバシーポリシー](https://thth.me/privacy/) にあります。
@@ -120,7 +120,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`embed`・`upcoming`・`retract`・`edit`・`reply`・`comments`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`ads`・`webhook`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`embed`・`upcoming`・`retract`・`edit`・`reply`・`comments`・`page`・`live`・`dm`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`ads`・`webhook`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 ## 版と配布
 

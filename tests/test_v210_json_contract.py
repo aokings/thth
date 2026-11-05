@@ -122,6 +122,8 @@ COMMANDS += ['media app-usage']
 COMMANDS += ['admin meta watch', 'admin meta ledger', 'admin meta set', 'admin meta keepalive']
 # 段 M3（読むだけの最小の口）: 埋め込み・予定・広告のカタログ／リード／ネットワーク／ショップ。
 COMMANDS += ['embed', 'upcoming', 'ads catalog list', 'ads catalog products', 'ads leads', 'ads network', 'ads shop']
+# 段 M4（書く最小の口・二段確認）: ページの行動ボタン・ライブ・DM（--json は 1 つの値・断りは {"ok": false, …}）。
+COMMANDS += ['page cta', 'live', 'dm']
 
 
 def test_json_table_covers_every_parser():

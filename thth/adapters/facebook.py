@@ -152,6 +152,28 @@ PAGE_POST_COUNT_FIELDS = "id,created_time,shares,comments.summary(true).limit(0)
 PROFILE_POSTS_MAX = 10
 # URL の 1 段に入れるので字を絞る（`/`・`?`・`{` などを通さない）。
 PAGE_NAME_RE = re.compile(r"[A-Za-z0-9.\-]{1,50}")
+
+# 計画 Meta 全部盛り M4（書く最小の口）。L2 は 11/05 に読んだ公式の頁。
+# 行動ボタン: `GET /{page-id}/call_to_actions` で読み、`DELETE /{cta-id}` で消す（pages_manage_cta）。
+# 作る口は無く、直す口は「deprecated and can no longer be used」（L2: page-call-to-action）。
+CTA_PERMISSION = "pages_manage_cta"
+CTA_FIELDS = "id,type,web_url,status,updated_time"
+# ライブ: `POST /{page-id}/live_videos?status=LIVE_NOW` が id・stream_url・secure_stream_url を返し、
+# `POST /{live-video-id}?end_live_video=true` で終える（L2: live-video-api/guides/streaming）。
+LIVE_PERMISSION = "publish_video"
+LIVE_FIELDS = "id,status,title,from{id}"
+LIVE_TITLE_MAX = 255
+# 受信箱: `GET /{page-id}/conversations?platform=…`・`GET /{conversation-id}?fields=messages`
+# （細部が読めるのは直近 20 通・L2: messenger-platform/conversations）。
+CONVERSATIONS_MAX = 25
+CONVERSATION_MESSAGES_MAX = 20
+CONVERSATION_ID = re.compile(r"[A-Za-z0-9_\-=:.]{1,200}")
+SCOPED_USER_ID = re.compile(r"[0-9]{1,32}")
+# 24 時間の窓の外で送ったとき Messenger が返す code 10・subcode 2018278【推・L3・本物で確かめる】。
+WINDOW_CLOSED_SUBCODES = frozenset({2018278})
+# 相手の属性（pages_user_*・端末に出すだけ）。L2: permissions の各項の用途。
+USER_PROFILE_PERMISSIONS = {"locale": "pages_user_locale", "timezone": "pages_user_timezone",
+                            "gender": "pages_user_gender"}
 # 台帳の `page_id` の正しい引き方（10/29 段 0・`account add`・`from_account` の断り文で同じ文）。
 PAGE_ID_HINT = ("ページの「基本データ → ページの透明性」に出る「ページID」を書きます"
                 "（ページの URL の profile.php?id= の id は人の画面の id で、API のページ id ではありません）")
@@ -270,10 +292,13 @@ class FacebookAdapter(base.Adapter):
     # `state/<口座>/inbox/` から読む・Meta は呼ばない）。`thth webhook subscribe` で購読してから届く。
     # 計画 Meta 全部盛り M3: `embed`（oEmbed）・`public_search`（ページの検索）・`profile_lookup`（他のページの
     # 公開の数）。どれも読むだけで、答えは画面に出すだけ（保存しない）。
+    # 計画 Meta 全部盛り M4（書く最小の口・`thth/meta_write.py`）: `page_cta`（行動ボタンを読む・消す）・
+    # `live_video`（ライブ配信の宛先を作る・終える）・`direct_messages`（Messenger の受信箱を読む・24 時間の窓の
+    # 中で返す・コメントへの非公開の返事）。本文は端末に出すだけで保存しない。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
                                          "account_insights", "carousel", "edit_post", "hide_reply",
                                          "quota", "inbox", "mentions", "embed", "public_search",
-                                         "profile_lookup"})
+                                         "profile_lookup", "page_cta", "live_video", "direct_messages"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",
@@ -308,6 +333,13 @@ class FacebookAdapter(base.Adapter):
     APPSECRET_PROOF_KEY = "facebook_appsecret_proof"
     # Meta の共通層（`thth/meta/`）に乗る印。timer が量の制限の待ちを見る（`core._meta_rate_limit_wait`）。
     META_GRAPH = True
+    # 計画 Meta 全部盛り M4。受信箱の `platform`・送る口の権限・本文の上限（Messenger は 2000 字【推・L3】）。
+    MESSAGING_PLATFORM = "messenger"
+    MESSAGING_PERMISSION = "pages_messaging"
+    DM_TEXT_LIMIT = ("chars", 2000)
+    # コメントの作られた時刻の欄と、それを読む権限（非公開の返事の 7 日の判定）。
+    COMMENT_TIME_FIELD = "created_time"
+    COMMENT_READ_PERMISSION = "pages_read_user_content"
 
     prepared_media_supported = True
 
@@ -663,6 +695,188 @@ class FacebookAdapter(base.Adapter):
         self._write("DELETE", f"/{value}", "コメントの削除",
                     permission=self.MODERATE_PERMISSIONS[0])
         return {"deleted": True, "comment_id": value}
+
+    # ----- 計画 Meta 全部盛り M4: 書く最小の口（呼ぶのは `thth/meta_write.py` だけ） -----------------
+
+    def _post_object(self, path: str, what: str, *, permission: str, form: dict, expect: tuple) -> dict:
+        """POST して object を返す（`success` でなく id を返す口）。**1 回だけ・再試行しない**。
+
+        24 時間の窓の外の断り（code 10・subcode 2018278）は権限の不足に化けさせない（`messaging_window_closed`）。
+        """
+        try:
+            body = self._request("POST", path, form=form, timeout=PUBLISH_TIMEOUT_SECONDS)
+        except urllib.error.HTTPError as e:
+            err = graph_error(e)
+            message = self._scrub(err.get("message") or e.reason or "")[:170]
+            if err.get("error_subcode") in WINDOW_CLOSED_SUBCODES:
+                raise AdapterError(f"messaging_window_closed: {what}: Meta が窓の外と答えました（HTTP {e.code} {message}）",
+                                   failure="definite", http_status=e.code, code=err.get("code")) from None
+            if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
+                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
+            raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
+                               failure="definite" if e.code < 500 else "ambiguous",
+                               http_status=e.code, code=err.get("code")) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise AdapterError(f"{what}: {self._scrub(e)}（済んだかは分かりません）", failure="ambiguous") from None
+        if not isinstance(body, dict) or not all(isinstance(body.get(k), str) and body[k] for k in expect):
+            raise AdapterError(f"{what}: 応答に {'・'.join(expect)} がありません（済んだとは言えません）",
+                               failure="ambiguous")
+        return body
+
+    def _self_ids(self) -> set:
+        return {self.page_id} - {""}
+
+    def page_cta(self) -> list:
+        """ページの行動ボタンの一覧（`GET /{page-id}/call_to_actions`・読むだけ）。"""
+        # 読むのに要るのはページの役割の鍵（ログインの権限は要らない・L2）。権限の断りは名指ししない。
+        body = self._get(f"/{self.page_id}/call_to_actions", "行動ボタン", params={"fields": CTA_FIELDS})
+        return [{key: str(row[key]) for key in CTA_FIELDS.split(",") if isinstance(row.get(key), (str, int))}
+                for row in self._rows(body, "行動ボタン")]
+
+    def delete_page_cta(self, cta_id: str) -> dict:
+        """行動ボタンを 1 つ消す（`DELETE /{cta-id}`・pages_manage_cta）。"""
+        value = str(cta_id or "").strip()
+        if not PAGE_ID.fullmatch(value):
+            raise AdapterError("行動ボタンの削除: id は数字です", failure="definite")
+        self._write("DELETE", f"/{value}", "行動ボタンの削除", permission=CTA_PERMISSION)
+        return {"deleted": True, "cta_id": value}
+
+    def live_create(self, title: str, description: str = "") -> dict:
+        """ライブ配信を作り、配信の宛先を返す（`POST /{page-id}/live_videos`・status=LIVE_NOW）。
+
+        宛先（`secure_stream_url`）は配信の鍵を含むので、呼び手は画面に出すだけで残さない。
+        """
+        form = {"status": "LIVE_NOW", "title": title}
+        if description:
+            form["description"] = description
+        body = self._post_object(f"/{self.page_id}/live_videos", "ライブの作成", permission=LIVE_PERMISSION,
+                                 form=form, expect=("id",))
+        out = {"id": body["id"]}
+        for key in ("stream_url", "secure_stream_url"):
+            if isinstance(body.get(key), str):
+                out[key] = body[key]
+        return out
+
+    def live_status(self, live_id: str) -> dict:
+        """ライブ 1 本の状態（終える前に人に見せる・このページの物かを確かめる）。"""
+        value = str(live_id or "").strip()
+        if not PAGE_ID.fullmatch(value):
+            raise AdapterError("ライブの確認: id は数字です")
+        body = self._get(f"/{value}", "ライブの確認", params={"fields": LIVE_FIELDS}, permission=LIVE_PERMISSION)
+        owner = body.get("from") if isinstance(body.get("from"), dict) else {}
+        return {"id": str(body.get("id") or value), "status": body.get("status") if isinstance(body.get("status"), str) else None,
+                "title": body.get("title") if isinstance(body.get("title"), str) else None,
+                "owner": str(owner.get("id")) if owner.get("id") else None}
+
+    def live_end(self, live_id: str) -> dict:
+        """ライブを終える（`POST /{live-video-id}?end_live_video=true`）。録画は動画として残る（L2）。"""
+        value = str(live_id or "").strip()
+        if not PAGE_ID.fullmatch(value):
+            raise AdapterError("ライブの終了: id は数字です", failure="definite")
+        self._post_object(f"/{value}", "ライブの終了", permission=LIVE_PERMISSION,
+                          form={"end_live_video": "true"}, expect=("id",))
+        return {"ended": True, "id": value}
+
+    @staticmethod
+    def _who(node) -> dict:
+        node = node if isinstance(node, dict) else {}
+        name = node.get("name") if isinstance(node.get("name"), str) else node.get("username")
+        return {"id": str(node.get("id") or ""), "name": name if isinstance(name, str) else None}
+
+    def dm_conversations(self, *, limit: int = CONVERSATIONS_MAX) -> list:
+        """受信箱の会話の一覧（`GET /{page-id}/conversations?platform=…`）。本文は頼まない。"""
+        body = self._get(f"/{self.page_id}/conversations", "受信箱",
+                         params={"platform": self.MESSAGING_PLATFORM, "fields": "id,updated_time,participants",
+                                 "limit": str(max(1, min(int(limit), CONVERSATIONS_MAX)))},
+                         permission=self.MESSAGING_PERMISSION)
+        out = []
+        for row in self._rows(body, "受信箱"):
+            people = row.get("participants") if isinstance(row.get("participants"), dict) else {}
+            others = [self._who(p) for p in (people.get("data") or []) if isinstance(p, dict)]
+            out.append({"id": str(row.get("id") or ""), "updated_time": row.get("updated_time"),
+                        "with": [p for p in others if p["id"] and p["id"] not in self._self_ids()]})
+        return out
+
+    def dm_messages(self, conversation_id: str) -> dict:
+        """会話の直近の通（`GET /{conversation-id}?fields=messages{…}`）。**本文は呼び手が画面に出すだけ。**"""
+        value = str(conversation_id or "").strip()
+        if not CONVERSATION_ID.fullmatch(value):
+            raise AdapterError("会話の読み: 会話の id の形が違います（thth dm list に出る id）")
+        fields = (f"id,participants,messages.limit({CONVERSATION_MESSAGES_MAX})"
+                  "{id,created_time,from,message}")
+        body = self._get(f"/{value}", "会話の読み", params={"fields": fields}, permission=self.MESSAGING_PERMISSION)
+        people = body.get("participants") if isinstance(body.get("participants"), dict) else {}
+        others = [self._who(p) for p in (people.get("data") or []) if isinstance(p, dict)]
+        node = body.get("messages") if isinstance(body.get("messages"), dict) else {}
+        rows = node.get("data") if isinstance(node.get("data"), list) else None
+        if rows is None:
+            raise AdapterError("会話の読み: 応答に messages の配列がありません（0 通とは区別できません）")
+        messages = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sender = self._who(row.get("from"))
+            messages.append({"id": str(row.get("id") or ""), "created_time": row.get("created_time"),
+                             "from": sender, "inbound": bool(sender["id"]) and sender["id"] not in self._self_ids(),
+                             "text": row.get("message") if isinstance(row.get("message"), str) else ""})
+        return {"id": value, "with": [p for p in others if p["id"] and p["id"] not in self._self_ids()],
+                "messages": messages}
+
+    def dm_send(self, recipient_id: str, text: str, *, tag: str | None = None) -> dict:
+        """1 通送る（`POST /{page-id}/messages`）。窓の中は `RESPONSE`、人の 7 日は `MESSAGE_TAG`＋`HUMAN_AGENT`。"""
+        value = str(recipient_id or "").strip()
+        if not SCOPED_USER_ID.fullmatch(value):
+            raise AdapterError("メッセージの送信: 相手の id の形が違います", failure="definite")
+        form = {"recipient": json.dumps({"id": value}), "message": json.dumps({"text": text}, ensure_ascii=False),
+                "messaging_type": "MESSAGE_TAG" if tag else "RESPONSE"}
+        if tag:
+            form["tag"] = tag
+        body = self._post_object(f"/{self.page_id}/messages", "メッセージの送信",
+                                 permission=self.MESSAGING_PERMISSION, form=form, expect=("message_id",))
+        return {"message_id": body["message_id"]}
+
+    def private_reply(self, comment_id: str, text: str) -> dict:
+        """コメントへの非公開の返事（`recipient={comment_id}`・7 日の内・1 コメントに 1 通・L2: private-replies）。"""
+        value = str(comment_id or "").strip()
+        if not self._comment_id_ok(value):
+            raise AdapterError("非公開の返事: コメントの id の形が違います", failure="definite")
+        form = {"recipient": json.dumps({"comment_id": value}),
+                "message": json.dumps({"text": text}, ensure_ascii=False)}
+        body = self._post_object(f"/{self.page_id}/messages", "非公開の返事",
+                                 permission=self.MESSAGING_PERMISSION, form=form, expect=("message_id",))
+        return {"message_id": body["message_id"]}
+
+    @staticmethod
+    def _comment_id_ok(value: str) -> bool:
+        return bool(OBJECT_ID.fullmatch(value))
+
+    def comment_created(self, comment_id: str) -> datetime.datetime:
+        """コメントの作られた時刻（非公開の返事の 7 日の判定・読むだけ）。読めなければ失敗として上げる。"""
+        value = str(comment_id or "").strip()
+        if not self._comment_id_ok(value):
+            raise AdapterError("コメントの時刻: コメントの id の形が違います")
+        body = self._get(f"/{value}", "コメントの時刻", params={"fields": f"id,{self.COMMENT_TIME_FIELD}"},
+                         permission=self.COMMENT_READ_PERMISSION)
+        at = _parse_time(body.get(self.COMMENT_TIME_FIELD))
+        if at is None:
+            raise AdapterError("コメントの時刻: 応答に時刻がありません（7 日の内かを言えません）")
+        return at
+
+    def dm_profile(self, user_id: str) -> dict:
+        """相手の言語・時間帯・性別（pages_user_*・1 欄ずつ頼む・**端末に出すだけ**）。権限が無い欄は None。"""
+        value = str(user_id or "").strip()
+        if not SCOPED_USER_ID.fullmatch(value):
+            raise AdapterError("相手の属性: 相手の id の形が違います")
+        out = {}
+        for field, permission in USER_PROFILE_PERMISSIONS.items():
+            try:
+                body = self._get(f"/{value}", "相手の属性", params={"fields": field}, permission=permission)
+            except base.PermissionMissing:
+                out[field] = None
+                continue
+            found = body.get(field)
+            out[field] = found if isinstance(found, (str, int, float)) and not isinstance(found, bool) else None
+        return out
 
     # ----- Webhook（段 6） ---------------------------------------------------
 

@@ -322,7 +322,7 @@ def compute_bundle_digest(approved_shas: list, length: int = APPROVE_DIGEST_LENG
 
 def compute_send_digest(*, text: str, account: str, reply_to: str | None,
                          topic: str | None, length: int = 12, media_sources=None, media_manifest=None,
-                         community_id: str | None = None) -> str:
+                         community_id: str | None = None, share_to_instagram: bool = False) -> str:
     """`thth send` の dry-run が出す短い digest（外部レビュー §1b・受け入れ 6）。
 
     `compute_approved_sha()` と同じ正規化（本文＋account＋reply_to＋topic）だが、
@@ -348,6 +348,9 @@ def compute_send_digest(*, text: str, account: str, reply_to: str | None,
     # 3.19.0: X のコミュニティ。値があるときだけ足す（無ければ digest は今までと同じ）。
     if community_id is not None and str(community_id).strip():
         parts.append("community_id=" + str(community_id).strip())
+    # 計画 Meta 全部盛り M4: ストーリーズへの共有。真のときだけ足す（無ければ digest は今までと同じ）。
+    if share_to_instagram is True:
+        parts.append("share_to_instagram=true")
     joined = _SEP.join(parts)
     full = hashlib.sha256(joined.encode("utf-8")).hexdigest()
     return full[:length]

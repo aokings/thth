@@ -96,8 +96,13 @@ UPCOMING_PERMISSION = "instagram_manage_upcoming_events"
 
 UNSUPPORTED = {
     "repost": "Instagram に再投稿の口はありません",
-    "like": "THTH の instagram の口はまだいいねを扱いません（段 3 の後半）",
 }
+# 計画 Meta 全部盛り M4: いいね（instagram_manage_engagement の原文「Publish or delete a "Like" on IG Media
+# objects」【一次 11/05・permissions】）。口の path は公式の参照に見つからず、`POST|DELETE /{ig-media-id}/likes`
+# は見立て【推・本物で確かめる】。
+LIKE_PERMISSION = "instagram_manage_engagement"
+# IG の DM は本文 1,000 バイト未満（L2: instagram-messaging send-message「under 1,000 bytes」）。
+DM_TEXT_BYTES = 1000
 
 
 def _number(value):
@@ -146,10 +151,18 @@ class InstagramAdapter(fb.FacebookAdapter):
     # `quota`（1 日の公開の上限と使用量）。`edit_post` は持たない（キャプションを直す口が公式に無い・L3）。
     # 計画 Meta 全部盛り M3: `embed`（oEmbed）・`public_search`（ハッシュタグ）・`profile_lookup`（他のプロ口座の
     # 公開の数）・`upcoming_events`（自分の予定）。どれも読むだけで、答えは画面に出すだけ（保存しない）。
+    # 計画 Meta 全部盛り M4: `like`（`thth like`・1 段・戻せる）・`direct_messages`（`thth dm`・IG の受信箱）。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "account_insights",
                                          "carousel", "hide_reply", "comment_control", "quota", "embed",
-                                         "public_search", "profile_lookup", "upcoming_events"})
+                                         "public_search", "profile_lookup", "upcoming_events", "like",
+                                         "direct_messages"})
     UNSUPPORTED_REACTIONS = UNSUPPORTED
+    REACTION_PERMISSIONS = {"like": LIKE_PERMISSION}
+    MESSAGING_PLATFORM = "instagram"
+    MESSAGING_PERMISSION = "instagram_manage_messages"
+    DM_TEXT_LIMIT = ("bytes", DM_TEXT_BYTES)
+    COMMENT_TIME_FIELD = "timestamp"
+    COMMENT_READ_PERMISSION = "instagram_manage_comments"
     TOKEN_KEYS = ("access_token",)
     TOKEN_SETUP_HINT = "thth auth"
     POST_ID_FORM_HINT = "Instagram の post_id は数字です（例 17895695668004550）。"
@@ -665,6 +678,37 @@ class InstagramAdapter(fb.FacebookAdapter):
                          params={"fields": UPCOMING_FIELDS}, permission=UPCOMING_PERMISSION)
         return [{key: row[key] for key in UPCOMING_FIELDS.split(",") if isinstance(row.get(key), str)}
                 for row in self._rows(body, "予定")]
+
+    # ----- 計画 Meta 全部盛り M4（書く最小の口） ----------------------------
+
+    def _self_ids(self) -> set:
+        # IG の会話の参加者は IG の口座の id で返る。親のページの id も自分として数える。
+        return {self.ig_user_id, self.page_id} - {""}
+
+    @staticmethod
+    def _comment_id_ok(value: str) -> bool:
+        return bool(IG_ID.fullmatch(value))
+
+    def _media_id(self, post_id: str, what: str) -> str:
+        value = str(post_id or "").strip()
+        if not IG_ID.fullmatch(value):
+            raise fb.AdapterError(f"{what}: " + self.POST_ID_FORM_HINT, failure="definite")
+        return value
+
+    def like(self, post_id: str) -> dict:
+        """いいねを 1 回（`POST /{ig-media-id}/likes`【推】・再試行しない）。記録の id は投稿の id。"""
+        value = self._media_id(post_id, "いいね")
+        self._write("POST", f"/{value}/likes", "いいね", permission=LIKE_PERMISSION)
+        return {"reaction_id": value}
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        """いいねを取り消す（`DELETE /{ig-media-id}/likes`【推】）。"""
+        value = self._media_id(post_id or reaction_id, "いいねの取り消し")
+        self._write("DELETE", f"/{value}/likes", "いいねの取り消し", permission=LIKE_PERMISSION)
+        return {"undone": True}
+
+    def dm_profile(self, user_id: str) -> dict:
+        raise fb.AdapterError("相手の属性: pages_user_* は Messenger（Facebook ページ）の権限です。Instagram には使いません")
 
     # ----- 素性・検査 ------------------------------------------------------
 
