@@ -81,7 +81,7 @@ def owners(credentials_path) -> dict:
             continue
         if accounts.is_invite_account(cfg) and relay.PERSON.fullmatch(name):
             out.setdefault(name, {})[name] = cfg.get("project")
-    # 広告の招待の口座は資格情報の行を持たない（`invites._try_credential`）。台帳から持ち主を引く。
+    # 広告の口座は `accounts/` に台帳が無いので、持ち主は広告の台帳（`adaccounts/`）から引く。
     from .ads import ledger as ads_ledger
     for name in ads_ledger.list_names():
         try:

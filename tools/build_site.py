@@ -516,7 +516,9 @@ def build_privacy() -> str:
         "minutes, does not log request or result contents, and holds only the hash, account and expiry of each "
         "key. The operator's server verifies the key again before acting. Direct message text and names and a "
         "live video's streaming destination pass this path only within those limits; the operator's server does "
-        "not write them to its request records or logs.</p>")
+        "not write them to its request records or logs. Requests for a Meta ad account, including reading lead "
+        "form answers, use the same path; the operator's server does not write lead answers, form names, product "
+        "details or audience targeting to its request records or logs.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
@@ -850,7 +852,10 @@ def build_privacy() -> str:
         "は、API キーを使って <code>https://thth.me/api/v1</code> からアカウントを動かします。thth.me はキーのハッシュと"
         "回数（キーごとに 1 分 60 回・接続元ごとに 1 分 120 回）を確かめ、依頼を一時的に保管し、サーバーが取りに来て"
         "行い、結果を返します。thth.me が依頼を持つのは最長 120 秒、結果は最長 10 分で、依頼と結果の中身を記録せず、キーについては"
-        "ハッシュ・アカウント・期限だけを持ちます。運営者のサーバーは行う前にキーをもう一度確かめます。</p>")
+        "ハッシュ・アカウント・期限だけを持ちます。運営者のサーバーは行う前にキーをもう一度確かめます。ダイレクトメッセージの本文と"
+        "名前、ライブ動画の配信先は、この範囲でだけこの経路を通り、運営者のサーバーは依頼の記録やログに書きません。Meta の広告"
+        "アカウントへの依頼（リード獲得フォームの回答を読むことを含む）も同じ経路を通り、運営者のサーバーはリードの回答・フォーム名・"
+        "商品の中身・広告の対象の条件を依頼の記録やログに書きません。</p>")
 
     add("<h2>認可コードの一時保管（Cloudflare）</h2>")
     add("<p>認可コードの一時保管には Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"

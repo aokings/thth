@@ -117,6 +117,8 @@ def current(context, account, *, write=False, kind=accounts.ACCOUNT_KIND):
         from .ads import ledger as ads_ledger
         cfg = dict(ads_ledger.load(account), media=ads_ledger.MEDIA)
     else:
+        # 口座の口は広告の台帳の名前を通さない（`load_account` が落ちる副作用に頼らず、ここで明示に断る）。
+        if accounts.ledger_kind(account) not in (None, kind): error('scope_unavailable')
         cfg = accounts.load_account(account)
     if cfg.get('project') != context.allowed_accounts[account]: error('scope_unavailable')
     return cfg

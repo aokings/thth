@@ -329,7 +329,7 @@ def test_広告の口は口座の台帳の名前には効かず_口座の口は�
     vm["value"]["credentials"][0]["accounts"] = {NAME: PROJECT, "alpha": "alpha"}
     save_config(vm)
     assert vm_call(vm, "ads_show", account="alpha")["error"] == "scope_unavailable"
-    assert vm_call(vm, "doctor")["error"] in ("read_unavailable", "scope_unavailable")
+    assert vm_call(vm, "doctor")["error"] == "scope_unavailable"
     assert vm_call(vm, "posts")["error"] not in (None, "")
 
 
