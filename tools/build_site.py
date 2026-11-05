@@ -513,7 +513,9 @@ def build_privacy() -> str:
         "per minute per address), holds the request for the operator's server, which fetches it and carries it out, "
         "and returns the result. thth.me keeps a request for at most 120 seconds and its result for at most 10 "
         "minutes, does not log request or result contents, and holds only the hash, account and expiry of each "
-        "key. The operator's server verifies the key again before acting.</p>")
+        "key. The operator's server verifies the key again before acting. Direct message text and names and a "
+        "live video's streaming destination pass this path only within those limits; the operator's server does "
+        "not write them to its request records or logs.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "

@@ -65,8 +65,10 @@ UNCONFIRMED_REASONS = frozenset(('inflight',))
 from .server_reads import REASONS as READ_REASONS
 # 4.0 S5 §5.3: 衝突を見る・解く（`hatena_conflict.REASONS`・手元の `thth conflict` と同じ符丁）。
 from .hatena_conflict import REASONS as CONFLICT_REASONS
+# 計画 Meta 全部盛り: 遠くの道の Meta の口（`thth/server_meta.py`・手元の `thth dm` などと同じ符丁）。
+from .server_meta import REASONS as META_REASONS
 SAFE_ERRORS = (SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
-               | READ_REASONS | INFLIGHT_REASONS | CONFLICT_REASONS)
+               | READ_REASONS | INFLIGHT_REASONS | CONFLICT_REASONS | META_REASONS)
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
@@ -729,6 +731,9 @@ def serve(context, request, *, via):
     if operation in ('settings','account_status'):
         from . import account_settings
         return (account_settings.mcp_settings if operation=='settings' else account_settings.mcp_status)(context,request)
+    # 計画 Meta 全部盛り: doctor・dm・live・page cta・like・edit・reply hide（MCP には出さない・`WRITE_OPERATIONS` の外）。
+    from . import server_meta
+    if operation in server_meta.OPERATIONS: return server_meta.execute(context,request)
     error('unsupported_operation')
 
 

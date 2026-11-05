@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 _C = ("cli",)
+_CR = ("cli", "remote")  # 手元の口と遠くの道（`thth/server_meta.py`）の両方で出る
 
 _REPORT = "続くなら開発のセッションへ thth report file で知らせてください。"
 
@@ -790,7 +791,7 @@ ENTRIES = {
         "fix": "相手からもう一度メッセージが届くのを待って、届いてから 24 時間の内に返してください。人の担当者が返すなら 7 日の内は --human-agent で送れます",
         "command": "thth dm list <口座>",
         "better": "thth dm read が返せる窓の締め切りを出すので、届いた日のうちに返すと窓を逃しません",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "private_reply_window_closed": {
@@ -798,7 +799,7 @@ ENTRIES = {
         "why": "コメントへの非公開の返事は、コメントから 7 日の内に 1 通だけ送れる決まりで、その 7 日を過ぎています。",
         "fix": "コメントには公開の返事で答えてください（thth send <口座> --reply-to <コメントの id>）",
         "better": "コメントの通知（thth replies）を毎日見ると、非公開の返事が要る問い合わせに 7 日の内に気づけます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "dm_text_invalid": {
@@ -806,7 +807,7 @@ ENTRIES = {
         "why": "送る本文が空か、制御文字を含むか、媒体の上限（Messenger は 2,000 字・Instagram は 1,000 バイト未満）を越えています。",
         "fix": "本文を直して --text か --text-file で渡し、一段目からやり直してください（THTH は切り詰めずに断ります）",
         "better": "長い説明はページの投稿か URL にして、メッセージには要点と URL を書くと読まれやすくなります",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "dm_recipient_unknown": {
@@ -815,7 +816,7 @@ ENTRIES = {
         "fix": "thth dm list に出る会話の id を 1 つだけ渡すか、--comment にコメントの id を 1 つ渡してください",
         "command": "thth dm list <口座>",
         "better": "thth dm read で相手と窓を確かめてから send を打つと、一段目で迷いません",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_unsupported": {
@@ -824,7 +825,7 @@ ENTRIES = {
         "fix": "対応する媒体の口座の名前で打ち直してください（口座の媒体は thth account <口座> に出ます）",
         "command": "thth account <口座>",
         "better": "同じ project の Facebook と Instagram の口座を並べておくと、どちらの受信箱も同じ命令で読めます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_permission_missing": {
@@ -833,7 +834,7 @@ ENTRIES = {
         "fix": "口座の持ち主が `thth auth <口座> --by <名前>` で認可し直してください（構成に権限を足したあとは認可し直すと乗ります）",
         "command": "thth auth <口座> --by <名前>",
         "better": "thth doctor <口座> で足りない権限を先に見ておくと、録画の日に止まりません",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_digest_mismatch": {
@@ -841,7 +842,7 @@ ENTRIES = {
         "why": "一段目で見せた中身と、二段目の直前に読み直した中身（本文・相手・窓の判定・行動ボタン・ライブの状態）が違います。",
         "fix": "--confirm を外して一段目を打ち直し、新しい digest で二段目を打ってください",
         "better": "一段目と二段目を続けて打つと、窓の判定や状態が変わる前に済ませられます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_refused": {
@@ -849,7 +850,7 @@ ENTRIES = {
         "why": "Meta がその書き込みか、その前の読みを断りました。媒体の側は何も変わっていません。",
         "fix": "1 行目の Meta の文を読み、id か状態を直してから一段目からやり直してください。" + _REPORT,
         "better": "thth doctor <口座> で鍵と権限の状態を先に見ておくと、断りの理由を早く絞れます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_unknown": {
@@ -857,7 +858,7 @@ ENTRIES = {
         "why": "Meta の答えが時間切れか 5xx で、書き込みが済んだかどうか分かりません。THTH は打ち直していません。",
         "fix": "媒体の画面（ページ・受信箱・ライブの一覧）で済んだかを確かめ、済んでいなければ一段目からやり直してください",
         "better": "結果の分からない書き込みは打ち直す前に画面で確かめると、同じメッセージを 2 通送らずに済みます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "meta_write_busy": {
@@ -865,7 +866,7 @@ ENTRIES = {
         "why": "同じ口座で別の実行が走っていて、口座のロックが空いていません。",
         "fix": "少し置いて打ち直すか、--wait <秒> を付けて空くのを待ってください",
         "better": "timer の実行の合間（thth board に出る次の時刻の前）に打つと、待たずに済みます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "page_cta_not_found": {
@@ -874,7 +875,7 @@ ENTRIES = {
         "fix": "thth page cta show に出る id を選び直してください",
         "command": "thth page cta show <口座>",
         "better": "消す前に show で種類と行き先を確かめると、別のボタンを消さずに済みます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "live_title_invalid": {
@@ -882,7 +883,7 @@ ENTRIES = {
         "why": "ライブの題が空か、制御文字を含むか、長すぎます（題は 255 字・説明は 2,000 字まで）。",
         "fix": "--title に 1 行の題を付けて一段目から打ち直してください",
         "better": "題に何を配信するかを短く書くと、ページで見た人が入りやすくなります",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.12.6",
     },
     "live_not_this_page": {
@@ -890,7 +891,17 @@ ENTRIES = {
         "why": "その id のライブは、この口座のページのライブではありません。",
         "fix": "thth live create が返した id を、同じページの口座の名前で渡してください",
         "better": "作ったときに出る「終えるとき」の命令をそのまま写すと、口座と id を取り違えません",
-        "doors": _C,
+        "doors": _CR,
+        "since": "5.12.6",
+    },
+    # 遠くの道の Meta の口（`thth/server_meta.py`）: 手元の口が自由文で断ったもの（edit・reply・反応の一部）。
+    "remote_command_refused": {
+        "kind": "refusal",
+        "why": "VM の THTH が、その命令を手元の道と同じ検査で断りました（理由は 1 行目の文です）。",
+        "fix": ("1 行目の文のとおりに引数か状態を直して、同じ命令を打ち直してください（済んだかどうか分からないと"
+                "書いてあれば、打ち直す前に媒体の画面で確かめてください）"),
+        "better": "書く命令は一段目の表示を読んでから二段目を打つと、断られる前に食い違いに気づけます",
+        "doors": ("remote",),
         "since": "5.12.6",
     },
     "page_mention_invalid": {

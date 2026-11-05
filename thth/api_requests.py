@@ -14,6 +14,8 @@ VM に外から入る口は作らない。
 二重に行わない: 依頼ごとに `state/<口座>/requests/<id>.json`（0600・置き場 0700）を先に置き（`running`）、
 行ったら `done` と結果を書く。sync が落ちても同じ依頼をもう一度行わない（結果を送り直すだけ）。
 `running` のまま残っていた依頼（途中で落ちた）は `outcome_unknown` と答える。本文はここに残さない。
+Meta の口（`server_meta`）の答えの本文・相手・配信の宛先も印には書かず（`for_record`）、この sync で 1 回だけ渡す
+（送り直しの答えはその欄が null で `not_kept` に名前が入る）。
 遠くの道で行ったことは `via: api` と鍵の id（credential_digest の先頭 12 字）で口座の記録に残る。
 """
 from __future__ import annotations
@@ -116,7 +118,7 @@ def _size(value) -> int:
 # --------------------------------------------------------------------------
 
 def _failure(exc) -> dict:
-    from . import server_writes
+    from . import server_meta, server_writes
     code = str(exc)
     if code not in server_writes.SAFE_ERRORS:
         return {"error": "request_failed"}
@@ -128,7 +130,8 @@ def _failure(exc) -> dict:
         out["reason"] = detail
     elif code == "publication_unconfirmed" and detail in server_writes.UNCONFIRMED_REASONS:
         out["reason"] = detail
-    elif code in ("invalid_request", "upstream_unavailable") and isinstance(detail, str) and detail:
+    elif (code in ("invalid_request", "upstream_unavailable") or code in server_meta.REASONS) \
+            and isinstance(detail, str) and detail:
         # 読む口が添えた 1 行（秘密・URL・path は `server_reads.short` で落としてある）。
         from .server_reads import short
         out["reason"] = short(detail)
@@ -192,7 +195,10 @@ def handle(person, item, credentials_path):
                           "status": "running", "delivered": False, "result": None}
                 _write(fd, name, record, new=True)
             # 行っている間は印の lock を持たない（公開は口座の lock を別に取る）。
-            record["result"] = _run(person, item, credentials_path)
+            result = _run(person, item, credentials_path)
+            # 印には本文・相手・配信の宛先を書かない（Meta の口・`server_meta.for_record`）。答えは 1 回だけ渡す。
+            from . import server_meta
+            record["result"] = server_meta.for_record(item["operation"], result)
             record["status"] = "done"
             try:
                 with server_files.lock_at(fd, ".lock"):
@@ -200,7 +206,7 @@ def handle(person, item, credentials_path):
             except Exception:
                 # 行ったあとで印を書けなくても、行った結果は返す（印は running のまま＝二度目は行わない）。
                 pass
-            return _entry(record)
+            return {**_entry(record), "result": result}
     except Exception:
         # 印が置けない（置き場が壊れている）: 行わずに断る。二重に行うよりよい。
         return {"request_id": request_id, "account": account, "status": "done",
