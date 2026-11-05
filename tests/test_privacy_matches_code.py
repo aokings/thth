@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from thth import map_store, map_world, meter, relay
+from thth import map_store, map_world, meta_public, meta_write, meter, permission_watch, relay
+from thth.meta import calls as meta_calls
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -83,7 +84,37 @@ def facts() -> list[tuple[str, str]]:
         ("Meta の通知の保持・日本語", f"最長 {js_const('webhook-object.js', 'RETENTION')} 日"),
         ("命令の控えの保持（meter.KEEP_DAYS）", f"sent nowhere): {meter.KEEP_DAYS} days"),
         ("命令の控えの保持・日本語", f"外へ送りません）: {meter.KEEP_DAYS}日"),
+        # 計画 Meta 全部盛り M6: M3・M4・M5 の数（DM の窓・ハッシュタグの柵・広告の呼び出しの数・権限の不使用）。
+        ("DM の窓（meta_write.WINDOW）",
+         f"within {_hours(meta_write.WINDOW)} hours of the other person's last message"),
+        ("DM の窓・日本語", f"相手の最後の通から {_hours(meta_write.WINDOW)} 時間の内"),
+        ("人の担当者の窓（meta_write.HUMAN_AGENT_WINDOW）",
+         f"human_agent tag, within {meta_write.HUMAN_AGENT_WINDOW.days} days of it"),
+        ("人の担当者の窓・日本語", f"人の担当者が {meta_write.HUMAN_AGENT_WINDOW.days} 日の内に"),
+        ("非公開の返事の窓（meta_write.PRIVATE_REPLY_WINDOW）",
+         f"is sent within {meta_write.PRIVATE_REPLY_WINDOW.days} days of the comment"),
+        ("非公開の返事の窓・日本語", f"コメントから {meta_write.PRIVATE_REPLY_WINDOW.days} 日の内に"),
+        ("IG のハッシュタグの柵（meta_public.HASHTAG_LIMIT・HASHTAG_WINDOW）",
+         f"at most {meta_public.HASHTAG_LIMIT} distinct hashtags in {meta_public.HASHTAG_WINDOW.days} days"),
+        ("IG のハッシュタグの柵・日本語", f"{meta_public.HASHTAG_WINDOW.days} 日で {meta_public.HASHTAG_LIMIT} 種"),
+        ("IG のハッシュタグの控えの保持（meta_public.HASHTAG_WINDOW）",
+         f"the hashtag and the first time only): {meta_public.HASHTAG_WINDOW.days} days"),
+        ("IG のハッシュタグの控えの保持・日本語", f"タグと最初の時刻だけ）: {meta_public.HASHTAG_WINDOW.days} 日"),
+        ("広告の呼び出しの数の保持（meta/calls.KEEP_DAYS）", f"per-day counts for the last {meta_calls.KEEP_DAYS} days"),
+        ("広告の呼び出しの数の保持・日本語", f"日ごとの数を直近 {meta_calls.KEEP_DAYS} 日"),
+        ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
+        ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
+        ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
+        ("権限の不使用の上限・日本語", f"{permission_watch.LIMIT_DAYS} 日使わなかった権限"),
+        ("利用者ごとの期限（permission_watch.USER_LIMIT_DAYS）",
+         f"expire {permission_watch.USER_LIMIT_DAYS} days after the user was last active"),
+        ("利用者ごとの期限・日本語", f"{permission_watch.USER_LIMIT_DAYS} 日のデータアクセスの期限"),
     ]
+
+
+def _hours(delta) -> int:
+    assert delta.total_seconds() % 3600 == 0
+    return int(delta.total_seconds() // 3600)
 
 
 @pytest.mark.parametrize("what,phrase", facts(), ids=[f[0] for f in facts()])
