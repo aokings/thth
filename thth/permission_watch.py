@@ -108,6 +108,10 @@ PERMISSIONS = {
     "catalog_management": _p(ADS, READ),
     "leads_retrieval": _p(ADS, READ),
     "ads_mcp_management": _p(ADS, READ),
+    # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ。
+    "instagram_manage_upcoming_events": _p("instagram", READ, "upcoming_events"),
+    "read_audience_network_insights": _p(ADS, READ),
+    "commerce_account_read_settings": _p(ADS, READ),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -118,7 +122,7 @@ WATCHED_BASE = frozenset({
 # 最小の読みを打てる広告の権限（媒体の口座は各 adapter の `KEEPALIVE_READS`）。
 ADS_KEEPALIVE_READS = frozenset({"ads_read"})
 
-RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", ACTION)
+RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION)
 # 知らせの重さの順（1 口座に 1 行だけ載るので、重いものを載せて残りの数を添える）。
 NOTICE_REFUSALS = ("data_access_expired", "duc_overdue", "permission_unused", "data_access_expiring",
                    "duc_due_soon", "ads_tier_at_risk", "ads_tier_ready")

@@ -100,7 +100,7 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     assert threads_mod.ThreadsAdapter.capabilities() == {
         "topic", "link_preview", "views", "quota", "refresh", "recent_posts",
         "account_insights", "keyword_search", "mentions", "profile_lookup", "inbox",
-        "thread_read", "repost"}   # repost は 3.15.0（いいねは Threads の API に無い）
+        "thread_read", "repost", "embed"}   # repost は 3.15.0（いいねは Threads の API に無い）・embed は M3
 
 
 def test_F3_metrics_ofは新しい形だけを受ける():
