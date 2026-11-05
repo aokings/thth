@@ -4467,7 +4467,9 @@ def cmd_board(args) -> int:
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
             incident_status = row.get("incident_notifications", {})
-            print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured")) else "設定不足")
+            hub_reads = incident_status.get("hub_reads_stuck")
+            print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured"))
+                                 else "宛先なし（止まりは hub が読む）" if hub_reads else "設定不足")
                   + f" / 未完了メール={incident_status.get('mail_pending', '?')} repo={incident_status.get('repo_pending', '?')} outbox={incident_status.get('outbox', '?')}")
             # 最後に送った運用通知（設計 3.3.1 §5）。届いたかどうかを人が受信箱と照合する。
             if incident_status.get("outbox") == "ok":
@@ -4475,7 +4477,9 @@ def cmd_board(args) -> int:
                       + incident_mod.last_sent_line(incident_status.get("last_sent")))
             notification_configured = row.get("notification_configured")
             notification_delivery = row.get("notification_delivery")
-            if notification_configured is False:
+            if hub_reads and notification_delivery not in ("failed", "delivered"):
+                print("  死活通知: なし（止まりは hub が読む）")
+            elif notification_configured is False:
                 print("  死活通知: **未設定**（最後の run は通知を送っていません）")
             elif notification_delivery == "failed":
                 print("  死活通知: **配送失敗**"

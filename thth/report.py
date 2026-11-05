@@ -578,7 +578,8 @@ def board_summary(now=None) -> dict:
                                       if inflight_diagnostic else None),
             "inflight_next_action_code": (inflight_diagnostic.next_action_code
                                            if inflight_diagnostic else None),
-            "notification_configured": (
+            # hub が `stuck` を読むと宣言した環境（5.12.4）は、死活通知が無くても届く道がある。
+            "notification_configured": incident_mod.hub_reads_stuck() or (
                 notification_status.get("endpoint_configured")
                 if notification_status else None),
             "notification_delivery": (

@@ -605,18 +605,21 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
                 log(n)
         return 2
 
-    if not all(incident_mod.readiness(account_cfg).values()):
-        notices.append("停止メール通知が未設定です。thth notifications status/config/test を実行してください（既存の投稿動作は維持）。")
     # **知らせる先が無いことを言う**（設計 3.3.0 A4）。timer に載る account で
     # 死活通知と運用通知のどちらか（または両方）が無ければ静的な符丁で 1 行。
     # 有無だけ・URL も宛先も出さない。rc は変えない（投稿の動作は変わらない）。
+    # hub が読むと宣言した環境（5.12.4）は、メールの未設定も欠けとは言わず、読み手を 1 行で言う。
     from . import notification_route
     route = notification_route.status(account_cfg)
     route_info = {"scheduled": notification_route.scheduled(account_cfg), **route}
     if not route_info["scheduled"]:
         route_info["cannot_say"] = None
+    if not route_info.get("hub") and not all(incident_mod.readiness(account_cfg).values()):
+        notices.append("停止メール通知が未設定です。thth notifications status/config/test を実行してください（既存の投稿動作は維持）。")
     if route_info["cannot_say"]:
         notices.append(notification_route.line(route_info["cannot_say"]))
+    elif route_info.get("hub") and route_info["scheduled"]:
+        notices.append(notification_route.HUB_LINE)
 
     # **台帳は読めた。その中身が雛形のダミーのままなら、名指しで言う**（C10）。
     # rc の意味づけは変えない——ここは「台帳が読めない」（2）でも「トークンが
