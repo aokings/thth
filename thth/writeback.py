@@ -196,12 +196,12 @@ def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     )
 
 
-def _run_git_bytes(repo_dir: str, args: list) -> subprocess.CompletedProcess:
+def _run_git_bytes(repo_dir: str, args: list, *, input: bytes | None = None) -> subprocess.CompletedProcess:
     """`_run_git` のバイト列版（blob をそのまま取り出して比較するため）。"""
     from . import managed_repo
     if managed_repo.account_for(repo_dir) is not None:
-        return managed_repo.run(repo_dir, args, text=False)
-    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True)
+        return managed_repo.run(repo_dir, args, text=False, input=input)
+    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, input=input)
 
 
 def upstream_sha(repo_dir: str) -> str | None:
@@ -480,34 +480,110 @@ def matches_synced_commit(repo_dir: str, path: str, *, tree_sha: str | None, dis
     検査したバイト列と select が実際に見るバイト列が別物になりうるから
     （検査と使用の間に書き換えられる隙間を作らない）。
     """
+    return matches_synced_commit_many(repo_dir, [(path, disk_bytes)], tree_sha=tree_sha)[0]
+
+
+def matches_synced_commit_many(repo_dir: str, items, *, tree_sha: str | None) -> list:
+    """`matches_synced_commit()` の判定を `(path, disk_bytes)` の並びへまとめて行う。
+
+    戻り値は `items` と同じ順の bool の list。判定の中身は 1 本のときと同じで、1 本の口も
+    ここを通る。違うのは blob の読み方だけ（git 2 回で全部読む）——board は原稿 1 本ごとに
+    git を 2 回呼び、原稿が増えるほど遅くなっていた（VM で 90 秒のうち 75 秒）。
+
+    **読んだ blob はこの呼び出しの中の変数にしか置かない。** 呼び出しをまたぐ覚えを
+    持つと、投稿の経路が古い結果を見る口になる。比べるのは毎回 `disk_bytes` そのもの。
+    """
+    items = list(items)
+    verdicts = [False] * len(items)
     if not repo_dir or not os.path.isdir(repo_dir):
-        return False
-    if os.path.islink(path):
-        return False
+        return verdicts
+    live = [i for i, (path, _) in enumerate(items) if not os.path.islink(path)]
+    if not live:
+        return verdicts
 
     top = _run_git(repo_dir, ["rev-parse", "--show-toplevel"])
     if top.returncode != 0 or not top.stdout.strip():
-        return False
+        return verdicts
     toplevel = os.path.realpath(top.stdout.strip())
 
-    real = os.path.realpath(path)
-    rel = os.path.relpath(real, toplevel)
-    if os.path.isabs(rel) or rel == os.pardir or rel.startswith(os.pardir + os.sep):
-        return False
+    rels = {}
+    for i in live:
+        rel = os.path.relpath(os.path.realpath(items[i][0]), toplevel)
+        if not (os.path.isabs(rel) or rel == os.pardir or rel.startswith(os.pardir + os.sep)):
+            rels[i] = rel.replace(os.sep, "/")
 
-    if not tree_sha:
-        return False
-    blob = _run_git_bytes(repo_dir, ["cat-file", "blob", f"{tree_sha}:" + rel.replace(os.sep, "/")])
-    if blob.returncode != 0:
-        return False
-    disk = disk_bytes
-    if disk is None:
-        try:
-            with open(path, "rb") as f:
-                disk = f.read()
-        except OSError:
-            return False
-    return blob.stdout == disk
+    if not tree_sha or not rels:
+        return verdicts
+    blobs = _read_blobs(repo_dir, tree_sha, list(dict.fromkeys(rels.values())))
+    for i, rel in rels.items():
+        blob = blobs.get(rel)
+        if blob is None:
+            continue
+        path, disk = items[i]
+        if disk is None:
+            try:
+                with open(path, "rb") as f:
+                    disk = f.read()
+            except OSError:
+                continue
+        verdicts[i] = blob == disk
+    return verdicts
+
+
+def _read_blobs(repo_dir: str, tree_sha: str, rels: list) -> dict:
+    """`tree_sha` の中の blob を `{rel: バイト列}` で返す。blob でない・無いパスは入らない。
+
+    **読み切れなければ空を返す**（＝全部「確認できない」）。途中までの結果を使わない。
+    `cat-file --batch` は 1 行 1 件の口なので、改行を含むパスだけは 1 本ずつ読む。
+    """
+    blobs = {}
+    batched = []
+    for rel in rels:
+        spec = f"{tree_sha}:{rel}"
+        if "\n" not in spec and "\r" not in spec:
+            batched.append(rel)
+            continue
+        one = _run_git_bytes(repo_dir, ["cat-file", "blob", spec])
+        if one.returncode == 0:
+            blobs[rel] = one.stdout
+    if not batched:
+        return blobs
+    request = b"".join(os.fsencode(f"{tree_sha}:{rel}") + b"\n" for rel in batched)
+    try:
+        out = _run_git_bytes(repo_dir, ["cat-file", "--batch"], input=request)
+    except OSError:
+        return {}
+    answers = _parse_batch(out.stdout, len(batched)) if out.returncode == 0 else None
+    if answers is None:
+        return {}
+    blobs.update((rel, blob) for rel, blob in zip(batched, answers) if blob is not None)
+    return blobs
+
+
+def _parse_batch(stdout: bytes, count: int) -> list | None:
+    """`cat-file --batch` の出力を `count` 件ぶん読む。blob 以外・無いものは None の要素。
+
+    形が崩れている・足りない・余る、なら全体を None にする。
+    """
+    answers = []
+    pos = 0
+    for _ in range(count):
+        end = stdout.find(b"\n", pos)
+        if end < 0:
+            return None
+        header = stdout[pos:end].split(b" ")
+        pos = end + 1
+        if header[-1] in (b"missing", b"ambiguous"):
+            answers.append(None)
+            continue
+        if len(header) != 3 or not header[2].isdigit():
+            return None
+        size = int(header[2])
+        if stdout[pos + size:pos + size + 1] != b"\n":
+            return None
+        answers.append(stdout[pos:pos + size] if header[1] == b"blob" else None)
+        pos += size + 1
+    return answers if pos == len(stdout) else None
 
 
 def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None) -> tuple:

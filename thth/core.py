@@ -96,6 +96,7 @@ def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
     repo_dir = account_cfg["repo_dir"]
     queue_dir = os.path.join(repo_dir, account_cfg["queue_dir"])
     out = []
+    disk = []
     if not os.path.isdir(queue_dir):
         return out
     for name in sorted(os.listdir(queue_dir)):
@@ -109,10 +110,12 @@ def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
         # 同じ事実を見る。
         with open(path, "rb") as f:
             raw = f.read()
-        qf = queuefile.parse_text(raw.decode("utf-8"), path)
-        qf.verified = writeback.matches_synced_commit(
-            repo_dir, path, tree_sha=tree_sha, disk_bytes=raw)
-        out.append(qf)
+        out.append(queuefile.parse_text(raw.decode("utf-8"), path))
+        disk.append((path, raw))
+    # 照合は全部読んでから 1 回で（git の回数を原稿の数に比例させない）。
+    verdicts = writeback.matches_synced_commit_many(repo_dir, disk, tree_sha=tree_sha)
+    for qf, verified in zip(out, verdicts):
+        qf.verified = verified
     return out
 
 

@@ -128,10 +128,10 @@ def private_umask():
     finally: os.umask(previous)
 
 
-def run(repo, arguments, *, text=True, check=True):
+def run(repo, arguments, *, text=True, check=True, input=None):
     if check: validate(repo)
     with private_umask():
-        return subprocess.run(['/usr/bin/git',*CONFIG,'-C',str(repo),*arguments],capture_output=True,text=text,env=environment())
+        return subprocess.run(['/usr/bin/git',*CONFIG,'-C',str(repo),*arguments],capture_output=True,text=text,env=environment(),input=input)
 
 
 def initialize(account, cfg):
