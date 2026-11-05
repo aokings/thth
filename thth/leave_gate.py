@@ -244,7 +244,9 @@ def bind(adapter,cfg):
              # Meta 計画 段 3（10/29）: Instagram の公開の上限を読む・コメント欄の開け閉め・フォロワー数。
              'publishing_limit','set_comments_enabled','followers_count',
              # Meta 計画 段 6（10/29）: Webhook の購読（ページの subscribed_apps）と、受けた記録を読む口。
-             'subscribe_webhooks','subscribed_webhooks','webhook_replies'}
+             'subscribe_webhooks','subscribed_webhooks','webhook_replies',
+             # 計画 Meta 全部盛り 段 M2: Threads の購読の権限の確かめと、通知の本文の読み直し。
+             'require_webhook_scopes','webhook_fill'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

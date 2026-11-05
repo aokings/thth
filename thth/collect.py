@@ -65,6 +65,8 @@ REPLY_MARKS_HOURS = [1, 6, 24, 72, 168]
 # Webhook（Meta 計画 段 6）でコメントが届いている口座の巡回の刻み。届いた分は台帳に写るので、
 # 巡回は取りこぼしの拾い直しだけ（1 日目と 7 日目）。届かなくなれば（`webhook.live` が偽）元の刻みに戻る。
 WEBHOOK_REPLY_MARKS_HOURS = [24, 168]
+# 1 回の採取で、Webhook の行の本文を読み直す上限（`webhook_fill`・読めなかった行は次の採取でまた試す）。
+WEBHOOK_FILL_MAX = 20
 
 def metric_window_days():
     return math.ceil(max(AGE_MARKS_HOURS) * 1.25 / 24)
@@ -628,7 +630,7 @@ def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # **Webhook でコメントが届いている口座は巡回を減らす**（Meta 計画 段 6 の条件 4）。刻みは
     # `WEBHOOK_REPLY_MARKS_HOURS`、会話の続く投稿の取り直しはしない（届いた分は台帳に写る）。
     reply_schedule = REPLY_MARKS_HOURS
-    if getattr(adapter, "WEBHOOK_REPLIES", False):
+    if getattr(adapter, "WEBHOOK_REPLIES", False) and getattr(adapter, "WEBHOOK_SLOWS_POLLING", True):
         try:
             from . import webhook as webhook_mod
             if webhook_mod.live(account_name, now=now):
@@ -889,6 +891,8 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
     `unanswered`・`events` がそのまま読む。重複は返信の id で除く（巡回で同じコメントを採っていても 2 行にしない）。
     **取得の記録（`kind: fetch`）は書かない**——巡回の刻みと「最後に採った時刻」は巡回だけのもの。
     自分の投稿でないものは台帳に写さない（記録は `state/<口座>/inbox/` に残る）。
+    本文の無い行（Threads・Worker は id と時刻だけを積む）は、写す分だけ `webhook_fill` で読み直す。読めなければ
+    写さない（巡回が拾う）。**本文の無い行を台帳に入れない**——入れると巡回が同じ id を既知として飛ばす。
     """
     if not getattr(adapter, "WEBHOOK_REPLIES", False):
         return []
@@ -909,6 +913,8 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
         if isinstance(root, str) and root in mine and _safe_post_id(root):
             by_post.setdefault(root, []).append(row)
     touched = []
+    fill = getattr(adapter, "webhook_fill", None)
+    fills_left = WEBHOOK_FILL_MAX
     for post_id, items in sorted(by_post.items()):
         path = os.path.join(replies_dir, f"{postid_mod.to_filename(post_id)}.ndjson")
         known = {reply_row_id(row) for row in _reply_rows(path)}
@@ -917,6 +923,15 @@ def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: l
             rid = row.get("message_id")
             if not isinstance(rid, str) or not rid or rid in known:
                 continue
+            if "text" not in row:
+                if not callable(fill) or fills_left <= 0:
+                    continue
+                fills_left -= 1
+                try:
+                    row = fill(row)
+                except Exception as e:  # noqa: BLE001 — 消された返信もここに来る。採取の失敗に数えない
+                    log(f"Webhook の返信を読み直せません: {rid}（{redact_mod.redact(str(e))}）")
+                    continue
             known.add(rid)
             fresh.append({**row, "kind": "reply", "post_id": post_id, "collected_at": jst.iso(now)})
         if fresh:

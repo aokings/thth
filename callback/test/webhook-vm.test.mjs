@@ -18,8 +18,8 @@ function crypto(args,input){const result=spawnSync(openssl,args,{input,env:{PATH
 test('real Worker receives a signed Meta delivery and the real VM pulls, routes, acks once',{timeout:60000},async()=>{
   const base=join(cwd,'.test-tmp');await mkdir(base,{recursive:true});const dir=await realpath(await mkdtemp(join(base,'webhook-vm-')));
   const vmHome=await realpath(await mkdtemp(join(tmpdir(),'thth-webhook-vm-')));
-  const home=join(dir,'home'),assets=join(dir,'assets'),key=join(dir,'key'),secret=opaque(),verify=opaque();
-  const hidden=[secret,verify],logs=[];await mkdir(home);await mkdir(join(assets,'webhook'),{recursive:true});
+  const home=join(dir,'home'),assets=join(dir,'assets'),key=join(dir,'key'),secret=opaque(),threadsSecret=opaque(),verify=opaque();
+  const hidden=[secret,threadsSecret,verify],logs=[];await mkdir(home);await mkdir(join(assets,'webhook'),{recursive:true});
   await writeFile(join(assets,'webhook','meta'),'shadow webhook');
   const pem=crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);hidden.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const pub=crypto(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
@@ -27,7 +27,7 @@ test('real Worker receives a signed Meta delivery and the real VM pulls, routes,
   const listener=createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
   const origin='http://127.0.0.1:'+port;
   const child=spawn(process.execPath,['node_modules/wrangler/bin/wrangler.js','dev','--local','--ip','127.0.0.1','--port',String(port),'--inspector-port','0',
-    '--var','RELAY_PUBLIC_KEY:'+pub,'--var','META_APP_SECRET:'+secret,'--var','META_WEBHOOK_VERIFY_TOKEN:'+verify,
+    '--var','RELAY_PUBLIC_KEY:'+pub,'--var','META_APP_SECRET:'+secret,'--var','THREADS_APP_SECRET:'+threadsSecret,'--var','META_WEBHOOK_VERIFY_TOKEN:'+verify,
     '--log-level','none','--persist-to',join(dir,'state'),'--assets',assets,'--env-file',join(dir,'local.env')],
     {cwd,env:{PATH:process.env.PATH,HOME:home,XDG_CONFIG_HOME:home,WRANGLER_SEND_METRICS:'false',CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV:'false'},stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',x=>logs.push(x.toString()));child.stderr.on('data',x=>logs.push(x.toString()));
@@ -40,12 +40,13 @@ test('real Worker receives a signed Meta delivery and the real VM pulls, routes,
     assert.equal(bad.status,403);assert.ok(!(await bad.text()).includes('shadow'));
     const vm=spawnSync(pythonForTests(),['test/webhook-vm.py',key],{cwd,env:{PATH:process.env.PATH,HOME:join(vmHome,'home'),PYTHONPATH:join(cwd,'..'),
       THTH_ROOT:join(dir,'vm'),THTH_ACCOUNTS_DIR:join(dir,'vm/accounts'),THTH_TEST_ALLOW_HTTP:'1',THTH_APPS_DIR:join(vmHome,'apps'),
-      THTH_RELAY_BASE_URL:origin,THTH_APP_ENV_PATH:join(vmHome,'absent.env'),WEBHOOK_TEST_APP_SECRET:secret,PYTHONDONTWRITEBYTECODE:'1'},encoding:'utf8',timeout:30000});
+      THTH_RELAY_BASE_URL:origin,THTH_APP_ENV_PATH:join(vmHome,'absent.env'),WEBHOOK_TEST_APP_SECRET:secret,WEBHOOK_TEST_THREADS_SECRET:threadsSecret,PYTHONDONTWRITEBYTECODE:'1'},encoding:'utf8',timeout:30000});
     assert.equal(vm.status,0,'VM webhook integration failed: '+[...vm.stderr.matchAll(/line (\d+), in ([^\n]+)/g)].map(m=>m[1]+':'+m[2]).join(',')+' '+vm.stderr.trim().split('\n').at(-1)?.split(':')[0]);
     assert.equal(vm.stderr,'');
     // 鍵を 1 文字変えた通知は 403・正しい通知は 200・同じ通知の送り直しも 200（重複として数えるだけ）。
     assert.deepEqual(JSON.parse(vm.stdout),{statuses:[403,200,200],first:{pulled:3,routed:{'kopicha-fb':2},unrouted:{page:1}},
-      second:0,stored:2,mentions:['77_1'],replies:['9001_1'],duplicates:3});
+      second:0,stored:2,mentions:['77_1'],replies:['9001_1'],duplicates:3,
+      threads:{statuses:[403,200],routed:{'kopicha-th':1},rows:[['replies',{id:'17901',timestamp:'2026-11-05T01:00:00+0000',media_type:'TEXT_POST',replied_to:'1789',root_post:'1789'}]],replies:['17901']}});
   }finally{
     if(child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}
     await rm(dir,{recursive:true,force:true});await rm(vmHome,{recursive:true,force:true});

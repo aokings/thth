@@ -261,9 +261,11 @@ def test_購読は今の欄を読んでから足す_外さない_別のアプリ
 def test_IGの購読は親のページのsubscribed_appsにfeedを足す(env):
     result, posted, calls = _subscribe(env, IG_ACCOUNT, existing=[])
     assert [c["path"] for c in calls] == [f"{V}/{PAGE}/subscribed_apps"] * 2
+    # IG の 3 欄はページの欄ではないので Graph に送らない（管理画面で選ぶ）。
     assert posted[0]["subscribed_fields"] == ["feed"]
     sub = webhook.subscriptions()[IG_ACCOUNT]
     assert sub["object"] == "instagram" and sub["entry_id"] == IG and sub["page_id"] == PAGE
+    assert sub["wanted"] == ["feed", "comments", "mentions", "story_insights"] and sub["fields"] == ["feed"]
 
 
 def test_購読の権限が無ければ断り_記録しない(env, capsys):
@@ -277,10 +279,101 @@ def test_購読の権限が無ければ断り_記録しない(env, capsys):
     assert webhook.subscriptions() == {}
 
 
-def test_threadsの口座は購読を断る(env, isolated_account_factory):
-    isolated_account_factory("kopicha-threads")
+def test_通知の口が無い媒体は購読を3つつきで断る(env, isolated_account_factory, capsys):
+    import argparse
+    isolated_account_factory("kopicha-bsky", media="bluesky")
     with pytest.raises(webhook.WebhookError, match="webhook_unsupported_medium"):
-        webhook.subscribe("kopicha-threads", by="masaru")
+        webhook.subscribe("kopicha-bsky", by="masaru")
+    assert webhook.cmd_subscribe(argparse.Namespace(account="kopicha-bsky", by="masaru", json=False)) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("webhook_unsupported_medium: ") and "通すには: " in err and "もっと良く: " in err
+    assert webhook.subscriptions() == {}
+
+
+# ================================================================== Threads（計画 Meta 全部盛り 段 M2）
+
+TH_ACCOUNT, TH_USER = "kopicha-th", "25000000000000001"
+TH_SCOPES = ["threads_basic", "threads_read_replies", "threads_manage_mentions", "threads_delete"]
+
+
+@pytest.fixture
+def th(env, isolated_account_factory, tmp_path):
+    """Threads の口座。`user_id` は `.token` にだけある（本番の台帳と同じ）。"""
+    token = tmp_path / "th.token"
+    token.write_text(json.dumps({"access_token": "tok-" + secrets.token_hex(8), "user_id": TH_USER,
+                                 "scopes": TH_SCOPES, "scopes_source": "response"}))
+    token.chmod(0o600)
+    isolated_account_factory(TH_ACCOUNT, media="threads", token=str(token), user_id="")
+    return {**env, "token": token}
+
+
+def th_reply(n, *, root="1789"):
+    """Worker が積む形（本文と名前は無い・`callback/src/webhook.js` の `kept`）。"""
+    return {"id": f"1790{n}", "timestamp": "2026-10-30T01:00:00+0000", "media_type": "TEXT_POST",
+            "replied_to": root, "root_post": root}
+
+
+def _th_adapter():
+    cfg = accounts.load_account(TH_ACCOUNT)
+    return adapters.make_adapter(cfg, accounts.load_token(cfg))
+
+
+def test_偽の通知でThreadsのrepliesが口座のinboxに落ちる_知らないidは捨てる(th):
+    w = th["worker"]
+    key = w.add("threads", TH_USER, "replies", th_reply(1))
+    w.add("threads", TH_USER, "delete", {"id": "1796", "deleted_at": "t"})
+    w.add("threads", "999", "replies", th_reply(2))
+    result = webhook.pull_once()
+    assert result["routed"] == {TH_ACCOUNT: 2} and result["unrouted"] == {"threads": 1} and w.rows == []
+    rows = webhook.rows_for(TH_ACCOUNT)
+    assert rows[0]["key"] == key and rows[0]["object"] == "threads" and rows[0]["value"]["id"] == "17901"
+    assert webhook.counts_for(TH_ACCOUNT)["by_field"] == {"replies": 1, "delete": 1}
+    # `delete` は記録に残るが、読む口には出さない。
+    assert [m["message_id"] for m in _th_adapter().webhook_replies()] == ["17901"]
+
+
+def test_止めたThreadsの口座の通知は捨てて数える(th):
+    stop(TH_ACCOUNT)
+    th["worker"].add("threads", TH_USER, "replies", th_reply(1))
+    result = webhook.pull_once()
+    assert result["stopped"] == 1 and result["unrouted"] == {}
+
+
+def test_Threadsの購読はMetaに要求を出さず記録する_二度目は足す欄なし(th, capsys):
+    import argparse
+    args = argparse.Namespace(account=TH_ACCOUNT, by="masaru", json=False)
+    with fake_graph({}) as (url, calls):
+        th["monkeypatch"].setenv("THTH_THREADS_BASE_URL", url)
+        assert webhook.cmd_subscribe(args) == 0
+        result = webhook.subscribe(TH_ACCOUNT, by="masaru")
+    assert calls == [], "Threads の購読で媒体を呼んだ"
+    assert "管理画面" in capsys.readouterr().out
+    assert result["added"] == [] and result["fields"] == ["replies", "mentions", "delete", "publish"]
+    sub = webhook.subscriptions()[TH_ACCOUNT]
+    assert sub["object"] == "threads" and sub["entry_id"] == TH_USER and sub["page_id"] == ""
+    rows, _ = admin_log.read(account=TH_ACCOUNT, event="webhook_subscribed")
+    assert rows[0]["diff"]["subscribed_fields"][0] == []
+
+
+@pytest.mark.parametrize("missing", ["threads_read_replies", "threads_manage_mentions", "threads_delete"])
+def test_Threadsの購読は欄の権限が無ければ断り_記録しない(th, capsys, missing):
+    import argparse
+    body = json.loads(th["token"].read_text())
+    body["scopes"] = [s for s in TH_SCOPES if s != missing]
+    th["token"].write_text(json.dumps(body))
+    assert webhook.cmd_subscribe(argparse.Namespace(account=TH_ACCOUNT, by="masaru", json=False)) == 2
+    assert missing in capsys.readouterr().err and webhook.subscriptions() == {}
+
+
+def test_idの無いThreadsの口座は購読を3つつきで断る(th, capsys):
+    import argparse
+    body = json.loads(th["token"].read_text())
+    del body["user_id"]
+    th["token"].write_text(json.dumps(body))
+    assert webhook.cmd_subscribe(argparse.Namespace(account=TH_ACCOUNT, by="masaru", json=False)) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("webhook_account_id_missing: ") and f"thth auth {TH_ACCOUNT}" in err and "もっと良く: " in err
+    assert webhook.subscriptions() == {}
 
 
 # ================================================================== 読む側（inbox・mentions・replies・events）
@@ -358,6 +451,99 @@ def test_collectは自分の投稿へのコメントを返信の台帳に写し_
     assert "mention_received" in kinds and "reply_received" in kinds
 
 
+def _th_collect(monkeypatch, fetch, *, now):
+    adapter = _th_adapter()
+    monkeypatch.setattr(adapter, "fetch_post", fetch, raising=False)
+    monkeypatch.setattr(adapter, "recent_posts", lambda **k: [], raising=False)
+    monkeypatch.setattr(adapter, "mentions", lambda **k: [], raising=False)
+    return _collect(TH_ACCOUNT, adapter, monkeypatch, now=now)
+
+
+def _th_body(post_id):
+    return {"message_id": post_id, "username": "visitor_x", "text": "本文", "timestamp": "2026-10-30T01:00:01+0000",
+            "replied_to": None, "root_post": post_id, "medium": "threads",
+            "author_key": base.author_key("threads", "visitor_x"), "reply_deadline": None,
+            "permalink": "https://www.threads.net/@visitor_x/post/C1"}
+
+
+def test_collectはThreadsの返信の本文を読み直して台帳に写す_二度目は読まない_枝の形は通知の値(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    w = th["worker"]
+    w.add("threads", TH_USER, "replies", th_reply(1))
+    w.add("threads", TH_USER, "replies", th_reply(2, root="1000"))
+    webhook.pull_once()
+    fetched = []
+
+    def fetch(post_id):
+        fetched.append(post_id)
+        return _th_body(post_id)
+    for _ in range(2):
+        _th_collect(monkeypatch, fetch, now=now)
+    assert fetched == ["17901"], "他人の投稿への返信か、台帳に写した返信を読み直した"
+    data = replies.load(TH_ACCOUNT)["replies"]
+    assert [r["reply_id"] for r in data] == ["17901"]
+    assert data[0]["via"] == "webhook" and data[0]["text"] == "本文" and data[0]["post_id"] == "1789"
+    # 読み直した本文は台帳だけ。inbox の記録は id と時刻のまま。
+    assert "本文" not in json.dumps(webhook.rows_for(TH_ACCOUNT), ensure_ascii=False)
+
+
+def test_本文を読み直せない返信は台帳に入れず次の採取で試す(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    th["worker"].add("threads", TH_USER, "replies", th_reply(1))
+    webhook.pull_once()
+
+    def broken(post_id):
+        raise base.AdapterError("投稿の取得: HTTP 404")
+    result, _calls = _th_collect(monkeypatch, broken, now=now)
+    assert replies.load(TH_ACCOUNT)["replies"] == []
+    assert not any("webhook" in e.lower() or "404" in e for e in result["errors"]), "読めない返信を採取の失敗に数えた"
+    _th_collect(monkeypatch, _th_body, now=now)
+    assert [r["reply_id"] for r in replies.load(TH_ACCOUNT)["replies"]] == ["17901"]
+
+
+def test_読み直しは1回の採取で上限まで(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=30)))
+    for n in range(collect.WEBHOOK_FILL_MAX + 5):
+        th["worker"].add("threads", TH_USER, "replies", th_reply(n))
+    webhook.pull_once()
+    fetched = []
+    _th_collect(monkeypatch, lambda p: fetched.append(p) or _th_body(p), now=now)
+    assert len(fetched) == collect.WEBHOOK_FILL_MAX
+
+
+def test_Threadsは通知が届いていても巡回を減らさない(th, monkeypatch):
+    from thth import sent as sent_mod
+    now = jst.parse("2026-10-30T12:00:00+09:00")
+    sent_mod.write(accounts.state_dir_for(TH_ACCOUNT), post_id="1789", text="お知らせ", body_hash="0" * 64,
+                   sent_at=jst.iso(now - datetime.timedelta(hours=7)))
+    webhook.subscribe(TH_ACCOUNT, by="masaru")
+    webhook.pull_once(now=now)
+    assert webhook.live(TH_ACCOUNT, now=now)
+    _result, calls = _th_collect(monkeypatch, _th_body, now=now)
+    assert calls == ["1789"], "Threads の巡回を減らした（1・6 時間の刻みで読むはず）"
+
+
+def test_Threadsのmentionsは通知で聞いた行にviaの印を付ける_inboxも同じ(th):
+    th["worker"].add("threads", TH_USER, "mentions", {"id": "1795", "timestamp": "t"})
+    webhook.pull_once()
+    rows = {"data": [{"id": "1795", "username": "a", "text": "x"}, {"id": "1794", "username": "b", "text": "y"}]}
+    with fake_graph({("GET", f"/v1.0/{TH_USER}/mentions"): (200, rows)}) as (url, _calls):
+        th["monkeypatch"].setenv("THTH_THREADS_BASE_URL", url)
+        adapter = _th_adapter()
+        for got in (adapter.mentions(), adapter.inbox()):
+            assert [(m["message_id"], m.get("via")) for m in got] == [("1795", "webhook"), ("1794", None)]
+            assert "via" not in got[1]
+
+
 def test_Webhookが届いている口座は巡回の刻みを減らし_届かなくなれば戻す(env, monkeypatch):
     from thth import sent as sent_mod
     now = jst.parse("2026-10-30T12:00:00+09:00")
@@ -423,7 +609,8 @@ def test_relayの口はwebhookのpullとackだけ():
 def test_新しい口はleave_gateのbindが包む():
     import inspect
     src = inspect.getsource(leave_gate.bind)
-    for name in ("subscribe_webhooks", "subscribed_webhooks", "webhook_replies", "inbox", "mentions"):
+    for name in ("subscribe_webhooks", "subscribed_webhooks", "webhook_replies", "inbox", "mentions",
+                 "require_webhook_scopes", "webhook_fill"):
         assert f"'{name}'" in src, name
 
 

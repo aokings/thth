@@ -253,6 +253,19 @@ def _run_probe(get, base_url: str, probe: _Probe, token: str) -> dict:
         return row(None, f"{COULD_NOT_VERIFY}（{type(e).__name__}）")
 
 
+def webhook_message(record: dict):
+    """Webhook の 1 変化 → `(種類, 1 行)`。種類は `reply`・`mention`。ほか（`delete`・`publish`）は None
+    （記録には残る）。Worker は本文を積まないので、行は id と時刻と枝の形だけ。"""
+    value = record.get("value") if isinstance(record.get("value"), dict) else None
+    kind = {"replies": "reply", "mentions": "mention"}.get(record.get("field"))
+    if value is None or kind is None or not isinstance(value.get("id"), str) or not value["id"]:
+        return None
+    ref = lambda name: value.get(name) if isinstance(value.get(name), str) else None  # noqa: E731
+    return kind, {"message_id": value["id"], "id": value["id"], "timestamp": ref("timestamp"),
+                  "replied_to": ref("replied_to"), "root_post": ref("root_post"), "medium": MEDIUM,
+                  "reply_deadline": None, "via": "webhook"}
+
+
 class ThreadsAdapter(base.Adapter):
     prepared_media_supported = True
     # 設計 v2 §4.2。`inbox` は持たない（Threads は push 型ではない）。
@@ -279,6 +292,18 @@ class ThreadsAdapter(base.Adapter):
     REACTION_PERMISSIONS = {"repost": "threads_content_publish"}
     REACTION_UNDO_PERMISSIONS = {"repost": "threads_delete"}
     UNSUPPORTED_REACTIONS = {"like": "Threads の API にいいねがありません"}
+
+    # 計画 Meta 全部盛り 段 M2: Webhook の欄に要る権限（資料 threads/webhooks・11/05 に読んだ）。
+    WEBHOOK_SCOPES = {"replies": ("threads_basic", "threads_read_replies"),
+                      "mentions": ("threads_basic", "threads_manage_mentions"),
+                      "delete": ("threads_basic", "threads_delete"),
+                      "publish": ("threads_basic",)}
+    # 返信が Webhook で届く媒体の印（`collect` が台帳に写す）。巡回は減らさない: `webhook.live` は「VM が取り込めて
+    # いる」ことしか言わず、本物の通知が届く証拠にならない。本物で確かめたら True にする。
+    WEBHOOK_REPLIES = True
+    WEBHOOK_SLOWS_POLLING = False
+    # Webhook の記録を読む口座（`from_account` が台帳の名前を入れる）。None なら読まない。
+    webhook_account = None
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
@@ -377,6 +402,10 @@ class ThreadsAdapter(base.Adapter):
             # 「付与済み」として使わないよう読み分ける）。
             scopes_source=token.get("scopes_source"),
         )
+        from .. import accounts as accounts_mod
+        name = (account_cfg or {}).get("account")
+        if name and accounts_mod.name_is_safe(name):
+            adapter.webhook_account = name
         return leave_gate.bind(adapter, account_cfg)
 
     def _post(self, path: str, params: dict) -> dict:
@@ -1635,7 +1664,46 @@ class ThreadsAdapter(base.Adapter):
         rows = self._read(
             lambda: self._all_pages(f"/v1.0/{self.user_id}/mentions", params, "言及"),
             permission="threads_manage_mentions", what="言及の取得")
-        return [self._message_row(r) for r in rows]
+        out = [self._message_row(r) for r in rows]
+        heard = {m["message_id"] for kind, m in self._webhook_messages() if kind == "mention"}
+        for row in out:
+            if row["message_id"] in heard:
+                row["via"] = "webhook"
+        return out
+
+    # ----- Webhook（計画 Meta 全部盛り 段 M2） --------------------------------
+
+    def require_webhook_scopes(self, fields) -> None:
+        """欄に要る権限を確かめる。無いと分かっていれば `PermissionMissing`。**購読の要求は出さない。**
+
+        Threads の欄はアプリの管理画面で選ぶだけで、口座ごとの購読の口が無い（`thth webhook subscribe`）。
+        """
+        for field in fields:
+            for permission in self.WEBHOOK_SCOPES[field]:
+                self._require_scope(permission)
+
+    def _webhook_messages(self) -> list:
+        """`state/<口座>/inbox/` の Webhook の記録を `(種類, 1 行)` に写す。**媒体は呼ばない。**"""
+        if not self.webhook_account:
+            return []
+        from .. import webhook as webhook_mod
+        out = []
+        for record in webhook_mod.rows_for(self.webhook_account):
+            if record.get("object") != "threads" or str(record.get("entry_id")) != str(self.user_id):
+                continue
+            item = webhook_message(record)
+            if item is not None:
+                out.append(item)
+        return out
+
+    def webhook_replies(self) -> list:
+        """自分の投稿に付いた返信（Webhook の `replies`）。本文は無い（`text` の鍵が無い）ので `webhook_fill` で読む。"""
+        return [m for kind, m in self._webhook_messages() if kind == "reply"]
+
+    def webhook_fill(self, row: dict) -> dict:
+        """Webhook の行に本文と相手の名前を足す（`GET /{id}`・`fetch_post`）。枝の形は通知の値を残す。"""
+        body = self.fetch_post(row["message_id"])
+        return {**row, **{k: v for k, v in body.items() if k not in ("replied_to", "root_post")}}
 
     # **L2**（threads-media・2026-09-16 に WebFetch で読解）: `GET /{id}` の
     # field 一覧に `id`・`username`・`text`・`timestamp`・`permalink` はあるが、
