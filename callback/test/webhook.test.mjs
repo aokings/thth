@@ -18,8 +18,8 @@ const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha25
 const logs=[],sensitive=[];
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(value){logs.push(String(value));}}
 let mf,directory,key;
-const APP_SECRET=opaque(),VERIFY=opaque();sensitive.push(APP_SECRET,VERIFY);
-const PAGE='1361492233719922',IG='17841437318552220';
+const APP_SECRET=opaque(),THREADS_SECRET=opaque(),VERIFY=opaque();sensitive.push(APP_SECRET,THREADS_SECRET,VERIFY);
+const PAGE='1361492233719922',IG='17841437318552220',THREADS='25000000000000001';
 const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/openssl';
 function run(args,input){const r=spawnSync(openssl,args,{input,env:{PATH:'/usr/bin:/bin',OPENSSL_CONF:'/dev/null'}});assert.equal(r.status,0,'OpenSSL failed');return r.stdout;}
 before(async()=>{
@@ -30,7 +30,7 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),
-    bindings:{RELAY_PUBLIC_KEY:publicKey,META_APP_SECRET:APP_SECRET,META_WEBHOOK_VERIFY_TOKEN:VERIFY},
+    bindings:{RELAY_PUBLIC_KEY:publicKey,META_APP_SECRET:APP_SECRET,THREADS_APP_SECRET:THREADS_SECRET,META_WEBHOOK_VERIFY_TOKEN:VERIFY},
     durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},PERSON:{className:'Person',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},WEBHOOK_INBOX:{className:'TestWebhook',useSQLite:true}},
     ratelimits:{RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:100000,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:100000,period:60}}}}));
   await mf.ready;
@@ -128,7 +128,69 @@ test('1000 件の束を全部積み・VM は頁を辿って全部受け取り・
   assert.equal((await stats()).pending,0);assert.equal((await rows()).length,0);
 });
 
-test('受ける欄は FB の feed・mention と IG の mentions だけ。IG の comments とほかは数だけ',async()=>{
+const reply=(n,extra={})=>({field:'replies',value:{id:`1790${n}`,username:'visitor_x',text:'本文 '+n,media_type:'TEXT_POST',
+  permalink:`https://www.threads.net/@visitor_x/post/C${n}`,timestamp:'2026-11-05T01:00:00+0000',
+  replied_to:{id:'1789'},root_post:{id:'1789',owner_id:THREADS,username:'kopi_chaba'},...extra}});
+const threads=(changes,time=1793500000)=>({object:'threads',entry:[{id:THREADS,time,changes}]});
+
+test('Threads の通知: 2 つの形を同じ行に積み・鍵を 1 文字変えると 403・重複は弾く',async()=>{
+  const s0=await stats();
+  const bad=await deliver(threads([reply(1)]),{secret:oneOff(THREADS_SECRET)});
+  assert.equal(bad.status,403);assert.equal((await stats()).received,s0.received,'鍵の違う Threads の通知を積んだ');
+  assert.equal((await deliver(threads([reply(1)]),{secret:THREADS_SECRET})).status,200);
+  // 平らな形（object が無い）でも同じ key になる。同じ通知の送り直しは重複。
+  const flat={app_id:'1',topic:'moderate',target_id:THREADS,time:1793500000,subscription_id:'2',has_uid_field:false,values:[reply(1)]};
+  assert.equal((await deliver(flat,{secret:THREADS_SECRET})).status,200);
+  assert.equal((await deliver({...flat,values:reply(2)},{secret:THREADS_SECRET})).status,200);
+  const s=await stats();assert.equal(s.received-s0.received,2);assert.equal(s.duplicates-s0.duplicates,1);
+  const got=await drain();assert.deepEqual(got.map(r=>[r.object,r.entry_id,r.field]),[['threads',THREADS,'replies'],['threads',THREADS,'replies']]);
+  assert.equal(got[0].key,hash(['threads',THREADS,'1793500000','replies','17901',''].join('|')),'key はページの通知と同じ作り');
+  // META の鍵の署名でも通る（どちらの鍵で来るかは本物でしか確かめられない）。
+  assert.equal((await deliver(threads([reply(3)]))).status,200);await drain();
+});
+
+test('Threads の鍵で通るのは Threads の通知だけ。ページと IG の通知は 403 で積まない',async()=>{
+  const s0=await stats();
+  assert.equal((await deliver(feed([comment(40)]),{secret:THREADS_SECRET})).status,403);
+  assert.equal((await deliver({object:'instagram',entry:[{id:IG,time:1,changes:[{field:'mentions',value:{media_id:'1'}}]}]},{secret:THREADS_SECRET})).status,403);
+  assert.equal((await stats()).received,s0.received);
+});
+
+test('足した欄の本文と相手の名前は thth.me に置かない（id と時刻だけ）',async()=>{
+  const body='他人の本文',who='visitor_x';
+  assert.equal((await deliver(threads([reply(5,{text:body}),{field:'mentions',value:{id:'1795',username:who,text:body,permalink:'https://www.threads.net/@'+who,timestamp:'t'}},
+    {field:'delete',value:{id:'1796',deleted_at:'t2',owner:{owner_id:THREADS}}},{field:'publish',value:{id:'1797',text:body,username:'kopi_chaba'}}],1793500100),{secret:THREADS_SECRET})).status,200);
+  assert.equal((await deliver({object:'instagram',entry:[{id:IG,time:1793500101,changes:[
+    {field:'comments',value:{id:'1801',parent_id:'1800',text:body,from:{id:'7',username:who},media:{id:'1799',media_product_type:'FEED'}}},
+    {field:'story_insights',value:{media_id:'1802',impressions:12,reach:9,note:body}}]}]})).status,200);
+  const stored=await rows();assert.equal(stored.length,6);
+  for(const row of stored){assert.ok(!row.value.includes(body),row.field);assert.ok(!row.value.includes(who),row.field);}
+  const value=field=>JSON.parse(stored.find(r=>r.field===field&&r.object!=='page').value);
+  assert.deepEqual(value('replies'),{id:'17905',timestamp:'2026-11-05T01:00:00+0000',media_type:'TEXT_POST',replied_to:'1789',root_post:'1789'});
+  assert.deepEqual(value('delete'),{id:'1796',deleted_at:'t2'});
+  assert.deepEqual(value('comments'),{id:'1801',parent_id:'1800',media:'1799'});
+  assert.deepEqual(value('story_insights'),{media_id:'1802',impressions:12,reach:9});
+  await drain();
+});
+
+test('今の欄の中身は 1 字も変えない（ページの本文・IG の mentions はそのまま積む）',async()=>{
+  const value=comment(50).value;
+  assert.equal((await deliver(feed([{field:'feed',value}]))).status,200);
+  assert.equal((await deliver({object:'instagram',entry:[{id:IG,time:1793500200,changes:[{field:'mentions',value:{media_id:'1799',comment_id:'1800'}}]}]})).status,200);
+  const stored=await drain();
+  assert.equal(stored.find(r=>r.object==='page').value,JSON.stringify(value));
+  assert.equal(stored.find(r=>r.object==='instagram').value,'{"media_id":"1799","comment_id":"1800"}');
+});
+
+test('Threads の形の分からない通知は積まずに数える（id の読めない宛先・知らない欄）',async()=>{
+  const s0=await stats();
+  assert.equal((await deliver({target_id:'abc',time:1,values:[reply(6)]},{secret:THREADS_SECRET})).status,200);
+  assert.equal((await deliver({target_id:THREADS,values:[reply(6)]},{secret:THREADS_SECRET})).status,200);
+  assert.equal((await deliver(threads([{field:'quotes',value:{id:'1'}}]),{secret:THREADS_SECRET})).status,200);
+  const s=await stats();assert.equal(s.received,s0.received);assert.equal(s.dropped-s0.dropped,3);
+});
+
+test('受ける欄の外は数だけ: FB の ratings・messages・IG の live_comments・知らない object',async()=>{
   const s0=await stats();
   const payload={object:'page',entry:[{id:PAGE,time:1793200000,changes:[
     {field:'mention',value:{item:'post',verb:'add',post_id:'77_1',sender_id:'556',sender_name:'言及した人',message:'@こぴちゃ'}},
@@ -138,8 +200,8 @@ test('受ける欄は FB の feed・mention と IG の mentions だけ。IG の 
     {field:'comments',value:{id:'1801',text:'x'}},{field:'live_comments',value:{id:'1802'}}]}]};
   assert.equal((await deliver(ig)).status,200);
   assert.equal((await deliver({object:'user',entry:[{id:'1',time:1,changes:[{field:'feed',value:{}}]}]})).status,200);
-  const s=await stats();assert.equal(s.received-s0.received,2);assert.equal(s.dropped-s0.dropped,5);
-  const got=await drain();assert.deepEqual(got.map(r=>[r.object,r.field]).sort(),[['instagram','mentions'],['page','mention']]);
+  const s=await stats();assert.equal(s.received-s0.received,3);assert.equal(s.dropped-s0.dropped,4);
+  const got=await drain();assert.deepEqual(got.map(r=>[r.object,r.field]).sort(),[['instagram','comments'],['instagram','mentions'],['page','mention']]);
   assert.equal((await deliver(null,{raw:'{"object":'})).status,400);
 });
 
