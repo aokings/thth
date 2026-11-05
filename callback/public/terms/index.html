@@ -32,9 +32,9 @@
 </style>
 </head><body><main>
 <h1>THTH — Terms of Service</h1>
-<p class="note">Effective 2026-09-26 · <a href="#ja">日本語はこの下</a> · <a href="/privacy/">Privacy Policy</a></p>
+<p class="note">Unpublished draft — effective date not set · <a href="#ja">日本語はこの下</a> · <a href="/privacy/">Privacy Policy</a></p>
 <h2>What THTH is</h2>
-<p>THTH is a command-line tool for publishing and managing posts on your own social media accounts, usually through your own AI assistant. The operator, gotoq, runs it on an operator-managed server for people the operator has invited or otherwise verified. Invited users connect their own accounts and do not run their own server or register their own app. These terms cover that service.</p>
+<p>THTH is a command-line tool for publishing and managing posts on your own social media accounts (Threads, Facebook Pages, Instagram professional accounts and Meta ad accounts, as well as Bluesky, Mastodon and X), usually through your own AI assistant. The operator, gotoq, runs it on an operator-managed server for people the operator has invited or otherwise verified. Invited users connect their own accounts and do not run their own server or register their own app. These terms cover that service.</p>
 <h2>What you do</h2>
 <ul>
   <li>Authorize THTH only for accounts you control, on the platform's own screen, after checking the account and the permissions it asks for.</li>
@@ -47,24 +47,25 @@
 <ul>
   <li>THTH acts only when you ask for it, through your CLI or your assistant; it does not post, reply or delete on its own. Every account has safety limits you control: a minimum interval between posts, daily caps on posts and deletions, and an automatic stop on bursts of actions. An assistant can only tighten them; loosening them, resuming a stopped account and issuing or revoking an assistant key are done by you on https://thth.me/activity with your account secret.</li>
   <li>Credentials (platform tokens and Bluesky App Passwords) are received through the authorization flow or from standard input, kept in owner-only files on the operator's server, and redacted from logs and printed output. They are not passed through chats or command arguments, and THTH's tools do not return them to LLM sessions.</li>
-  <li>THTH does not read direct messages.</li>
+  <li>THTH reads a Page's Messenger inbox or an Instagram Direct inbox only when you run <code>thth dm</code>; what it shows is printed for you and not saved, a reply is sent only after your two-step confirmation and inside the platform's messaging window, and THTH never replies or messages anyone on its own.</li>
+  <li>Ads run on your own Meta ad account. THTH creates everything paused and starts delivery only after your two-step confirmation (and, where the operator requires it, an approval number). What is spent, and its consequences, are yours; THTH's budget estimate is not an invoice. A platform may stop or limit ads, permissions or the account at its own judgment, and THTH cannot override that.</li>
   <li>The operator can stop an account's use of the service at any time and can hide a post on the plaza. The operator stops an account when you ask, and may stop it when these terms or a platform's terms are not followed, when a platform requires it, or when the service ends. Stopping may happen without advance notice.</li>
   <li>How data is used, kept and deleted is described in the <a href="/privacy/">Privacy Policy</a>.</li>
 </ul>
 <h2>How the service is provided</h2>
 <p>The service is free of charge and provided as is. It may stop, change or be unavailable at times, and a post may be delayed or not published. The operator does not guarantee that the service is available, free of errors or suitable for any purpose.</p>
 <h2>Leaving</h2>
-<p>To leave, contact the operator (see Contact). The operator ends the account with <code>thth account leave</code>, which stops the account and deletes its data on the operator's server as described in the <a href="/privacy/#delete">Privacy Policy</a>. THTH asks Mastodon and X to revoke the token. For Threads, remove the connection in your Threads settings; for Bluesky, delete the App Password in your Bluesky settings.</p>
+<p>To leave, contact the operator (see Contact). The operator ends the account with <code>thth account leave</code>, which stops the account and deletes its data on the operator's server as described in the <a href="/privacy/#delete">Privacy Policy</a>. THTH asks Mastodon and X to revoke the token. For Threads, remove the connection in your Threads settings; for Bluesky, delete the App Password in your Bluesky settings; for Facebook Pages, Instagram and ad accounts, remove THTH under Business integrations in your Facebook settings.</p>
 <h2>Contact</h2>
 <p>Open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Issues are public: do not include tokens, App Passwords or personal information. Invited users can also file a report from their THTH session (<code>thth report file</code>); reports are kept in a private location on the operator's server. Operator: gotoq.</p>
 <h2>Changes</h2>
-<p>This page is generated from the THTH source repository; its history is public there.</p>
+<p>This page is generated from the THTH source repository; its history is public there. Revision: adds Facebook Pages, Instagram, Meta ad accounts and direct messages.</p>
 <h2>Software license</h2>
 <p>The THTH software is open source under the MIT License. That license covers the software; these terms cover the operator's service.</p>
 <h1 id="ja" style="margin-top:56px">THTH — 利用規約</h1>
-<p class="note">2026-09-26 施行 · <a href="/privacy/">プライバシーポリシー</a></p>
+<p class="note">未公開の案 — 施行日未設定 · <a href="/privacy/">プライバシーポリシー</a></p>
 <h2>THTH とは</h2>
-<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのコマンドラインツールで、多くの人は自分の AI アシスタントを通して使います。運営者（gotoq）が、運営者の管理するサーバーで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は自分のアカウントを接続し、自分のサーバーを動かしたり自分のアプリを登録したりしません。この規約はそのサービスについてのものです。</p>
+<p>THTH は、自分の SNS のアカウント（Threads・Facebook ページ・Instagram のプロ口座・Meta の広告アカウント、ほかに Bluesky・Mastodon・X）の投稿を公開・管理するためのコマンドラインツールで、多くの人は自分の AI アシスタントを通して使います。運営者（gotoq）が、運営者の管理するサーバーで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は自分のアカウントを接続し、自分のサーバーを動かしたり自分のアプリを登録したりしません。この規約はそのサービスについてのものです。</p>
 <h2>利用者がすること</h2>
 <ul>
   <li>自分が管理するアカウントだけを、SNSの画面でアカウントと求められる権限を確かめてから認可する。</li>
@@ -77,18 +78,19 @@
 <ul>
   <li>THTH は、利用者が自分の CLI か AI アシスタントで頼んだときだけ動き、自分から投稿・返信・削除をしません。どのアカウントにも利用者が決めるガードがあります。投稿の最短間隔、投稿と削除の 1 日の上限、短時間に操作が多すぎたときの自動停止です。アシスタントはこれを厳しくする向きにしか変えられません。緩める・止まったアカウントを戻す・API キーを発行する／取り消すのは、利用者が https://thth.me/activity でアカウントのシークレット を使って行います。</li>
   <li>認証情報（SNSの token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者のサーバーのオーナーだけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を通さず、THTH の道具が LLM のセッションに返すこともありません。</li>
-  <li>THTH はダイレクトメッセージを読みません。</li>
+  <li>THTH がページの Messenger や Instagram の Direct の受信箱を読むのは、利用者が <code>thth dm</code> を打ったときだけです。見せたものは画面に出すだけで保存せず、返事は利用者の二段確認のあとに、SNS の決めた窓の内でだけ送ります。THTH が自分から返事やメッセージを送ることはありません。</li>
+  <li>広告は利用者自身の Meta の広告アカウントで動きます。THTH はすべて止まった状態（PAUSED）で作り、配信を始めるのは利用者の二段確認（運営者が求めるときは承認の番号も）のあとだけです。使ったお金とその結果は利用者のものです。THTH の予算の見積もりは請求書ではありません。SNS は自らの判断で広告・権限・アカウントを止めたり制限したりすることがあり、THTH はそれを覆せません。</li>
   <li>運営者は、いつでもアカウントの利用を止められ、プラザの書き込みを非表示にできます。利用者が求めたときは止めます。この規約やSNSの規約が守られないとき、SNSが求めたとき、サービスを終えるときにも止めることがあります。止めるときに前もって知らせないことがあります。</li>
   <li>データの使い方・保存・削除は、<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>
 </ul>
 <h2>提供の形</h2>
 <p>サービスは無償で、現状のまま提供します。止まる・変わる・使えない時間があり、投稿が遅れたり公開されなかったりすることがあります。運営者は、サービスが使えること・誤りがないこと・特定の目的に合うことを保証しません。</p>
 <h2>やめ方</h2>
-<p>やめるときは運営者に連絡してください（連絡先を参照）。運営者は <code>thth account leave</code> でアカウントの利用を終えます。アカウントを止め、運営者のサーバーのデータを<a href="/privacy/#ja">プライバシーポリシー</a>のとおり削除します。Mastodon と X は THTH がSNSに token の失効を求めます。Threads は本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で App Password を削除してください。</p>
+<p>やめるときは運営者に連絡してください（連絡先を参照）。運営者は <code>thth account leave</code> でアカウントの利用を終えます。アカウントを止め、運営者のサーバーのデータを<a href="/privacy/#ja">プライバシーポリシー</a>のとおり削除します。Mastodon と X は THTH がSNSに token の失効を求めます。Threads は本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で App Password を削除してください。Facebook ページ・Instagram・広告アカウントは、本人が Facebook の設定（ビジネス連携）で THTH を外してください。</p>
 <h2>連絡先</h2>
 <p><a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> に issue を立ててください。issue は公開されます。token・App Password・個人情報は書かないでください。招待された利用者は、自分の THTH のセッションから報告（<code>thth report file</code>）もできます。報告は運営者のサーバーの私有の置き場に保存します。運営者: gotoq。</p>
 <h2>変更</h2>
-<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>
+<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。改訂: Facebook ページ・Instagram・Meta の広告アカウント・ダイレクトメッセージを足しました。</p>
 <h2>ソフトウェアのライセンス</h2>
 <p>THTH のソフトウェアは MIT License のオープンソースです。このライセンスはソフトウェアについてのもので、運営者のサービスについてはこの規約が定めます。</p>
 <footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>
