@@ -9,7 +9,7 @@
 ## 誰が push・release・tag・deploy をするか
 
 - [THTH の開発セッション] main への push は Claude がしてよい（本番は変わらない。CI の全件試験が走るだけ）— 理由: 本番は release の枝で切り分けてある — 出所: masaru 2026-09-17 — 期限: なし
-- [THTH の開発セッション] release の枝を進める（VM が拾う）・tag `vX.Y.Z` の push（PyPI と MCP registry）・Worker の deploy（`cd callback && npx --no-install wrangler deploy`、Worker が先・VM があと）は、CI が緑になったあと、masaru が「出して」と言ったときに Claude が押す — 理由: 本番か公開を変える — 出所: masaru 2026-10-13 — 期限: なし
+- [THTH の開発セッション] release の枝を進める（VM が拾う）・tag `vX.Y.Z` の push（PyPI と MCP registry）・Worker の deploy（`cd callback && npx --no-install wrangler deploy`、Worker が先・VM があと）は、CI が緑で `python3 tools/release_gate.py --ref <sha>` が rc 0 になったあと、masaru が「出して」と言ったときに Claude が押す — 理由: 本番か公開を変える — 出所: masaru 2026-10-13・関門は 2026-11-05 — 期限: なし
 - [運用のセッション・各レーン] THTH のコードは直さない。不具合や要望は `thth report file` か hub messenger で開発セッションへ — 理由: 同じ repo を開発と運用が同時に触る — 出所: 申し送り 2026-10-07 — 期限: なし
 
 ## 事故が起きた操作

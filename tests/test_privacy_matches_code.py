@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from thth import map_store, map_world, relay
+from thth import map_store, map_world, meter, relay
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -78,6 +78,8 @@ def facts() -> list[tuple[str, str]]:
         ("トピックマップの保持・日本語", f"最大 {map_store.MAX_RETENTION_DAYS} 日保存します"),
         ("少ない数は保存しない（map_world.SMALL_SAMPLE）", f"A number below {map_world.SMALL_SAMPLE}"),
         ("少ない数は保存しない・日本語", f"{map_world.SMALL_SAMPLE} 未満の数"),
+        ("命令の控えの保持（meter.KEEP_DAYS）", f"sent nowhere): {meter.KEEP_DAYS} days"),
+        ("命令の控えの保持・日本語", f"外へ送りません）: {meter.KEEP_DAYS}日"),
     ]
 
 

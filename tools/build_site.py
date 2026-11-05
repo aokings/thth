@@ -294,7 +294,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-27"  # 3.14.2（ブラウザでのサインイン）。Worker の deploy が別の日になったら直す。前: 2026-09-26（3.13.0・3.14.0）
+PRIVACY_EFFECTIVE = "2026-11-05"  # 5.12.4 のあと（命令の控えの 14 日）。Worker の deploy が別の日になったら直す。前: 2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -562,6 +562,8 @@ def build_privacy() -> str:
         "observation map daily figures.</li>")
     add("  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run "
         "logs on the operator's server: until the account exits.</li>")
+    add("  <li>The per-account command record (time, account, command name, result, refusal code and flag names; "
+        "no text, sent nowhere): 14 days, and deleted when the account exits.</li>")
     add("  <li>Plaza posts and replies: until the account exits (open posts may be kept without the account "
         "name, as described under Plaza).</li>")
     add("  <li>Reports and the change log: no set period.</li>")
@@ -790,6 +792,7 @@ def build_privacy() -> str:
     add("  <li>運営者のサーバーのトピックマップの日々の集計: 最大180日（日単位で削除）。退会と依頼でも削除。</li>")
     add("  <li>求めに応じて残した検索の語ごとの数（<code>thth where … --keep</code>）: トピックマップの日々の集計と同じ。</li>")
     add("  <li>運営者のサーバーの認証情報・設定・下書き・投稿の履歴・インサイト・返信・言及・添付・ログ: 退会まで。</li>")
+    add("  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日。退会でも削除。</li>")
     add("  <li>プラザの書き込みと返信: 退会まで（open の書き込みは「プラザ」のとおりアカウント名を落として残すことがあります）。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
     add("</ul>")
