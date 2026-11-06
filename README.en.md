@@ -103,7 +103,7 @@ All subcommands `thth --help` lists, one line each:
 - `posts` — list your own recent posts
 - `retract` — delete a published post (two-step confirmation on a local ledger; the record is kept)
 - `edit` — correct the text of a post THTH published (two-step confirmation; Facebook only; the previous text stays in the record)
-- `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook and Instagram)
+- `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook and Instagram; Threads replies can be hidden and unhidden but not deleted), and on Threads list, approve or ignore the replies waiting on a post that requires reply approval (`reply pending <account> <post_id>`, `reply approve|ignore <account> <reply_id>`; local ledger only; reply text is shown, not stored)
 - `comments` — open or close the comments on a post (`comments open|close`; Instagram)
 - `page` — a Facebook Page's call-to-action buttons (`page cta show|delete`; delete is two-step)
 - `live` — create a Facebook Page live video and get its stream address, or end it (`live create|end`; two-step)

@@ -423,7 +423,10 @@ COMMANDS: dict = {}
 UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh",
                          "account", "account resume", "account leave",
                          # 計画 Meta 全部盛り: 遠くの道に出していない Meta の書く口（消すと戻せない・審査の区間に無い）。
-                         "reply delete"))
+                         "reply delete",
+                         # 監査 2026-11-06 #2: Threads の承認待ちの返信（読む・承認・無視）は手元の道だけ。
+                         # 審査の区間に無く、承認は返信を公開する（遠くの道の資格と記録の形を決めていない）。
+                         "reply pending", "reply approve", "reply ignore"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",
@@ -1569,7 +1572,7 @@ def register(sub) -> None:
     for name in ("dm", "live", "edit", "reply"):
         _tell(sub, name, "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
         _tell(sub, name, "wait", "thth.me の道: 使えない（付けると断る）")
-    _tell(sub, "reply", None, "thth.me の道は hide・unhide だけ（delete は手元の道）")
+    _tell(sub, "reply", None, "thth.me の道は hide・unhide だけ（delete・pending・approve・ignore は手元の道）")
     _tell(sub, "dm", None, "thth.me の道も二段・digest は VM が作って照合する")
     _tell(sub, "live", None, "thth.me の道も二段・配信の宛先は端末に 1 回だけ返り VM に残さない")
     send = choices["send"]

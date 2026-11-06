@@ -207,6 +207,9 @@ KNOWN_CAPABILITIES = frozenset({
     "carousel",
     # 返信（コメント）を隠せる・戻せる・消せる（`hide_reply()`・`delete_reply()`・`thth reply`）。
     "hide_reply",
+    # 承認制の投稿に付いた返信を一覧し、承認・無視できる（`pending_replies()`・`manage_pending_reply()`・
+    # `thth reply pending|approve|ignore`・Threads だけ・監査 2026-11-06 #2）。
+    "reply_approvals",
     # 出した投稿の本文を直せる（`edit_post()`・`thth edit`）。
     "edit_post",
     # --- Meta 計画 段 3（10/29）
@@ -387,6 +390,10 @@ class Adapter:
     # `thread_read` が post_id の形違いを断るときに添える手本。形の知識は
     # `is_post_id()` と同じ adapter 境界に置き、呼ぶ側は媒体名で分岐しない。
     POST_ID_FORM_HINT: str = "post_id の形が違います。"
+
+    # `thth reply delete` を媒体が受けないときの断りの 1 行（None なら受ける）。`hide_reply` の語は
+    # 「隠す・戻す」を言い、消す口の無い媒体（Threads）はここで前向きに断る（監査 2026-11-06 #1）。
+    REPLY_DELETE_REFUSAL: str | None = None
 
     # 語検索の結果を読むときに利用者へ伝える、媒体側の制約。たとえば
     # Mastodon の全文検索可否はインスタンスの検索設定に依存する。

@@ -12,6 +12,13 @@
   `thth reply delete … --reason … --by …` は**取り下げと同じ二段確認**（`compute_retract_digest`
   に印を足した digest・投稿の取り下げの digest を流用できない）。記録は
   `state/<account>/moderation-YYYY-MM.ndjson` に 1 行（コメントの本文は残さない）。
+  Threads（11/06・監査 #1）も同じ口で隠す・戻す（`manage_reply`）。Threads に返信を消す口は無いので
+  `delete` は adapter の `REPLY_DELETE_REFUSAL` で前向きに断る。
+- `reply_approvals`（11/06・監査 #2・Threads）— `thth reply pending <account> <post_id> [--status …]` は
+  承認待ちの返信を読むだけ（本文は画面と `--json` に出すだけで残さない）。`thth reply approve|ignore
+  <account> <reply_id> --by …` は 1 段（無視した返信はあとで承認できる・承認した返信は hide で隠せる）。
+- 権限の使用は runs に 1 行（`reply_moderate`・`reply_pending`・`reply_approval`。命令・媒体・権限・結果だけ・
+  `thth/permission_watch.py` が読む）。
 
 fail-closed（`retract` と同じ）:
   - 台帳に `production: true` が無ければ媒体を呼ばない（読むだけの一段目は通す）。
@@ -42,7 +49,10 @@ from . import redact as redact_mod
 from . import sent as sent_mod
 from .adapters import base as adapter_base
 
-REPLY_ACTIONS = ("hide", "unhide", "delete")
+REPLY_ACTIONS = ("hide", "unhide", "delete", "pending", "approve", "ignore")
+# 承認待ちの返信（capability `reply_approvals`）の命令。
+APPROVAL_ACTIONS = ("pending", "approve", "ignore")
+PENDING_STATUSES = ("pending", "ignored", "all")
 # Meta 計画 段 3（10/29）: コメント欄の開け閉め（capability `comment_control`・Instagram）。
 COMMENT_ACTIONS = ("open", "close")
 
@@ -64,10 +74,15 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_edit)
 
     r = sub.add_parser(
-        "reply", help="コメントを隠す・戻す・消す（hide|unhide は 1 段・delete は二段確認・Facebook）")
+        "reply", help="コメント・返信を隠す・戻す・消す（hide|unhide は 1 段・delete は二段確認・Facebook・"
+                      "Instagram。Threads は hide|unhide）。Threads の承認待ちの返信を見る（pending）・"
+                      "承認する（approve）・無視する（ignore）")
     r.add_argument("action", choices=REPLY_ACTIONS)
     r.add_argument("account")
-    r.add_argument("comment_id")
+    r.add_argument("comment_id", metavar="id",
+                   help="コメント・返信の id（pending のときは承認制で出した投稿の post_id）")
+    r.add_argument("--status", choices=PENDING_STATUSES, default="pending",
+                   help="pending の絞り（pending＝承認待ち・ignored＝無視した返信・all＝両方・既定 pending）")
     r.add_argument("--reason", default=None, help="なぜか（記録に残す・delete は必須）")
     r.add_argument("--by", default=None, help="誰がしたか（記録に残す・必須）")
     r.add_argument("--confirm", default=None, help="delete の一段目が表示した digest")
@@ -320,8 +335,21 @@ def _reply_delete_digest(comment_id: str, account: str, reason: str) -> str:
                                                reason=reason + "\x1freply_delete")
 
 
+def _record_use(account, action, media, status, *, permission=None, error=None) -> None:
+    """runs に 1 行（命令の名前・媒体・権限・結果だけ・本文・相手・id は入れない）。権限の不使用の見張りが読む。"""
+    from . import runs as runs_mod
+    try:
+        runs_mod.record_minimal(account, {"action": action, "account": account, "medium": media,
+                                          "mode": "read" if action == "reply_pending" else "production",
+                                          "status": status, "error": error, "permission": permission})
+    except (OSError, accounts_mod.AccountError):
+        pass
+
+
 def cmd_reply(args) -> int:
     try:
+        if args.action in APPROVAL_ACTIONS:
+            return _cmd_reply_approval(args)
         return _cmd_reply(args)
     except adapter_base.PermissionMissing as e:
         return _fail(args, 2, str(e).replace("<account>", args.account))
@@ -343,6 +371,9 @@ def _cmd_reply(args) -> int:
     if loaded is None:
         return _fail(args, rc, message)
     account_cfg, adapter_cls, token = loaded
+    if action == "delete" and getattr(adapter_cls, "REPLY_DELETE_REFUSAL", None):
+        return _fail(args, 2, f"{account_cfg.get('media')}: {adapter_cls.REPLY_DELETE_REFUSAL}"
+                              .replace("<account>", args.account), failure="unsupported_on_platform")
     permissions = list(getattr(adapter_cls, "MODERATE_PERMISSIONS", ()))
     if not adapter_cls.has_token(token):
         return _fail(args, 2, f"{args.account}: token がありません（{adapter_cls.TOKEN_SETUP_HINT}）")
@@ -360,6 +391,8 @@ def _cmd_reply(args) -> int:
     except Exception as e:   # noqa: BLE001
         return _fail(args, 1, "コメントを読めませんでした（何もしていません）: " + redact_mod.redact(str(e)))
 
+    if comment.get("refusal"):
+        return _fail(args, 1, comment["refusal"])
     can = comment.get("can_remove") if action == "delete" else comment.get("can_hide")
     if can is False:
         word = "消せない" if action == "delete" else "隠せない"
@@ -435,6 +468,8 @@ def _cmd_reply(args) -> int:
                                           f"媒体の画面で確かめてください: {message}", result="unknown")
                 return _fail(args, 1, "できませんでした（何も変えていません）: " + message)
             path = _append_moderation(state_dir, {**record, "result": "confirmed"})
+            _record_use(args.account, "reply_moderate", account_cfg.get("media"), "ok",
+                        permission=permissions[0] if permissions else None)
     except lock_mod.LockBusy:
         return _fail(args, 1, f"{args.account} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます")
 
@@ -445,6 +480,110 @@ def _cmd_reply(args) -> int:
     else:
         print(f"{word}: {args.account} comment {comment_id}（{at}・{by}）")
         print(f"  記録: {path}")
+    return 0
+
+
+def _cmd_reply_approval(args) -> int:
+    """`thth reply pending|approve|ignore`（capability `reply_approvals`・Threads）。"""
+    action = args.action
+    target = (args.comment_id or "").strip()
+    by = _by(args)
+    if action != "pending" and not by:
+        return _fail(args, 1, "--by を付けてください（誰がしたかを記録します）。"
+                              "環境変数 THTH_ACTOR でも指定できます")
+    if args.confirm:
+        return _fail(args, 1, "--confirm は delete だけです（pending は読むだけ・approve・ignore は 1 段です）")
+    loaded, rc, message = _load(args, "reply_approvals", "承認待ちの返信")
+    if loaded is None:
+        return _fail(args, rc, message)
+    account_cfg, adapter_cls, token = loaded
+    media = account_cfg.get("media")
+    if not target.isdigit():
+        return _fail(args, 1, ("pending には承認制で出した投稿の post_id（数字）を渡してください。"
+                               if action == "pending" else "返信の id は数字です（thth reply pending で見られます）。")
+                     + "何もしていません")
+    if action == "pending":
+        return _reply_pending(args, account_cfg, adapter_cls, token, target)
+    permission = adapter_cls.PENDING_WRITE_PERMISSION
+    refusal = _ready_to_write(args, account_cfg, adapter_cls, token, [permission])
+    if refusal:
+        return _fail(args, *refusal)
+    state_dir = accounts_mod.state_dir_for(args.account)
+    approve = action == "approve"
+    try:
+        with core._account_locks(args.account, account_cfg, state_dir, wait=args.wait):
+            stopped = _guard_stopped(args.account)
+            if stopped:
+                return _fail(args, 1, stopped, guard="stopped")
+            at = jst.iso()
+            record = {"at": at, "action": action, "reply_id": target, "by": by,
+                      "reason": (args.reason or "").strip() or None, "medium": media}
+            try:
+                adapter = adapters_mod.make_adapter(account_cfg, token)
+                adapter.manage_pending_reply(target, approve=approve)    # ← 承認・無視はここ 1 回だけ
+            except adapter_base.PermissionMissing:
+                raise
+            except accounts_mod.AccountStopped as e:
+                return _fail(args, 1, f"{args.account} は止まっています（{e}）。何もしていません")
+            except adapter_base.AdapterError as e:
+                message = redact_mod.redact(str(e))
+                if getattr(e, "failure", None) == "ambiguous":
+                    path = _append_moderation(state_dir, {**record, "result": "unknown"})
+                    return _fail(args, 1, f"済んだかどうか分かりません（{path} に result: unknown を残しました）。"
+                                          f"媒体の画面で確かめてください: {message}", result="unknown")
+                return _fail(args, 1, "できませんでした（何も変えていません）: " + message)
+            path = _append_moderation(state_dir, {**record, "result": "confirmed"})
+            _record_use(args.account, "reply_approval", media, "ok", permission=permission)
+    except lock_mod.LockBusy:
+        return _fail(args, 1, f"{args.account} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます")
+    if args.json:
+        _print_json({"ok": True, "changed": True, "action": action, "account": args.account,
+                     "reply_id": target, "at": at, "by": by, "record": path})
+    else:
+        word = "承認しました（返信が公開されます）" if approve else "無視しました（あとで approve で承認できます）"
+        print(f"{word}: {args.account} reply {target}（{at}・{by}）")
+        print(f"  記録: {path}")
+    return 0
+
+
+def _reply_pending(args, account_cfg, adapter_cls, token, post_id) -> int:
+    """承認待ちの返信を読むだけ。本文は画面と `--json` に出すだけで、どこにも残さない。"""
+    media = account_cfg.get("media")
+    permission = adapter_cls.PENDING_READ_PERMISSION
+    if not adapter_cls.has_token(token):
+        return _fail(args, 2, f"{args.account}: token がありません（{adapter_cls.TOKEN_SETUP_HINT}）")
+    missing = adapter_cls.missing_permissions(token, [permission])
+    if missing:
+        return _fail(args, 2, adapter_base.not_granted_message(missing[0]).replace("<account>", args.account))
+    status = getattr(args, "status", None) or "pending"
+    try:
+        adapter = adapters_mod.make_adapter(account_cfg, token)
+        rows = adapter.pending_replies(post_id, status=None if status == "all" else status)
+    except adapter_base.PermissionMissing:
+        _record_use(args.account, "reply_pending", media, "error", permission=permission,
+                    error="permission_missing")
+        raise
+    except accounts_mod.AccountStopped as e:
+        return _fail(args, 1, f"{args.account} は止まっています（{e}）")
+    except Exception as e:   # noqa: BLE001
+        _record_use(args.account, "reply_pending", media, "error", permission=permission, error="read_failed")
+        return _fail(args, 1, "承認待ちの返信を読めませんでした（何もしていません）: " + redact_mod.redact(str(e)))
+    _record_use(args.account, "reply_pending", media, "ok", permission=permission)
+    if args.json:
+        _print_json({"ok": True, "account": args.account, "post_id": post_id, "status": status,
+                     "count": len(rows), "replies": rows})
+        return 0
+    label = {"pending": "承認待ちの", "ignored": "無視した", "all": "承認待ちと無視した"}[status]
+    if not rows:
+        print(f"{label}返信はありません: {args.account} post {post_id}")
+        return 0
+    print(f"{label}返信 {len(rows)} 件: {args.account} post {post_id}")
+    for row in rows:
+        who = "@" + row["username"] if row.get("username") else "（名前は返りません）"
+        print(f"- {row['reply_id']}  {row.get('approval_status') or '?'}  {who}  {row.get('timestamp') or ''}")
+        print("  " + (row.get("text") or "（本文なし）").replace("\n", "\n  "))
+    print(f"承認: thth reply approve {args.account} <reply_id> --by <名前>"
+          f"　無視: thth reply ignore {args.account} <reply_id> --by <名前>")
     return 0
 
 

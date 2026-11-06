@@ -96,7 +96,7 @@ COMMANDS += ['scenario']
 # 5.0 段 2: 会話の中のダッシュボードの中身（読むだけ・版つき）。
 COMMANDS += ['dashboard']
 # Meta 計画 段 1: 投稿の編集・コメントを隠す・消す（二段確認・--json は 1 つの値）。
-COMMANDS += ['edit', 'reply']
+COMMANDS += ['edit', 'reply']   # reply は 11/06 に pending・approve・ignore（Threads）も同じ parser・同じ --json
 # Meta 計画 段 2: 量の制限の使用量（読むだけ・--json は 1 つの値）。
 COMMANDS += ['quota']
 # Meta 計画 段 3: コメント欄の開け閉め（--json は 1 つの値）。

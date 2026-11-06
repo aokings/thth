@@ -241,6 +241,8 @@ def bind(adapter,cfg):
              'community_search','trends','post_counts','archive_search','archive_counts',
              # Meta 計画 段 1（10/29）: 直す・隠す・消すの口。止めた口座では呼べない。
              'edit_post','fetch_reply','hide_reply','delete_reply',
+             # 監査 2026-11-06 #2: Threads の承認待ちの返信を読む・承認する口。
+             'pending_replies','manage_pending_reply',
              # Meta 計画 段 3（10/29）: Instagram の公開の上限を読む・コメント欄の開け閉め・フォロワー数。
              'publishing_limit','set_comments_enabled','followers_count',
              # Meta 計画 段 6（10/29）: Webhook の購読（ページの subscribed_apps）と、受けた記録を読む口。

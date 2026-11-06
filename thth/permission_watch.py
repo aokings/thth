@@ -77,9 +77,9 @@ PERMISSIONS = {
     "threads_location_tagging": _p("threads", READ, "location_search"),
     "threads_manage_insights": _p("threads", READ, "collect_posts"),
     "threads_manage_mentions": _p("threads", READ, "collect", "mentions"),
-    "threads_manage_replies": _p("threads", WRITE, "reply"),
+    "threads_manage_replies": _p("threads", WRITE, "reply", "reply_moderate", "reply_approval"),
     "threads_profile_discovery": _p("threads", READ, "who"),
-    "threads_read_replies": _p("threads", READ, "collect_posts", "thread_read"),
+    "threads_read_replies": _p("threads", READ, "collect_posts", "thread_read", "reply_pending"),
     "threads_share_to_instagram": _p("threads", WRITE, "share_to_instagram"),
     "pages_show_list": _p("facebook", READ, "auth"),
     "business_management": _p("facebook", READ, "auth"),
@@ -89,7 +89,7 @@ PERMISSIONS = {
     "read_insights": _p("facebook", READ, "collect_posts"),
     "pages_manage_metadata": _p("facebook", READ, "webhook_subscribe"),
     "pages_manage_posts": _p("facebook", WRITE, "post", "retract"),
-    "pages_manage_engagement": _p("facebook", WRITE, "reply"),
+    "pages_manage_engagement": _p("facebook", WRITE, "reply", "reply_moderate"),
     "pages_manage_ads": _p(ADS, WRITE, "ads_op"),
     "pages_manage_cta": _p("facebook", WRITE, "page_cta_delete"),
     "publish_video": _p("facebook", WRITE, "live_create", "live_end"),
@@ -97,7 +97,7 @@ PERMISSIONS = {
     "pages_utility_messaging": _p("facebook", WRITE),
     "instagram_basic": _p("instagram", READ, "collect"),
     "instagram_content_publish": _p("instagram", WRITE, "post"),
-    "instagram_manage_comments": _p("instagram", READ, "collect_posts", "reply"),
+    "instagram_manage_comments": _p("instagram", READ, "collect_posts", "reply", "reply_moderate"),
     "instagram_manage_insights": _p("instagram", READ, "collect_posts"),
     "instagram_manage_contents": _p("instagram", WRITE, "retract"),
     "instagram_manage_engagement": _p("instagram", WRITE, "ig_like"),
@@ -132,7 +132,9 @@ RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",
-               "ads_catalog", "ads_leads", "ads_network", "ads_shop")
+               "ads_catalog", "ads_leads", "ads_network", "ads_shop",
+               # 返信の管理（`thth reply`・`thth/edit_cli.py`・11/06）: 隠す・戻す・消す／承認待ちを読む／承認・無視。
+               "reply_moderate", "reply_pending", "reply_approval")
 # 知らせの重さの順（1 口座に 1 行だけ載るので、重いものを載せて残りの数を添える）。
 NOTICE_REFUSALS = ("data_access_expired", "duc_overdue", "permission_unused", "data_access_expiring",
                    "duc_due_soon", "ads_tier_at_risk", "ads_tier_ready")

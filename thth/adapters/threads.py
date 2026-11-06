@@ -837,6 +837,152 @@ class ThreadsAdapter(base.Adapter):
     def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
         raise base.UnsupportedOnPlatform(self.UNSUPPORTED_REACTIONS["like"])
 
+    # --- 返信の管理（監査 2026-11-06 #1・#2・`thth reply`） ----------------------------
+    #
+    # **L2** https://developers.facebook.com/docs/threads/reply-management（11/06 に読んだ）:
+    # - 隠す・戻す: `POST /v1.0/{reply-id}/manage_reply` に `hide=true|false`・応答 `{"success": true}`。
+    #   「Replies nested deeper than the top-level reply cannot be targeted in isolation to be
+    #   hidden/unhidden」——**隠せるのは投稿に直接付いた返信だけ**（隠すと下の返信も隠れる）。
+    # - 承認待ち: `GET /v1.0/{media-id}/pending_replies`。`approval_status` は `pending`・`ignored`
+    #   （大文字小文字を区別・既定は両方）、`reverse` は真偽（既定 true＝新しい順）。欄の
+    #   `reply_approval_status` は `pending`・`ignored`。
+    # - 承認・無視: `POST /v1.0/{reply-id}/manage_pending_reply` に `approve=true|false`・応答
+    #   `{"success": true}`。「Ignored replies can still be approved」。
+    # その頁に権限の名前は無い。権限は **L2** retrieve-and-manage-replies の「threads_manage_replies —
+    # Required for making POST calls to reply endpoints」「threads_read_replies — Required for making GET
+    # calls to reply endpoints」（`_extra_probes` の但し書きと同じ）から当てた。**承認待ちの一覧の GET が
+    # threads_read_replies で通るかは本物で確かめる**（頁に書いていない）。
+    # 返信を消す口は無い（`DELETE` は「created by the authenticated user」の投稿だけ・delete-posts）。
+    MODERATE_PERMISSIONS = ("threads_manage_replies", "threads_read_replies")
+    PENDING_READ_PERMISSION = "threads_read_replies"
+    PENDING_WRITE_PERMISSION = "threads_manage_replies"
+    CAPABILITIES = CAPABILITIES | frozenset({"hide_reply", "reply_approvals"})
+    REPLY_DELETE_REFUSAL = ("Threads の API には他人の返信を消す口がありません（DELETE は自分の投稿だけ）。"
+                            "隠すなら thth reply hide <account> <reply_id> --by <名前>（戻せます）")
+    PENDING_STATUSES = ("pending", "ignored")
+    # 一覧で引く欄（資料の欄の一覧のうち、本文・投稿者・時刻・状態だけ。画像の URL 等は取らない）。
+    # `username` と `permalink` は資料の pending_replies の欄の一覧に無い（返信の欄の一覧にはある）。
+    # **付くかは本物で確かめる**（付かなければ None のまま見せる）。
+    PENDING_FIELDS = ("id,text,username,timestamp,permalink,media_type,is_reply,replied_to,root_post,"
+                      "has_replies,hide_status,reply_approval_status")
+    # `fetch_reply` が引く欄（返信の欄の一覧・資料 replies-and-conversations にある 9 つ）。
+    REPLY_LOOKUP_FIELDS = "id,text,username,timestamp,permalink,is_reply,replied_to,root_post,hide_status,is_reply_owned_by_me"
+    # `hide_status` のうち「隠れている」と言えるもの（ほかの値は「分からない」= None）。
+    HIDDEN_STATUSES = ("HIDDEN",)
+    VISIBLE_STATUSES = ("NOT_HUSHED", "UNHUSHED")
+
+    @staticmethod
+    def _write_error(message: str, failure: str) -> base.AdapterError:
+        e = base.AdapterError(redact_mod.redact(message))
+        e.failure = failure
+        return e
+
+    def _reply_id(self, value, what: str) -> str:
+        value = str(value or "").strip()
+        if not value.isdigit():
+            raise self._write_error(f"{what}: Threads の返信の id は数字だけです（{value!r}）", "definite")
+        return value
+
+    def _manage(self, path: str, params: dict, what: str, permission: str) -> dict:
+        """返信の管理の POST を 1 回だけ（再試行しない）。`success: true` 以外は済んだと言わない。"""
+        self._require_scope(permission)
+        try:
+            body = self._post(path, {**params, "access_token": self.access_token})
+        except urllib.error.HTTPError as e:
+            err, message = _read_error(e)
+            detail = f"HTTP {e.code} {message}".strip()
+            if _is_permission_error(err, message):
+                raise base.PermissionMissing(permission, redact_mod.redact(detail)) from e
+            raise self._write_error(f"{what}: {detail}", "definite" if e.code < 500 else "ambiguous") from e
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise self._write_error(f"{what}: {e}（済んだかは分かりません）", "ambiguous") from e
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise self._write_error(f"{what}: 応答に success: true がありません（済んだとは言えません）",
+                                    "ambiguous")
+        return body
+
+    def fetch_reply(self, comment_id: str) -> dict:
+        """返信を 1 件読む（隠す前に人に見せる・読むだけ）。`GET /v1.0/{reply-id}`。
+
+        `edit_cli` の読む形（`text`・`by_page`・`is_hidden`・`can_hide`・`can_remove`）にそろえる。
+        `can_hide` は投稿に直接付いた返信か（`replied_to` と `root_post` が同じ）で決める。
+        他人の返信の 1 件を `GET /{id}` で引けるか（`threads_read_replies` で通るか）は資料に例が無いので
+        **本物で確かめる**（通らなければ読めないと断り、何もしない）。
+        """
+        value = self._reply_id(comment_id, "返信の取得")
+        row = self._read(lambda: self._get(f"/v1.0/{value}", {"fields": self.REPLY_LOOKUP_FIELDS}),
+                         permission=self.MODERATE_PERMISSIONS[1], what="返信の取得")
+        if not isinstance(row, dict) or str(row.get("id") or "") != value:
+            raise base.AdapterError("返信の取得: 応答の id が違います")
+        username = row.get("username") if isinstance(row.get("username"), str) else None
+        status = row.get("hide_status")
+        parent = row.get("replied_to") if isinstance(row.get("replied_to"), dict) else {}
+        root = row.get("root_post") if isinstance(row.get("root_post"), dict) else {}
+        refusal = None
+        if row.get("is_reply") is False:
+            refusal = "これは返信ではなく投稿です（隠せるのは返信だけ）。何もしていません"
+        elif parent.get("id") and root.get("id") and parent["id"] != root["id"]:
+            refusal = ("返信への返信は単独では隠せません（Threads は投稿に直接付いた返信だけを隠します。"
+                       "親の返信を隠すと下の返信も隠れます）。何もしていません")
+        return {"message_id": value, "text": row.get("text"), "username": username,
+                "timestamp": row.get("timestamp"), "permalink": row.get("permalink"),
+                "medium": MEDIUM, "author_key": base.author_key(MEDIUM, username),
+                "by_page": row.get("is_reply_owned_by_me") is True,
+                "is_hidden": (True if status in self.HIDDEN_STATUSES else
+                              False if status in self.VISIBLE_STATUSES else None),
+                "hide_status": status if isinstance(status, str) else None,
+                "can_hide": None, "can_remove": False, "refusal": refusal}
+
+    def hide_reply(self, comment_id: str, *, hidden: bool = True) -> dict:
+        """返信を隠す・戻す `POST /v1.0/{reply-id}/manage_reply` に `hide`（L2）。"""
+        value = self._reply_id(comment_id, "返信の非表示")
+        if type(hidden) is not bool:
+            raise self._write_error("返信の非表示: hidden は真か偽です", "definite")
+        self._manage(f"/v1.0/{value}/manage_reply", {"hide": "true" if hidden else "false"},
+                     "返信を隠す" if hidden else "返信を戻す", self.MODERATE_PERMISSIONS[0])
+        return {"hidden": hidden, "comment_id": value}
+
+    def delete_reply(self, comment_id: str) -> dict:
+        raise base.UnsupportedOnPlatform(self.REPLY_DELETE_REFUSAL)
+
+    def pending_replies(self, post_id: str, *, status: str | None = None) -> list:
+        """承認待ちの返信の一覧（`GET /v1.0/{media-id}/pending_replies`・L2）。全頁を辿る。
+
+        `status` は `pending`・`ignored`・None（両方＝資料の既定）。**本文は返すだけで保存しない**
+        （呼び手 `edit_cli` が画面と `--json` に出すだけ）。
+        """
+        post_id = str(post_id or "").strip()
+        if not post_id.isdigit():
+            raise base.AdapterError(f"承認待ちの返信: {self.POST_ID_FORM_HINT}（{post_id!r}）")
+        if status is not None and status not in self.PENDING_STATUSES:
+            raise base.AdapterError(f"承認待ちの返信: approval_status は {'・'.join(self.PENDING_STATUSES)} です")
+        params = {"fields": self.PENDING_FIELDS, "reverse": "true"}
+        if status is not None:
+            params["approval_status"] = status
+        rows = self._read(lambda: self._all_pages(f"/v1.0/{post_id}/pending_replies", params, "承認待ちの返信"),
+                          permission=self.PENDING_READ_PERMISSION, what="承認待ちの返信")
+        out = []
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("id") or "").isdigit():
+                raise base.AdapterError("承認待ちの返信: id の無い行があります（件数として数えません）")
+            username = row.get("username") if isinstance(row.get("username"), str) else None
+            item = {"reply_id": str(row["id"]), "text": row.get("text"), "username": username,
+                    "timestamp": row.get("timestamp"), "permalink": row.get("permalink"),
+                    "approval_status": row.get("reply_approval_status"),
+                    "hide_status": row.get("hide_status"), "media_type": row.get("media_type"),
+                    "medium": MEDIUM, "author_key": base.author_key(MEDIUM, username)}
+            out.append(item)
+        return out
+
+    def manage_pending_reply(self, reply_id: str, *, approve: bool) -> dict:
+        """承認待ちの返信を承認する・無視する（`POST /v1.0/{reply-id}/manage_pending_reply`・`approve`・L2）。"""
+        value = self._reply_id(reply_id, "承認待ちの返信")
+        if type(approve) is not bool:
+            raise self._write_error("承認待ちの返信: approve は真か偽です", "definite")
+        self._manage(f"/v1.0/{value}/manage_pending_reply", {"approve": "true" if approve else "false"},
+                     "返信を承認する" if approve else "返信を無視する", self.PENDING_WRITE_PERMISSION)
+        return {"approved": approve, "reply_id": value}
+
     def _get(self, path: str, params: dict, *, absolute_url: str | None = None,
              timeout: float | None = None) -> dict:
         p = dict(params)
