@@ -1025,7 +1025,9 @@ def _collect_owned(adapter, due: list, *, now, errors: list, write, account_name
     if not callable(read):
         return  # 自分の投稿の数字の口を持たない有償の媒体（今は無い）。誤りとして積まない
     try:
-        result = read([entry["post_id"] for entry in due], now=now)
+        # 経過時間を渡す: 30 日の内の投稿だけ、非公開の数（リンクのクリック等）も頼む（監査 11/06 #3）。
+        result = read([entry["post_id"] for entry in due], now=now,
+                      ages={entry["post_id"]: entry["age_hours"] for entry in due})
     except Exception as e:  # 採取の失敗で投稿を止めない（予算の断りも含む）
         errors.append(f"X の自分の投稿の数字: {redact_mod.redact(str(e))}")
         return

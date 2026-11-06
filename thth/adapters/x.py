@@ -24,7 +24,10 @@
 user_id と一致しない行は `x_metrics.normalize_owned_metrics` が落とす。料金表の Owned Reads
 （1 本 0.001 USD）で、`budget_x.owned_read()` の予約の中でだけ動く——他人の投稿の読み取り
 （`PAID_READS`）とは別の段なので、collect の timer から叩いてよいのはこの口だけ。
-本文・username は取らない（`tweet.fields` に text を入れず、`expansions` も付けない）。
+本文・username は取らない（`tweet.fields` に text を入れず、user の `expansions` も付けない）。
+**非公開の数**（監査 11/06 #3）: 作って 30 日以内と判る投稿だけ、別の要求で `non_public_metrics`
+（リンクのクリック・プロフィールのクリック・engagements）と、動画の再生（`attachments.media_keys`
+の展開・media の欄だけ）も頼む（`OWNED_PRIVATE_QUERY`）。断られたら公開の数だけで頼み直す。
 
 **コミュニティ**（3.19.0）: 出すのは `tweet_body` の `community_id`（返信とは同時に使わない）。
 探すのは `community_search`（`GET /2/communities/search`・Community: Read 1 件 0.005 USD・
@@ -100,6 +103,28 @@ class NoRedirect(httpsafe.SameOriginRedirectHandler):
 
 _transport = httpsafe.build_opener(NoRedirect())
 MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+def _field_refused(value) -> bool:
+    """200 の応答の `errors[]` に「欄の断り」があるか（非公開の数を頼んだ時）。
+
+    **L1** get-posts-by-ids の型: `NotAuthorizedForFieldProblem`（`…/problems/not-authorized-for-field`）・
+    `FieldUnauthorizedProblem`（`…/problems/field-unauthorized`）。どちらも `field` を必ず持つ。
+    30 日を過ぎた・自分でない投稿が混ざった時にどちらが返り、その投稿の行が `data` から
+    落ちるのかは資料に無い（**本物で確かめる**）。見るのは型と `field` の有無だけ（文面は取らない）。
+    """
+    errors = value.get('errors') if isinstance(value, dict) else None
+    if not isinstance(errors, list):
+        return False
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        kind = error.get('type')
+        if isinstance(kind, str) and ('not-authorized-for-field' in kind or 'field-unauthorized' in kind):
+            return True
+        if isinstance(error.get('field'), str):
+            return True
+    return False
 
 
 def rate_limit(error):
@@ -299,6 +324,17 @@ class XAdapter(base.Adapter):
     OWNED_BATCH = 100
     OWNED_FIELDS = 'public_metrics,created_at,author_id'
     OWNED_METRICS = ('views', 'likes', 'replies', 'reposts', 'quotes', 'bookmarks')
+    # 非公開の数（監査 11/06 #3・**L1** docs.x.com/x-api/fundamentals/metrics「Non-public, organic,
+    # and promoted metrics are only available for posts created within the last 30 days」・
+    # user context の認可で自分の投稿だけ。get-posts-by-ids の認可は tweet.read＋users.read——
+    # いまのトークンにある）。**30 日の境で 1 時間の余裕**を取り、それより古い・経過の判らない
+    # id は今までどおり公開の数だけ頼む（混ぜた時の応答は資料に無い——本物で確かめる）。
+    # 動画は `expansions=attachments.media_keys` の `includes.media[]`（media の欄だけ。
+    # 本文・username・url は頼まない）。
+    OWNED_PRIVATE_WINDOW_HOURS = 30 * 24 - 1
+    OWNED_PRIVATE_QUERY = {'tweet.fields': 'public_metrics,non_public_metrics,created_at,author_id,attachments',
+                           'expansions': 'attachments.media_keys',
+                           'media.fields': 'type,public_metrics,non_public_metrics'}
     # `max_results` の下限（一次資料: recent search は 10〜100）。
     SEARCH_MIN_RESULTS = 10
     SEARCH_WINDOW_DAYS = 7
@@ -987,14 +1023,22 @@ class XAdapter(base.Adapter):
 
     # ----- 自分の投稿の数字（Owned Reads・**owned_read の予約の中でだけ動く**） ----
 
-    def owned_metrics(self, post_ids, *, now=None) -> dict:
-        """自分の投稿の公開の数字を `GET /2/tweets?ids=…` で読む（100 本ずつ 1 回）。
+    def owned_metrics(self, post_ids, *, now=None, ages=None) -> dict:
+        """自分の投稿の数字を `GET /2/tweets?ids=…` で読む（100 本ずつ 1 回）。
 
         戻り: `{'by_post': {post_id: {'metrics': {...}, 'available': [...]}}, 'rejected': n,
-        'api_errors': n, 'not_returned': [post_id...], 'posts': n, 'requests': n, 'usd_estimate': str}`。
+        'api_errors': n, 'not_returned': [post_id...], 'posts': n, 'requests': n, 'usd_estimate': str,
+        'private_posts': n, 'private_fallback': n}`。
         `by_post` の値は `insights()` と同じ形（`adapter_base.metrics_of` で開ける）。取れなかった
         指標は入れない（0 と混ぜない）。**`author_id` が自分でない行は `x_metrics` が落とす**——
         渡された id が他人の投稿でも、数字は台帳に入らない（課金は返ってきた本数のまま）。
+
+        `ages`（`{post_id: 投稿からの時間}`）で 30 日の内と判る id だけ、非公開の数
+        （`link_clicks`・`profile_clicks`・`engagements`・`private_impressions`、動画が 1 本なら
+        `video_views`・`video_playback_0〜100`）も頼む（`OWNED_PRIVATE_QUERY`・別の要求）。
+        その要求が 400／403 で断られたら、同じ id を公開の数だけで頼み直す（断りは 0 本で確定
+        するので二重には数えない）。欄の断り（`errors[]` の field の問題）で行が返らなかった id
+        も公開の数だけで頼み直す。行は返ったが非公開の欄が無いときは、その数を入れない。
         """
         import datetime
         from .. import x_metrics
@@ -1006,51 +1050,84 @@ class XAdapter(base.Adapter):
             if value not in ids:
                 ids.append(value)
         out = {'by_post': {}, 'rejected': 0, 'api_errors': 0, 'not_returned': [],
-               'posts': 0, 'requests': 0, 'usd_estimate': '0'}
+               'posts': 0, 'requests': 0, 'usd_estimate': '0', 'private_posts': 0, 'private_fallback': 0}
         if not ids:
             return out
         if not re.fullmatch(r'[1-9][0-9]{0,19}', self.user_id or ''):
             raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
         at = now if now is not None else jst.now_jst()
         stamp = at.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        for start in range(0, len(ids), self.OWNED_BATCH):
-            chunk = ids[start:start + self.OWNED_BATCH]
-            value = self._owned_get(chunk)
-            if value.get('data') is not None:
-                try:
-                    report = x_metrics.normalize_owned_metrics(
-                        value, connected_user_id=self.user_id, observed_at=stamp, now=stamp)
-                except x_metrics.XMetricsError as exc:
-                    raise AdapterError('自分の投稿の数字: x_owned_response_invalid: ' + str(exc)) from None
-                out['rejected'] += report['coverage']['rejected_records']
-                out['api_errors'] += report['coverage']['api_error_count']
-                for record in report['records']:
-                    if record['post_id'] not in chunk:
-                        continue
-                    metrics = {name: item['value'] for name, item in record['metrics'].items()
-                               if item['value'] is not None}
-                    out['by_post'][record['post_id']] = {'metrics': metrics,
-                                                         'available': list(self.OWNED_METRICS)}
-            else:
+        ages = ages if isinstance(ages, dict) else {}
+
+        def recent(pid):
+            age = ages.get(pid)
+            return (isinstance(age, (int, float)) and not isinstance(age, bool)
+                    and 0 <= age < self.OWNED_PRIVATE_WINDOW_HOURS)
+
+        def take(value, chunk, private):
+            if value.get('data') is None:
                 errors = value.get('errors')
                 out['api_errors'] += len(errors) if isinstance(errors, list) else 0
-            out['not_returned'] += [pid for pid in chunk if pid not in out['by_post']]
+                return
+            try:
+                report = x_metrics.normalize_owned_metrics(
+                    value, connected_user_id=self.user_id, observed_at=stamp, now=stamp, private=private)
+            except x_metrics.XMetricsError as exc:
+                raise AdapterError('自分の投稿の数字: x_owned_response_invalid: ' + str(exc)) from None
+            out['rejected'] += report['coverage']['rejected_records']
+            out['api_errors'] += report['coverage']['api_error_count']
+            for record in report['records']:
+                if record['post_id'] not in chunk:
+                    continue
+                metrics = {name: item['value'] for name, item in record['metrics'].items()
+                           if item['value'] is not None}
+                available = list(self.OWNED_METRICS)
+                if private:
+                    available += list(x_metrics.PRIVATE_METRICS)
+                    if 'video_views' in record['metrics']:
+                        available += list(x_metrics.VIDEO_METRICS)
+                    out['private_posts'] += 1
+                out['by_post'][record['post_id']] = {'metrics': metrics, 'available': available}
+
+        private_ids = [pid for pid in ids if recent(pid)]
+        public_ids = [pid for pid in ids if not recent(pid)]
+        for group, private in ((private_ids, True), (public_ids, False)):
+            for start in range(0, len(group), self.OWNED_BATCH):
+                chunk = group[start:start + self.OWNED_BATCH]
+                value = self._owned_get(chunk, private=private)
+                if value is None:   # 非公開の欄ごと断られた（400／403）→ 公開の数だけで頼み直す
+                    out['private_fallback'] += len(chunk)
+                    take(self._owned_get(chunk), chunk, False)
+                    continue
+                take(value, chunk, private)
+                if private and _field_refused(value):
+                    retry = [pid for pid in chunk if pid not in out['by_post']]
+                    if retry:
+                        out['private_fallback'] += len(retry)
+                        take(self._owned_get(retry), retry, False)
+        out['not_returned'] = [pid for pid in ids if pid not in out['by_post']]
         out['posts'] = self._owned['posts']
         out['requests'] = self._owned['calls']
         out['usd_estimate'] = self._owned['usd']
         return out
 
-    def _owned_get(self, chunk):
+    def _owned_get(self, chunk, *, private=False):
         """1 回の `GET /2/tweets?ids=…` を `budget_x.owned_read(account, len(chunk))` の中で。
 
         作法は `_paid_get` と同じ: 断りの応答（4xx・5xx）は 0 本で確定、応答が読めなければ
         押さえた上限のまま uncertain。全部が見つからない応答（`data` 無し・`errors` だけ）は
         0 本で確定する（投稿は返っていない）。
+
+        `private=True` は非公開の数も頼む（`OWNED_PRIVATE_QUERY`）。そのとき 400／403 は
+        **None を返す**（0 本で確定済み・呼ぶ側が公開の数だけで頼み直す）。単価は同じ
+        Owned Reads の 1 本 0.001 USD として数える——非公開の欄や media の展開で料金が変わるとは
+        料金表に書いていない（**本物で確かめる**: 請求の本数が返った投稿の本数と合うか）。
         """
         from decimal import Decimal
         from .. import budget_x
         limit = len(chunk)
-        query = {'ids': ','.join(chunk), 'tweet.fields': self.OWNED_FIELDS}
+        query = {'ids': ','.join(chunk), **(self.OWNED_PRIVATE_QUERY if private
+                                            else {'tweet.fields': self.OWNED_FIELDS})}
         charged = limit
         try:
             with budget_x.owned_read(self.auth_account, limit) as slot:
@@ -1061,6 +1138,8 @@ class XAdapter(base.Adapter):
                 except urllib.error.HTTPError as exc:
                     slot.settle(0)
                     charged = 0
+                    if private and exc.code in (400, 403):
+                        return None   # 0 本で確定済み。呼ぶ側が公開の数だけで頼み直す
                     if exc.code == 403:
                         raise base.PermissionMissing('tweet.read', 'x_owned_read_http_403') from None
                     if exc.code == 429:

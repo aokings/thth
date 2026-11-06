@@ -154,3 +154,81 @@ def test_errors_only_is_explicit_invalid_data_contract():
     assert result["coverage"]["api_error_count"] == 1
     assert result["coverage"]["complete"] is False
     assert "PRIVATE_ERROR_CANARY" not in json.dumps(result)
+
+
+# ----- 非公開の数（監査 11/06 #3・private=True の時だけ） --------------------------
+
+def video(key="3_1", **kw):
+    return {"media_key": key, "type": "video", "url": "URL_CANARY",
+            "public_metrics": {"view_count": 70},
+            "non_public_metrics": {"playback_0_count": 50, "playback_25_count": 40,
+                                   "playback_50_count": 30, "playback_75_count": 20,
+                                   "playback_100_count": 10}, **kw}
+
+
+def run_private(data, media=None, **kw):
+    response = {"data": data}
+    if media is not None:
+        response["includes"] = {"media": media}
+    return normalize_owned_metrics(response, connected_user_id="456", observed_at=NOW, now=NOW,
+                                   private=True, **kw)
+
+
+def test_private_metrics_are_read_with_their_source_fields():
+    item = row(non_public_metrics={"url_link_clicks": 9, "user_profile_clicks": 2,
+                                   "engagements": 15, "impression_count": 130},
+               attachments={"media_keys": ["3_1"]})
+    result = run_private([item], media=[video()])
+    metrics = result["records"][0]["metrics"]
+    assert {k: v["value"] for k, v in metrics.items()} == {
+        "views": 0, "likes": 5, "replies": 2, "reposts": 3, "quotes": 4, "bookmarks": 6,
+        "link_clicks": 9, "profile_clicks": 2, "engagements": 15, "private_impressions": 130,
+        "video_views": 70, "video_playback_0": 50, "video_playback_25": 40,
+        "video_playback_50": 30, "video_playback_75": 20, "video_playback_100": 10}
+    assert metrics["link_clicks"]["source_fields"] == ["non_public_metrics.url_link_clicks"]
+    assert metrics["video_views"]["source_fields"] == ["includes.media.public_metrics.view_count"]
+    # 公開の views と非公開の表示は混ぜない。media の url は持ち出さない。
+    assert metrics["views"]["source_fields"] == ["public_metrics.impression_count"]
+    assert "URL_CANARY" not in json.dumps(result)
+    assert result["metric_definitions"]["link_clicks"] == "non_public_url_link_clicks"
+
+
+@pytest.mark.parametrize("raw,reason", [
+    (None, "missing"), ("x", "invalid_metrics_object"), ([], "invalid_metrics_object"),
+])
+def test_private_block_absent_or_malformed_is_none_not_zero(raw, reason):
+    item = row() if raw is None else row(non_public_metrics=raw)
+    metrics = run_private([item])["records"][0]["metrics"]
+    for name in ("link_clicks", "profile_clicks", "engagements", "private_impressions"):
+        assert metrics[name] == {"value": None, "reason": reason, "source_fields": []}
+    assert "video_views" not in metrics   # 動画が無ければ動画の数は持たない
+
+
+@pytest.mark.parametrize("value,reason", [(True, "invalid_type"), ("8", "invalid_type"),
+                                          (-1, "negative"), (1.0, "invalid_type")])
+def test_private_values_of_the_wrong_type_are_none(value, reason):
+    metrics = run_private([row(non_public_metrics={"url_link_clicks": value})])["records"][0]["metrics"]
+    assert metrics["link_clicks"]["value"] is None and metrics["link_clicks"]["reason"] == reason
+    assert metrics["profile_clicks"]["reason"] == "missing"
+
+
+def test_video_counts_only_for_exactly_one_known_video():
+    two = row(attachments={"media_keys": ["3_1", "3_2"]})
+    assert "video_views" not in run_private([two], media=[video("3_1"), video("3_2")])["records"][0]["metrics"]
+    photo = row(attachments={"media_keys": ["3_1"]})
+    assert "video_views" not in run_private(
+        [photo], media=[{"media_key": "3_1", "type": "photo"}])["records"][0]["metrics"]
+    dup = row(attachments={"media_keys": ["3_1"]})
+    assert "video_views" not in run_private([dup], media=[video(), video()])["records"][0]["metrics"]
+    no_private = row(attachments={"media_keys": ["3_1"]})
+    metrics = run_private([no_private], media=[video(non_public_metrics=None)])["records"][0]["metrics"]
+    assert metrics["video_views"]["value"] == 70
+    assert metrics["video_playback_100"] == {"value": None, "reason": "missing", "source_fields": []}
+
+
+def test_private_false_output_is_unchanged():
+    item = row(non_public_metrics={"url_link_clicks": 9}, attachments={"media_keys": ["3_1"]})
+    result = normalize_owned_metrics({"data": [item], "includes": {"media": [video()]}},
+                                     connected_user_id="456", observed_at=NOW, now=NOW)
+    assert set(result["records"][0]["metrics"]) == {"views", "likes", "replies", "reposts", "quotes", "bookmarks"}
+    assert set(result["metric_definitions"]) == {"views", "likes", "replies", "reposts", "quotes", "bookmarks"}

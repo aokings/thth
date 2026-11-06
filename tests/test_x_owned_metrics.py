@@ -154,6 +154,131 @@ def test_owned_metrics_all_missing_settles_zero(x_account, fake):
     assert [(r["state"], r["count"]) for r in owned_ledger()] == [("settled", 0)]
 
 
+# ----- 非公開の数（監査 11/06 #3・30 日の内と判る投稿だけ） ----------------------------
+
+PRIVATE = {"url_link_clicks": 7, "user_profile_clicks": 2, "engagements": 11, "impression_count": 125}
+
+
+def private_row(identifier, *, video_key=None, non_public=PRIVATE, **kw):
+    row = owned_row(identifier, **kw)
+    if non_public is not None:
+        row["non_public_metrics"] = dict(non_public)
+    if video_key:
+        row["attachments"] = {"media_keys": [video_key]}
+    return row
+
+
+def asks_private(query):
+    return "non_public_metrics" in query.get("tweet.fields", "")
+
+
+def test_owned_metrics_asks_private_only_for_posts_within_30_days(x_account, fake):
+    def answer(query):
+        ids = query["ids"].split(",")
+        if asks_private(query):
+            return {"data": [private_row(i, video_key="3_9" if i.endswith("1") else None) for i in ids],
+                    "includes": {"media": [{"media_key": "3_9", "type": "video",
+                                            "public_metrics": {"view_count": 40},
+                                            "non_public_metrics": {"playback_0_count": 30,
+                                                                   "playback_100_count": 5}}]}}
+        return {"data": [owned_row(i) for i in ids]}
+    fake["routes"]["/2/tweets"] = answer
+    ids = ["1900000000000000001", "1900000000000000002", "1900000000000000003", "1900000000000000004"]
+    result = adapter_for().owned_metrics(ids, now=NOW, ages={
+        "1900000000000000001": 2.0, "1900000000000000002": 718.5,   # 30 日の内
+        "1900000000000000003": 719.5,                               # 境の 1 時間は公開だけ
+        # 4 は経過が判らない → 公開だけ
+    })
+    assert [c[2] for c in fake["calls"]] == [
+        {"ids": "1900000000000000001,1900000000000000002",
+         "tweet.fields": "public_metrics,non_public_metrics,created_at,author_id,attachments",
+         "expansions": "attachments.media_keys", "media.fields": "type,public_metrics,non_public_metrics"},
+        {"ids": "1900000000000000003,1900000000000000004", "tweet.fields": "public_metrics,created_at,author_id"}]
+    # 本文・username・media の url を頼まない。
+    for _m, _p, query in fake["calls"]:
+        assert "text" not in query["tweet.fields"] and "author_id" != query.get("expansions")
+        assert "url" not in query.get("media.fields", "").split(",")
+    one = result["by_post"]["1900000000000000001"]
+    assert one["metrics"] == {"views": 120, "likes": 4, "replies": 1, "reposts": 2, "quotes": 0, "bookmarks": 3,
+                              "link_clicks": 7, "profile_clicks": 2, "engagements": 11,
+                              "private_impressions": 125, "video_views": 40,
+                              "video_playback_0": 30, "video_playback_100": 5}
+    # 欄の無い再生の数は入れない（0 にしない）が、媒体にある指標としては available に載る。
+    assert "video_playback_50" not in one["metrics"] and "video_playback_50" in one["available"]
+    two = result["by_post"]["1900000000000000002"]
+    assert two["metrics"]["link_clicks"] == 7 and "video_views" not in two["available"]
+    assert result["by_post"]["1900000000000000003"]["available"] == list(x_adapter_cls().OWNED_METRICS)
+    assert result["private_posts"] == 2 and result["private_fallback"] == 0
+    # 課金は今までどおり返った本数 × 0.001（4 本）。
+    assert result["posts"] == 4 and result["usd_estimate"] == "0.004"
+    assert sorted(r["count"] for r in owned_ledger()) == [2, 2]
+
+
+def x_adapter_cls():
+    from thth.adapters import x
+    return x.XAdapter
+
+
+def test_private_row_without_the_block_records_no_private_numbers(x_account, fake):
+    fake["routes"]["/2/tweets"] = {"data": [private_row("1900000000000000001", non_public=None)]}
+    result = adapter_for().owned_metrics(["1900000000000000001"], now=NOW, ages={"1900000000000000001": 3})
+    metrics = result["by_post"]["1900000000000000001"]["metrics"]
+    assert "link_clicks" not in metrics and metrics["views"] == 120
+    assert "link_clicks" in result["by_post"]["1900000000000000001"]["available"]
+    assert len(fake["calls"]) == 1
+
+
+@pytest.mark.parametrize("code", [400, 403])
+def test_private_request_refused_falls_back_to_public_without_double_charge(x_account, fake, code):
+    def answer(query):
+        if asks_private(query):
+            return urllib.error.HTTPError("u", code, "x", {}, None)
+        return {"data": [owned_row(i) for i in query["ids"].split(",")]}
+    fake["routes"]["/2/tweets"] = answer
+    result = adapter_for().owned_metrics(["1900000000000000001"], now=NOW, ages={"1900000000000000001": 3})
+    assert [asks_private(c[2]) for c in fake["calls"]] == [True, False]
+    assert result["by_post"]["1900000000000000001"]["metrics"]["views"] == 120
+    assert "link_clicks" not in result["by_post"]["1900000000000000001"]["available"]
+    assert result["private_fallback"] == 1 and result["private_posts"] == 0
+    assert sorted((r["state"], r["count"]) for r in owned_ledger()) == [("settled", 0), ("settled", 1)]
+    assert result["usd_estimate"] == "0.001"
+
+
+def test_public_403_is_still_permission_missing(x_account, fake):
+    fake["routes"]["/2/tweets"] = urllib.error.HTTPError("u", 403, "x", {}, None)
+    with pytest.raises(base.PermissionMissing):
+        adapter_for().owned_metrics(["1900000000000000001"], now=NOW, ages={"1900000000000000001": 3})
+    assert len(fake["calls"]) == 2   # 非公開 → 公開で頼み直し → 公開も 403 は権限の断り
+
+
+def test_field_refusal_reasks_only_the_dropped_ids_publicly(x_account, fake):
+    def answer(query):
+        if asks_private(query):
+            return {"data": [private_row("1900000000000000001")],
+                    "errors": [{"type": "https://api.x.com/2/problems/not-authorized-for-field",
+                                "field": "non_public_metrics", "resource_id": "1900000000000000002",
+                                "detail": "PRIVATE_ERROR_CANARY"}]}
+        return {"data": [owned_row(i) for i in query["ids"].split(",")]}
+    fake["routes"]["/2/tweets"] = answer
+    result = adapter_for().owned_metrics(["1900000000000000001", "1900000000000000002"], now=NOW,
+                                         ages={"1900000000000000001": 3, "1900000000000000002": 5})
+    assert [(asks_private(c[2]), c[2]["ids"]) for c in fake["calls"]] == [
+        (True, "1900000000000000001,1900000000000000002"), (False, "1900000000000000002")]
+    assert result["by_post"]["1900000000000000001"]["metrics"]["link_clicks"] == 7
+    assert "link_clicks" not in result["by_post"]["1900000000000000002"]["available"]
+    assert result["not_returned"] == [] and result["private_fallback"] == 1
+    assert "PRIVATE_ERROR_CANARY" not in json.dumps(result)
+
+
+def test_not_found_in_private_request_is_not_reasked(x_account, fake):
+    fake["routes"]["/2/tweets"] = {"data": [private_row("1900000000000000001")],
+                                   "errors": [{"resource_id": "1900000000000000002", "title": "Not Found Error",
+                                               "type": "https://api.x.com/2/problems/resource-not-found"}]}
+    result = adapter_for().owned_metrics(["1900000000000000001", "1900000000000000002"], now=NOW,
+                                         ages={"1900000000000000001": 3, "1900000000000000002": 5})
+    assert len(fake["calls"]) == 1 and result["not_returned"] == ["1900000000000000002"]
+
+
 def test_owned_metrics_refuses_bad_ids_before_any_request(x_account, fake):
     with pytest.raises(base.AdapterError, match="x_post_id_invalid"):
         adapter_for().owned_metrics(["abc"], now=NOW)
@@ -209,6 +334,35 @@ def test_collect_reads_only_own_sent_posts_at_the_threads_marks(x_account, fake)
     # 同じ時刻にもう一度: 済んだ刻みは読まない（要求も予約もしない）。
     collect_mod.collect_once(ACCOUNT, adapter=adapter_for(), now=NOW, log=lambda _l: None)
     assert len(fake["calls"]) == 1 and len(owned_ledger()) == 1
+
+
+def test_collect_records_private_numbers_inside_30_days_and_measured_shows_them(x_account, fake, capsys):
+    _sent("1900000000000000001", "2026-09-09T08:30:00+09:00")   # 1.5h → 非公開も
+    _sent("1900000000000000002", "2026-08-10T09:00:00+09:00")   # 721h → 720h の刻み・公開だけ
+
+    def answer(query):
+        ids = query["ids"].split(",")
+        if asks_private(query):
+            return {"data": [private_row(i, created="2026-08-09T00:00:00.000Z") for i in ids]}
+        return {"data": [owned_row(i, created="2026-08-09T00:00:00.000Z") for i in ids]}
+    fake["routes"]["/2/tweets"] = answer
+    result = collect_mod.collect_once(ACCOUNT, adapter=adapter_for(), now=NOW, log=lambda _l: None)
+    assert result["errors"] == []
+    assert [(asks_private(c[2]), c[2]["ids"]) for c in fake["calls"]] == [
+        (True, "1900000000000000001"), (False, "1900000000000000002")]
+    row = _insight_rows("1900000000000000001")[0]
+    assert row["metrics"] == {"views": 120, "likes": 4, "replies": 1, "reposts": 2, "quotes": 0,
+                              "bookmarks": 3, "link_clicks": 7, "profile_clicks": 2,
+                              "engagements": 11, "private_impressions": 125, "shares": None}
+    old = _insight_rows("1900000000000000002")[-1]
+    assert 720 in old["marks"] and "link_clicks" not in old["metrics"]
+    # 読む口: `thth measured --json` と人向けの表示に、そのまま出る。
+    assert cli.main(["measured", ACCOUNT, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    post = next(p for p in payload["posts"] if p["post_id"] == "1900000000000000001")
+    assert post["rows"][0]["metrics"]["link_clicks"] == 7
+    assert cli.main(["measured", ACCOUNT]) == 0
+    assert "link_clicks=7" in capsys.readouterr().out
 
 
 def test_collect_does_not_read_ids_outside_sent(x_account, fake, monkeypatch):
