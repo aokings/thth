@@ -72,7 +72,10 @@ REASONS = frozenset((
     'ads_business_unknown', 'ads_object_story_id_invalid', 'ads_post_invalid', 'ads_time_invalid',
     'ads_time_range_invalid', 'ads_end_time_required', 'ads_platform_unsupported', 'ads_instagram_unlinked',
     'ads_objective_invalid', 'ads_url_tags_invalid', 'ads_utm_campaign_invalid', 'ads_landing_url_invalid',
-    'ads_amount_invalid', 'ads_id_invalid'))
+    'ads_amount_invalid', 'ads_id_invalid',
+    # Threads を出し先に（11/07）。手元と同じ符丁で、作る前に断る（何も作っていない）。
+    'ads_threads_needs_instagram', 'ads_threads_unlinked', 'ads_threads_not_granted', 'ads_threads_unreadable',
+    'ads_threads_scope_missing'))
 # 依頼の印に書かない欄（リード＝第三者の個人情報・フォーム名・商品・カタログ・狙う相手）。
 SECRET_FIELDS = ('leads', 'forms', 'products', 'catalogs', 'targeting')
 _CODE = re.compile(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)+\Z')

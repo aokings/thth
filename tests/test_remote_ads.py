@@ -241,6 +241,15 @@ def test_ads_boostは上限0ならads_days_over_ceilingで断る(vm):
     assert writes(vm) == []
 
 
+def test_ads_boostのinstagram無しのthreadsは手元と同じ符丁で断る(vm):
+    production()
+    value = vm_call(vm, "ads_boost", object_story_id=STORY, lifetime=500, end=end_in(1), platforms="facebook,threads")
+    assert value["error"] == "ads_threads_needs_instagram" and writes(vm) == []
+    # IG の口座を結んでいない台帳なら instagram,threads は ads_instagram_unlinked（何も作らない）
+    value = vm_call(vm, "ads_boost", object_story_id=STORY, lifetime=500, end=end_in(1), platforms="instagram,threads")
+    assert value["error"] == "ads_instagram_unlinked" and writes(vm) == []
+
+
 def test_止めた口座でads_boostは網に出ずads_pauseとads_stopは通る(vm):
     production()
     vm["meta"].campaign(status="ACTIVE")

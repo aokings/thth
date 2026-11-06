@@ -588,7 +588,9 @@ ADS_TOOLS = [
          "lifetime": {"type": "integer", "description": "通しの予算（最小単位・JPY なら円）"},
          "start": {"type": "string", "description": "開始（ISO 8601 か now・既定 now）"},
          "end": {"type": "string", "description": "終了（必須・ISO 8601）"},
-         "platforms": {"type": "string", "description": "facebook か facebook,instagram（既定 facebook）"},
+         "platforms": {"type": "string", "description": "facebook・facebook,instagram・instagram,threads・"
+                                                        "facebook,instagram,threads のどれか（既定 facebook）。threads は "
+                                                        "instagram と組でだけ出せる。Threads の投稿そのものは広告にできない"},
          "objective": {"type": "string", "enum": ["engagement", "traffic", "reach"],
                        "description": "目的（既定 engagement。traffic＝サイトへの誘導・reach＝認知）"},
          "url_tags": {"type": "string",

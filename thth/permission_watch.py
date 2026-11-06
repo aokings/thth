@@ -63,8 +63,9 @@ READ, WRITE = "read", "write"
 ACTION = "permission_keepalive"
 
 
-def _p(media, kind, *evidence):
-    return {"media": media, "kind": kind, "evidence": evidence}
+def _p(media, kind, *evidence, also=None):
+    """`also` は、ほかの媒体の口座でも同じ権限を使う所（媒体 → 記録の種類）。審査の表の媒体は `media` のまま。"""
+    return {"media": media, "kind": kind, "evidence": evidence, "also": dict(also or {})}
 
 
 # 権限 → 媒体・読む／書く・成功を言える記録。THTH の認可が求める権限は全部ここに並ぶ（試験が縛る）。
@@ -102,7 +103,9 @@ PERMISSIONS = {
     "instagram_manage_contents": _p("instagram", WRITE, "retract"),
     "instagram_manage_engagement": _p("instagram", WRITE, "ig_like"),
     "instagram_manage_messages": _p("instagram", WRITE, "dm_list", "dm_read", "dm_send"),
-    "threads_business_basic": _p("instagram", READ, "connected_threads_user"),
+    # IG の doctor の probe と、広告の鍵の側の使用（Threads を出し先にした boost が connected_threads_user を
+    # 引いた・threads を含む creative を作った・`_ad_row` の `ads_threads`・11/07 に ads の SCOPES に足した）。
+    "threads_business_basic": _p("instagram", READ, "connected_threads_user", also={"ads": ("ads_threads",)}),
     "ads_read": _p(ADS, READ, "ads_snapshot"),
     "ads_management": _p(ADS, WRITE, "ads_op"),
     "catalog_management": _p(ADS, READ, "ads_catalog"),
@@ -277,7 +280,7 @@ def _held(media, token) -> set:
     """鍵に乗っている権限（一覧が無い鍵は、その媒体の権限を全部持つとして数える）。"""
     if not isinstance(token, dict) or token.get("unreadable"):
         return set()
-    expected = {name for name, spec in PERMISSIONS.items() if spec["media"] == media}
+    expected = {name for name, spec in PERMISSIONS.items() if spec["media"] == media or media in spec["also"]}
     scopes = token.get("scopes")
     return expected & set(scopes) if isinstance(scopes, list) else expected
 
@@ -313,8 +316,16 @@ def _ad_row(name, now):
     snapshot = watch.read_snapshot(name) or {}
     _note(found, "ads_snapshot", jst.parse(snapshot.get("last_ok_at")))
     for row in ops.read_ops(name):
+        at = jst.parse(row.get("at"))
         if row.get("result") == "ok":
-            _note(found, "ads_op", jst.parse(row.get("at")))
+            _note(found, "ads_op", at)
+        plan = row.get("plan") if isinstance(row.get("plan"), dict) else {}
+        created = row.get("created") if isinstance(row.get("created"), dict) else {}
+        # threads_business_basic の広告の側の使用: connected_threads_user を引けた（そのあと作るのに失敗しても
+        # 読みは通った）か、threads_user_id を入れた creative を作れた。
+        if row.get("op") == "boost" and (plan.get("threads_user_source") == "connected_threads_user"
+                                         or (plan.get("threads_user_id") and created.get("creative_id"))):
+            _note(found, "ads_threads", at)
     obtained = jst.parse(token.get("obtained_at")) if isinstance(token, dict) else None
     limit = ledger.token_limits(token or {})["data_access_expires_at"] if isinstance(token, dict) else None
     access = None
@@ -352,7 +363,8 @@ def _rows(now) -> list:
 def _last(row, permission):
     """その口座の最後の成功（時刻・無ければ None）。"""
     spec = PERMISSIONS[permission]
-    times = [row["found"].get(kind) for kind in (*spec["evidence"], "keepalive:" + permission)]
+    evidence = spec["evidence"] if row["media"] == spec["media"] else spec["also"].get(row["media"], ())
+    times = [row["found"].get(kind) for kind in (*evidence, "keepalive:" + permission)]
     return max((at for at in times if at is not None), default=None)
 
 
@@ -373,7 +385,7 @@ def _can_call(row, permission) -> bool:
 
 def _permission_row(permission, rows, watched, now) -> dict:
     spec = PERMISSIONS[permission]
-    same = [row for row in rows if row["media"] == spec["media"]]
+    same = [row for row in rows if row["media"] == spec["media"] or row["media"] in spec["also"]]
     holders = [row for row in same if permission in row["held"]]
     best = max(((at, row["name"]) for row in same if (at := _last(row, permission))), default=(None, None))
     since, counted_from = best[0], "record"

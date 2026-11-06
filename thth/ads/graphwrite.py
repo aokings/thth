@@ -199,10 +199,17 @@ class Writer:
         return self._new_id(body)
 
     def create_creative(self, *, name: str, object_story_id: str, instagram_user_id: str | None = None,
-                        url_tags: str | None = None) -> str:
+                        threads_user_id: str | None = None, url_tags: str | None = None) -> str:
         form = {"name": name[:200], "object_story_id": object_story_id}
         if instagram_user_id:
             form["instagram_user_id"] = self._check_id(instagram_user_id)
+        if threads_user_id:
+            # Threads にも流す（公式 Use Posts as Ads: FB の投稿は object_story_id＋instagram_user_id＋
+            # threads_user_id）。Threads は Instagram と組でだけ出せるので、IG の口座が無ければ送らない。
+            # 例にある call_to_action は要るか書いていないので送らない【本番で確かめる】。
+            if not instagram_user_id:
+                raise AdsWriteError("ads_threads_needs_instagram", failure=meta_errors.DEFINITE)
+            form["threads_user_id"] = self._check_id(threads_user_id)
         if url_tags is not None:
             # クリエイティブの `url_tags`（ページの投稿の広告のリンクに付ける印・AdCreative の文書。
             # object_story_id と一緒に送る例が文書にある）。**本番未確認。**

@@ -73,7 +73,44 @@ RESUMABLE_REASONS = frozenset({"owner"})
 DONE_STATUS = frozenset({"PAUSED", "DELETED", "ARCHIVED"})
 SKIP_ACTIVATE = frozenset({"DELETED", "ARCHIVED"})
 POST_ID_RE = re.compile(r"([0-9]{1,32})_([0-9]{1,32})")
-PLATFORMS = ("facebook", "instagram")
+PLATFORMS = ("facebook", "instagram", "threads")
+# Threads への出し方（調べ_Threads広告のAPI_2026-11-06 §1・公式 Threads Ads Creation と Placement Targeting）:
+# `publisher_platforms` に instagram と threads の両方、`instagram_positions` に stream、`threads_positions` に
+# threads_stream（値はこれだけ）。Threads 単独・Instagram の stream 無しは Meta が許していない。
+# threads を選んだときは Instagram の配置が feed（stream）だけに絞られる（ストーリーズ・リールには出ない）。
+# facebook の配置は書かない（書かなければ全部の配置・今と同じ）。**v26 と JP で通るかは本番未確認。**
+THREADS_INSTAGRAM_POSITIONS = ("stream",)
+THREADS_POSITIONS = ("threads_stream",)
+# threads を含む広告を作ったあとに添える注（目的・版・国の組み合わせが本物で確かめられていない）。
+THREADS_UNVERIFIED = ("Threads への配信は本番未確認です（Graph v26・日本・目的の組み合わせ）。"
+                      "管理画面で配置に Threads が入っているかを見てから始めてください")
+# Threads の口座の id（creative の `threads_user_id`）を引けないときの案内。ads の鍵の SCOPES には
+# `threads_business_basic` を入れた（masaru 11/07）が、それより前に作った鍵には再認可するまで乗らない。
+REAUTH_COMMAND = "thth ads auth {name} --by <名前>"
+THREADS_ID_HINT = ("広告の鍵を再認可して threads_business_basic を乗せてください（{command}）。待てないときは、台帳に "
+                   "threads_user_id を書けば引かずに使います（値は IG の口座の thth doctor <IG の口座> の"
+                   "「Threads 広告の下地（connected_threads_user）」の行の threads_user_id=…）")
+THREADS_GRANT_HINT = ("Threads を含むクリエイティブが権限で断られました。広告の鍵に threads_business_basic が乗っているか"
+                      "を thth ads doctor {name} で確かめ、無ければ再認可してください（{command}）。今回は --platforms から"
+                      " threads を外せばそのまま作れます")
+
+
+def threads_scope_refusal(name, token) -> OpsRefused | None:
+    """threads を出し先にするのに、鍵の権限の一覧に `threads_business_basic` が無ければ断り（要求の前）。
+
+    一覧が分からない鍵（`scopes` が無い・`scopes_source` が `unknown`＝構成 config_id の認可）は断らずに通し、
+    Meta の権限の断りを `ads_threads_not_granted` で言い換える。
+    """
+    from . import auth as ads_auth
+    scopes = token.get("scopes") if isinstance(token, dict) else None
+    if not isinstance(scopes, list) or token.get("scopes_source") == "unknown":
+        return None
+    if ads_auth.THREADS_SCOPE in scopes:
+        return None
+    return OpsRefused("ads_threads_scope_missing",
+                      "広告の鍵に threads_business_basic が乗っていません（この権限を足す前に作った鍵です）。"
+                      f"何も作っていません。再認可すると乗ります: {REAUTH_COMMAND.format(name=name)}",
+                      hint="今回は --platforms から threads を外せば、そのまま Facebook・Instagram で作れます")
 # ページを広告に使えない系の断り（G-11）のときに添える案内。
 PAGE_HINT = ("ページを広告に使えない断りなら: ページの持ち主のビジネスから吾徳（広告アカウントのビジネス）へ"
              "ページの共有（広告の権限）をリクエストして承認し、広告を出す人（masaru）をそのページに割り当てる。"
@@ -255,6 +292,13 @@ def _object_story(name, cfg, *, post=None, object_story_id=None) -> tuple:
             if not match or match.group(1) != page_id:
                 raise OpsRefused("ads_post_invalid", f"{post} は {account} のページの投稿の形ではありません")
             return post, page_id, f"sent:{account}"
+        threads_account = _threads_sent_account(cfg, post)
+        if threads_account:
+            # Meta は Threads の投稿そのものを広告にすることを許していない（Use Posts as Ads）。道は作らない。
+            raise OpsRefused("ads_threads_post_unsupported",
+                             f"{post} は Threads の口座 {threads_account} の投稿です。Meta は Threads の投稿そのものを"
+                             "広告にすることを許していません。同じ中身を Facebook ページに出した投稿を "
+                             "--platforms facebook,instagram,threads で boost すると Threads にも流れます")
         raise OpsRefused("ads_post_not_found",
                          f"{post} は結んだページの口座（{', '.join(cfg.get('pages') or []) or 'なし'}）の送った記録に"
                          "ありません。THTH で出していない投稿は --object-story-id <ページID>_<投稿の数字>")
@@ -262,6 +306,27 @@ def _object_story(name, cfg, *, post=None, object_story_id=None) -> tuple:
     if not match:
         raise OpsRefused("ads_object_story_id_invalid", "--object-story-id は <ページID>_<投稿の数字> です")
     return object_story_id, match.group(1), "object_story_id"
+
+
+def _threads_sent_account(cfg, post) -> str | None:
+    """`--post` が同じ project の Threads の口座の送った記録にあれば、その口座の名前（断りの文に使う）。"""
+    try:
+        names = accounts.list_account_names()
+    except (accounts.AccountError, OSError):
+        return None
+    for account in names:
+        try:
+            account_cfg = accounts.load_account(account)
+        except (accounts.AccountError, OSError, ValueError):
+            continue
+        if account_cfg.get("media") != "threads" or account_cfg.get("project") != cfg.get("project"):
+            continue
+        try:
+            if sent.read(accounts.state_dir_for(account), post) is not None:
+                return account
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def _instagram_user(cfg) -> str:
@@ -285,7 +350,12 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
     unknown = [p for p in platforms if p not in PLATFORMS]
     if unknown:
         raise OpsRefused("ads_platform_unsupported",
-                         f"出し先は facebook・instagram だけです（threads は後の段）: {','.join(unknown)}")
+                         f"出し先は {'・'.join(PLATFORMS)} のどれかです: {','.join(unknown)}")
+    if "threads" in platforms and "instagram" not in platforms:
+        # 要求を出す前に断る（Meta の決まり: Threads は Instagram の stream と組でだけ出せる）。
+        raise OpsRefused("ads_threads_needs_instagram",
+                         "Threads には単独で出せません（Meta は Instagram のフィードと組でだけ Threads に出します）。"
+                         "--platforms instagram,threads（Facebook にも出すなら facebook,instagram,threads）にしてください")
     if not cfg.get("production"):
         raise OpsRefused("ads_not_production", "台帳の production が false です（作るのも断る・D-2）")
     ceilings = ledger.ceilings(cfg)
@@ -311,6 +381,10 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
     # 形・有機は medium=social・設計 効果測定と連動 §2-2）。
     if utm_campaign is not None and not ledger.UTM_CAMPAIGN_RE.fullmatch(str(utm_campaign)):
         raise OpsRefused("ads_utm_campaign_invalid", "--utm-campaign は原稿のファイル名（拡張子なし・英数字と _ . -）です")
+    # threads を含むときも同じ規則（出し先の 1 つ目）のままにする: 1 つのクリエイティブが全部の出し先に出るので、
+    # 黙って threads に書き換えると、Instagram や Facebook から来た人まで threads と数えてしまう。Threads と数えたい
+    # なら --platforms threads,instagram の順に書く（utm_source=threads）。配置ごとに分けるマクロ
+    # （`{{site_source_name}}`・調べ §4）は --url-tags で渡せるが、値の綴りが有機の投稿の鍵と違うので既定にしない。
     url_tags = url_tags if url_tags is not None else cfg.get("url_tags")
     if url_tags is None and utm_campaign is not None:
         url_tags = default_url_tags(platforms[0], utm_campaign)
@@ -325,11 +399,60 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
     targeting = {"geo_locations": {"countries": ["JP"]}, "age_min": 18,
                  "publisher_platforms": list(platforms),
                  "targeting_automation": {"advantage_audience": 0}}
+    threads = "threads" in platforms
+    if threads:
+        targeting["instagram_positions"] = list(THREADS_INSTAGRAM_POSITIONS)
+        targeting["threads_positions"] = list(THREADS_POSITIONS)
+    # Threads の口座の id: 台帳の `threads_user_id` が先（網に出ない）。無ければ boost が作る前に
+    # `connected_threads_user` で引く（`resolve_threads_user`）。
+    threads_user = str(cfg["threads_user_id"]) if threads and cfg.get("threads_user_id") else None
     return {"object_story_id": story, "page_id": page_id, "source": source, "instagram_user_id": ig_user,
+            "threads_user_id": threads_user, "threads_user_source": "ledger" if threads_user else None,
             "lifetime_minor": lifetime_minor, "start": meta_time(start_at), "end": meta_time(end_at),
             "days": round(days, 3), "platforms": list(platforms), "objective": objective,
-            "objective_verified": objective in graphwrite.VERIFIED_OBJECTIVES, "targeting": targeting,
+            "objective_verified": objective in graphwrite.VERIFIED_OBJECTIVES,
+            "threads_verified": False if threads else None, "targeting": targeting,
             "url_tags": url_tags, "landing_url": landing_url}
+
+
+LEDGER_THREADS_HINT = ("少し置いて打ち直すか、台帳に threads_user_id を書けば読みに行かずに使います（値は IG の口座の "
+                       "thth doctor <IG の口座> の「Threads 広告の下地（connected_threads_user）」の行の threads_user_id=…）")
+
+
+def _threads_unreadable(exc) -> OpsRefused:
+    return OpsRefused("ads_threads_unreadable",
+                      f"Instagram に結びついた Threads の口座を読めませんでした（{_failure_code(exc)}）。何も作っていません",
+                      hint=LEDGER_THREADS_HINT)
+
+
+def resolve_threads_user(name, cfg, plan, *, token=None, base_url=None, reader=None) -> dict:
+    """threads を含む plan の `threads_user_id` を埋める（作る前・**読むだけ**）。だめなら `OpsRefused`。
+
+    `GET /<IG_USER_ID>/connected_threads_user?fields=threads_user_id`（公式 IG User connected_threads_user・
+    答えは `data` の並び）。要る権限は instagram_basic・threads_business_basic・pages_read_engagement。
+    ads の鍵の SCOPES には threads_business_basic を入れた（11/07）。一覧が分かる鍵で乗っていなければ
+    `threads_scope_refusal` が先に断る。一覧が分からない鍵で Meta が権限で断れば `ads_threads_not_granted`
+    （再認可と台帳の `threads_user_id` を案内する）。
+    """
+    if "threads" not in (plan.get("platforms") or ()) or plan.get("threads_user_id"):
+        return plan
+    try:
+        reader = reader or _reader(name, cfg, token or _token(cfg), base_url=base_url)
+        ids = reader.connected_threads_user(plan["instagram_user_id"])
+    except graphread.AdsReadError as exc:
+        if exc.failure == meta_errors.PERMISSION:
+            raise OpsRefused("ads_threads_not_granted",
+                             "広告の鍵では Instagram に結びついた Threads の口座を読めませんでした（Meta が権限で断った・"
+                             f"{_failure_code(exc)}）。何も作っていません",
+                             hint=THREADS_ID_HINT.format(command=REAUTH_COMMAND.format(name=name))) from None
+        raise _threads_unreadable(exc) from None
+    except meta_errors.RateLimited as exc:
+        raise _threads_unreadable(exc) from None
+    if not ids:
+        raise OpsRefused("ads_threads_unlinked",
+                         f"Instagram の口座 {plan['instagram_user_id']} に結びついた Threads の口座がありません。"
+                         "何も作っていません")
+    return dict(plan, threads_user_id=ids[0], threads_user_source="connected_threads_user")
 
 
 def default_url_tags(platform: str, utm_campaign: str) -> str:
@@ -340,6 +463,8 @@ def default_url_tags(platform: str, utm_campaign: str) -> str:
 def boost_steps(name, cfg, plan, *, token=None, base_url=None, reader=None) -> list:
     """作ったあとの次の一手（**先頭は skill**）。サイトへの誘導（traffic）ならピクセルと印（UTM）を確かめる。"""
     steps = [guide.skill_step()]
+    if "threads" in (plan.get("platforms") or ()):
+        steps.append({"kind": "threads_unverified", "text": THREADS_UNVERIFIED})
     if plan.get("objective") != "traffic":
         return steps
     try:
@@ -369,6 +494,11 @@ def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_mino
                       start=start, end=end, platforms=platforms, objective=objective, now=now,
                       url_tags=url_tags, landing_url=landing_url, utm_campaign=utm_campaign)
     token = _token(cfg)
+    if "threads" in plan["platforms"]:
+        refusal = threads_scope_refusal(name, token)
+        if refusal is not None:
+            raise refusal
+    plan = resolve_threads_user(name, cfg, plan, token=token, base_url=base_url)
     op_id = budget.new_op_id(now)
     row = {"op": "boost", "op_id": op_id, "at": jst.iso(now), "by": by, "via": via, "adaccount": name,
            "act_id": cfg["act_id"], "result": "started", "plan": {k: v for k, v in plan.items() if k != "targeting"},
@@ -390,7 +520,7 @@ def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_mino
             step = "creative"
             row["created"]["creative_id"] = writer.create_creative(
                 name=label, object_story_id=plan["object_story_id"], instagram_user_id=plan["instagram_user_id"],
-                url_tags=plan["url_tags"])
+                threads_user_id=plan["threads_user_id"], url_tags=plan["url_tags"])
             _record(name, op_id, row)
             step = "ad"
             row["created"]["ad_id"] = writer.create_ad(name=label, adset_id=row["created"]["adset_id"],
@@ -401,6 +531,11 @@ def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_mino
             _record(name, op_id, row)
             _log(name, "boost", by, via, {"result": [None, row["result"]]})
             hint = PAGE_HINT if step in ("creative", "ad") and _is_page_refusal(exc) else None
+            if (step == "creative" and plan["threads_user_id"]
+                    and getattr(exc, "failure", None) == meta_errors.PERMISSION):
+                # threads を含む creative の権限の断りは、広告の鍵の権限（threads_business_basic）の見込みが先。
+                hint = (THREADS_GRANT_HINT.format(name=name, command=REAUTH_COMMAND.format(name=name))
+                        + (f"。{PAGE_HINT}" if hint else ""))
             raise OpsRefused(
                 "ads_boost_unknown" if ambiguous else "ads_boost_failed",
                 f"{step} を作る所で{'結果が分かりません（打ち直さない。thth ads show で確かめる）' if ambiguous else '断られました'}"

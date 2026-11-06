@@ -40,7 +40,12 @@ CALLBACK = afb.CALLBACK
 DIALOG = afb.DIALOG
 # 構成（config_id）が無いときにだけ `scope` で求める権限。**読むのは `ads_read`**。`ads_management` は
 # 段 5 の書く口が使う（この段では使わない・求めておけば D のやり直しが 1 回で済む）。
-SCOPES = ["ads_read", "ads_management", "business_management", "public_profile"]
+# `threads_business_basic` は Threads を出し先にする広告（`boost --platforms instagram,threads`）が、IG に結びついた
+# Threads の口座の id を `connected_threads_user` で引くのに使う（masaru 11/07「広告の鍵の権限入れておくべきでは？」・
+# 計画_Meta全部盛り申請 §1.2 で既に「新しく Advanced（判断不要）」なので審査の対象は増えない）。これより前に作った
+# 鍵には乗っていないので、`ops.threads_scope_refusal` が要求の前に再認可を案内する。
+SCOPES = ["ads_read", "ads_management", "business_management", "public_profile", "threads_business_basic"]
+THREADS_SCOPE = "threads_business_basic"
 READ_SCOPE = "ads_read"
 SESSION_FILE = "auth_state.json"
 TRIALS_FILE = "exchange_trials.ndjson"

@@ -176,6 +176,32 @@ def test_広告はsnapshotとopsから(world):
     assert row_of(view, "ads_management")["days_idle"] == 8
 
 
+def test_threads_business_basicは広告の側の使用も数える(world):
+    """11/07: ads の SCOPES に足した。Threads を出し先にした boost の connected_threads_user の読み・creative を数える。"""
+    assert "threads_business_basic" in ads_auth.SCOPES
+    name = world.add_ads("a-ads", obtained=50)
+    state = ads_ledger.state_dir_for(name)
+    os.makedirs(os.path.join(state, "ops"))
+    rows = [  # 引けたあと creative で断られた（読みは通った）・台帳の値で creative を作れた・threads でない
+        {"op": "boost", "at": jst.iso(ago(9)), "result": "failed", "created": {},
+         "plan": {"threads_user_id": "31415", "threads_user_source": "connected_threads_user"}},
+        {"op": "boost", "at": jst.iso(ago(4)), "result": "ok", "created": {"creative_id": "77"},
+         "plan": {"threads_user_id": "31415", "threads_user_source": "ledger"}},
+        {"op": "boost", "at": jst.iso(ago(1)), "result": "ok", "created": {"creative_id": "78"},
+         "plan": {"threads_user_id": None, "threads_user_source": None}},
+    ]
+    for index, row in enumerate(rows):
+        with open(os.path.join(state, "ops", f"{index}-boost.json"), "w", encoding="utf-8") as stream:
+            json.dump(row, stream)
+    row = row_of(pw.build(), "threads_business_basic")
+    assert (row["days_idle"], row["last_success_account"]) == (4, "a-ads")
+    assert row["holders"] == 1 and row["media"] == "instagram", "審査の表の媒体は instagram のまま"
+    # IG の doctor の probe（instagram の口座の runs）が新しければそちら
+    world.add("a-ig", "instagram", obtained=50)
+    world.run("a-ig", "connected_threads_user", 2)
+    assert row_of(pw.build(), "threads_business_basic")["last_success_account"] == "a-ig"
+
+
 def test_認可が求める権限は全部表にある():
     wanted = {*scopes.DEFAULT_SCOPES, *facebook.SCOPES, *instagram.SCOPES, *ads_auth.SCOPES}
     for rows in scopes.META_INVITE_EXTRA.values():

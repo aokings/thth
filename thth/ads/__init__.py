@@ -12,7 +12,7 @@ adapter の枠（`adapters.REGISTRY`・`media_registry.MEDIA`）には入れな�
 - `graphwrite.py`  Graph の**書く**口（段 5・POST はここの `_post()` 1 か所・作るは全部 `PAUSED`）
 - `ops.py`  書く操作（boost・activate・extend・pause・stop・lower・end）と記録 `ops/`
 - `budget.py`  月の上限の予約→発射→確定（見積もり・請求書ではない）
-- `digest.py`  承認の digest `thth-ads-1`（Meta から読み直した木から作る）
+- `digest.py`  承認の digest `thth-ads-2`（Meta から読み直した木から作る）
 - `cli.py`  `thth ads accounts|add|auth|doctor|show|insights|collect|boost|activate|extend|pause|stop|budget|end`
 
 **読む命令は Meta に書かない**（`tests/test_meta_stage4.py`）。書く口は段 5 の決まった命令の決まった関数だけ

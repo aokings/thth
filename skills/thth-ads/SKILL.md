@@ -57,7 +57,7 @@ thth ads estimate <広告の口座> --targeting '{"geo_locations":{"countries":[
    - `kind: pixel_check_page` … ピクセルは動いている。誘導先の頁にもコードが入っているかを確かめる。
    - `kind: landing_url_unknown` … 誘導先の URL を `--landing-url` か台帳の `landing_url` に書くと、文に URL が入る。
 2. 入れたら `thth ads doctor <広告の口座>` を打ち直し、「ピクセル」の行が ○（最後に動いた時刻が出る）になるのを見る。
-3. **UTM**: 有機の投稿と同じ鍵にそろえる（10/27 に決まった形）。有機は `utm_source=<媒体>&utm_medium=social&utm_campaign=<原稿のファイル名、拡張子なし>`、広告は `utm_medium=paid` で campaign は同じ。`thth ads boost` の `--utm-campaign <元の投稿の原稿のファイル名、拡張子なし>` で `utm_source=<出し先の 1 つ目>&utm_medium=paid&utm_campaign=<それ>` を組む。違う形が要るときだけ `--url-tags 'key=value&key=value'`（無ければ台帳の `url_tags`）。どれもクリエイティブの `url_tags` として送られ、広告から押されたリンクに付く。口座名を campaign にしない（記事ごとに分けられない）。
+3. **UTM**: 有機の投稿と同じ鍵にそろえる。有機は `utm_source=<媒体>&utm_medium=social&utm_campaign=<原稿のファイル名、拡張子なし>`、広告は `utm_medium=paid` で campaign は同じ。`thth ads boost` の `--utm-campaign <原稿のファイル名>` で `utm_source=<出し先の 1 つ目>&utm_medium=paid&utm_campaign=<それ>` を組む。違う形が要るときだけ `--url-tags 'key=value&key=value'`（無ければ台帳の `url_tags`）。どれもクリエイティブの `url_tags` として送られ、広告から押されたリンクに付く。口座名を campaign にしない（記事ごとに分けられない）。
 
 ## 4. 作る（全部 PAUSED・お金は動かない）
 
@@ -67,7 +67,7 @@ thth ads boost <広告の口座> --post <post_id> --lifetime <額> --end <終了
 ```
 
 - 投稿は `--post <post_id>`（THTH で出したページの投稿）か `--object-story-id <ページID>_<数字>`。
-- `--end` は必須。1 操作の上限（通しの予算・期間）を越える指定は作らない。`--platforms facebook,instagram` で Instagram にも出す。
+- `--end` は必須。1 操作の上限（通しの予算・期間）を越える指定は作らない。`--platforms facebook,instagram[,threads]` で IG・Threads にも出す（threads は instagram と組・本番未確認）。
 - 出力の `created`（キャンペーン・広告セット・クリエイティブ・広告の id）と `next_steps` を読む。サイトへの誘導でピクセルが動いていなければ、ここでも手順 3 の一手が出る。
 
 ## 5. 人の承認を得て始める

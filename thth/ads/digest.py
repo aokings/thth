@@ -1,4 +1,4 @@
-"""広告の承認の digest `thth-ads-1`（計画 D-1 の 7・D-2・段 5 の 6・監査 A-5）。
+"""広告の承認の digest `thth-ads-2`（計画 D-1 の 7・D-2・段 5 の 6・監査 A-5）。
 
 **何から作るか**: Meta から読んだキャンペーンの木の全体（`graphread.Reader.campaign_tree`）。THTH の
 `ops/` の記録からは作らない。`thth ads activate`・`extend` は 1 段目でも 2 段目でも、その時点で Meta から
@@ -8,7 +8,11 @@
 入れる物（D-2）: 版の語・操作（activate／extend）・`act_id`・通貨・キャンペーン（id・目的・状態・
 `effective_status`・予算・期間）・**その下の全部の**広告セット（id・状態・予算・`start_time`／`end_time`・
 `targeting` の sha・`publisher_platforms`）と広告（id・広告セット・状態・`object_story_id`／
-`source_instagram_media_id`）・延ばす操作なら変える値。金額は最小単位の整数。
+`source_instagram_media_id`・`instagram_user_id`・`threads_user_id`）・延ばす操作なら変える値。金額は最小単位の整数。
+
+版の移り: `thth-ads-1` → `thth-ads-2`（2026-11-07・Threads を出し先に足した）。広告のクリエイティブの
+`instagram_user_id`・`threads_user_id`（どの口座の名で Instagram・Threads に出るか）を入れた。1 段目を古い版で
+取った digest は 2 段目で合わないので、1 段目から打ち直す（`ads_tree_changed`）。
 
 本文の指紋（`approval.py` の `FINGERPRINT_VERSION`）とは別の版（はてなと同じ扱い）。並びを変えるときは
 版の語を上げ、golden（`tests/test_meta_stage5.py`）を直す。
@@ -18,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-VERSION = "thth-ads-1"
+VERSION = "thth-ads-2"
 LENGTH = 12
 
 _CAMPAIGN_KEYS = ("id", "objective", "status", "effective_status", "lifetime_budget", "daily_budget",
@@ -43,6 +47,8 @@ def components(*, op: str, act_id: str, currency: str | None, tree: dict, change
         creative = row.get("creative") if isinstance(row.get("creative"), dict) else {}
         item["object_story_id"] = creative.get("object_story_id")
         item["source_instagram_media_id"] = creative.get("source_instagram_media_id")
+        item["instagram_user_id"] = creative.get("instagram_user_id")
+        item["threads_user_id"] = creative.get("threads_user_id")
         ads.append(item)
     return {
         "version": VERSION,

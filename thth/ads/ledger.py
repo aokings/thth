@@ -17,6 +17,8 @@
  "currency": null, "timezone_name": null,          # `thth ads auth` が Meta の答えから写す
  "production": false, "ads_enabled": false,        # 既定は止めた状態（D-1 の 5）
  "pages": ["kopicha-fb"], "ig_accounts": ["kopicha-ig"],
+ "threads_user_id": null,                          # 任意。Threads に出す広告の creative に入れる（無ければ boost が
+                                                   # connected_threads_user で引く・11/07）
  "ceilings": {"monthly": 0, "lifetime_budget_max": 0, "days_max": 0},   # 最小単位の整数・既定 0
  "writes_refused": null,                           # 書く操作を断る印（"ads_currency_unverified" など）
  "require_gate": true,                             # 省略は true（activate・extend に hub の番号の記録が要る・段 5）
@@ -198,6 +200,10 @@ def validate(name: str, data) -> None:
     if data.get("url_tags") is not None and not url_tags_ok(data["url_tags"]):
         raise AdAccountError("url_tags_invalid", f"{name}: url_tags は key=value&key=value の形です（例 "
                              "utm_source=facebook&utm_medium=paid）")
+    threads_user = data.get("threads_user_id")
+    if threads_user is not None and (not isinstance(threads_user, str) or not ACT_ID_RE.fullmatch(threads_user)):
+        raise AdAccountError("threads_user_id_invalid", f"{name}: threads_user_id は数字の文字列です（IG の口座の "
+                             "doctor の connected_threads_user の行の値）")
     if data.get("landing_url") is not None and not landing_url_ok(data["landing_url"]):
         raise AdAccountError("landing_url_invalid", f"{name}: landing_url は http(s):// の URL です")
     refused = data.get("writes_refused")

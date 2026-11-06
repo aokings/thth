@@ -22,7 +22,7 @@
 段 5（書く・お金が動くのは activate と extend だけ）:
 
     thth ads boost <名前> (--post <post_id> | --object-story-id <ページID>_<数字>) --lifetime <額>
-                   --start <時刻|now> --end <時刻> [--platforms facebook[,instagram]] [--objective engagement|traffic|reach] --by <名前>
+                   --start <時刻|now> --end <時刻> [--platforms facebook[,instagram[,threads]]] [--objective engagement|traffic|reach] --by <名前>
                                                 全部 PAUSED で作る（お金は動かない）
     thth ads activate <名前> <campaign_id> --by <名前>                       1 段目: digest を出す
     thth ads activate <名前> <campaign_id> --confirm <digest> --approval <hub の番号> --by <名前>
@@ -74,7 +74,7 @@ WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end", 
 VERBS = READ_VERBS + WRITE_VERBS
 # MCP に出す道具（**activate・extend・budget・end は出さない**・段 5 の 7）。
 MCP_TOOLS = ("thth_ads_show", "thth_ads_boost", "thth_ads_pause", "thth_ads_stop")
-EXPECTED_SCOPES = ("ads_read", "ads_management", "business_management")
+EXPECTED_SCOPES = ("ads_read", "ads_management", "business_management", "threads_business_basic")
 # 計画 Meta 全部盛り M3 の読む口の断り（`graphread.AdsReadError` の符丁のうち 3 つを出すもの）。
 READ_REFUSALS = ("ads_business_unknown", "ads_page_unknown", "ads_form_other_page", "ads_catalog_other_business")
 LIST_DEFAULT = 25
@@ -720,7 +720,10 @@ def doctor_rows(name, *, now=None) -> list:
             ok = "ads_read" in scopes and (debug or {}).get("is_valid") is not False
             row("debug_token", "鍵の権限（/debug_token）", ok,
                 (f"NOT_GRANTED: {','.join(missing)}" if missing else "求めた権限はすべて有り")
-                + ("（読むのに要るのは ads_read・ads_management は段 5）" if missing else ""),
+                + ("（読むのに要るのは ads_read・ads_management は段 5）" if missing else "")
+                + ("。threads_business_basic は Threads を出し先にする広告に要ります（11/07 に足した権限・"
+                   f"thth ads auth {name} --by <名前> で再認可すると乗ります）"
+                   if "threads_business_basic" in missing else ""),
                 missing=missing)
     try:
         account = reader.account()
@@ -852,6 +855,9 @@ def render_boost(v):
           + ("" if p.get("objective_verified") else "（この目的は本番未確認。管理画面で中身を見てから始める）"))
     if p.get("url_tags"):
         print(f"  リンクの印（url_tags）: {p['url_tags']}")
+    if p.get("threads_user_id"):
+        print(f"  Threads の口座 {p['threads_user_id']}（{p.get('threads_user_source')}）・Instagram の口座 "
+              f"{p.get('instagram_user_id')}（Threads は Instagram のフィードと組で出ます）")
     _render_steps(v.get("next_steps"))
     print(f"次の一手: {v['next']}")
 
@@ -1154,7 +1160,7 @@ def register(sub) -> None:
     p_boost.add_argument("--lifetime", type=_amount, required=True, help="通しの予算（最小単位・JPY なら円）")
     p_boost.add_argument("--start", default="now", help="開始（ISO 8601 か now）")
     p_boost.add_argument("--end", required=True, help="終了（必須・ISO 8601）")
-    p_boost.add_argument("--platforms", default="facebook", help="facebook[,instagram]")
+    p_boost.add_argument("--platforms", default="facebook", help="facebook[,instagram[,threads]]（threads は instagram と組・Threads の投稿そのものは広告にできない）")
     p_boost.add_argument("--objective", default="engagement", choices=tuple(graphwrite.OBJECTIVES),
                          help="engagement（本番で確かめた）・traffic・reach（この 2 つは本番未確認）")
     p_boost.add_argument("--url-tags", dest="url_tags", default=None,

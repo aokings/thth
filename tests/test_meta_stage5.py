@@ -94,6 +94,9 @@ class Meta:
         if obj["kind"] == "ad":
             creative = self.objects.get(obj.get("creative_id")) or {}
             out["creative"] = {"id": creative.get("id"), "object_story_id": creative.get("object_story_id")}
+            for key in ("instagram_user_id", "threads_user_id"):
+                if creative.get(key):
+                    out["creative"][key] = creative[key]
             out.pop("creative_id", None)
         return out
 
@@ -383,7 +386,9 @@ def test_boostは4つを全部PAUSEDで作り_終了日と通しの予算を送�
     ({"end": None}, "ads_end_time_required"),
     ({"lifetime_minor": 5001}, "ads_lifetime_over_ceiling"),
     ({"end": "+8d"}, "ads_days_over_ceiling"),
-    ({"platforms": ("threads",)}, "ads_platform_unsupported"),
+    ({"platforms": ("tiktok",)}, "ads_platform_unsupported"),
+    ({"platforms": ("threads",)}, "ads_threads_needs_instagram"),
+    ({"platforms": ("facebook", "threads")}, "ads_threads_needs_instagram"),
     ({"object_story_id": "123"}, "ads_object_story_id_invalid"),
 ])
 def test_boostは終了日なし_上限越え_期間越え_形違いを作らない(env, kwargs, code):
@@ -562,7 +567,8 @@ GOLDEN_TREE = {
     "ads": [{"id": "30", "adset_id": "20", "status": "PAUSED", "effective_status": "PAUSED",
              "creative": {"object_story_id": STORY}}],
 }
-GOLDEN = "2edaa84b9b19"
+# thth-ads-2（11/07）: 広告のクリエイティブの instagram_user_id・threads_user_id を入れた（thth-ads-1 は 2edaa84b9b19）。
+GOLDEN = "e470ced6f877"
 
 
 def _golden(tree=None, **kw):
@@ -579,7 +585,8 @@ def test_digestのgolden_金額_期間_id_木の子_通貨のどれを変えて�
     for path, value in ((("adsets", 0, "lifetime_budget"), 501), (("adsets", 0, "end_time"), "2026-11-03T10:00:00+0900"),
                         (("adsets", 0, "start_time"), "2026-11-01T11:00:00+0900"), (("ads", 0, "id"), "31"),
                         (("adsets", 0, "targeting_sha"), "cd" * 32), (("ads", 0, "status"), "ACTIVE"),
-                        (("campaign", "id"), "11")):
+                        (("campaign", "id"), "11"), (("ads", 0, "creative", "threads_user_id"), "31415"),
+                        (("ads", 0, "creative", "instagram_user_id"), "17841400000000001")):
         tree = copy.deepcopy(GOLDEN_TREE)
         target = tree
         for key in path[:-1]:

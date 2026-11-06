@@ -91,8 +91,12 @@ CAMPAIGN_TREE_FIELDS = ("id,name,account_id,objective,status,effective_status,li
                         "start_time,stop_time")
 ADSET_TREE_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,daily_budget,"
                      "start_time,end_time,targeting")
+# クリエイティブの `instagram_user_id`・`threads_user_id` は AdCreative の参照の Fields の表にある読める欄
+# （developers.facebook.com/docs/marketing-api/reference/ad-creative/・2026-11-07 に読んだ）。どの口座の名で
+# Instagram・Threads に出るかを digest に入れる（thth-ads-2）。**v26 で読めるかは本番未確認。**
 AD_TREE_FIELDS = ("id,name,campaign_id,adset_id,status,effective_status,"
-                  "creative{id,object_story_id,source_instagram_media_id}")
+                  "creative{id,object_story_id,source_instagram_media_id,instagram_user_id,threads_user_id}")
+CREATIVE_KEYS = ("id", "object_story_id", "source_instagram_media_id", "instagram_user_id", "threads_user_id")
 ID_RE = re.compile(r"[0-9]{1,32}")
 ADACCOUNTS_FIELDS = "id,account_id,name,currency,timezone_name,account_status"
 # 計画 Meta 全部盛り M3（読むだけ・保存しない）。L2: reference/product-catalog・guides/lead-ads/retrieving・
@@ -656,6 +660,20 @@ class Reader:
             out["delivery_estimate"] = {"unavailable": getattr(exc, "code", type(exc).__name__)}
         return out
 
+    def connected_threads_user(self, ig_user_id: str) -> list:
+        """IG の口座に結びついた Threads の口座の id（`GET /<IG_USER_ID>/connected_threads_user`・読むだけ）。
+
+        公式 IG User connected_threads_user: `fields=threads_user_id`・答えは `data` の並び。要る権限は
+        instagram_basic・threads_business_basic・pages_read_engagement（ads の鍵の SCOPES に
+        threads_business_basic を足した 11/07・古い鍵の断りは `ops` が前向きに言う）。数字の id だけ返す。
+        """
+        if not isinstance(ig_user_id, str) or not ID_RE.fullmatch(ig_user_id):
+            raise AdsReadError("ads_id_invalid")
+        body = self._get(f"/{ig_user_id}/connected_threads_user", {"fields": "threads_user_id"})
+        rows = body.get("data") if isinstance(body.get("data"), list) else []
+        return [str(r["threads_user_id"]) for r in rows
+                if isinstance(r, dict) and ID_RE.fullmatch(str(r.get("threads_user_id") or ""))]
+
     def pixels(self) -> list:
         """広告アカウントのピクセル（`/act_<id>/adspixels`・読むだけ）。`last_fired_time` は最後に動いた時刻。"""
         rows, _ = self._list(f"/{self.act}/adspixels", {"fields": PIXEL_FIELDS})
@@ -836,6 +854,5 @@ def _node(row: dict) -> dict:
                                       if isinstance(platforms, list) else None)
     creative = row.get("creative")
     if isinstance(creative, dict):
-        out["creative"] = {k: creative[k][:200] for k in ("id", "object_story_id", "source_instagram_media_id")
-                           if isinstance(creative.get(k), str)}
+        out["creative"] = {k: creative[k][:200] for k in CREATIVE_KEYS if isinstance(creative.get(k), str)}
     return out
