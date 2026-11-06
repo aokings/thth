@@ -712,6 +712,9 @@ def _prepare_one(path: str):
     fm = qf.front_matter
     if fm.get("post_id"):
         return None, f"{path}: post_id が付いています（既に投稿済み）"
+    if fm.get("status") == "withdrawn":
+        # 11/06: 出さないと決めて閉じた原稿は、名指しでも承認しない（閉じたことを黙って上書きしない）。
+        return None, f"{path}: 閉じた原稿です（status: withdrawn）。出すなら thth withdraw --undo で戻してから"
 
     account_name = fm.get("account")
     try:
@@ -1481,6 +1484,8 @@ def _prepare_bundle(path: str, text: str):
     b = bundle_mod.parse_text(text, path)
     if b.malformed:
         return None, f"{path}: thth: 2 の原稿として読めません"
+    if b.front_matter.get("status") == "withdrawn":
+        return None, f"{path}: 閉じた原稿です（status: withdrawn）。出すなら thth withdraw --undo で戻してから"
     account_name = b.front_matter.get("account")
     try:
         account_cfg = accounts_mod.load_account(account_name)
@@ -2125,10 +2130,183 @@ def cmd_approvals(args) -> int:
             print(f"  承認 {row['file']} — {row['at']} {row['by']}"
                   + (f"・{row['gate']}" if row.get("gate") else "")
                   + f"・指紋 {str(row.get('approved_sha') or '')[:12]}")
+        elif row["state"] == approval_ledger.WITHDRAWN:
+            print(f"  閉じた {row['file']} — {row['at']} {row['by']}"
+                  + (f"（{row['withdrawn_reason']}）" if row.get("withdrawn_reason") else ""))
         else:
             print(f"  取り消し {row['file']} — {row['at']} {row['by']}"
                   + (f"（{row['revoked_reason']}）" if row.get("revoked_reason") else ""))
     return 0
+
+
+def _withdraw_one(path: str, repo_dir: str, *, account, by: str, at: str, reason, undo: bool) -> str | None:
+    """1 本を閉じる（`undo` なら閉じたのを戻す）。**repo のロックの中・同期のあとで呼ぶ**。断るなら理由。
+
+    **記録先は VM の承認の台帳（`state/<account>/approvals.json`・state `withdrawn`）。repo には書かない。**
+    理由: 原稿の実効の status は `approval_ledger.overlay()` が「repo の front-matter ＋ 台帳」で決めて
+    いる（approve・revoke は 4.4.1 から台帳だけに書く）。front-matter に `status: withdrawn` を書くと
+    (1) 利用者の repo の main の先頭に THTH の commit が積まれ、配信の承認の照合がずれる（10/21 に 4 回）、
+    (2) 台帳に承認・取り消しの行が残っていると、repo と台帳の 2 か所で status を決めることになる。台帳に
+    `withdrawn` を重ねれば、select・schedule・board・throw の読み手はみな今までどおり `status` を
+    見るだけで閉じたものを外せる（queuefile.KNOWN_STATUSES の `withdrawn` と同じ意味）。
+    """
+    from . import approval_ledger
+    from . import bundle as bundle_mod
+    try:
+        raw_text = open(path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"読めないので閉じられません（{exc.__class__.__name__}）: {path}"
+    if bundle_mod.is_bundle_text(raw_text):
+        b = bundle_mod.parse_text(raw_text, path)
+        fm, malformed = b.front_matter, b.malformed
+        any_posted = bool(fm.get("post_id")) or any(p.get("post_id") for p in b.posts)
+    else:
+        qf = queuefile.parse(path)
+        fm, malformed = qf.front_matter, qf.malformed
+        any_posted = bool(fm.get("post_id"))
+    if malformed:
+        return f"front-matter が読めないので閉じられません: {path}"
+    if account and fm.get("account") != account:
+        return f"{path}: 指定 account（{account}）と一致しないので閉じません（原稿の account は {fm.get('account')}）"
+    outside = (_outside_account_repo(path, fm["account"])
+               if isinstance(fm.get("account"), str) and fm.get("account") else None)
+    if outside:
+        return outside + "（閉じていません）"
+    trouble = (approval_ledger.problem(fm["account"])
+               if approval_ledger._safe_account(fm.get("account")) else "account が読めません")
+    if trouble or fm.get(approval_ledger.UNREADABLE_MARK):
+        return (f"台帳が読めないので受け付けられません（{trouble or '承認の台帳'}）。"
+                f"台帳を直してから打ち直してください: {path}")
+    if any_posted:
+        return (f"もう出ています（post_id あり）。閉じるのは出ていない draft だけです。"
+                f"出たものを消すなら thth retract: {path}")
+    key = approval_ledger.rel_key(path, repo_dir)
+    if undo:
+        entry = approval_ledger.entry_for(fm["account"], key) if key else None
+        if not entry or entry.get("state") != approval_ledger.WITHDRAWN:
+            if fm.get("status") == "withdrawn":
+                return (f"repo の front-matter に status: withdrawn と書いてあります（台帳の記録ではありません）。"
+                        f"戻すなら repo の原稿を直してください: {path}")
+            return f"閉じた記録がありません（status: {fm.get('status')}）: {path}"
+        change = {"state": "reopen", "at": at, "by": by}
+    else:
+        if fm.get("status") == "approved":
+            return (f"承認済みです。出さないなら先に thth revoke で承認を取り消してから閉じてください: {path}")
+        if fm.get("status") != "draft":
+            return f"閉じられるのは draft だけです（status: {fm.get('status')}）: {path}"
+        change = {"state": approval_ledger.WITHDRAWN,
+                  "fields": {"withdrawn_at": at, "withdrawn_by": by, "withdrawn_reason": reason or ""}}
+    try:
+        approval_ledger.record([{"account": fm.get("account"), "file": key, "via": "cli",
+                                 "repo": repo_dir, **change}])
+    except (approval_ledger.LedgerError, ValueError) as exc:
+        return f"台帳に書けませんでした: {exc}"
+    if not undo and fm.get("account"):
+        # 閉じたものは確定待ちの控えも要らない（revoke と同じ）。
+        _clear_pending([{"account": fm.get("account"), "path": path}], repo_dir)
+    return None
+
+
+def cmd_withdraw(args) -> int:
+    """`thth withdraw <file|dir...> --by <名乗り> [--reason …] [--account …] [--undo] [--json]`（11/06）。
+
+    出さないと決めた draft を閉じる（こぴちゃ report r20261106-28b30dfa・依頼 運用→開発 11/06）。
+    閉じた原稿は `status: withdrawn` に見え、select（throw・run）・`thth schedule`・board の
+    `unapproved_soon` のどれにも出ない。本文には触らない。記録先は VM の承認の台帳
+    （`_withdraw_one` の docstring）。`--undo` は閉じたのを閉じる前に戻す（取り消しの記録が
+    あればそれに、無ければ repo のまま）。誤って閉じたものを approve でなく draft に戻す口が
+    無いと、台帳を手で直すしかなくなるので最小で置く。
+
+    形は `thth revoke` に合わせる: 複数本・ディレクトリ（`--undo` 無しなら draft、有りなら withdrawn を拾う）・
+    `-` で標準入力・repo ごとに同期とロック 1 回・断る本はその本だけ断って他は進める。
+    遠くの道（thth.me）には出さない（`remote.UNSUPPORTED` に載せてある）。
+    """
+    files = args.file if isinstance(args.file, list) else [args.file]
+    account = getattr(args, "account", None)
+    undo = bool(getattr(args, "undo", False))
+    if "-" in files:
+        if files != ["-"]:
+            print("- （標準入力からパスを読む）は単独で渡してください。", file=sys.stderr)
+            return 2
+        files = _revoke_paths_from_stdin()
+    if not files:
+        print("閉じるファイル（またはディレクトリ）を渡してください。", file=sys.stderr)
+        return 2
+    by = args.by or os.environ.get("THTH_ACTOR")
+    if not by:
+        print("--by を付けてください（誰が閉じたかを記録します）。環境変数 THTH_ACTOR でも指定できます。",
+              file=sys.stderr)
+        return 2
+    # 改行入りの名乗り・理由は断る（revoke と同じ検査・セキュリティ監査 2026-09-14 P1-3）。
+    try:
+        writeback_mod.check_front_matter_field("withdrawn_by", by)
+        writeback_mod.check_front_matter_field("withdrawn_reason", args.reason)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    paths, note = _expand_targets(files, only_draft=False, only_status="withdrawn" if undo else "draft",
+                                  account=account, purpose="withdraw", wait=getattr(args, "wait", 0))
+    if paths is None:
+        return 2
+    if not paths:
+        print(f"{'戻せるもの（閉じたもの）' if undo else '閉じられるもの（draft）'}がありません{note}",
+              file=sys.stderr)
+        return 1
+    refused = []
+    by_repo = {}
+    for path in paths:
+        repo_dir = writeback_mod.repo_toplevel(path)
+        if repo_dir is None:
+            refused.append((path, f"git repo の中のファイルではないので記録できません: {path}"))
+            continue
+        by_repo.setdefault(os.path.realpath(repo_dir), []).append(path)
+    at = jst.iso()
+    done = []
+    for repo_dir in sorted(by_repo):
+        repo_paths = by_repo[repo_dir]
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+        try:
+            lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
+        except lock_mod.LockBusy:
+            refused += [(p, f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+                            "--wait <秒> で空くのを待てます。") for p in repo_paths]
+            continue
+        try:
+            # 検査はロックの中で、同期して読み直してから（revoke と同じ・外部レビュー第 6 巡 P1-2）。
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+            if not synced:
+                refused += [(p, f"repo を同期できないので記録しません（いまの状態が判りません）: {sync_err}")
+                            for p in repo_paths]
+                continue
+            for path in repo_paths:
+                problem = _withdraw_one(path, repo_dir, account=account, by=by, at=at,
+                                        reason=args.reason, undo=undo)
+                if problem:
+                    refused.append((path, problem))
+                else:
+                    done.append(path)
+        finally:
+            repo_lock.release()
+    from . import approval_ledger
+    if args.json:
+        _print_json({"undo": undo, "count": len(done), "refused_count": len(refused),
+                     "at": at, "by": by, "reason": args.reason or None, "recorded": "ledger",
+                     "done": [{"file": p, "path": approval_ledger.rel_key(p),
+                               "status": "draft" if undo else "withdrawn"} for p in done],
+                     "refused": [{"file": p, "reason": r} for p, r in refused]})
+    else:
+        if note:
+            print(note.strip("（）"), file=sys.stderr)
+        verb = "戻しました" if undo else "閉じました"
+        for path in done:
+            print(f"{verb}: {path}")
+        for path, reason in refused:
+            print(f"していません: {reason}" if path in reason else f"していません: {path} — {reason}",
+                  file=sys.stderr)
+        print(f"{verb} {len(done)} 本・断った {len(refused)} 本（{by}・VM の承認の台帳に記録・"
+              "repo には書いていません）。本文はそのままです"
+              + ("" if undo else "。戻すなら thth withdraw --undo"))
+    return 1 if refused else 0
 
 
 def cmd_posts(args) -> int:
@@ -3545,6 +3723,12 @@ def cmd_schedule(args) -> int:
         print("remote_only: 予約を刻む形（--text・--at・--draft）は thth.me の鍵の道だけです。"
               "手元の台帳では queue に原稿を置いて thth approve", file=sys.stderr)
         return 2
+    window = getattr(args, "window", None)
+    if window is not None and not getattr(args, "unapproved", False):
+        print("--window は --unapproved と一緒に使います。", file=sys.stderr)
+        return 2
+    if getattr(args, "unapproved", False):
+        return _schedule_unapproved(args, report_mod.UNAPPROVED_WINDOW if window is None else window)
     account_names = [args.account] if args.account else accounts_mod.list_account_names()
     notice_lines, repo_by_account = _behind_notices(account_names)
     rows = report_mod.schedule(args.account, days=args.days)
@@ -3560,6 +3744,39 @@ def cmd_schedule(args) -> int:
     for line in notice_lines:
         print(line)
     return show_schedule(rows)
+
+
+def _schedule_unapproved(args, window: str) -> int:
+    """`thth schedule --unapproved [--window -3d,+24h]`（11/06）: 未承認で時刻が近い原稿だけ。
+
+    判定は board の `unapproved_soon` と同じ `report.is_unapproved_soon()`。`--json` は schedule の行の
+    並び（`path` 付き）。数えられなかった口座は標準エラーに 1 行ずつ（`--json` でも同じ）。
+    """
+    try:
+        report_mod.parse_window(window)
+    except ValueError as exc:
+        print(f"invalid_window: {exc}", file=sys.stderr)
+        return 2
+    if args.days is not None:
+        print("--days と --unapproved は一緒に使えません（窓は --window で決めます）。", file=sys.stderr)
+        return 2
+    cells = report_mod.unapproved_soon(args.account, window_text=window)
+    rows = []
+    for name, cell in sorted(cells.items()):
+        if "cannot_say" in cell:
+            print(f"{name}: 数えられません（{cell['cannot_say']}）", file=sys.stderr)
+            continue
+        rows.extend(cell["rows"])
+    rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
+    if args.json:
+        _print_json(rows)
+        return 0
+    if not rows:
+        print(f"未承認で時刻が近い原稿はありません（窓 {window}）")
+        return 0
+    show_schedule(rows)
+    print(f"（未承認だけ・窓 {window}。承認は thth approve、出さないなら thth withdraw）")
+    return 0
 
 
 def show_schedule(rows) -> int:
@@ -4677,6 +4894,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_revoke.set_defaults(func=cmd_revoke)
 
+    p_withdraw = sub.add_parser(
+        "withdraw", help="出さないと決めた draft を閉じる（本文は触らない・VM の承認の台帳に記録・複数本・ディレクトリ可）")
+    p_withdraw.add_argument("file", nargs="+",
+                            help="ファイルでもディレクトリでも可（ディレクトリなら draft の .md・--undo なら閉じた .md）。"
+                                 "- を 1 つだけ渡すと標準入力の 1 行に 1 本のパスを読む")
+    p_withdraw.add_argument("--account", default=None, help="この account の原稿だけ")
+    p_withdraw.add_argument("--reason", default=None, help="なぜ閉じたか（記録に残す）")
+    p_withdraw.add_argument("--by", default=None, help="誰が閉じたか（記録に残す・必須。THTH_ACTOR でも可）")
+    p_withdraw.add_argument("--undo", action="store_true", help="閉じたのを閉じる前に戻す")
+    p_withdraw.add_argument("--json", action="store_true")
+    p_withdraw.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    p_withdraw.set_defaults(func=cmd_withdraw)
+
     p_posts = sub.add_parser(
         "posts", help="実際に出ている投稿を一覧する（手で出した分も含む・読むだけ）")
     p_posts.add_argument("account")
@@ -4833,6 +5063,10 @@ def build_parser() -> argparse.ArgumentParser:
         "schedule", help="日付順に「いつ何が出るか」を並べる（読むだけ）")
     p_schedule.add_argument("account", nargs="?")
     p_schedule.add_argument("--days", type=int, default=None, help="この日数ぶんに絞る")
+    p_schedule.add_argument("--unapproved", action="store_true",
+                            help="未承認（draft）で publish_at が窓の中のものだけ（board の unapproved_soon と同じ判定）")
+    p_schedule.add_argument("--window", default=None,
+                            help="--unapproved の窓（既定 -3d,+24h。-Nd か -Nh、+Nd か +Nh）")
     p_schedule.add_argument("--json", action="store_true")
     p_schedule.set_defaults(func=cmd_schedule)
 
@@ -5319,6 +5553,12 @@ def _main(argv, real_argv) -> int:
     refused = remote.refuse_flag(real_argv)
     if refused is not None:
         return refused
+    if real_argv[:1] == ["schedule"] and "--window" in real_argv:
+        # `--window -3d,+24h` の値は `-` で始まるので argparse が旗と読む。`--window=-3d,+24h` に寄せる（11/06）。
+        i = real_argv.index("--window")
+        if i + 1 < len(real_argv) and real_argv[i + 1].startswith("-") and real_argv[i + 1] != "--":
+            real_argv = real_argv[:i] + [f"--window={real_argv[i + 1]}"] + real_argv[i + 2:]
+            argv = real_argv
     parser = build_parser()
     if real_argv and real_argv[0] == 'where':
         commands = next(action for action in parser._actions

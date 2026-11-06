@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 
 from . import accounts as accounts_mod
 from . import approve_pending as approve_pending_mod
@@ -262,56 +263,163 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
             account_cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
             continue
-        files = core.list_queue_files(
-            account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
-        media = account_cfg["media"]
-        for qf in files:
-            fm = qf.front_matter
-            if qf.malformed or fm.get("account") != name or fm.get("post_id"):
-                continue
-            if fm.get("status") not in ("draft", "approved"):
-                continue
-            raw = fm.get("publish_at")
-            if not raw:
-                continue
-            try:
-                publish_at = queuefile.parse_publish_at(raw)
-            except ValueError:
-                continue
-            if days is not None and publish_at > now + datetime.timedelta(days=days):
-                continue
-            section = queuefile.extract_section(qf.body, media) or ""
-            head = section.strip().split("\n", 1)[0]
-            # reply_to_file（設計 3.2.0 §2）: 解決できていなければその理由（静的）。
-            # 待ちの行は時刻超過に数えない（`morning._overdue_rows()`）。
-            reply = select_mod.resolve_reply_to_file(qf, account_name=name, pool=files)
-            # 4.5.6: 出さない期限。過ぎたもの（`expired`）は承認済みでも出ない（held・時刻超過とは別）。
-            try:
-                not_after = queuefile.parse_not_after(fm)
-            except ValueError:
-                not_after = None
-            rows.append({
-                "account": name,
-                "file": os.path.basename(qf.path),
-                "publish_at": publish_at.isoformat(),
-                "status": fm.get("status"),
-                "topic": queuefile.normalize_topic(fm.get("topic")),
-                "reply_to": fm.get("reply_to") or None,
-                "reply_to_file": reply.name if reply is not None else None,
-                "reply_to_unresolved": reply.reason if reply is not None else None,
-                "waiting_for": select_mod.waiting_target(reply.reason) if reply is not None else None,
-                "past": publish_at <= now,
-                "head": head[:60],
-                # burst の順番待ちに並べた返信（3.25.0）。無ければ None。
-                "queued_for": fm.get("queued_for") or None,
-                "not_after": not_after.isoformat() if not_after is not None else None,
-                # 読めない期限は「過ぎた」と言わない（select が not_after_invalid で要確認に出す）。
-                "expired": not_after is not None and now > not_after,
-                # 10/30: 緊急の札（静かな時間帯だけ越えて timer が出す）。
-                "urgent": queuefile.is_urgent(fm),
-            })
+        rows.extend(_schedule_rows(name, account_cfg, now=now, days=days))
     rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
     return rows
+
+
+def _schedule_rows(name: str, account_cfg: dict, *, now, days: int | None = None) -> list:
+    """1 口座ぶんの `schedule()` の行（並べ替えない）。`unapproved_soon()` も同じ行を使う。"""
+    files = core.list_queue_files(
+        account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
+    media = account_cfg["media"]
+    repo_dir = accounts_mod.resolved_repo_dir(account_cfg)
+    rows = []
+    for qf in files:
+        fm = qf.front_matter
+        if qf.malformed or fm.get("account") != name or fm.get("post_id"):
+            continue
+        if fm.get("status") not in ("draft", "approved"):
+            continue
+        raw = fm.get("publish_at")
+        if not raw:
+            continue
+        try:
+            publish_at = queuefile.parse_publish_at(raw)
+        except ValueError:
+            continue
+        if publish_at.tzinfo is None:
+            # 時差の無い publish_at は select が `publish_at_invalid` で要確認に出す。ここで比べると
+            # TypeError で一覧ごと落ちる（board に unapproved_soon を足して見つけた・11/06）。
+            continue
+        if days is not None and publish_at > now + datetime.timedelta(days=days):
+            continue
+        section = queuefile.extract_section(qf.body, media) or ""
+        head = section.strip().split("\n", 1)[0]
+        # reply_to_file（設計 3.2.0 §2）: 解決できていなければその理由（静的）。
+        # 待ちの行は時刻超過に数えない（`morning._overdue_rows()`）。
+        reply = select_mod.resolve_reply_to_file(qf, account_name=name, pool=files)
+        # 4.5.6: 出さない期限。過ぎたもの（`expired`）は承認済みでも出ない（held・時刻超過とは別）。
+        try:
+            not_after = queuefile.parse_not_after(fm)
+        except ValueError:
+            not_after = None
+        rows.append({
+            "account": name,
+            "file": os.path.basename(qf.path),
+            "publish_at": publish_at.isoformat(),
+            "status": fm.get("status"),
+            "topic": queuefile.normalize_topic(fm.get("topic")),
+            "reply_to": fm.get("reply_to") or None,
+            "reply_to_file": reply.name if reply is not None else None,
+            "reply_to_unresolved": reply.reason if reply is not None else None,
+            "waiting_for": select_mod.waiting_target(reply.reason) if reply is not None else None,
+            "past": publish_at <= now,
+            "head": head[:60],
+            # burst の順番待ちに並べた返信（3.25.0）。無ければ None。
+            "queued_for": fm.get("queued_for") or None,
+            "not_after": not_after.isoformat() if not_after is not None else None,
+            # 読めない期限は「過ぎた」と言わない（select が not_after_invalid で要確認に出す）。
+            "expired": not_after is not None and now > not_after,
+            # 10/30: 緊急の札（静かな時間帯だけ越えて timer が出す）。
+            "urgent": queuefile.is_urgent(fm),
+            # 11/06: repo の中の相対パス（hub が原稿を名指しする・足すだけ）。
+            "path": (approve_pending_mod.rel_path(qf.path, repo_dir).replace(os.sep, "/")
+                     if repo_dir else os.path.basename(qf.path)),
+        })
+    return rows
+
+
+# ---- 未承認で時刻が近い原稿（11/06・依頼 運用→開発「未承認で時刻が近い原稿を機械で知らせる」）----
+#
+# kopicha-threads の draft 6 本が未承認のまま publish_at を過ぎ、誰も気づかなかった（11/4〜11/5）。
+# board（hub が読む）と `thth schedule --unapproved` が**同じ判定**で数える。判定は
+# `is_unapproved_soon()` の 1 か所だけ。
+
+UNAPPROVED_WINDOW = "-3d,+24h"
+_WINDOW_RE = re.compile(r"-(\d{1,4})([dh]),\+(\d{1,4})([dh])\Z")
+
+
+def parse_window(text: str) -> tuple:
+    """`-3d,+24h` の形を `(過去へ, 先へ)` の timedelta の組に。形が違えば `ValueError`。"""
+    match = _WINDOW_RE.match(text or "")
+    if not match:
+        raise ValueError(f"窓の形が違います: {text!r}（例 -3d,+24h。-Nd か -Nh、+Nd か +Nh）")
+    def span(num, unit):
+        return datetime.timedelta(days=int(num)) if unit == "d" else datetime.timedelta(hours=int(num))
+    return span(match.group(1), match.group(2)), span(match.group(3), match.group(4))
+
+
+def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
+    """`schedule()` の 1 行が「未承認で時刻が近い」か（判定はここだけ）。
+
+    - 実効の status が `draft`（承認の台帳を重ねたあと。取り消し済みは draft・閉じた
+      `withdrawn` と承認済みは入らない）
+    - post_id が無い（`schedule()` が除いている）
+    - publish_at が 今-過去へ 〜 今+先へ（両端を含む）
+    - 出さない期限（not_after）を過ぎていない
+    """
+    if row.get("status") != "draft" or row.get("expired"):
+        return False
+    try:
+        publish_at = datetime.datetime.fromisoformat(row["publish_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    before, after = window
+    return now - before <= publish_at <= now + after
+
+
+def unapproved_soon(account_name: str | None = None, *, now=None,
+                    window_text: str = UNAPPROVED_WINDOW) -> dict:
+    """口座ごとの `{"count", "first_at", "window", "paths", "rows"}`、数えられなければ `{"cannot_say": 理由}`。
+
+    `rows` は `thth schedule --unapproved` が使う（board には出さない）。
+    """
+    from . import approval_ledger
+    window = parse_window(window_text)
+    # naive な now は UTC とみなす（`jst.to_jst` の決まり。publish_at は aware なので比べられるように）。
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    names = [account_name] if account_name else accounts_mod.list_account_names()
+    out = {}
+    for name in names:
+        out[name] = _unapproved_one(name, now=now, window=window, window_text=window_text,
+                                    ledger=approval_ledger)
+    return out
+
+
+def _unapproved_one(name, *, now, window, window_text, ledger) -> dict:
+    try:
+        account_cfg = accounts_mod.load_account(name)
+    except accounts_mod.AccountStopped as exc:
+        from .stop_observation import reason
+        return {"cannot_say": reason(exc)}
+    except accounts_mod.AccountError as exc:
+        return {"cannot_say": f"account_unreadable: {exc}"}
+    state = accounts_mod.repo_state(account_cfg)
+    if state == accounts_mod.REPO_BROKEN:
+        return {"cannot_say": "repo_unavailable: 原稿の repo が読めません"}
+    if state == accounts_mod.REPO_NONE:
+        rows = []  # 原稿の置き場を持たない口座（承認を待つ原稿が無い）
+    else:
+        # 台帳が読めないと、閉じた（withdrawn）・取り消した原稿を見分けられない。
+        trouble = ledger.problem(name)
+        if trouble:
+            return {"cannot_say": f"approval_ledger_unreadable: {trouble}"}
+        try:
+            rows = _schedule_rows(name, account_cfg, now=now)
+        except (OSError, ValueError, KeyError) as exc:
+            return {"cannot_say": f"queue_unreadable: {exc.__class__.__name__}"}
+    hits = sorted((row for row in rows if is_unapproved_soon(row, now=now, window=window)),
+                  key=lambda r: (r["publish_at"], r["file"]))
+    return {"count": len(hits), "first_at": hits[0]["publish_at"] if hits else None,
+            "window": window_text, "paths": [row["path"] for row in hits], "rows": hits}
+
+
+def board_unapproved_cell(cell: dict) -> dict:
+    """board に出す形（hub と約束した形・`rows` を外す）。"""
+    if "cannot_say" in cell:
+        return {"cannot_say": cell["cannot_say"]}
+    return {k: cell[k] for k in ("count", "first_at", "window", "paths")}
 
 
 def _thread_rows(account_name: str) -> list:
@@ -456,10 +564,12 @@ def board_summary(now=None) -> dict:
         except accounts_mod.AccountStopped as e:
             from .stop_observation import reason
             code=reason(e)
-            accounts_out.append({'account':name,'error':code,'stop_reason':code,'cannot_say':[code]})
+            accounts_out.append({'account':name,'error':code,'stop_reason':code,'cannot_say':[code],
+                                 'unapproved_soon':{'cannot_say':code}})
             continue
         except accounts_mod.AccountError as e:
-            accounts_out.append({"account": name, "error": str(e)})
+            accounts_out.append({"account": name, "error": str(e),
+                                 "unapproved_soon": {"cannot_say": f"account_unreadable: {e}"}})
             continue
         # 同期を伴わない読み手の照合先（外部レビュー第 5 巡 P2）。
         files = core.list_queue_files(
@@ -654,6 +764,10 @@ def board_summary(now=None) -> dict:
             # （見つかったときだけ True・False は「走っていない」の証明ではない）。
             "repo_running": repo_running_pid is not None,
             "repo_running_pid": repo_running_pid,
+            # 未承認（draft）で publish_at が 今-3d〜今+24h の原稿（11/06・hub と約束した形・
+            # `{"count","first_at","window","paths"}` か `{"cannot_say": 理由}`）。count は 0 でも出す。
+            "unapproved_soon": board_unapproved_cell(
+                unapproved_soon(name, now=now)[name]),
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。**取りに行かない**

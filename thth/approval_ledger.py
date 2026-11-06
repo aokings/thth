@@ -12,7 +12,7 @@ front-matter（`status: approved`・`approved_sha` など）を書き換えて�
   `approvals.lock` を flock で取り、一時ファイルから `os.replace` で入れ替える（読み手は
   ロックを取らない・いつ読んでも書き終えた形のどちらか）。
 - 鍵: 原稿の **repo の中の相対パス**（git の作業ツリーの頂上からの相対・clone が違っても同じ原稿）。
-- 中身: `state`（`approved`・`revoked`）・`fields`（原稿の front-matter に重ねて見せる項目）・
+- 中身: `state`（`approved`・`revoked`・`withdrawn`）・`fields`（原稿の front-matter に重ねて見せる項目）・
   `approved_sha`・`at`・`by`・`gate`（hub の承認の番号・⑦）・`via`・短い `history`。
 
 ## 読み方（重ねて見せる）
@@ -27,6 +27,9 @@ front-matter の `status`・`approved_sha` を見るだけでよい。
   `revoked_*` を見せる（repo に古い `status: approved` が書いてあっても止まる）。
 - 出たあと（`post_id` あり・`status: posted` など）: 承認の控え（`approved_sha`・`delivery` など）が
   repo に無ければ足して見せるだけ。`status` は変えない。
+- 台帳に `withdrawn`（11/06・`thth withdraw`）があり、原稿がまだ出ていない: `status: withdrawn` にし、
+  承認の項目を外し、`withdrawn_*` を見せる（出さないと決めて閉じた原稿。select・schedule・board の
+  未承認の数え上げのどれにも出ない）。
 - 台帳に何も無い: repo のまま（**移行期間**: 4.4.0 までに repo に書いた承認はそのまま効く）。
 
 **指紋は今までどおり読み手が照合する。** 台帳の承認のあとで原稿の中身（本文・account・reply_to・
@@ -52,13 +55,19 @@ HISTORY_MAX = 20
 
 APPROVED = "approved"
 REVOKED = "revoked"
+# 出さないと決めて閉じた（11/06・`thth withdraw`）。repo の front-matter の `status: withdrawn`
+# （queuefile.KNOWN_STATUSES）と同じ意味を、repo に commit を積まずに重ねる。
+WITHDRAWN = "withdrawn"
+STATES = (APPROVED, REVOKED, WITHDRAWN)
 
 # 原稿の front-matter に重ねてよい項目。**指紋の材料（本文・account・reply_to・topic・
 # publish_at・場所・共有・media・community・announces）は入れない**。
 OVERLAY_KEYS = ("status", "approved_sha", "approved_at", "approved_by", "approved_goal",
                 "approved_kind", "delivery", "approved_via", "approved_credential",
                 "approved_gate", "held_minutes", "queued_for",
-                "revoked_at", "revoked_by", "revoked_reason")
+                "revoked_at", "revoked_by", "revoked_reason",
+                "withdrawn_at", "withdrawn_by", "withdrawn_reason")
+_WITHDRAW_SHOW = ("withdrawn_at", "withdrawn_by", "withdrawn_reason")
 # 出たあとの原稿に「無ければ足す」だけの控え（status は変えない）。
 _POSTED_INFO_KEYS = ("approved_sha", "approved_at", "approved_by", "approved_goal",
                      "approved_kind", "delivery", "approved_via", "approved_gate")
@@ -160,7 +169,7 @@ _LOAD_CACHE: dict = {}
 
 
 def _valid_entry(entry) -> bool:
-    return (isinstance(entry, dict) and entry.get("state") in (APPROVED, REVOKED)
+    return (isinstance(entry, dict) and entry.get("state") in STATES
             and isinstance(entry.get("file"), str) and isinstance(entry.get("fields"), dict))
 
 
@@ -332,6 +341,18 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
                 if fields.get(k) is not None:
                     out[k] = fields[k]
         return out
+    if entry["state"] == WITHDRAWN:
+        # 閉じた（11/06）。出たあとの原稿は変えない（閉じる口が post_id のある本を断る）。
+        if not is_open:
+            return fm
+        out["status"] = WITHDRAWN
+        for k in _REVOKE_DROP + ("approved_kind", "approved_via", "approved_credential", "approved_gate",
+                                 "held_minutes", "queued_for", "revoked_at", "revoked_by", "revoked_reason"):
+            out.pop(k, None)
+        for k in _WITHDRAW_SHOW:
+            if fields.get(k) is not None:
+                out[k] = fields[k]
+        return out
     # 取り消し
     if not is_open:
         return fm
@@ -451,6 +472,35 @@ def _history(old, event: dict) -> list:
 def _apply(items: dict, change: dict) -> None:
     key = change["file"]
     old = items.get(key)
+    if change["state"] == WITHDRAWN:
+        fields = _clean_fields(change["fields"])
+        fields["status"] = WITHDRAWN
+        # 閉じる前の行（取り消しの記録など）を `prior` に持つ。`thth withdraw --undo` はこれに戻す。
+        prior = None
+        if old is not None:
+            prior = old.get("prior") if old.get("state") == WITHDRAWN else {
+                k: v for k, v in old.items() if k != "history"}
+        items[key] = {
+            "file": key, "state": WITHDRAWN, "fields": fields,
+            "approved_sha": None, "at": fields.get("withdrawn_at"), "by": fields.get("withdrawn_by"),
+            "gate": None, "via": change.get("via") or "cli", "repo": change.get("repo"),
+            "prior": prior,
+            "history": _history(old, {"event": "withdrawn", "at": fields.get("withdrawn_at"),
+                                      "by": fields.get("withdrawn_by"),
+                                      "reason": fields.get("withdrawn_reason"), "via": change.get("via")}),
+        }
+        return
+    if change["state"] == "reopen":
+        # `thth withdraw --undo`: 閉じる前の行に戻す（前が無ければ行を消す＝repo のまま）。
+        if old is None or old.get("state") != WITHDRAWN:
+            raise ValueError(f"閉じた記録がありません: {key}")
+        prior = old.get("prior")
+        if isinstance(prior, dict) and _valid_entry(prior):
+            items[key] = {**prior, "history": _history(old, {
+                "event": "reopened", "at": change.get("at"), "by": change.get("by"), "via": change.get("via")})}
+        else:
+            del items[key]
+        return
     if change["state"] == APPROVED:
         fields = _clean_fields(change["fields"])
         fields["status"] = "approved"
@@ -495,8 +545,8 @@ def record(changes: list) -> None:
     """
     by_account: dict = {}
     for change in changes:
-        if change.get("state") not in (APPROVED, REVOKED):
-            raise ValueError("state は approved か revoked です")
+        if change.get("state") not in STATES + ("reopen",):
+            raise ValueError("state は approved・revoked・withdrawn・reopen のどれかです")
         if not _safe_account(change.get("account")) or not isinstance(change.get("file"), str):
             raise ValueError("account と file が要ります")
         if not isinstance(change.get("repo"), str) or not change["repo"]:
@@ -541,5 +591,7 @@ def export(account_name: str) -> list:
                     "at": entry.get("at"), "by": entry.get("by"), "gate": entry.get("gate"),
                     "via": entry.get("via"),
                     "revoked_reason": entry["fields"].get("revoked_reason") if entry["state"] == REVOKED else None,
+                    "withdrawn_reason": (entry["fields"].get("withdrawn_reason")
+                                         if entry["state"] == WITHDRAWN else None),
                     "history": entry.get("history") or []})
     return out

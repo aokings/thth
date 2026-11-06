@@ -719,6 +719,9 @@ def _show_sent(value) -> int:
 
 
 def _schedule(args, account):
+    if getattr(args, "unapproved", False) or getattr(args, "window", None) is not None:
+        # 11/06: 未承認の数え上げは運営の道具（VM の台帳と queue を読む）。遠くの道には出さない。
+        raise RemoteError("remote_unsupported", rc=2)
     draft = getattr(args, "draft", None)
     if draft is not None and getattr(args, "not_after", None):
         # 4.5.6: 期限は下書きを置くとき（--text・--text-file）に付ける。--draft では付けられない

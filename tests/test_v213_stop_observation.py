@@ -57,7 +57,8 @@ def test_board_stop_row_never_looks_healthy(env,monkeypatch,state,expected):
         d=env/'state/_leave';d.mkdir(mode=0o700);(d/'alpha.json').write_text('{}')
     else:(env/'state').chmod(0o775)
     before=snapshot(env);value=report.board_summary();row=value['accounts'][0]
-    assert row=={'account':'alpha','error':expected,'stop_reason':expected,'cannot_say':[expected]}
+    assert row=={'account':'alpha','error':expected,'stop_reason':expected,'cannot_say':[expected],
+                 'unapproved_soon':{'cannot_say':expected}}
     assert 'running' not in row and snapshot(env)==before
 
 
