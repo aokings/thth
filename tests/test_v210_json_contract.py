@@ -128,6 +128,8 @@ COMMANDS += ['page cta', 'live', 'dm']
 COMMANDS += ['admin appreview script', 'admin appreview check']
 # 設計 広告の資格と遠くの道 段 5: 広告の口座の退出（--json は 1 つの値・断りは {"completed": false, …}）。
 COMMANDS += ['ads leave']
+# Google 広告（読むだけ・auth は端末での対話なので --json を持たない）。
+COMMANDS += ['gads accounts', 'gads keywords', 'gads report']
 
 
 def test_json_table_covers_every_parser():
