@@ -225,3 +225,20 @@ def test_mcp_lint_with_account_name_says_the_mcp_way(isolated_account, monkeypat
     assert payload["error"] == "lint_takes_no_account"
     assert "thth_lint の file に原稿のパス" in payload["fix"]
     assert "thth lint <" not in payload["fix"] + payload["better"]
+
+
+def test_moved_draft_refusal_names_where_it_is_now(isolated_account):
+    """運用 #7040（11/07）: 原稿を置き場の中で移したあと古いパスで打つと、移った先を添えて断る。"""
+    rel = _push_new_draft(isolated_account, "2026-11-10-1200-fb-moved.md")
+    # VM の repo は移したあとの姿まで取り込み済み（11/06 の運用と同じ: 取り込みの 1 分後に古いパスで打った）。
+    assert run_git(isolated_account["repo_dir"], ["pull", "--ff-only", "-q"]).returncode == 0
+    result = run_thth(["approve", "docs/sns/fb/2026-11-10-1200-fb-moved.md"])
+    assert result.returncode == 2
+    assert "VM の repo に無いパスです" in result.stderr
+    assert f"同じ名前の原稿が置き場にあります（移したなら、こちらのパスで）: {rel}" in result.stderr
+
+
+def test_unknown_name_still_points_to_thth_queue(isolated_account):
+    result = run_thth(["approve", "docs/sns/fb/nowhere-at-all.md"])
+    assert result.returncode == 2
+    assert "同じ名前の原稿" not in result.stderr

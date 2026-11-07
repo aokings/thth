@@ -382,6 +382,7 @@ def _resolve_repo_path(path: str, purpose: str | None = None, account=None) -> s
             return translated
         raise ValueError(_require_vm_path(path))
     candidates = {}
+    queues = {}
     for name in accounts_mod.list_account_names():
         try:
             cfg = accounts_mod.load_account(name)
@@ -392,6 +393,8 @@ def _resolve_repo_path(path: str, purpose: str | None = None, account=None) -> s
         if not isinstance(repo, str) or not os.path.isdir(repo):
             continue
         root = os.path.realpath(repo)
+        if isinstance(cfg.get('queue_dir'), str) and cfg['queue_dir'].strip('/'):
+            queues.setdefault(root, set()).add(cfg['queue_dir'].strip('/'))
         candidate = os.path.realpath(os.path.join(root, path))
         if os.path.commonpath([root, candidate]) == root and os.path.exists(candidate):
             candidates.setdefault(candidate, (root, set()))[1].add(name)
@@ -404,7 +407,40 @@ def _resolve_repo_path(path: str, purpose: str | None = None, account=None) -> s
     if candidates:
         raise AmbiguousPath('複数の repo に同じパスがあります。絶対パスか --account <口座> で指定してください: '
                          + ' / '.join(sorted(candidates)))
-    raise ValueError(f'VM の repo に無いパスです: {path}。thth queue <account> で置き場を確認してください')
+    moved = _same_name_in_queues(path, queues)
+    hint = (f'同じ名前の原稿が置き場にあります（移したなら、こちらのパスで）: {" / ".join(moved)}' if moved
+            else 'thth queue <account> で置き場を確認してください')
+    raise ValueError(f'VM の repo に無いパスです: {path}。{hint}')
+
+
+# 置き場を探す上限（大きな repo で迷わないように・運用 #7040）。
+_MOVED_LOOKUP_LIMIT = 5
+
+
+def _same_name_in_queues(path, queues) -> list:
+    """見つからないパスと同じファイル名の原稿が、台帳の置き場（queue_dir）の下にあればその repo 相対パス。
+
+    運用 #7040（11/07）: 原稿を docs/sns/fb/ から docs/sns/queue/ へ移した直後に古いパスで approve して
+    「VM の repo に無い」とだけ言われ、絶対パスで打ち直していた。移った先を添えて、そのまま打ち直せるようにする。
+    探すのは置き場の下だけ（repo 全体は見ない）・見つけたものは最大 `_MOVED_LOOKUP_LIMIT` 件。"""
+    base = os.path.basename(path.rstrip('/'))
+    if not base or base in ('.', '..'):
+        return []
+    found = []
+    for root in sorted(queues):
+        for queue in sorted(queues[root]):
+            top = os.path.realpath(os.path.join(root, queue))
+            if os.path.commonpath([root, top]) != root or not os.path.isdir(top):
+                continue
+            for dirpath, dirnames, filenames in os.walk(top):
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith('.'))
+                if base in filenames:
+                    rel = os.path.relpath(os.path.join(dirpath, base), root)
+                    if rel not in found:
+                        found.append(rel)
+                    if len(found) >= _MOVED_LOOKUP_LIMIT:
+                        return found
+    return found
 
 
 def _repos_for_lookup(items, account=None) -> dict:
