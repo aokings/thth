@@ -599,4 +599,13 @@ ENTRIES = {
         "no_better": "internal",
         "doors": ("cli",),
     },
+    "report_file_unreadable": {
+        "kind": "refusal",
+        "why": "--body-file か --repro-file のファイルを読めませんでした（無い・読む権限が無い・UTF-8 でない）。パスは thth を動かしている機械の上で読みます。",
+        "fix": "VM の道具に渡すなら VM の上のパスにするか、`-` にして本文を標準入力で渡してください（例: ssh wt '… --body-file -' < 本文.md）。",
+        "command": "thth report file <口座> --kind bug --title <題> --body-file - --by <名前>",
+        "better": "本文を標準入力で渡すと、手元と VM のどちらで打っても同じ形で届きます。",
+        "doors": _CM,
+        "since": "5.12.6",
+    },
 }

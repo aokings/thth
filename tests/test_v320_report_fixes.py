@@ -172,3 +172,28 @@ def test_一覧の行に置いた人が出る(two_projects, tmp_path, capsys):
     assert rc == 0 and "置いた人 kopicha-session" in out
     listed = report_inbox.list_reports(scope=None, status="all")
     assert listed["reports"][0]["reporter"] == "kopicha-session"
+
+
+# ---------------------------------------------------------------- 運用 #7040（11/07）: 読めないファイルを空と言わない
+
+def test_読めないbody_fileは空でなく読めないと断る(two_projects, tmp_path, capsys):
+    rc = cli.main(["report", "file", "kopicha-threads", "--kind", "bug", "--title", "読めない",
+                   "--body-file", str(tmp_path / "無い.md"), "--by", "kopicha-session", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert json.loads(captured.out)["cannot_say"] == ["report_file_unreadable"]
+    assert "空にできません" not in captured.err and "--body-file -" in captured.err
+
+
+def test_UTF8でないbody_fileも読めないと断る(two_projects, tmp_path, capsys):
+    path = tmp_path / "sjis.md"
+    path.write_bytes("本文".encode("shift_jis"))
+    rc = cli.main(["report", "file", "kopicha-threads", "--kind", "bug", "--title", "sjis",
+                   "--body-file", str(path), "--by", "kopicha-session", "--json"])
+    assert rc == 2 and json.loads(capsys.readouterr().out)["cannot_say"] == ["report_file_unreadable"]
+
+
+def test_空のbody_fileは今までどおりinvalid_report(two_projects, tmp_path, capsys):
+    rc = cli.main(["report", "file", "kopicha-threads", "--kind", "bug", "--title", "空",
+                   "--body-file", _body_file(tmp_path, "  \n"), "--by", "kopicha-session", "--json"])
+    assert rc == 2 and json.loads(capsys.readouterr().out)["cannot_say"] == ["invalid_report"]

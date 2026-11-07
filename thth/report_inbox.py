@@ -74,6 +74,8 @@ REASONS = frozenset((
     "no_last_refusal",
     # つまずきの年表（設計 3.6.0 §B）: --since が日付として読めない。
     "invalid_since",
+    # `--body-file`・`--repro-file` を読めない（無い・権限・UTF-8 でない）。空と混ぜない（運用 #7040・11/07）。
+    "report_file_unreadable",
 ))
 
 # 断りのあとに添える「次の一手」（人と LLM が読む 1 行・静的）。
@@ -680,8 +682,12 @@ def _print_refusal(args, error):
 
 
 def _read_input(path):
-    """`--body-file` 等を読む（`-` は標準入力）。読めなければ `invalid_report`。"""
-    return private_store.read_input(path, BODY_MAX, error=ReportError, invalid="invalid_report")
+    """`--body-file` 等を読む（`-` は標準入力）。読めなければ `report_file_unreadable`。
+
+    以前は `invalid_report`（「本文は空にできません」）で断っていて、Mac のパスを VM の道具に渡したときに
+    空と言われて迷った（運用 #7040・11/07）。読めないことと空を別の符丁にする。
+    """
+    return private_store.read_input(path, BODY_MAX, error=ReportError, invalid="report_file_unreadable")
 
 
 def from_last_refusal(account, *, kind=None, body=None, repro=None):

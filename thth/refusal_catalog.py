@@ -88,7 +88,7 @@ FIX_VIEWS = {
         "report_too_long", "secret_detected", "report_rate_limited", "duplicate_report", "report_not_found",
         "report_already_closed", "invalid_close_reason", "invalid_version", "invalid_status",
         "report_store_unavailable", "report_log_unavailable", "invalid_export_target", "report_closed",
-        "no_last_refusal", "invalid_since",
+        "no_last_refusal", "invalid_since", "report_file_unreadable",
     ),
     "map_store.NEXT": (
         "by_required", "invalid_project", "project_unknown", "invalid_node", "node_handle", "node_url",
