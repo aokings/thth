@@ -1,6 +1,6 @@
 # 手順: Google の広告と AdSense の準備（2026-11-08 THTH開発 第13）
 
-masaru 11/08「もっとサポートして」。Google の 2 つの準備を、誰が何をするかまで 1 枚にした。調べの正本は [調べ_Google広告とAdSenseのAPI_2026-11-06.md](調べ_Google広告とAdSenseのAPI_2026-11-06.md)、AdSense の申し込みの叩き台の正本は media-hub の repo の `docs/段取り_AdSenseの申し込み_2026-11-07.md`（本線 第12）。
+masaru 11/08「もっとサポートして」。Google の 2 つの準備を、誰が何をするかまで 1 枚にした。調べの正本は [調べ_Google広告とAdSenseのAPI_2026-11-06.md](調べ_Google広告とAdSenseのAPI_2026-11-06.md)、AdSense の申し込みの叩き台の正本は media-hub の repo の docs にある「段取り_AdSenseの申し込み_2026-11-07」（本線 第12）。
 
 ## 全体像
 
