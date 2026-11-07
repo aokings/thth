@@ -335,6 +335,44 @@ def test_origin復旧後に次の実行が送り直す(tmp_path, isolated_accoun
     assert [r["marks"] for r in rows] == [[1], [6]], rows
 
 
+def test_送れなかった分は次の回が同じファイルを触らなくても送る(tmp_path, isolated_account_factory):
+    """運用 2026-11-07。push に失敗して `reset --soft` で戻した分は index に残るが、
+    commit は `--only` でその回に触ったファイルだけを載せるので、**次の回が同じ
+    ファイルを触らなければ二度と commit されなかった**（VM の asmon に 4 本が残った）。"""
+    import subprocess
+    from pathlib import Path
+
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    hook = Path(pair["bare"]) / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    assert collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=NOW,
+                                    log=lambda _l: None) == 1
+    hook.unlink()
+
+    # 人の作業（置き場の外の変更）は巻き込まない
+    other = Path(pair["work"]) / "notes.md"
+    other.write_text("人の書きかけ\n")
+
+    # 10 分後: 新しい刻みは無いので、採取は POST1 の台帳を触らない
+    later = NOW + datetime.timedelta(minutes=10)
+    adapter = FakeAdapter()
+    rc = collect_mod.run_collect(account["name"], adapter=adapter, now=later,
+                                  log=lambda _l: None)
+    assert rc == 0
+    assert adapter.insight_calls == [], "この試験の前提（同じファイルを触らない）が崩れている"
+
+    in_origin = subprocess.run(["git", "-C", pair["bare"], "ls-tree", "-r", "--name-only", "main"],
+                                capture_output=True, text=True).stdout
+    assert "data/sns/insights/posts/POST1.ndjson" in in_origin, "取り残しが送られていない"
+    assert "notes.md" not in in_origin, "置き場の外の変更を巻き込んだ"
+    from thth import accounts as accounts_mod
+    cfg = accounts_mod.load_account(account["name"])
+    assert collect_mod.pending_paths(pair["work"], cfg) == [], "未送信が残っている"
+
+
 def test_bundleのmediaが合わないとerrorsに出るが他の投稿は採れる(tmp_path, isolated_account_factory):
     """バグ 3: account の `media` を書き換えると（表記の修正など）、公開済みの
     `thth: 2` 束の `## <旧media>` 節が見つからなくなり `problems` が非空になる。

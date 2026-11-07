@@ -200,6 +200,46 @@ def _pending_engagement_paths(repo_dir: str, account_cfg: dict, account_name: st
     return sorted(out)
 
 
+def _pending_collect_paths(repo_dir: str, account_cfg: dict, account_name: str) -> list:
+    """**前の回に送れなかった採取の台帳**（実測・返信・受信箱の `.ndjson`）を絶対パスで返す。
+
+    push に失敗すると `_undo_local_commit()` が `reset --soft` で commit を取り消し、
+    中身は作業ツリーと index に残る（「次の実行が commit し直す」）。ところが
+    commit は `--only` で**その回に触ったファイルだけ**を載せるので、次の回が
+    同じファイルを触らなければ、**取り残しは二度と commit されなかった**
+    （運用 2026-11-07: VM の asmon に 22:03 の 4 本が stage されたまま残った）。
+
+    はてなの反応（`hatena_reactions.pending_paths`）と同じ形で、採取が書く置き場
+    だけを `git status` で見て拾う。置き場は同じ repo の他の account と共有なので、
+    他の account の取り残しも同じ commit に入る（repo の錠の中なので、書きかけは無い）。
+    絡みの台帳は `_pending_engagement_paths()` が別に見る。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return []
+    dirs = accounts_mod.data_dirs(account_cfg, account_name)
+    root = os.path.realpath(repo_dir)
+    rels = []
+    for key in ("insights_posts", "insights_account", "replies", "inbox"):
+        rel_dir = os.path.relpath(os.path.realpath(dirs[key]), root)
+        if rel_dir == os.pardir or rel_dir.startswith(os.pardir + os.sep):
+            continue
+        if os.path.isdir(dirs[key]):
+            rels.append(rel_dir)
+    if not rels:
+        return []
+    status = _git(repo_dir, ["status", "--porcelain", "--untracked-files=all", "--", *rels])
+    if status.returncode != 0:
+        return []
+    out = []
+    for line in status.stdout.splitlines():
+        code, path = line[:2], line[3:].strip()
+        # 消えたファイルは採取の取り残しではない（採取は消さない）。人の作業に触らない。
+        if "D" in code or not path.endswith(".ndjson"):
+            continue
+        out.append(os.path.join(repo_dir, path))
+    return sorted(out)
+
+
 def _read_ndjson_strict(path: str) -> tuple:
     """`(行, 壊れているか)`。**壊れた行を黙って飛ばさない。**
 
@@ -1469,7 +1509,10 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict, wait=0) 
         # の `touched` に一度も現れない。採取で他に何も触らなくても、絡みの
         # 台帳に未追跡・変更があれば同じ commit に含める。
         engagement_paths = _pending_engagement_paths(repo_dir, account_cfg, account_name)
-        all_touched = sorted(set(result["touched"]) | set(engagement_paths))
+        # 前の回に push できず取り消した分も同じ commit に入れる（運用 2026-11-07）。
+        leftovers = _pending_collect_paths(repo_dir, account_cfg, account_name)
+        all_touched = sorted({os.path.realpath(p) for p in
+                              [*result["touched"], *engagement_paths, *leftovers]})
 
         if all_touched:
             rel = [os.path.relpath(os.path.realpath(p), os.path.realpath(repo_dir))
