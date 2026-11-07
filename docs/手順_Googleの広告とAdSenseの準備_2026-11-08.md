@@ -29,9 +29,11 @@ A と B は別々に進められる。B は審査に数日〜数週かかるの�
 **11/08 の進み（masaru「打ってよい」「同意してよい」）:**
 - 段 1 済み: project 名 thth-google-ads・ID `thth-gads-2611`（`thth-google-ads` の ID は世界のどこかで使われていて取れなかった）。
 - 段 2 済み: Google Ads API が「有効」・段は Test。
-- 段 3 の途中: 同意の画面を作った（アプリ名 THTH・外部・連絡先 aokings@gmail.com・Google API のユーザーデータの方針に同意）。状態はまだ「テスト中」（「本番」にするのは押す前に masaru に聞く）。スコープ（データアクセス）は入れていない（`adwords` は要確認のスコープで、入れると確認を求められうるため。未確認のままでも自分と数人は使える）。
+- 段 3 済み: 同意の画面を作った（アプリ名 THTH・外部・連絡先 aokings@gmail.com・Google API のユーザーデータの方針に同意）。masaru「本番にしてよい」で「本番環境」にした。公開の前にブランディングを埋める必要があり、ホームページ https://thth.me/・privacy https://thth.me/privacy・terms https://thth.me/terms・承認済みドメイン thth.me を入れた（3 つとも 200 を確かめた）。スコープ（データアクセス）は入れていない（`adwords` は要確認のスコープで、入れると確認を求められうるため。未確認のままでも自分と数人は使える）。
 - 段 4 済み: デスクトップの OAuth クライアント `thth-cli` を作り、鍵の JSON を `~/.config/thth/google-ads-client.json`（600・フォルダは 700）に置いた。アプリの内蔵ブラウザはダウンロードを保存しないので、JSON は masaru が自分の Chrome でダウンロードし、Claude が形だけ確かめて移した（秘密の値は会話に出していない）。
-- 残り: 段 3 の「本番」→ 段 5 Explorer → 段 6 ブランド確認と Basic。
+- 段 5 済み: masaru「申請してよい」で Explorer を申請し、数分で「エクスプローラ」になった（本番の口座 1 日 2,880 操作・テストの口座 15,000）。
+- 段 6 の前に分かったこと: Basic の申請はブランド確認が前提。aokings@gmail.com は Search Console で thth.me の所有者になっていない（「このプロパティへのアクセス権がありません」）。ブランド確認では承認済みドメインの所有を見るので、先に thth.me の所有を証明する（DNS の TXT を 1 行足す。Cloudflare の API で足せる）。
+- 残り: thth.me の所有の証明 → ブランド確認 → Basic の申請。
 
 ## B. AdSense の申し込み（本線の叩き台の要点）
 
