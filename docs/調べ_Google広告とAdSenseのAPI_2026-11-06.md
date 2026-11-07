@@ -20,6 +20,7 @@ THTH開発 第13 が Opus に頼んだ調べもの。masaru の決定 11/06「�
 - 出典: developer token https://developers.google.com/google-ads/api/docs/api-policy/developer-token ・ 段 https://developers.google.com/google-ads/api/docs/api-policy/access-levels ・ 量 https://developers.google.com/google-ads/api/docs/best-practices/quotas
 - 申請は Cloud Console の「Google Ads API Overview」から。`developer-token` の header は今は無視される（先の版で送ると断られる予定・日付なし）。
 - Explorer で使えないのは、口座の作成・利用者の管理・計画・請求。キャンペーンを作る・止めることは禁じられていない。
+- キーワードの案と検索の数（キーワードプランナーと同じ中身・`KeywordPlanIdeaService.GenerateKeywordIdeas`）は「計画」に入るので Explorer では呼べない。Basic から（ブランド確認が前提・Cloud の画面のボタンで申請・自動で上がることがある・日数の記載なし）。返る検索の数は月の平均の整数と月ごとの数。広告費の実績が要るとは書いていない【一次 11/08・access-levels・generate-keyword-ideas】。
 - 1 日の数え方は project 単位の直近 24 時間。Search は 1 回で 1 操作（ページ送りは数えない）、mutate は中の操作の数だけ（1 回 10,000 まで）、失敗も数える。
 - v25 から、Test の project で本番の口座を呼ぶと `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`。90 日使わない project は段を外されうる。
 - 既知の不具合: 9/09 以降に段を上げた project で、本番の口座に `AUTHORIZATION_ERROR`（直しを配っている途中）。
