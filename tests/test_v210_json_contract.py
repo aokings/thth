@@ -130,6 +130,8 @@ COMMANDS += ['admin appreview script', 'admin appreview check']
 COMMANDS += ['ads leave']
 # Google 広告（読むだけ・auth は端末での対話なので --json を持たない）。
 COMMANDS += ['gads accounts', 'gads keywords', 'gads report']
+# Search Console（読むだけ・auth は端末での対話なので --json を持たない）。
+COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
 
 
 def test_json_table_covers_every_parser():

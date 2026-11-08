@@ -1,6 +1,6 @@
 """Google 広告の口の網と断り（`auth.py`・`api.py` が使う）。
 
-**網に出るのはここの `default_transport` の 1 か所**（`thth.httpsafe` の作法: 別ホストへのリダイレクトを追わない・
+**網に出るのはここの `default_transport` の 1 か所**（中身は `thth.google_oauth.http_request`・`thth.httpsafe` の作法: 別ホストへのリダイレクトを追わない・
 https だけ）。試験は `transport` を差し替える（本物の網に出ない）。
 
 `transport(method, url, headers, body) -> (status, body_bytes)`。HTTP の 4xx・5xx も (status, body) で返す
@@ -12,10 +12,8 @@ https だけ）。試験は `transport` を差し替える（本物の網に出�
 from __future__ import annotations
 
 import re
-import urllib.error
-import urllib.request
 
-from .. import httpsafe
+from .. import google_oauth, httpsafe  # noqa: F401 （httpsafe は試験が差し替える所の名前）
 
 TIMEOUT = 60
 # 断りの符丁（この口が出すもの全部・目録 `thth/refusal_catalog_part7.py` に 3 つがある）。
@@ -47,18 +45,8 @@ class GadsRefused(Exception):
 
 
 def default_transport(method: str, url: str, headers: dict, body: bytes | None):
-    request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with httpsafe.urlopen(request, timeout=TIMEOUT) as response:
-            return response.status, response.read()
-    except urllib.error.HTTPError as exc:
-        try:
-            raw = exc.read(1_000_000)
-        except Exception:  # 本文が読めなくても数だけで判断する
-            raw = b""
-        finally:
-            exc.close()
-        return exc.code, raw
-    except (urllib.error.URLError, OSError, ValueError):
+        return google_oauth.http_request(method, url, headers, body, timeout=TIMEOUT)
+    except google_oauth.Unreachable:
         # 例外の文には URL や本文が入りうるので、符丁だけにする（from None で連鎖も切る）。
         raise GadsRefused("gads_unavailable") from None

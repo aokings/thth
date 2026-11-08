@@ -5401,6 +5401,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth gads auth|accounts|keywords|report`（Google 広告・読むだけ）。口は `thth/gads/cli.py` に閉じる。
     from .gads import cli as gads_cli
     gads_cli.register(sub)
+    # `thth gsc auth|sites|query|compare|inspect`（Search Console・読むだけ）。口は `thth/gsc/cli.py` に閉じる。
+    from .gsc import cli as gsc_cli
+    gsc_cli.register(sub)
     # `thth embed`・`thth upcoming`（計画 Meta 全部盛り M3・読むだけ・保存しない）。口は `thth/meta_public.py` に閉じる。
     from . import meta_public
     meta_public.register(sub)
