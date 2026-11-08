@@ -41,6 +41,9 @@ A と B は別々に進められる。B は審査に数日〜数週かかるの�
 - THTH の口 `thth gads auth|accounts|keywords|report`（読むだけ）を入れた（merge `fef4b8c`・全件 11,578 件緑）。11/08 に masaru が認可を押し、鍵は `~/.config/thth/google-ads-token.json`（600）。本物で `accounts` は 226-006-0755 が見えた。`keywords` は `CUSTOMER_NOT_ENABLED`（口座の初めの設定＝支払いの情報が未了）で断られた。支払いの情報は masaru の手（キャンペーンを作らなければ請求は起きない）。済んだら Claude が `thth gads keywords --customer 226-006-0755 --seed …` で確かめる。
 - 11/08 夜: 226-006-0755 は「閉鎖済」で、支払いの画面が開けなかった（作りかけで閉じたと見ている・未確認）。masaru が新しい口座 **173-554-9950**（名前 THTH）をキャンペーンを作らずに（「スキップ」）作った。`thth gads accounts` に見え、`keywords` で案が引けた（例「sns 予約 投稿」月平均 40）。ただし同じ頼みが時々 `ACTION_NOT_PERMITTED` で断られる（口座が「設定中」の間の揺れと見ている）。少し後に `--seed` を 2 つ重ねて 4 回続けて打ち、4 回とも通った。以後の口座は 173-554-9950。
 - gotoq として出稿するときの叩き台（11/08・決めるのは gotoq）: 口座は m.aoki@gotoq.jp 側に分け、支払いも会社のもの。THTH から読むなら aokings@gmail.com を「閲覧のみ」（作るなら「標準」）で招待すれば、今の認可のまま `thth gads accounts` に並ぶ。
+- 11/08 masaru「gsc と gt 入れちゃいましょう」: Cloud の project thth-gads-2611 で Search Console API を有効にした（画面に「ステータス 有効」）。`thth gsc`（読むだけ・スコープ webmasters.readonly・鍵は `~/.config/thth/google-gsc-token.json`）を作っている。media-hub の `scripts/gsc.py`（SEO レーン）は masaru のサイト用、THTH の口は THTH の利用者が自分のサイトを読む道具として作る。
+- Google トレンド API は試験版で申し込み制（https://developers.google.com/search/apis/trends ）。masaru「申し込みましょう」で 11/08 に申し込んだ（名義 aokings@gmail.com・project thth-gads-2611・個人の開発者・商用・感想はメールで）。受け付けの画面「We'll notify you if you're accepted」。通った知らせは aokings@gmail.com のメールに来る（masaru はメールを見ないので、ときどき Claude が受信を確かめる手が要る）。通るまで `thth trends` は作らない。
+- Yahoo!広告（LINEヤフー広告）API は見送り（11/08 masaru「推しでオケ」）。キーワードの案の口（KeywordPlanIdeaService・v20）は語しか返さず、月間の検索数が無い（公式の OpenAPI 定義 yahoojp-marketing/ads-search-api-documents の design/v20 で確かめた）。検索数の見えた「キーワードアドバイスツール」は 2023-05-31 に終わった。口座・API の申し込み・約款の同意が要るのに対し、語の案は Google で足りる。
 - A の道はここで終わり。次は THTH の口: 鍵（`~/.config/thth/google-ads-client.json`）で masaru の Google 広告の口座を認可し、成績を読む口・キーワードの案の口・止めた状態で作る/止める口を作る。
 
 ## B. AdSense の申し込み（本線の叩き台の要点）
