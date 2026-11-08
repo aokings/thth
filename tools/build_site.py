@@ -533,7 +533,9 @@ def build_privacy() -> str:
         "live video's streaming destination pass this path only within those limits; the operator's server does "
         "not write them to its request records or logs. Requests for a Meta ad account, including reading lead "
         "form answers, use the same path; the operator's server does not write lead answers, form names, product "
-        "details or audience targeting to its request records or logs.</p>")
+        "details or audience targeting to its request records or logs. An account that is read-only on this path "
+        "(for example a Meta ad account before the operator sets limits) cannot post, send or create, but can still "
+        "read that account's direct messages and lead form answers.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
@@ -885,7 +887,8 @@ def build_privacy() -> str:
         "ハッシュ・アカウント・期限だけを持ちます。運営者のサーバーは行う前にキーをもう一度確かめます。ダイレクトメッセージの本文と"
         "名前、ライブ動画の配信先は、この範囲でだけこの経路を通り、運営者のサーバーは依頼の記録やログに書きません。Meta の広告"
         "アカウントへの依頼（リード獲得フォームの回答を読むことを含む）も同じ経路を通り、運営者のサーバーはリードの回答・フォーム名・"
-        "商品の中身・広告の対象の条件を依頼の記録やログに書きません。</p>")
+        "商品の中身・広告の対象の条件を依頼の記録やログに書きません。この経路で読むだけのアカウント（たとえば運営者が上限を入れる前の"
+        "Meta の広告アカウント）は、投稿・送信・作成はできませんが、そのアカウントのダイレクトメッセージとリードの回答は読めます。</p>")
 
     add("<h2>認可コードの一時保管（Cloudflare）</h2>")
     add("<p>認可コードの一時保管には Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"

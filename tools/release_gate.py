@@ -42,7 +42,7 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     "server_reads": ("thth/server_reads.py",),
     "guard": ("thth/guard.py",),
     "plaza_redact": ("thth/plaza_redact.py",),
-    "leave": ("thth/leave.py", "thth/leave_gate.py"),
+    "leave": ("thth/leave.py", "thth/leave_gate.py", "thth/ads/leave.py"),
     "callback": ("callback/*",),
     "privacy_terms": ("callback/public/privacy/*", "callback/public/terms/*", "tools/build_site.py"),
     "approval": ("thth/approval.py", "thth/approval_ledger.py", "thth/approve_pending.py"),

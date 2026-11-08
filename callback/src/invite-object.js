@@ -13,7 +13,7 @@ export const RESET_REASONS=['auth_expired','auth_failed','account_exists','unava
 // 招待の媒体（3.22.0 から Mastodon も・点検 §B-20。5.13.0 から Facebook・Instagram・広告も）。権限の名前の形は媒体ごと。
 export const META_MEDIA=['facebook','instagram','ads'];
 export const MEDIA=['threads','mastodon',...META_MEDIA];
-const META_SCOPE=/^(?:pages|instagram|ads|threads|leads|catalog|business|publish|read|public)_[a-z_]{1,40}$/;
+const META_SCOPE=/^(?:pages|instagram|ads|threads|leads|catalog|commerce|business|publish|read|public)_[a-z_]{1,40}$/;
 const SCOPE={threads:/^threads_[a-z_]{1,40}$/,mastodon:/^(?:read|write):[a-z_]{1,40}$/,facebook:META_SCOPE,instagram:META_SCOPE,ads:META_SCOPE};
 const HANDLE=/^[A-Za-z0-9_.]{1,64}$/;
 // VM が組む認可 URL は Threads の authorize か、招待を作ったときに決めた Mastodon の

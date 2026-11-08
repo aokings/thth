@@ -1,7 +1,8 @@
 # THTH
 
 > THTH is a command-line tool for researching, posting to, scheduling on and
-> managing your own social media accounts (Threads, Bluesky, Mastodon, X).
+> managing your own social media accounts (Threads, Bluesky, Mastodon, X,
+> Facebook Pages, Instagram and Meta ad accounts).
 > Because it is a CLI, an LLM can drive it; the bundled MCP server and skills
 > only make that easier. Local queue work is recorded in git. An invited person
 > authorizes the invited service (Threads, Mastodon, a Facebook Page or Instagram),
@@ -51,7 +52,10 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
   Instagram the same route also runs `thth doctor`, `thth dm`, `thth live`,
   `thth page cta`, `thth like`/`unlike`, `thth edit` and `thth reply`
   (hide/unhide); writes stay two-step and the server makes and checks the
-  digest. `thth ads` and `thth reply delete` are not on this route.
+  digest. For a Meta ad account the route also runs `thth ads … --remote`
+  (doctor, show, insights, estimate, catalog, leads, network, shop, and boost,
+  pause and stop; boost always creates paused ads and nothing raises a
+  budget). `thth reply delete` is not on this route.
 - Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by gotoq` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`
