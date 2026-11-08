@@ -294,7 +294,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-08"  # 5.13.0 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = None  # 次の Worker の deploy の日に入れる。前: 2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -659,9 +659,10 @@ def build_privacy() -> str:
     add("  <li>Command requests on thth.me/api/v1: at most 120 seconds; their results: at most 10 minutes.</li>")
     add("  <li>Sign-in to the activity page: 10 minutes.</li>")
     add("  <li>Attachment objects on R2: deleted 24 hours after creation.</li>")
-    add("  <li>Notifications from Meta held on thth.me (for example a comment or mention on a connected Page, "
-        "which can include its text and the sender's name): until the operator's server collects them, at most "
-        "7 days.</li>")
+    add("  <li>Notifications from Meta held on thth.me: until the operator's server collects them, at most "
+        "7 days. A comment or mention on a connected Facebook Page, or a mention of a connected Instagram account, can include its text and the sender's name; "
+        "for Threads and for Instagram comments and story insights, thth.me keeps only ids, times, the post type and numbers, "
+        "not the text or the other person's name.</li>")
     add("  <li>Instagram hashtags searched (the hashtag and the first time only): 7 days.</li>")
     add("  <li>Marketing API call counts (numbers only): per-day counts for the last 16 days.</li>")
     add("  <li>The ad account ledger, daily snapshots and operation records: until the operator removes the ad "
@@ -994,8 +995,9 @@ def build_privacy() -> str:
     add("  <li>thth.me/api/v1 の依頼: 最長 120 秒。その結果: 最長 10 分。</li>")
     add("  <li>アクティビティに入った状態: 10 分。</li>")
     add("  <li>R2 の添付: 置いてから 24 時間で削除。</li>")
-    add("  <li>thth.me に置く Meta からの通知（接続したページへのコメントや言及など。本文と送り手の名前を含むことがあります）: "
-        "運営者のサーバーが受け取るまで、最長 7 日。</li>")
+    add("  <li>thth.me に置く Meta からの通知: 運営者のサーバーが受け取るまで、最長 7 日。接続した Facebook ページへの"
+        "コメントや言及と、接続した Instagram への言及は、本文と送り手の名前を含むことがあります。Threads と、Instagram のコメントとストーリーの数値は、"
+        "id・時刻・投稿の種類・数だけを置き、本文や相手の名前は置きません。</li>")
     add("  <li>Instagram で調べたハッシュタグ（タグと最初の時刻だけ）: 7 日。</li>")
     add("  <li>Marketing API の呼び出しの数（数だけ）: 日ごとの数を直近 16 日。</li>")
     add("  <li>広告の台帳・日次の写し・操作の記録: 運営者が広告アカウントを外すまで。</li>")
