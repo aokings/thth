@@ -574,8 +574,29 @@ def cmd_add(args) -> int:
 # 振り分けと登録
 # --------------------------------------------------------------------------
 
+def _refuse_dry_run(verb, name) -> int:
+    """migrate 以外の `--dry-run` の断り（なぜ・通る直し方・先に見る口）。何も書かない。"""
+    who = name or "<口座>"
+    shown = f"account {verb}" if verb else "account"
+    print(f"--dry-run は account migrate だけの口です。{shown} は --dry-run を読まないので、"
+          "付けたまま進めると台帳を書いてしまいます。ここでは何も書かずに止めました。",
+          file=sys.stderr)
+    if verb == "set":
+        print(f"  今の値は thth account status {who} で見られます。変えるなら --dry-run を外して打つと、"
+              "前 → 後 が出ます（戻すときは同じ set で元の値を入れる）。", file=sys.stderr)
+    else:
+        print(f"  先に状態を見るなら thth account {who}（1 本の一枚）。確かめたら --dry-run を外して"
+              "打ってください。", file=sys.stderr)
+    return 2
+
+
 def dispatch(args) -> int:
     verb = getattr(args, "account", None)
+    if getattr(args, "dry_run", False) and verb != "migrate":
+        # `--dry-run` は `migrate` だけの口。`set` は黙って無視して台帳を書いていた（#7177・
+        # 11/06 asmon-kanto-fb と 11/08 kopicha-ig の scheduled）。`leave` も同じく止めずに進んでいた。
+        # 試すつもりで書かせないよう、migrate 以外は何も触らずに断る。
+        return _refuse_dry_run(verb, getattr(args, "name", None))
     if verb == 'leave':
         from . import leave
         return leave.command(args)

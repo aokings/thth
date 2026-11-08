@@ -59,3 +59,24 @@ def test_MCPやthth_meの口からは変えられない(env):
             account_settings.change("alpha", "scheduled", "true", by="llm", via="mcp",
                                     tighten_only=tighten_only)
     assert read_ledger(env)["scheduled"] is False
+
+
+@pytest.mark.parametrize("words", [
+    ("set", "alpha", "scheduled", "true"),
+    ("set", "alpha", "hold_minutes", "10"),
+    ("resume", "alpha"),
+    ("leave", "alpha"),
+])
+def test_dry_runはmigrate以外では何も書かずに断る(env, words):
+    """#7177（11/06・11/08）: `account set … --dry-run` が --dry-run を読まず台帳を書いていた。"""
+    ledger(env, scheduled=False)
+    before = read_ledger(env)
+    log_before, _ = admin_log.read(event="settings_set")
+    done = thth("account", *words, "--by", "masaru", "--dry-run")
+    assert done.returncode == 2, done.stdout
+    assert "--dry-run は account migrate だけの口です" in done.stderr
+    assert "何も書かずに止めました" in done.stderr
+    assert read_ledger(env) == before
+    assert admin_log.read(event="settings_set")[0] == log_before
+    if words[0] == "set":
+        assert "thth account status alpha" in done.stderr
