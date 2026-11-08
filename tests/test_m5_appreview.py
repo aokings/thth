@@ -41,6 +41,17 @@ def row(name):
     return next(item for item in appreview.items() if item["name"] == name)
 
 
+def test_落とした権限は申請の表にも_privacyの語にも出ない():
+    """計画 §1.10（masaru 11/08）: 成功の呼び出しを作れない 5 つは DROPPED に理由つきで残し、申請に入れない。"""
+    assert set(appreview.DROPPED) == {"commerce_account_read_orders", "commerce_account_read_reports",
+                                      "commerce_account_manage_orders", "attribution_read",
+                                      "live_shopping_manage_video"}
+    assert not set(appreview.DROPPED) & set(appreview.names())
+    assert not set(appreview.DROPPED) & set(appreview.PRIVACY_WORDS)
+    assert all(reason.strip() for reason in appreview.DROPPED.values())
+    assert len(appreview.PLANNED) == 16
+
+
 # ---------------------------------------------------------------- (d) 台本の表
 
 def test_権限の正本はPERMISSIONSの1か所で_台本の表は重ねない():

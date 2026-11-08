@@ -941,7 +941,7 @@ ENTRIES = {
         "kind": "refusal",
         "why": "申請に入れる権限か機能のうち、THTH に呼ぶ口が無いものがあります（録画に映せず、30 日の呼び出しも作れません）。",
         "fix": ("口を作って thth/appreview.py の SEGMENTS に区間を足すか、計画 §1.10 の判断で申請から外して "
-                "PLANNED から消してください"),
+                "PLANNED から DROPPED へ理由つきで移してください"),
         "command": "thth admin appreview script",
         "better": "口は読むだけの最小の形にすると、録画が短く済み、審査の問いも減ります",
         "doors": _C,

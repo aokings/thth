@@ -14,6 +14,7 @@
   載っていること**（THTH の口は区間の命令から引く）。
 - `PLANNED`: 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（口が無い・M0 で Dashboard を見て
   直す）。`PERMISSIONS` と重ねない（試験が縛る）。
+- `DROPPED`: 計画 §1.10 の判断で申請から落とした権限と、その理由（成功の呼び出しを作れないもの）。
 - `FEATURES`: 機能（Feature・権限ではない）。
 - `PRIVACY_WORDS`: privacy の頁にあるはずの語（英語の文・大文字小文字は見ない・全部の語が要る）。見立ての粗い柵で、
   M6 で privacy を直す者が語をそろえる。
@@ -249,16 +250,26 @@ SEGMENTS = (
 
 # 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す。
 PLANNED = {
-    "email": "facebook", "pages_events": "facebook", "attribution_read": "ads",
+    "email": "facebook", "pages_events": "facebook",
     "facebook_branded_content_ads_brand": "facebook", "facebook_creator_marketplace_discovery": "facebook",
     "instagram_manage_events": "instagram", "instagram_branded_content_brand": "instagram",
     "instagram_branded_content_creator": "instagram", "instagram_branded_content_ads_brand": "instagram",
     "instagram_creator_marketplace_discovery": "instagram", "instagram_creator_marketplace_messaging": "instagram",
     "instagram_shopping_tag_products": "instagram",
-    "commerce_account_manage_orders": "ads", "commerce_account_read_orders": "ads",
-    "commerce_account_read_reports": "ads", "commerce_manage_accounts": "ads", "live_shopping_manage_video": "ads",
+    "commerce_manage_accounts": "ads",
     "whatsapp_business_management": "whatsapp", "whatsapp_business_messaging": "whatsapp",
     "whatsapp_business_manage_events": "whatsapp", "manage_app_solution": "whatsapp",
+}
+
+# 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。
+# masaru 2026-11-08「呼んでも返らないような入れようがないもの以外は入れたい」。成功の呼び出しを作れないものだけ。
+DROPPED = {
+    "commerce_account_read_orders": "Commerce Order Management API が 2025-10-27 に全版から消え、代わりが無い（changelog v26.0）",
+    "commerce_account_read_reports": "Commerce Order Management API が 2025-10-27 に全版から消え、代わりが無い（changelog v26.0）",
+    "commerce_account_manage_orders": "Commerce Order Management API が 2025-10-27 に全版から消え、代わりが無い（changelog v26.0）",
+    "attribution_read": "Facebook アトリビューションと その API は 2021-08-25 に提供終了（Meta ビジネスヘルプ 126244809394867・11/08 に原文を確認）",
+    "live_shopping_manage_video": "Live Shopping Tools API はアプリ ID と販売者のページ ID をベータ版のアクセスの申請に含め、"
+                                  "ページごとに Meta が許す（live-shopping-tools-api・11/08）。こちらから成功の呼び出しを作れない",
 }
 
 # 機能（名前の鍵 → Meta の画面の名前・録画が要るか）。Full と Standard Access は録画の要らない別のボタン（計画 §1.5）。
@@ -305,7 +316,7 @@ PRIVACY_WORDS = {
     "leads_retrieval": (_AD, "lead"), "ads_mcp_management": (_AD, "MCP"),
     "read_audience_network_insights": (_AD, "Audience Network"), "commerce_account_read_settings": (_AD, "shop"),
     # PLANNED
-    "email": ("email address",), "pages_events": (_FB, "event"), "attribution_read": (_AD, "attribution"),
+    "email": ("email address",), "pages_events": (_FB, "event"),
     "facebook_branded_content_ads_brand": (_FB, "branded content"),
     "facebook_creator_marketplace_discovery": (_FB, "creator marketplace"),
     "instagram_manage_events": (_IG, "event"), "instagram_branded_content_brand": (_IG, "branded content"),
@@ -314,9 +325,7 @@ PRIVACY_WORDS = {
     "instagram_creator_marketplace_discovery": (_IG, "creator marketplace"),
     "instagram_creator_marketplace_messaging": (_IG, "creator marketplace"),
     "instagram_shopping_tag_products": (_IG, "product tag"),
-    "commerce_account_manage_orders": (_AD, "order"), "commerce_account_read_orders": (_AD, "order"),
-    "commerce_account_read_reports": (_AD, "order"), "commerce_manage_accounts": (_AD, "shop"),
-    "live_shopping_manage_video": (_AD, "live shopping"),
+    "commerce_manage_accounts": (_AD, "shop"),
     "whatsapp_business_management": ("WhatsApp:",), "whatsapp_business_messaging": ("WhatsApp:", "message"),
     "whatsapp_business_manage_events": ("WhatsApp:", "event"), "manage_app_solution": ("WhatsApp:",),
     # FEATURES
