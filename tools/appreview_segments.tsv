@@ -211,7 +211,6 @@ cmd	thth who {IG} {IGUSER} --profile
 end
 seg	ig-like	instagram	instagram_manage_engagement — like a media object.
 items	instagram_manage_engagement
-real	IG のいいねの path（POST /{ig-media-id}/likes）が公式の参照に無く【推】（計画 M4）
 cmd	thth like {IG} {IG_MEDIA} --by {BY}
 hand	Instagram でいいねが付いたのを見せたら Return
 end

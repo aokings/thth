@@ -198,8 +198,8 @@ SEGMENTS = (
          ("cmd", "thth collect {IG}"), ("cmd", "thth measured {IG} --limit 3"),
          ("cmd", "thth who {IG} {IGUSER} --profile")),
     _seg("ig-like", "instagram", "instagram_manage_engagement — like a media object.", ["instagram_manage_engagement"],
-         ("cmd", "thth like {IG} {IG_MEDIA} --by {BY}"), ("hand", "Instagram でいいねが付いたのを見せたら Return"),
-         real_first="IG のいいねの path（POST /{ig-media-id}/likes）が公式の参照に無く【推】（計画 M4）"),
+         ("cmd", "thth like {IG} {IG_MEDIA} --by {BY}"), ("hand", "Instagram でいいねが付いたのを見せたら Return")),
+    # ig-like の「本物で 1 回打ってから」は外した: 11/08 本物で POST /{ig-user-id}/likes が通った（計画 M4）。
     _seg("ig-dm", "instagram", "instagram_manage_messages — read the Instagram inbox and answer.",
          ["instagram_manage_messages"],
          ("prep", "別のテストの口座から Instagram に DM を 1 通送っておく"),

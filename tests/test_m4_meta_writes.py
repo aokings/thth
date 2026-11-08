@@ -98,8 +98,8 @@ def m4(isolated_account_factory, tmp_path, monkeypatch):
         ("GET", V + f"/{FB_COMMENT}"): lambda q, f, r: (200, {"id": FB_COMMENT, "created_time": state["comment_at"]}),
         ("GET", V + f"/{IG_COMMENT}"): lambda q, f, r: (200, {"id": IG_COMMENT, "timestamp": state["comment_at"]}),
         ("GET", V + f"/{FB_PERSON}"): profile,
-        ("POST", V + f"/{IG_MEDIA}/likes"): (200, {"success": True}),
-        ("DELETE", V + f"/{IG_MEDIA}/likes"): (200, {"success": True}),
+        ("POST", V + f"/{IG_ID}/likes"): (200, {"success": True}),
+        ("DELETE", V + f"/{IG_ID}/likes"): (200, {"success": True}),
         ("POST", V + f"/{PAGE}/feed"): (200, {"id": PAGE + "_9"}),
     }
     with fake_graph(table) as (url, calls):
@@ -221,8 +221,11 @@ def test_Instagramのいいねは付けて外せ_最後に成功した日に数�
     assert rc == 0, err
     rc, out, err = main(capsys, "unlike", IG_ACCOUNT, IG_MEDIA, "--by", "m", "--json")
     assert rc == 0, err
-    assert [(c["method"], c["path"]) for c in writes(m4)] == [("POST", V + f"/{IG_MEDIA}/likes"),
-                                                              ("DELETE", V + f"/{IG_MEDIA}/likes")]
+    assert [(c["method"], c["path"]) for c in writes(m4)] == [("POST", V + f"/{IG_ID}/likes"),
+                                                              ("DELETE", V + f"/{IG_ID}/likes")]
+    # 口は IG User の likes に media_id（11/08 本物で確かめた）。外すときはクエリで渡す。
+    assert writes(m4)[0]["form"]["media_id"] == [IG_MEDIA]
+    assert writes(m4)[1]["query"]["media_id"] == [IG_MEDIA]
     assert "ig_like" in found(IG_ACCOUNT)
     guard.stop(IG_ACCOUNT, "owner", actor="t")
     rc, out, err = main(capsys, "like", IG_ACCOUNT, IG_MEDIA + "1", "--by", "m")
@@ -452,3 +455,13 @@ def test_止めた口座で書く口はadapterの包みに入っている():
     source = inspect.getsource(leave_gate.bind)
     for name in ("delete_page_cta", "live_create", "live_end", "dm_send", "private_reply", "dm_messages"):
         assert f"'{name}'" in source, name
+
+
+def test_いいねの無いidは認可し直しを勧めずpost_missingで断る(m4, capsys):
+    # 11/08 本物: code 100・subcode 33 の文面には「missing permissions」が入るが、鍵の問題ではない。
+    m4["routes"][("POST", V + f"/{IG_ID}/likes")] = (400, {"error": {
+        "code": 100, "error_subcode": 33, "type": "GraphMethodException",
+        "message": "Unsupported post request. Object with ID '1' does not exist, cannot be loaded due to "
+                   "missing permissions, or does not support this operation."}})
+    rc, _out, err = main(capsys, "like", IG_ACCOUNT, IG_MEDIA, "--by", "m")
+    assert rc != 0 and "post_missing" in err and "thth auth" not in err

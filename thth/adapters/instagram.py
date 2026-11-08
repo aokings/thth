@@ -97,9 +97,10 @@ UPCOMING_PERMISSION = "instagram_manage_upcoming_events"
 UNSUPPORTED = {
     "repost": "Instagram に再投稿の口はありません",
 }
-# 計画 Meta 全部盛り M4: いいね（instagram_manage_engagement の原文「Publish or delete a "Like" on IG Media
-# objects」【一次 11/05・permissions】）。口の path は公式の参照に見つからず、`POST|DELETE /{ig-media-id}/likes`
-# は見立て【推・本物で確かめる】。
+# 計画 Meta 全部盛り M4: いいね（instagram_manage_engagement）。口は IG User の `POST|DELETE /{ig-user-id}/likes`
+# に `media_id`（L2: reference/ig-user/user-likes・changelog 2026-04-22「Like Media and Comments API」）。
+# 本物で確かめた（11/08・kopicha-ig のページの鍵で付けて外せた・応答 {"success": true}）。
+# 前の見立て `/{ig-media-id}/likes` は code 100・subcode 33 で断られた。
 LIKE_PERMISSION = "instagram_manage_engagement"
 # IG の DM は本文 1,000 バイト未満（L2: instagram-messaging send-message「under 1,000 bytes」）。
 DM_TEXT_BYTES = 1000
@@ -696,15 +697,17 @@ class InstagramAdapter(fb.FacebookAdapter):
         return value
 
     def like(self, post_id: str) -> dict:
-        """いいねを 1 回（`POST /{ig-media-id}/likes`【推】・再試行しない）。記録の id は投稿の id。"""
+        """いいねを 1 回（`POST /{ig-user-id}/likes` に `media_id`・再試行しない）。記録の id は投稿の id。"""
         value = self._media_id(post_id, "いいね")
-        self._write("POST", f"/{value}/likes", "いいね", permission=LIKE_PERMISSION)
+        self._write("POST", f"/{self.ig_user_id}/likes", "いいね", permission=LIKE_PERMISSION,
+                    form={"media_id": value})
         return {"reaction_id": value}
 
     def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
-        """いいねを取り消す（`DELETE /{ig-media-id}/likes`【推】）。"""
+        """いいねを取り消す（`DELETE /{ig-user-id}/likes` に `media_id`）。"""
         value = self._media_id(post_id or reaction_id, "いいねの取り消し")
-        self._write("DELETE", f"/{value}/likes", "いいねの取り消し", permission=LIKE_PERMISSION)
+        self._write("DELETE", f"/{self.ig_user_id}/likes", "いいねの取り消し", permission=LIKE_PERMISSION,
+                    params={"media_id": value})
         return {"undone": True}
 
     def dm_profile(self, user_id: str) -> dict:

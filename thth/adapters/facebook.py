@@ -615,21 +615,23 @@ class FacebookAdapter(base.Adapter):
     # 呼ぶのは `edit_cli.py` だけ（`tests/test_facebook_stage1.py` が source で縛る）。
 
     def _write(self, method: str, path: str, what: str, *, permission: str,
-               form: dict | None = None) -> dict:
+               form: dict | None = None, params: dict | None = None) -> dict:
         try:
             if method == "POST":
                 body = self._request("POST", path, form=form or {}, timeout=PUBLISH_TIMEOUT_SECONDS)
             else:
-                body = self._request(method, path)
+                body = self._request(method, path, params=params)
         except urllib.error.HTTPError as e:
             err = graph_error(e)
             message = self._scrub(err.get("message") or e.reason or "")[:170]
-            if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
-                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
+            # subcode 33 の文面には必ず「missing permissions」が入る。権限の判定より先に見ないと、
+            # 無い id や違う口を「認可し直して」と案内してしまう（11/08 本物の IG のいいねで見た）。
             if e.code == 404 or (err.get("code") == 100 and err.get("error_subcode") == 33):
                 raise AdapterError(f"{what}: post_missing: 媒体にその id がありません（既に消えているか、"
                                    "この鍵から見えません）。何も変えていません",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
+            if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
+                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
             raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
                                failure="definite" if e.code < 500 else "ambiguous",
                                http_status=e.code, code=err.get("code")) from None
@@ -1160,11 +1162,18 @@ class FacebookAdapter(base.Adapter):
     # ----- 計画 Meta 全部盛り M3（読むだけ） --------------------------------
 
     def _feature_get(self, path: str, what: str, feature: str, *, params: dict) -> dict:
-        """機能の審査が要る口の GET。権限系の断りは再認可で直らないので、機能の断りに言い換える。"""
+        """機能の審査が要る口の GET。権限系の断りは再認可で直らないので、機能の断りに言い換える。
+
+        ページの検索は機能が無いと code 100「Authorization Error」で断られる（権限の code でない・
+        11/08 本物の kopicha-fb で見た）。これも機能の断りとして言い換える。"""
         try:
             return self._get(path, what, params=params, permission=feature)
         except base.PermissionMissing as exc:
             raise meta_errors.feature_required(what, feature, exc.detail) from None
+        except AdapterError as exc:
+            if getattr(exc, "code", None) == 100 and "Authorization Error" in str(exc):
+                raise meta_errors.feature_required(what, feature, "HTTP 400 (#100) Authorization Error") from None
+            raise
 
     def oembed(self, url: str) -> dict:
         """公開の投稿・動画・ページの埋め込み（L2: graph-api/reference/oembed-post）。"""

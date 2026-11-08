@@ -93,8 +93,8 @@ def vm(env, monkeypatch, tmp_path):  # noqa: F811
         ("GET", V + f"/{PAGE}/conversations"): conversations,
         ("GET", V + f"/{FB_CONVO}"): convo,
         ("POST", V + f"/{PAGE}/messages"): (200, {"recipient_id": FB_PERSON, "message_id": "m_9"}),
-        ("POST", V + f"/{IG_MEDIA}/likes"): (200, {"success": True}),
-        ("DELETE", V + f"/{IG_MEDIA}/likes"): (200, {"success": True}),
+        ("POST", V + f"/{IG_ID}/likes"): (200, {"success": True}),
+        ("DELETE", V + f"/{IG_ID}/likes"): (200, {"success": True}),
         ("POST", V + f"/{POST}"): (200, {"success": True}),
         ("GET", V + f"/{COMMENT}"): (200, {"id": COMMENT, "message": "コメント", "created_time": ago(hours=2),
                                            "from": {"id": "77", "name": "誰か"}, "is_hidden": False,
@@ -266,8 +266,8 @@ def test_Instagramのいいねは付けて外せる(far, capsys):
     rc, out, err = cli(capsys, "unlike", "beta", IG_MEDIA, "--by", "m", "--remote", "--json")
     assert rc == 0, err
     assert json.loads(out)["record"]["via"] == "api"
-    assert [(c["method"], c["path"]) for c in writes(far)] == [("POST", V + f"/{IG_MEDIA}/likes"),
-                                                               ("DELETE", V + f"/{IG_MEDIA}/likes")]
+    assert [(c["method"], c["path"]) for c in writes(far)] == [("POST", V + f"/{IG_ID}/likes"),
+                                                               ("DELETE", V + f"/{IG_ID}/likes")]
 
 
 def test_editは二段で直しVMのpathを返さない(far, capsys):

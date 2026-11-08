@@ -286,6 +286,18 @@ def test_機能の審査が無い断りは再認可を勧めない(m3, capsys):
     assert "通すには:" in line and "もっと良く:" in line and "thth auth" not in line
 
 
+
+def test_ページの検索のAuthorizationErrorも機能の断りに言い換える(m3, capsys):
+    # 11/08 本物の kopicha-fb: 機能が無いと code 100「Authorization Error」（権限の code でない）。
+    m3["routes"][("GET", V + "/pages/search")] = (400, {"error": {"message": "Authorization Error",
+                                                                "type": "OAuthException", "code": 100}})
+    rc, out, _err = main(capsys, "where", FB_ACCOUNT, "コーヒー", "--json")
+    assert rc == 0
+    line = json.loads(out)["by_account"][FB_ACCOUNT]["cannot_say"][0]
+    assert "meta_feature_required" in line and "Page Public Content Access" in line
+    assert "thth auth" not in line
+
+
 # ================================================================== who
 
 def test_whoのプロフィールはIGの数だけで残さない(m3, capsys):
