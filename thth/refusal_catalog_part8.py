@@ -7,7 +7,7 @@ Google の断り（HTTP の数・`error.status`・`error.details[].reason`・`er
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.12.6"
+_SINCE = "5.13.0"
 _AUTH = "thth gsc auth"
 _SITES = "thth gsc sites"
 _QUERY = "thth gsc query --site <プロパティ> --days 28"

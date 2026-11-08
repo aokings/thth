@@ -347,7 +347,7 @@ def test_新しい符丁は3つがそろい遠くの道の口を持つ():
         entry = refusal_catalog.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"] and "remote" in entry["doors"], code
     for code in ("ads_remote_unsupported", "account_registry_ambiguous"):
-        assert refusal_catalog.CATALOG[code]["since"] == "5.12.6"
+        assert refusal_catalog.CATALOG[code]["since"] == "5.13.0"
 
 
 # ================================================================== 段 4: CLI の口（`thth/remote.py`）

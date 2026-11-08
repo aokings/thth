@@ -459,4 +459,4 @@ def test_新しい符丁は3つがそろい遠くの道の口を持つ():
     for code in sorted(server_meta.REASONS):
         entry = refusal_catalog.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"] and "remote" in entry["doors"], code
-    assert refusal_catalog.CATALOG["remote_command_refused"]["since"] == "5.12.6"
+    assert refusal_catalog.CATALOG["remote_command_refused"]["since"] == "5.13.0"

@@ -294,7 +294,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = None  # M7（計画 Meta 全部盛り）の Worker の deploy の日に入れる。前: 2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-08"  # 5.13.0 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -471,6 +471,21 @@ def build_privacy() -> str:
         "<code>thth ads leads</code> shows lead forms and, on request, the leads of a form (the fields the person "
         "entered) on the owner's terminal, and <code>thth ads network</code> and <code>thth ads shop</code> show "
         "Audience Network figures and shop settings; none of these results are saved.</p>")
+
+    add("<h2>Google Ads and Search Console (read-only)</h2>")
+    add("<p><code>thth gads</code> and <code>thth gsc</code> read the user's own Google Ads accounts (the account "
+        "list, keyword ideas with their search volume, competition and bid ranges, and campaign figures) and Search "
+        "Console properties (the property list, search clicks, impressions, click-through rate and position, and URL "
+        "inspection results). They ask Google only for the read scopes <code>adwords</code> and "
+        "<code>webmasters.readonly</code>, through the Google sign-in the user approves in their own browser. They "
+        "run only on the user's own computer: the refresh token is kept in a file only the user can read "
+        "(<code>~/.config/thth/</code>, mode 600), and nothing from Google is sent to the operator's server, to "
+        "thth.me or to any other party. Results are shown on the user's terminal (or as JSON for the user's own "
+        "tools) and are not saved by THTH. THTH does not create, change or pay for ads through Google. The user can "
+        "revoke access at any time in their Google Account (Security, third-party access) and delete the token "
+        "file. THTH's use and transfer to any other app of information received from Google APIs will adhere to the "
+        '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data '
+        "Policy</a>, including the Limited Use requirements.</p>")
 
     add("<h2>Attachments</h2>")
     add("<p>Images, video and audio attached to a draft are checked before use. For images, THTH removes "
@@ -684,7 +699,8 @@ def build_privacy() -> str:
         "--keep</code>). Revision: adds the per-account command record. Revision: adds the notifications from Meta held on thth.me. "
         "Revision: adds Facebook Pages, Instagram and Meta ad accounts, direct messages, live video and the "
         "call-to-action button, public reads (hashtags, Pages Search, embeds, events), catalogs and leads, Marketing "
-        "API call counts, the permission records and ledger, re-authorization and the Data Use Checkup.</p>")
+        "API call counts, the permission records and ledger, re-authorization and the Data Use Checkup. Revision: adds the "
+        "read-only Google Ads and Search Console commands and the Google API Services User Data Policy.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -817,6 +833,20 @@ def build_privacy() -> str:
         "<code>thth ads leads</code> はリードのフォームと、求めたときにそのフォームのリード（本人が入力した項目）を"
         "持ち主の端末に、<code>thth ads network</code> と <code>thth ads shop</code> は Audience Network の数と"
         "ショップの設定を見せます。どれも保存しません。</p>")
+
+    add("<h2>Google 広告と Search Console（読むだけ）</h2>")
+    add("<p><code>thth gads</code> と <code>thth gsc</code> は、利用者本人の Google 広告の口座（口座の一覧、"
+        "キーワードの案とその検索数・競合・入札の幅、キャンペーンの成績）と Search Console のプロパティ（一覧、"
+        "検索のクリック・表示回数・クリック率・掲載順位、URL 検査の結果）を読みます。Google に求めるのは読むための"
+        "スコープ <code>adwords</code> と <code>webmasters.readonly</code> だけで、利用者が自分のブラウザで許可した"
+        "ときに限ります。動くのは利用者自身のコンピューターの中だけです。refresh token は本人だけが読めるファイル"
+        "（<code>~/.config/thth/</code>・600）に置き、Google から得たものを運営者のサーバー・thth.me・その他の"
+        "誰にも送りません。結果は利用者の端末（または利用者自身の道具のための JSON）に出すだけで、THTH は保存しません。"
+        "THTH が Google で広告を作る・変える・支払うことはありません。利用者は Google アカウントの「セキュリティ」の"
+        "サードパーティのアクセスからいつでも許可を取り消し、鍵のファイルを消せます。Google API から受け取った情報の"
+        "THTH による利用と他のアプリへの移転は、限定使用（Limited Use）の要件を含む"
+        '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API サービスのユーザーデータに関するポリシー</a>'
+        "に従います。</p>")
 
     add("<h2>添付</h2>")
     add("<p>下書きに付けた画像・動画・音声は、使う前に検査します。画像は、位置情報などの埋め込みメタデータ"
@@ -992,7 +1022,8 @@ def build_privacy() -> str:
         "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。改訂: 口座ごとの命令の控えを足しました。改訂: thth.me に置く Meta からの通知を足しました。"
         "改訂: Facebook ページ・Instagram・Meta の広告アカウント、ダイレクトメッセージ、ライブ配信と行動ボタン、公開の読み"
         "（ハッシュタグ・Pages Search・埋め込み・予定）、カタログとリード、Marketing API の呼び出しの数、権限の記録と台帳、"
-        "再認可と Data Use Checkup を足しました。</p>")
+        "再認可と Data Use Checkup を足しました。改訂: 読むだけの Google 広告と Search Console の命令と、Google API サービスの"
+        "ユーザーデータに関するポリシーを足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
@@ -1000,7 +1031,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = None  # M7（計画 Meta 全部盛り）の Worker の deploy の日に入れる。前: 2026-09-26（3.13.0）・初版 2026-09-25
+TERMS_EFFECTIVE = "2026-11-08"  # 5.13.0 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-09-26（3.13.0）・初版 2026-09-25
 
 
 def contact_html(lang: str) -> str:

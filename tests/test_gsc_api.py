@@ -353,7 +353,7 @@ def test_引数の断りは網に出る前(google, capsys):
 def test_符丁は目録に3つがそろう(name):
     entry = refusal_catalog.CATALOG[name]
     assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["no_better"] is None
-    assert entry["doors"] == ("cli",) and entry["since"] == "5.12.6"
+    assert entry["doors"] == ("cli",) and entry["since"] == "5.13.0"
 
 
 def test_GscRefusedは知らない符丁と形の違う詳細を通さない():

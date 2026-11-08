@@ -366,7 +366,7 @@ def test_符丁ごとにCLIが3つの行を出し秘密を出さない(name, goo
 def test_符丁は目録に3つがそろう(name):
     entry = refusal_catalog.CATALOG[name]
     assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["no_better"] is None
-    assert entry["doors"] == ("cli",) and entry["since"] == "5.12.6"
+    assert entry["doors"] == ("cli",) and entry["since"] == "5.13.0"
 
 
 def test_GadsRefusedは知らない符丁と形の違う詳細を通さない():

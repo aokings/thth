@@ -1558,7 +1558,7 @@ ENTRIES = {
         "command": "thth webhook status",
         "better": "通知の口が無い媒体は `thth collect` の巡回が返信を拾うので、そのまま使えます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "webhook_account_id_missing": {
         "kind": "refusal",
@@ -1567,7 +1567,7 @@ ENTRIES = {
         "command": "thth auth <口座>",
         "better": "認可のあとに `thth doctor <口座>` まで通しておくと、id と権限をまとめて確かめられます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "permission_unused": {
         "kind": "refusal",
@@ -1577,7 +1577,7 @@ ENTRIES = {
         "command": "thth admin meta watch",
         "better": "`thth systemd --meta-keepalive` の timer を置くと、読む権限は 25 日で自動で保たれます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "permission_keepalive_denied": {
         "kind": "refusal",
@@ -1586,7 +1586,7 @@ ENTRIES = {
         "command": "thth doctor <口座>",
         "better": "認可のあとに `thth doctor <口座>` まで通しておくと、足りない権限を先に見つけられます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "permission_keepalive_failed": {
         "kind": "refusal",
@@ -1595,7 +1595,7 @@ ENTRIES = {
         "command": "thth doctor <口座>",
         "better": "28 日まで日があれば待つだけで足り、`thth admin meta watch` で残りの日数を見られます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "permission_keepalive_no_target": {
         "kind": "refusal",
@@ -1604,7 +1604,7 @@ ENTRIES = {
         "command": "thth send",
         "better": "運用で投稿と返信の採取が回っている口座は、最小の読みが要らなくなります",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "keepalive_quota_high": {
         "kind": "refusal",
@@ -1613,7 +1613,7 @@ ENTRIES = {
         "command": "thth quota <口座>",
         "better": "量の窓は 1 時間なので、運用の読みが落ち着く明け方の timer なら通りやすくなります",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "keepalive_tried_today": {
         "kind": "refusal",
@@ -1621,7 +1621,7 @@ ENTRIES = {
         "fix": "明日の timer まで待ってください",
         "better": "結果は `thth admin meta watch` で見られるので、打ち直さなくても確かめられます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "keepalive_next_run": {
         "kind": "refusal",
@@ -1629,7 +1629,7 @@ ENTRIES = {
         "fix": "次の timer まで待ってください",
         "better": "運用で使われる権限が増えると、1 回に打つ本数も減ります",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_rate_waiting": {
         "kind": "refusal",
@@ -1638,7 +1638,7 @@ ENTRIES = {
         "command": "thth quota <口座>",
         "better": "量の待ちは 1 時間ほどで明けるので、明け方の timer なら次の日に通ります",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "data_access_expiring": {
         "kind": "refusal",
@@ -1647,7 +1647,7 @@ ENTRIES = {
         "command": "thth auth <口座> --by <名前>",
         "better": "期限は利用者が最後に活動した日から数えるので、再認可の日を決めておくと止まらずに済みます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "data_access_expired": {
         "kind": "refusal",
@@ -1656,7 +1656,7 @@ ENTRIES = {
         "command": "thth auth <口座> --by <名前>",
         "better": "残り 14 日の知らせの日に認可し直すと、読みの止まりを避けられます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "duc_due_soon": {
         "kind": "refusal",
@@ -1664,7 +1664,7 @@ ENTRIES = {
         "fix": "管理画面で Data Use Checkup を済ませ、次の期日を `thth admin meta set duc_due <日付> --by <名前>` で入れてください",
         "better": "App Review の提出と同じ日に済ませると、用途の文を 1 回で書けます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "duc_overdue": {
         "kind": "refusal",
@@ -1672,7 +1672,7 @@ ENTRIES = {
         "fix": "管理画面で Data Use Checkup を今すぐ済ませ、次の期日を `thth admin meta set duc_due <日付> --by <名前>` で入れてください",
         "better": "30 日前の知らせの日に済ませると、期日に追われません",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_tier_ready": {
         "kind": "refusal",
@@ -1681,7 +1681,7 @@ ENTRIES = {
                 "通ったら `thth admin meta set ads_tier full --by <名前>` で入れてください"),
         "better": "条件は保つ間も同じなので、通ったあとも `thth admin meta ledger` で数を見られます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_tier_at_risk": {
         "kind": "refusal",
@@ -1690,7 +1690,7 @@ ENTRIES = {
         "command": "thth admin meta ledger",
         "better": "呼び出しを増やす細工はせず、運用の読みが増えるのを待つと安全です",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_ledger_key_unknown": {
         "kind": "refusal",
@@ -1698,7 +1698,7 @@ ENTRIES = {
         "fix": "`thth admin meta set duc_due 2027-10-09 --by <名前>` の形で打ち直してください",
         "better": "今の値は `thth admin meta ledger` で見られます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_ledger_value_invalid": {
         "kind": "refusal",
@@ -1707,7 +1707,7 @@ ENTRIES = {
         "command": "thth admin meta watch",
         "better": "advanced は全部を置き換えるので、今の一覧に足した形で渡すと抜けません",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_ledger_unreadable": {
         "kind": "cannot_say",
@@ -1715,7 +1715,7 @@ ENTRIES = {
         "fix": "state/_meta/ledger.json の形を直してから打ち直してください",
         "better": "台帳は手で開かず `thth admin meta set` で書くと、形が崩れません",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     # 設計 広告の資格と遠くの道（2026-11-06・案 B）: 名前は accounts/ と adaccounts/ の 2 つの置き場で一意。
     "account_registry_ambiguous": {
@@ -1725,7 +1725,7 @@ ENTRIES = {
         "command": "thth account add <名前> --media <媒体> --project <project> --by <名前>",
         "better": "広告の口座は名前の後ろに -ads をそろえて付けると、人にも道具にも見分けがつきます",
         "doors": ("cli",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_remote_unsupported": {
         "kind": "refusal",
@@ -1734,7 +1734,7 @@ ENTRIES = {
         "command": "thth ads show <口座>",
         "better": "thth ads boost で PAUSED のまま作っておけば、運営者は承認のあと activate を打つだけで済みます",
         "doors": ("remote",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "window_open": {
         "kind": "cannot_say",

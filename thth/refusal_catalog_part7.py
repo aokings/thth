@@ -7,7 +7,7 @@ Google の断り（`authenticationError`・`authorizationError`・`quotaError` �
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.12.6"
+_SINCE = "5.13.0"
 _AUTH = "thth gads auth"
 _ACCOUNTS = "thth gads accounts"
 _KEYWORDS = "thth gads keywords --customer <id> --seed <語>"

@@ -477,4 +477,4 @@ def test_M3の断りは3つがそろい版はsinceの形():
                  "embed_url_invalid", "ads_business_unknown", "ads_page_unknown", "ads_form_other_page",
                  "ads_catalog_other_business"):
         entry = refusal_catalog.CATALOG[code]
-        assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["since"] == "5.12.6", code
+        assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["since"] == "5.13.0", code

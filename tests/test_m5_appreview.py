@@ -308,7 +308,7 @@ def test_privacyが読めなければ言えないと言う():
 def test_断りの符丁は目録にあり3つがそろう():
     for code in (*appreview.CHECK_REFUSALS, *appreview.PRIVACY_REFUSALS):
         entry = rc.CATALOG[code]
-        assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["since"] == "5.12.6", code
+        assert entry["why"] and entry["fix"]["text"] and entry["better"] and entry["since"] == "5.13.0", code
         assert refusal.parts(code)["fix"]
 
 

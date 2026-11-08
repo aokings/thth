@@ -282,7 +282,7 @@ ENTRIES = {
         "command": "thth ads boost <名前> --post <post_id> --platforms instagram,threads --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "Threads と数えたいなら --platforms threads,instagram の順に書くと、--utm-campaign の印が utm_source=threads になります。",
         "doors": (*_CM, "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_threads_not_granted": {
         "kind": "refusal",
@@ -291,7 +291,7 @@ ENTRIES = {
         "command": "thth ads auth <名前> --by <名前>",
         "better": "待つ間は --platforms から threads を外して Facebook・Instagram で出し、反応を見ておけます。",
         "doors": (*_CM, "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_threads_scope_missing": {
         "kind": "refusal",
@@ -300,7 +300,7 @@ ENTRIES = {
         "command": "thth ads auth <名前> --by <名前>",
         "better": "再認可のあと thth ads doctor で鍵の権限の行を見ておくと、Threads の広告を作る前に確かめられます。",
         "doors": (*_CM, "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_threads_post_unsupported": {
         "kind": "refusal",
@@ -309,7 +309,7 @@ ENTRIES = {
         "command": "thth ads boost <名前> --post <post_id> --platforms facebook,instagram,threads --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "Threads で伸びた投稿を thth after で選び、同じ言い回しで Facebook に出してから広告に回すと効きやすくなります。",
         "doors": _CM,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_threads_unlinked": {
         "kind": "refusal",
@@ -318,7 +318,7 @@ ENTRIES = {
         "command": "thth ads boost <名前> --post <post_id> --platforms facebook,instagram --lifetime <額> --start <時刻|now> --end <時刻> --by <名前>",
         "better": "結んだあと IG の口座の thth doctor で threads_user_id の行を確かめると、次の boost で迷いません。",
         "doors": (*_CM, "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_threads_unreadable": {
         "kind": "refusal",
@@ -327,7 +327,7 @@ ENTRIES = {
         "command": "thth doctor <IG の口座>",
         "better": "台帳に threads_user_id があれば読みに行かないので、Meta の混み具合に左右されずに作れます。",
         "doors": (*_CM, "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_time_invalid": {
         "kind": "refusal",
@@ -606,6 +606,6 @@ ENTRIES = {
         "command": "thth report file <口座> --kind bug --title <題> --body-file - --by <名前>",
         "better": "本文を標準入力で渡すと、手元と VM のどちらで打っても同じ形で届きます。",
         "doors": _CM,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
 }

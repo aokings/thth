@@ -714,7 +714,7 @@ ENTRIES = {
         "fix": "再認可では直らないので、App Review の結果を待ってください（待つ間は運営者に状況を聞けます）",
         "better": "自分の口座の数は thth measured で読めるので、審査を待つ間はそちらで進められます",
         "doors": ("cli", "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ig_hashtag_limit": {
         "kind": "refusal",
@@ -722,7 +722,7 @@ ENTRIES = {
         "fix": "次の時刻を過ぎてから打ち直すか、この 7 日に調べたタグの中から選んでください（同じタグは数えません）",
         "better": "語を先に thth where の Threads の口座で試してから Instagram で引くと、30 種を当たりの語に使えます",
         "doors": ("cli", "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ig_hashtag_invalid": {
         "kind": "refusal",
@@ -730,7 +730,7 @@ ENTRIES = {
         "fix": "語を # のあとに続く 1 語にして打ち直してください（例 thth where <口座> coffee）",
         "better": "語の組み合わせは 1 語ずつ分けて渡すと、それぞれの数を比べられます",
         "doors": ("cli", "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ig_hashtag_ledger_unreadable": {
         "kind": "refusal",
@@ -738,7 +738,7 @@ ENTRIES = {
         "fix": "運営者に state/<口座>/ig_hashtags.json を確かめてもらってください（控えはタグと時刻だけです）",
         "better": "待つ間は thth who の --profile で、数を読むほかの口が使えます",
         "doors": ("cli", "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "embed_url_invalid": {
         "kind": "refusal",
@@ -746,7 +746,7 @@ ENTRIES = {
         "fix": "投稿を開いてアドレス欄の URL を写し、その媒体の口座で打ち直してください（例 thth embed <口座> https://www.instagram.com/p/…/）",
         "better": "自分の投稿の URL は thth posts の一覧に出るので、そこから写すと確かです",
         "doors": ("cli", "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_business_unknown": {
         "kind": "refusal",
@@ -755,7 +755,7 @@ ENTRIES = {
         "command": "thth ads show <名前>",
         "better": "台帳の business_id に書いておくと、毎回の問い合わせが 1 回減ります",
         "doors": (*("cli",), "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_page_unknown": {
         "kind": "refusal",
@@ -764,7 +764,7 @@ ENTRIES = {
         "command": "thth ads leads <名前> --page <ページの id>",
         "better": "1 つのページだけを使う口座は、台帳の pages を 1 つにしておくと --page を省けます",
         "doors": (*("cli",), "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_form_other_page": {
         "kind": "refusal",
@@ -773,7 +773,7 @@ ENTRIES = {
         "command": "thth ads leads <名前>",
         "better": "件数が 0 のフォームは読まなくて済むので、一覧の件数を先に見ると呼び出しが減ります",
         "doors": (*("cli",), "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "ads_catalog_other_business": {
         "kind": "refusal",
@@ -782,7 +782,7 @@ ENTRIES = {
         "command": "thth ads catalog list <名前>",
         "better": "商品数が 0 のカタログは読まなくて済むので、一覧の商品数を先に見ると呼び出しが減ります",
         "doors": (*("cli",), "remote"),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     # 計画 Meta 全部盛り M4（書く最小の口・thth/meta_write.py・thth/meta_mention.py）。since は版上げのときに直す。
     "messaging_window_closed": {
@@ -792,7 +792,7 @@ ENTRIES = {
         "command": "thth dm list <口座>",
         "better": "thth dm read が返せる窓の締め切りを出すので、届いた日のうちに返すと窓を逃しません",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "private_reply_window_closed": {
         "kind": "refusal",
@@ -800,7 +800,7 @@ ENTRIES = {
         "fix": "コメントには公開の返事で答えてください（thth send <口座> --reply-to <コメントの id>）",
         "better": "コメントの通知（thth replies）を毎日見ると、非公開の返事が要る問い合わせに 7 日の内に気づけます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "dm_text_invalid": {
         "kind": "refusal",
@@ -808,7 +808,7 @@ ENTRIES = {
         "fix": "本文を直して --text か --text-file で渡し、一段目からやり直してください（THTH は切り詰めずに断ります）",
         "better": "長い説明はページの投稿か URL にして、メッセージには要点と URL を書くと読まれやすくなります",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "dm_recipient_unknown": {
         "kind": "refusal",
@@ -817,7 +817,7 @@ ENTRIES = {
         "command": "thth dm list <口座>",
         "better": "thth dm read で相手と窓を確かめてから send を打つと、一段目で迷いません",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_unsupported": {
         "kind": "refusal",
@@ -826,7 +826,7 @@ ENTRIES = {
         "command": "thth account <口座>",
         "better": "同じ project の Facebook と Instagram の口座を並べておくと、どちらの受信箱も同じ命令で読めます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_permission_missing": {
         "kind": "refusal",
@@ -835,7 +835,7 @@ ENTRIES = {
         "command": "thth auth <口座> --by <名前>",
         "better": "thth doctor <口座> で足りない権限を先に見ておくと、録画の日に止まりません",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_digest_mismatch": {
         "kind": "refusal",
@@ -843,7 +843,7 @@ ENTRIES = {
         "fix": "--confirm を外して一段目を打ち直し、新しい digest で二段目を打ってください",
         "better": "一段目と二段目を続けて打つと、窓の判定や状態が変わる前に済ませられます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_refused": {
         "kind": "refusal",
@@ -851,7 +851,7 @@ ENTRIES = {
         "fix": "1 行目の Meta の文を読み、id か状態を直してから一段目からやり直してください。" + _REPORT,
         "better": "thth doctor <口座> で鍵と権限の状態を先に見ておくと、断りの理由を早く絞れます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_unknown": {
         "kind": "refusal",
@@ -859,7 +859,7 @@ ENTRIES = {
         "fix": "媒体の画面（ページ・受信箱・ライブの一覧）で済んだかを確かめ、済んでいなければ一段目からやり直してください",
         "better": "結果の分からない書き込みは打ち直す前に画面で確かめると、同じメッセージを 2 通送らずに済みます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "meta_write_busy": {
         "kind": "refusal",
@@ -867,7 +867,7 @@ ENTRIES = {
         "fix": "少し置いて打ち直すか、--wait <秒> を付けて空くのを待ってください",
         "better": "timer の実行の合間（thth board に出る次の時刻の前）に打つと、待たずに済みます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "page_cta_not_found": {
         "kind": "refusal",
@@ -876,7 +876,7 @@ ENTRIES = {
         "command": "thth page cta show <口座>",
         "better": "消す前に show で種類と行き先を確かめると、別のボタンを消さずに済みます",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "live_title_invalid": {
         "kind": "refusal",
@@ -884,7 +884,7 @@ ENTRIES = {
         "fix": "--title に 1 行の題を付けて一段目から打ち直してください",
         "better": "題に何を配信するかを短く書くと、ページで見た人が入りやすくなります",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "live_not_this_page": {
         "kind": "refusal",
@@ -892,7 +892,7 @@ ENTRIES = {
         "fix": "thth live create が返した id を、同じページの口座の名前で渡してください",
         "better": "作ったときに出る「終えるとき」の命令をそのまま写すと、口座と id を取り違えません",
         "doors": _CR,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     # 遠くの道の Meta の口（`thth/server_meta.py`）: 手元の口が自由文で断ったもの（edit・reply・反応の一部）。
     "remote_command_refused": {
@@ -902,7 +902,7 @@ ENTRIES = {
                 "書いてあれば、打ち直す前に媒体の画面で確かめてください）"),
         "better": "書く命令は一段目の表示を読んでから二段目を打つと、断られる前に食い違いに気づけます",
         "doors": ("remote",),
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "page_mention_invalid": {
         "kind": "refusal",
@@ -910,7 +910,7 @@ ENTRIES = {
         "fix": "言及なら @[数字の id] に直し、言及でなければ @ と [ の間に空白を入れて打ち直してください",
         "better": "ページの id はページの「ページの透明性」に出るので、写して使うと打ち違えません",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "share_to_instagram_unavailable": {
         "kind": "refusal",
@@ -919,7 +919,7 @@ ENTRIES = {
         "command": "thth account <口座>",
         "better": "画像つきの投稿を共有すると、ストーリーズで目に留まりやすくなります",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     # ------------------------------------------------------------------
     # 計画 Meta 全部盛り M5 の (e): 提出の前の点検（`thth admin appreview check`・`thth/appreview.py`）
@@ -935,7 +935,7 @@ ENTRIES = {
         "command": "thth admin appreview script",
         "better": "録画の日に区間の順で打つと、30 日の条件と録画が一度にそろいます",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "appreview_no_door": {
         "kind": "refusal",
@@ -945,7 +945,7 @@ ENTRIES = {
         "command": "thth admin appreview script",
         "better": "口は読むだけの最小の形にすると、録画が短く済み、審査の問いも減ります",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "appreview_privacy_missing": {
         "kind": "refusal",
@@ -955,7 +955,7 @@ ENTRIES = {
         "command": "thth admin appreview check",
         "better": "段を足すときに保存するもの・しないものを並べて書くと、審査員の問いが減ります",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
     "appreview_privacy_unreadable": {
         "kind": "cannot_say",
@@ -964,6 +964,6 @@ ENTRIES = {
         "command": "thth admin appreview check --privacy callback/public/privacy/index.html",
         "better": "deploy の前に生成した頁を渡すと、出す前の文で確かめられます",
         "doors": _C,
-        "since": "5.12.6",
+        "since": "5.13.0",
     },
 }
