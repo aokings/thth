@@ -196,7 +196,8 @@ def register(sub) -> None:
     p_acc.set_defaults(func=cmd_accounts)
     p_kw = verbs.add_parser("keywords", help="キーワードの案と検索の数（キーワードプランナーと同じ中身・読むだけ）")
     p_kw.add_argument("--customer", required=True, metavar="ID", help="広告の口座の id（226-006-0755 の形でも可）")
-    p_kw.add_argument("--seed", required=True, nargs="+", metavar="語", help="種の語（1〜20 語）")
+    p_kw.add_argument("--seed", required=True, nargs="+", action="extend", metavar="語",
+                      help="種の語（1〜20 語・--seed を重ねても並べてもよい）")
     p_kw.add_argument("--url", default=None, metavar="頁", help="この頁の中身も種にする")
     p_kw.add_argument("--lang", default="ja", metavar="|".join(api.LANGUAGES), help="言語（既定 ja）")
     p_kw.add_argument("--geo", default="JP", metavar="|".join(api.GEO_TARGETS), help="地域（既定 JP）")

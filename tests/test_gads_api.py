@@ -123,6 +123,16 @@ IDEAS = {"results": [
 ], "totalSize": "2"}
 
 
+def test_keywordsは種を重ねて書いても全部送る(google, capsys):
+    """11/08 本物で `--seed A --seed B` が B だけになった（argparse の nargs="+" は後ろが上書き）。"""
+    path = "customers/2260060755:generateKeywordIdeas"
+    google.routes[("POST", path)] = (200, IDEAS)
+    rc, out = run(["gads", "keywords", "--customer", "226-006-0755", "--seed", "中学受験",
+                   "--seed", "算数", "国語", "--json"], capsys)
+    assert rc == 0, out.err
+    assert google.calls[-1]["body"]["keywordSeed"] == {"keywords": ["中学受験", "算数", "国語"]}
+
+
 def test_keywordsの依頼の本文(google, capsys):
     path = "customers/2260060755:generateKeywordIdeas"
     google.routes[("POST", path)] = (200, IDEAS)
