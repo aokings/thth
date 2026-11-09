@@ -199,9 +199,11 @@ def _recent_marks(account, now):
         return None
     recent = {}
     for item in row["marks"]:
-        if (isinstance(item, dict) and isinstance(item.get("m"), str) and isinstance(item.get("at"), int)
-                and now - MARK_WINDOW < item["at"] <= now + 300):
-            recent[item["m"]] = item["at"]
+        if not (isinstance(item, dict) and isinstance(item.get("m"), str) and isinstance(item.get("at"), int)):
+            return None                                      # 形の崩れた印は読めないのと同じ（送らない側）
+        if item["at"] > now - MARK_WINDOW:
+            # 時計が戻ると印が「未来」に見える。捨てると柵が開くので数え、時刻は今に丸める（窓は長くなる側）。
+            recent[item["m"]] = min(item["at"], now)
     return recent
 
 
@@ -225,12 +227,14 @@ def already_sent(account, digest) -> bool:
 def claim_mark(account, digest, previous=None) -> str:
     """二段目（ロックの中）で、出来事の POST の直前に印を置く。既にあれば断る。`previous` は --nth の 1 つ前の digest。"""
     now = int(time.time())
-    key = _mark_key(account, create=True)
-    if not key:
-        _unreadable(account, "印の鍵が読めない（か作れない）")
     recent = _recent_marks(account, now)
     if recent is None:
         _unreadable(account, "印が読めない")
+    # 鍵を新しく作るのは、窓の中に印が 1 つも無いときだけ。印が残っているのに鍵だけ無いと、作り直した鍵では
+    # 古い印と合わず、直前に送った出来事を二重に送れてしまう（監査 5.14.1 の確かめ）。
+    key = _mark_key(account, create=not recent)
+    if not key:
+        _unreadable(account, "印の鍵が読めない（印が残っているのに鍵が無い・か作れない）")
     if len(recent) >= SENT_MAX:
         _unreadable(account, f"印が多すぎる（{SENT_MAX} 件）")
     mark = sent_mark(key, digest)

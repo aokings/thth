@@ -281,6 +281,29 @@ def test_日付でなく送った時刻から数える_0時をまたいでも二
     assert len(kept) == 1 and kept[0]["at"] > int(time.time()) - 60
 
 
+def test_時計が戻っても印を捨てず二度送らない(ev, capsys):
+    """監査 5.14.1 の確かめ: 未来に見える印を窓の外として捨て、時計が戻ると二重に送れていた。"""
+    _plant(capsys, -3600)                                             # 1 時間先（時計が 1 時間戻った）
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_event_already_sent" in out
+    assert _event_posts(ev) == []
+
+
+def test_印が残っているのに鍵だけ消えたら作り直さずに断る(ev, capsys):
+    """監査 5.14.1 の確かめ: 鍵を黙って作り直すと古い印と合わず、直前の出来事を二重に送れていた。"""
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    key_path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.MARK_KEY_FILE
+    key_path.unlink()
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_event_marks_unreadable" in out
+    assert not key_path.exists() and len(_event_posts(ev)) == 1
+    _sent_file().unlink()                                             # 両方を消せば空から数え直す
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    assert key_path.exists()
+
+
 @pytest.mark.parametrize("broken", ["dir", "garbage", "key"])
 def test_印か鍵が読めなければ確かめられないので送らない(ev, capsys, broken):
     state = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT))
