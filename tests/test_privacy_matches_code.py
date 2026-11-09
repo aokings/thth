@@ -125,3 +125,22 @@ def test_privacyの数はコードの定数と同じ(what, phrase):
 
 def test_PBKDF2の回数はWorkerとththで同じ():
     assert js_const("person.js", "ITERATIONS") == relay.ITERATIONS
+
+
+def test_Xの項はadapterの口と合う():
+    """X の adapter が自分の投稿の数・返信・反応を取れるなら、privacy は「集めない／できない」と言わない（11/09）。
+
+    9/27 の文「Replies and metrics are not collected」が、c8511ae（5.13.0）で数を記録したあとも残っていた。
+    """
+    from thth.adapters.x import XAdapter
+
+    page = PRIVACY.read_text(encoding="utf-8")
+    item = re.search(r"<li>X: (.*?)</li>", page, re.S)
+    assert item, "privacy に X の項が無い"
+    text = item.group(1)
+    if hasattr(XAdapter, "owned_metrics"):
+        assert "metrics" in text and "not collected" not in text
+    if hasattr(XAdapter, "conversation"):
+        assert "replies to its posts" in text
+    if {"repost", "like"} <= set(XAdapter.CAPABILITIES):
+        assert "reposts and likes" in text

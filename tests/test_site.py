@@ -228,7 +228,10 @@ def test_紹介ページは訪問者向けの言葉で書く():
     # 2026-09-27 の校正: 個人名は出さない（運営者は gotoq）。招待の流れは今の実装のとおり。
     assert "masaru" not in page
     assert "招待リンクを開いて Threads（Mastodon の招待ならそのサーバー）を認可します" in page
-    assert "X は投稿・削除・自分の最近の投稿の読み取りに対応し" in page
+    assert "X の利用は運営者設定の範囲内です" in page
+    # 11/09: X は返信・数・検索・再投稿といいねに対応した。「対応していない」と書かない
+    assert "返信とインサイトの取得、検索には対応していません" not in page
+    assert "再投稿といいねは、まだどの SNS でもできません" not in page
     assert page.count("<h2>English</h2>") == 1
 
 

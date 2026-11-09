@@ -45,7 +45,7 @@
   <li>振り返る: 投稿後 1 時間から 30 日までの決まった時点で、返信とインサイト（表示・いいね・返信などの数）を取得します。<code>thth replies</code>・<code>thth measured</code> で読みます。</li>
   <li>止める: アカウントごとのガード（最短間隔・1 日の上限・急な連投で止まる）が、AI アシスタントの誤動作を止めます。</li>
 </ul>
-<p>X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信とインサイトの取得、検索には対応していません。Bluesky は削除に対応していません。再投稿といいねは、まだどの SNS でもできません。</p>
+<p>X の利用は運営者設定の範囲内です。Bluesky は削除に対応していません。</p>
 <h2>招待された方へ</h2>
 <p>招待された利用者は、招待リンクを開いて Threads（Mastodon の招待ならそのサーバー）を認可します。続けて <code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。利用者が VM や Meta アプリを用意する必要はありません。</p>
 <p>以後は、調べる（<code>thth topics --search</code>・<code>thth mentions</code>・<code>thth profile</code>・<code>thth location search</code>・<code>thth where</code>・<code>thth thread</code>・<code>thth who</code>）、出す（<code>thth send</code>・<code>thth schedule</code>・<code>thth retract</code>）、振り返る（<code>thth posts</code>・<code>thth replies</code>・<code>thth collect</code>・<code>thth measured</code>）のコマンドで自分のアカウントを動かします。ガードの数値はオーナーが決め、AI アシスタントが変えられるのは厳しくする向きだけです。<a href="/activity">アクティビティ</a>で、オーナーが確認・停止・キーの発行を行えます。</p>
@@ -67,7 +67,7 @@
 <h2>English</h2>
 <p class="en">THTH is a command-line tool for researching, posting to, scheduling on and reviewing your own social media accounts. It supports Threads, Bluesky, Mastodon and X. Because it is a CLI, an AI assistant can drive it directly; the bundled MCP server and skills only make that easier.</p>
 <p class="en">An invited person opens an invitation link, authorizes Threads (or their Mastodon server, for a Mastodon invitation), installs <code>thth</code>, and runs <code>thth login</code> to allow their device in the browser. They then research (<code>topics --search</code>, <code>mentions</code>, <code>profile</code>, <code>location search</code>, <code>where</code>, <code>thread</code>, <code>who</code>), post (<code>send</code>, <code>schedule</code>, <code>retract</code>) and review (<code>posts</code>, <code>replies</code>, <code>collect</code>, <code>measured</code>) for their own account. The owner sets safety limits; an AI assistant can only tighten them. The owner uses <a href="/activity">Activity</a> to review, stop, and issue keys. The operator (gotoq) runs the server.</p>
-<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. Drafts, published post IDs, replies, and view counts are stored in that repository. X can publish, delete, and read the account's recent posts within the operator's configured scope; it does not collect replies or metrics. Reposts and likes are not supported yet.</p>
+<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. Drafts, published post IDs, replies, and view counts are stored in that repository. X can publish, delete, and read the account's recent posts within the operator's configured scope, and also collects replies and metrics.</p>
 <p><a href="https://github.com/aokings/thth">GitHub</a> ／ <a href="https://pypi.org/project/thth/">PyPI</a> ／ <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>
 <footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a> · <a href="/terms/">利用規約 / Terms of Service</a></footer>
 </main></body></html>

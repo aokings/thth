@@ -230,8 +230,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "<code>thth replies</code>・<code>thth measured</code> で読みます。</li>")
     add("  <li>止める: アカウントごとのガード（最短間隔・1 日の上限・急な連投で止まる）が、AI アシスタントの誤動作を止めます。</li>")
     add("</ul>")
-    add("<p>X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。"
-        "返信とインサイトの取得、検索には対応していません。Bluesky は削除に対応していません。再投稿といいねは、まだどの SNS でもできません。</p>")
+    add("<p>X の利用は運営者設定の範囲内です。Bluesky は削除に対応していません。</p>")
 
     add("<h2>招待された方へ</h2>")
     add("<p>招待された利用者は、招待リンクを開いて Threads（Mastodon の招待ならそのサーバー）を認可します。続けて "
@@ -280,8 +279,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "to review, stop, and issue keys. The operator (gotoq) runs the server.</p>")
     add('<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. '
         "Drafts, published post IDs, replies, and view counts are stored in that repository. X can publish, delete, and read "
-        "the account's recent posts within the operator's configured scope; it does not collect replies or metrics. "
-        "Reposts and likes are not supported yet.</p>")
+        "the account's recent posts within the operator's configured scope, and also collects replies and metrics.</p>")
 
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
@@ -345,8 +343,10 @@ def build_privacy() -> str:
         "posts, and mentions and quotes of the account.</li>")
     add("  <li>Mastodon: its posts and their metrics (likes, replies, reposts), replies to its posts, and public "
         "mentions of the account.</li>")
-    add("  <li>X: publishing approved posts, deleting a post on request, and reading the account's own recent "
-        "posts. Replies and metrics are not collected.</li>")
+    add("  <li>X: publishing approved posts, deleting a post on request, reposts and likes on request, the account's "
+        "own recent posts and their metrics (views, likes, replies, reposts, quotes, bookmarks; for posts made within "
+        "the last 30 days, also link clicks, profile clicks, engagements and video playback), and replies to its "
+        "posts.</li>")
     add("  <li>Facebook Pages: the Page's ID and name; the posts THTH published and their metrics (Page insights: "
         "views, engagements, media views); daily follower counts; comments on the Page's posts and mentions of the "
         "Page; on request, hiding or unhiding a comment (<code>thth reply hide</code>), the Page's call-to-action button, "
@@ -732,8 +732,9 @@ def build_privacy() -> str:
         "（<code>thth send --share-to-instagram</code>）。</li>")
     add("  <li>Bluesky: 投稿とそのインサイト（いいね・返信・再投稿・引用）、投稿への返信、アカウントへの言及と引用。</li>")
     add("  <li>Mastodon: 投稿とそのインサイト（いいね・返信・再投稿）、投稿への返信、アカウントへの公開の言及。</li>")
-    add("  <li>X: 承認された投稿の公開、依頼による投稿の削除、アカウント自身の最近の投稿の読み取り。返信と"
-        "インサイトは集めません。</li>")
+    add("  <li>X: 承認された投稿の公開、依頼による投稿の削除、求めたときの再投稿といいね、アカウント自身の最近の投稿と"
+        "そのインサイト（表示・いいね・返信・再投稿・引用・ブックマーク。作って 30 日以内の投稿は、リンクのクリック・"
+        "プロフィールのクリック・エンゲージメント・動画の再生も）、投稿への返信。</li>")
     add("  <li>Facebook ページ: ページの ID と名前、THTH が出した投稿とそのインサイト（表示・反応・メディアの表示）、"
         "日ごとのフォロワー数、投稿へのコメントとページへの言及、求めたときのコメントを隠す・戻す（<code>thth reply hide</code>）・"
         "行動ボタン・ライブ・Messenger の受信箱"
