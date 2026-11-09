@@ -254,6 +254,8 @@ def bind(adapter,cfg):
              # 計画 Meta 全部盛り M4: 書く最小の口（行動ボタン・ライブ・DM）。止めた口座では呼べない。
              'page_cta','delete_page_cta','live_create','live_status','live_end','dm_conversations',
              'dm_messages','dm_send','private_reply','comment_created','dm_profile','_post_object','_write',
+             # Conversions API for Business Messaging（dataset を作る・イベントを送る）。止めた口座では呼べない。
+             'event_dataset','event_send',
              # 計画 Meta 全部盛り 段 M5: 権限の不使用の見張りの最小の読み。
              'keepalive_read'}
     for name in methods:

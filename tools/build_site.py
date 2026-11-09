@@ -350,7 +350,9 @@ def build_privacy() -> str:
     add("  <li>Facebook Pages: the Page's ID and name; the posts THTH published and their metrics (Page insights: "
         "views, engagements, media views); daily follower counts; comments on the Page's posts and mentions of the "
         "Page; on request, hiding or unhiding a comment (<code>thth reply hide</code>), the Page's call-to-action button, "
-        "live videos and the Messenger inbox (described below).</li>")
+        "live videos and the Messenger inbox (described below). When the owner authorizes with Meta, THTH reads the "
+        "authorizing user's email address once, shows it on the owner's terminal and does not store it, so that the "
+        "owner can confirm where service notices go; THTH records only that the address could be read.</li>")
     add("  <li>Instagram: for a professional account linked to a Page, the account's ID and username; its posts and "
         "their metrics (insights); daily reach and follower counts; comments on its posts; the ID of the Threads "
         "account linked to it (read once); on request, hashtag search, the events the account hosts, likes the "
@@ -444,9 +446,13 @@ def build_privacy() -> str:
         "person's last message; after that, only a human agent's reply marked with Meta's human_agent tag, within 7 days "
         "of it. To decide this, THTH reads the time of the last message at the moment of sending and keeps no record "
         "of it. A private reply to a comment (<code>thth dm send --comment</code>) is sent within 7 days of the "
-        "comment, one per comment. THTH does not send utility messages or marketing messages. What THTH keeps is "
-        "one run-log line per command: the command name, the platform, the permission used and the result, with no "
-        "text, name or ID.</p>")
+        "comment, one per comment. THTH does not send utility messages or marketing messages. On the owner's "
+        "request, and only after a two-step confirmation, THTH can also report the outcome of a conversation, such as a "
+        "purchase or an inquiry, to Meta (Conversions API for Business Messaging) so that the owner's advertising can be "
+        "measured and optimized: the kind of outcome, an optional amount and currency, and the other person's ID within "
+        "the Page or account. What THTH keeps is one run-log line per command: the command name, the platform, the "
+        "permission used and the result (for a reported outcome, also its kind), with no text, name, ID or amount; "
+        "it also keeps the ID of the Meta dataset that receives the outcomes.</p>")
 
     add("<h2>Live video and call-to-action button</h2>")
     add("<p><code>thth live create</code> creates a live video on the owner's Page after a two-step confirmation and "
@@ -738,7 +744,8 @@ def build_privacy() -> str:
     add("  <li>Facebook ページ: ページの ID と名前、THTH が出した投稿とそのインサイト（表示・反応・メディアの表示）、"
         "日ごとのフォロワー数、投稿へのコメントとページへの言及、求めたときのコメントを隠す・戻す（<code>thth reply hide</code>）・"
         "行動ボタン・ライブ・Messenger の受信箱"
-        "（下に書きます）。</li>")
+        "（下に書きます）。持ち主が Meta で認可するとき、認可したユーザーのメールアドレスを 1 回だけ読み、持ち主の端末に"
+        "出すだけで保存しません（サービスの知らせの送り先を持ち主が確かめるため。残すのは読めたという印だけです）。</li>")
     add("  <li>Instagram（ページに紐づくプロ口座）: 口座の ID とユーザー名、投稿とそのインサイト、日ごとのリーチと"
         "フォロワー数、投稿へのコメント、結びついた Threads の口座の ID（1 回読みます）、求めたときのハッシュタグ検索・"
         "主催する予定・持ち主が付けるいいね（<code>thth like</code>・取り消せるようメディアの ID と一緒に記録）・"
@@ -814,8 +821,11 @@ def build_privacy() -> str:
         "だけで、それを過ぎた会話には、人の担当者が 7 日の内に Meta の human_agent の札を付けて返すときだけです。"
         "この判定のために THTH は送る直前に最後の通の時刻を読み、記録には残しません。コメントへの非公開の返事"
         "（<code>thth dm send --comment</code>）はコメントから 7 日の内に、1 コメントに 1 通です。THTH は utility の"
-        "メッセージや宣伝のメッセージを送りません。THTH が残すのは"
-        "命令ごとのログ 1 行（命令の名前・SNS・使った権限・結果）だけで、本文・名前・ID は含みません。</p>")
+        "メッセージや宣伝のメッセージを送りません。持ち主が求めたときに限り、二段確認のあとに、会話から起きた購入や"
+        "問い合わせの結果を Meta に報告できます（Conversions API for Business Messaging）。持ち主の広告を計測し、最適化"
+        "するためで、送るのは結果の種類・任意の金額と通貨・ページまたは口座の中での相手の ID です。THTH が残すのは"
+        "命令ごとのログ 1 行（命令の名前・SNS・使った権限・結果。報告した結果ならその種類も）だけで、本文・名前・ID・金額は"
+        "含みません。結果を受け取る Meta の dataset の ID も残します。</p>")
 
     add("<h2>ライブ配信と行動ボタン</h2>")
     add("<p><code>thth live create</code> は二段確認のあとに本人のページにライブを作り、配信の宛先を持ち主の端末に "

@@ -91,7 +91,10 @@ SPARSE_FIELDS = ["remote_state", "inflight_resolution", "goal",
                  # 直接の公開（設計 3.12.0 §3.2）: `via`（mcp・cli・http）と資格の id（先頭 12 文字）。
                  "via", "credential",
                  # 権限の不使用の見張り（`permission_watch`）: 最小の読みで使った権限の名前。
-                 "permission"]
+                 "permission",
+                 # Conversions API for Business Messaging に送った出来事の種類（`thth dm event`・静的な語だけ・
+                 # 相手の id は入れない。件数は `n`）。
+                 "event_type"]
 # **値があるときだけ出す dict の項目**（設計 3.6.0 §A1）。`goal_change`: 承認の時点の
 # 目的と公開の時点の目的が違った（`{"from", "to"}`）。目的は承認の指紋に入らないので
 # 公開は止めず、ここと sent に残す。形が合わなければ書かない。

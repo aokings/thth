@@ -412,6 +412,12 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
         doctor.record_auth(account, cfg, token, log=log)
         oauth._out(f"user_id={token['user_id']} username={token['username']}", log=log)
         oauth._out(f"保存しました: {cfg['token']}（600）", log=log)
+        shown = getattr(profile, 'email_display', None)
+        if shown:
+            # 認可したユーザーのメール（`email` の権限）。画面にだけ出す——log（認可のログのファイル）にも `.token` にも
+            # 入れない。「サービスの知らせの送り先」を確かめるための 1 行で、THTH は値を保存しない。
+            profile.email_display = None
+            print(f"認可したユーザーのメール: {shown}（画面に出すだけ・保存していません）")
         return 0
     except admin_log.AdminLogError as exc:
         if exc.appended:

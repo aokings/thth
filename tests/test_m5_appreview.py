@@ -49,7 +49,8 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert not set(appreview.DROPPED) & set(appreview.names())
     assert not set(appreview.DROPPED) & set(appreview.PRIVACY_WORDS)
     assert all(reason.strip() for reason in appreview.DROPPED.values())
-    assert len(appreview.PLANNED) == 16
+    # 16 のうち email・pages_events・instagram_manage_events・whatsapp_business_manage_events は口ができて PERMISSIONS へ移した（11/09）。
+    assert len(appreview.PLANNED) == 12
 
 
 # ---------------------------------------------------------------- (d) 台本の表
@@ -134,7 +135,12 @@ def test_本物で確かめていない口の区間には印がある():
 
 def test_口の無い権限は表で口が無いと言う():
     assert row("pages_utility_messaging")["doors"] == []
-    assert row("email")["doors"] == [] and not row("email")["requested_by_thth"]
+    assert row("manage_app_solution")["doors"] == [] and not row("manage_app_solution")["requested_by_thth"]
+    # 口ができた 4 権限は PERMISSIONS に移り、口（thth dm event・thth doctor）が表に出る。
+    assert row("pages_events")["doors"] == ["thth dm event"] and row("pages_events")["requested_by_thth"]
+    assert row("instagram_manage_events")["doors"] == ["thth dm event"]
+    assert row("email")["doors"] == ["thth doctor"] and row("email")["kind"] == "read"
+    assert row("whatsapp_business_manage_events")["doors"] and row("whatsapp_business_manage_events")["segments"] == ["wa-events"]
     assert row("threads_basic")["doors"] == ["thth posts"]
     assert row("ads_mcp_management")["doors"]            # 手だけの区間は区間の口の文
     assert row("marketing_api_access_tier")["doors"]     # 録画の要らない機能
@@ -392,11 +398,11 @@ def test_今の表では口の無い権限と申請の前の呼び出しが赤�
 def test_記録に残らない権限は赤の中でそう分けて言う():
     """evidence の空の権限と PLANNED は、1 回打っても記録に残らない（Dashboard の呼び出しの欄で確かめる）。"""
     assert pw.PERMISSIONS["threads_basic"]["evidence"] and not pw.PERMISSIONS["pages_utility_messaging"]["evidence"]
-    names = ("threads_basic", "pages_utility_messaging", "email")
+    names = ("threads_basic", "pages_utility_messaging", "manage_app_solution")
     result = appreview.evaluate(fake_view(), "", now=NOW, rows=subset(*names))
     problem = next(p for p in result["problems"] if p["code"] == "appreview_no_recent_call")
     assert set(problem["names"]) == set(names)
-    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "email"}
+    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "manage_app_solution"}
     fix = rc.CATALOG["appreview_no_recent_call"]["fix"]["text"]
     assert "Dashboard" in fix and "記録に残らない" in fix
 

@@ -247,8 +247,29 @@ class FacebookAuthProfile(AuthProfile):
                             + fb.PAGE_ID_HINT + "）")
         return self._checked_page(page, page_id)
 
+    # 認可のとき 1 回だけ読んだメール（`email` の権限・値は保存しない）。`email_read` は読めた日の印、
+    # `email_display` は端末の画面に 1 回出すための値（`authflow.run` が出して捨てる・`.token` にも log にも入れない）。
+    email_read = None
+    email_display = None
+    _user_token = None
+
+    def _read_email(self, user_token) -> None:
+        """`GET /me?fields=email`（ユーザーの鍵・1 回だけ）。権限が無い・メールが無い・読めないときは何も残さない。
+
+        `email` の権限が無ければ Meta は欄を返さない（エラーにならない）ので、権限の有無を先に調べず、返ったときだけ印を残す。
+        """
+        self.email_read = self.email_display = None
+        try:
+            body = graph_get("/me", self._with_proof({"fields": "email", "access_token": user_token}))
+        except FlowError:
+            return
+        value = body.get("email")
+        if isinstance(value, str) and "@" in value and len(value) <= 320 and value.isprintable():
+            self.email_read = jst.iso()
+            self.email_display = value
+
     def _long_token(self, code_value):
-        """code → 短い鍵 → 長い鍵（ユーザーの鍵・保存しない）。"""
+        """code → 短い鍵 → 長い鍵（ユーザーの鍵・保存しない）。この鍵は `_token_record` がメールを 1 回読むまで持つ。"""
         short = graph_get("/oauth/access_token", {
             "client_id": self.client_id, "redirect_uri": CALLBACK,
             "client_secret": self.client_secret, "code": secret(code_value)})
@@ -256,7 +277,10 @@ class FacebookAuthProfile(AuthProfile):
         long_ = graph_get("/oauth/access_token", {
             "grant_type": "fb_exchange_token", "client_id": self.client_id,
             "client_secret": self.client_secret, "fb_exchange_token": short_token})
-        return _token_value(long_, "long")
+        long_token = _token_value(long_, "long")
+        # ページの照合（`/me`）が終わってからメールを読む（`_token_record`）ために、この鍵を口座の保存の前まで持つ。
+        self._user_token = long_token
+        return long_token
 
     def _checked_page(self, page, page_id):
         """ページの鍵を `/debug_token` と `/me` で確かめる。`(page の行, 鍵, debug の data か None, /me の答え)`。"""
@@ -278,6 +302,9 @@ class FacebookAuthProfile(AuthProfile):
 
     def _token_record(self, page_id, page, page_token, debug, me) -> dict:
         """`.token` に書く中身（ページの鍵・権限・期限・データの期限）。"""
+        user_token, self._user_token = self._user_token, None     # ユーザーの鍵は保存しない（ここで手放す）
+        if user_token:
+            self._read_email(user_token)
         scopes = meta_tokens.scopes_of(debug)
         if scopes is not None:
             scopes_recorded, scopes_source = scopes, SCOPES_SOURCE_RESPONSE
@@ -312,6 +339,10 @@ class FacebookAuthProfile(AuthProfile):
         data_access = debug.get("data_access_expires_at") if debug else None
         if isinstance(data_access, int) and not isinstance(data_access, bool):
             token["data_access_expires_at"] = data_access
+        if self.email_read:
+            # メールを読めた印だけ（値は残さない）。doctor が「読める」と言い、権限の見張りが最後に成功した日に数える。
+            token["email_readable"] = True
+            token["email_read_at"] = self.email_read
         return token
 
 

@@ -37,10 +37,14 @@ MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
 # 構成（`config_id`）があるときは構成の側の一覧が効く。
 THREADS_REVIEW_SCOPES = ("threads_share_to_instagram",)
 META_INVITE_EXTRA = {
+    # `pages_events` は権限の参照の見出しの綴り（Dashboard の綴りは `page_events` の見込み・M0 で合わせる）。
+    # `email` はここに足さない: Worker の招待の形の検査（`callback/src/invite-object.js` の META_SCOPE）が
+    # `<頭>_<名前>` の形だけを通し、`email` は断られる。メールの権限は Dashboard の構成（`config_id`）に足す
+    # （Worker を直して deploy したあとなら、ここに足せる）。
     "facebook": ("pages_manage_ads", "pages_manage_cta", "publish_video", "pages_messaging",
-                 "pages_utility_messaging"),
+                 "pages_utility_messaging", "pages_events"),
     "instagram": ("instagram_manage_engagement", "instagram_manage_messages", "pages_read_user_content",
-                  "threads_business_basic", "instagram_manage_upcoming_events"),
+                  "threads_business_basic", "instagram_manage_upcoming_events", "instagram_manage_events"),
     "ads": ("catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list",
             "read_audience_network_insights", "commerce_account_read_settings"),
 }
