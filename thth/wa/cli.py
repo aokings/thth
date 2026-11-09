@@ -10,7 +10,7 @@
                                                                             承認済みのテンプレートを 1 通送る（二段）
     thth wa stop <名前> --by <名前>                                         止めの印を置く（送る・作るが断られる）
 
-**送る口は外の人に届く書く口**。`thth dm send` と同じ強さの柵を付ける:
+**送る口は外の人に届く書く口**。`thth dm send` と同じ型の柵を付ける（ただし dm send は会話の窓が開いた相手にだけ送れるが、wa send は持ち主が渡した番号に送る。相手の同意〔opt-in〕は持ち主が取る。1 日の上限は wa のほうが厳しい）:
   - 二段確認: 一段目は中身と digest を見せて何もしない（rc=1）。二段目 `--confirm <digest>` は、その場で読み直した
     番号・テンプレートの状態から digest を作り直し、一致したときだけ 1 回打つ。
   - 台帳に `production: true` が無ければ媒体の書く口を呼ばない（読むだけの一段目は通す）。
@@ -99,13 +99,15 @@ def _guard_stopped(name) -> None:
                    "止めたまま媒体は呼びません", rc=1, guard="stopped")
 
 
-def _sent_today(name, now) -> int:
+def _sent_today(name, now) -> int | None:
     """今日（JST）の送信の通数。runs の wa_send の行（ok と unknown）を数える。"""
     try:
         with open(runs_mod.path_for(ledger.state_dir_for(name), jst.month_str(now)), encoding="utf-8") as stream:
             lines = stream.readlines()
+    except FileNotFoundError:
+        return 0  # この月にまだ何も送っていない
     except OSError:
-        return 0
+        return None  # 読めない: 数えられないので送らない側に倒す（監査 5.14.0b の 5）
     count = 0
     for line in lines:
         if '"action": "wa_send"' not in line:
@@ -123,6 +125,9 @@ def _sent_today(name, now) -> int:
 
 def _limit_check(args, cfg, now) -> int:
     used, cap = _sent_today(args.account, now), ledger.send_daily_max(cfg)
+    if used is None:
+        mw._refuse("wa_daily_limit", f"{args.account}: 今日の送信の記録が読めず、何通送ったか数えられません。"
+                   "数えられないまま送ると上限を越えうるので送りません", rc=1, used=None, limit=cap)
     if used >= cap:
         mw._refuse("wa_daily_limit", f"{args.account}: 今日（JST）はもう {used} 通送りました（台帳の send_daily_max は {cap}）",
                    rc=1, used=used, limit=cap)

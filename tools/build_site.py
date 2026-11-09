@@ -491,14 +491,14 @@ def build_privacy() -> str:
 
     add("<h2>WhatsApp</h2>")
     add("<p>For a connected WhatsApp Business Account THTH keeps a ledger on the operator's server "
-        "(<code>waba/</code>: the account's ID, the project and the daily limit of messages the owner set) and a state "
+        "(<code>waba/</code>: the account's ID, the project and a daily limit of messages) and a state "
         "directory (<code>waba_state/&lt;name&gt;/</code>: the sign-in state, a stop mark and run logs). At the owner's "
-        "request THTH reads the account's phone numbers and message templates and shows them on the owner's terminal; "
-        "they are not saved. After a two-step confirmation it can submit a new message template to Meta for review, or "
-        "send one message built from an approved template to the phone number the owner gives. The recipient's number "
-        "and the text of a template or message are used for that one request and are not saved. What THTH keeps is one "
-        "run-log line per command: the command name, the platform, the permission used and the result, with no phone "
-        "number, template or message text.</p>")
+        "request THTH reads the account's phone numbers and message templates and only shows them to the owner (and the "
+        "AI assistant the owner chose); THTH does not save them. With the owner's confirmation it can submit a new "
+        "message template to Meta for review, or send one message built from an approved template to the phone number "
+        "the owner gives. The recipient's number and the text of a template or message are used for that request only "
+        "and THTH does not save them. What THTH keeps in its run log is only the command name, the platform, the "
+        "permission used and the result.</p>")
 
     add("<h2>Ads, catalogs and leads</h2>")
     add("<p>For a connected Meta ad account THTH keeps a ledger on the operator's server (<code>adaccounts/</code>: "
@@ -896,12 +896,12 @@ def build_privacy() -> str:
 
     add("<h2>WhatsApp</h2>")
     add("<p>接続した WhatsApp ビジネスアカウントについて、THTH は運営者のサーバーに台帳（<code>waba/</code>: アカウントの ID、"
-        "プロジェクト、持ち主が決めた 1 日に送れる通数の上限）と状態の置き場（<code>waba_state/&lt;名前&gt;/</code>: "
+        "プロジェクト、1 日に送れる通数の上限）と状態の置き場（<code>waba_state/&lt;名前&gt;/</code>: "
         "認可の途中の状態・止めの印・実行記録）を持ちます。持ち主の求めに応じて、アカウントの電話番号とメッセージテンプレートを読み、"
-        "持ち主の端末に出します（保存しません）。二段確認のあとにだけ、新しいテンプレートを Meta の審査に出すか、承認済みの"
-        "テンプレートから作ったメッセージを、持ち主が指定した電話番号に 1 通送ります。相手の番号とテンプレート・メッセージの"
-        "本文は、その 1 回の依頼にだけ使い、保存しません。残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、"
-        "電話番号・テンプレート・本文は入れません。</p>")
+        "持ち主（と持ち主が選んだ AI の助手）に見せるだけで、THTH は保存しません。持ち主の確認を経て、新しいテンプレートを Meta の"
+        "審査に出すか、承認済みのテンプレートから作ったメッセージを、持ち主が指定した電話番号に 1 通送ります。相手の番号と"
+        "テンプレート・メッセージの本文は、その依頼にだけ使い、THTH は保存しません。実行記録に残すのは、命令の名前・媒体・"
+        "使った権限・結果だけです。</p>")
 
     add("<h2>広告・カタログ・リード</h2>")
     add("<p>接続した Meta の広告アカウントについて、THTH は運営者のサーバーに台帳（<code>adaccounts/</code>: 広告"

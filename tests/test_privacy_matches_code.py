@@ -145,10 +145,31 @@ def test_Xの項はadapterの口と合う():
     if {"repost", "like"} <= set(XAdapter.CAPABILITIES):
         assert "reposts and likes" in text
     # 検索と会話の読み（監査 5.14.0）。他人の投稿を読む口があるなら、項に書き、検索の節にも X を挙げる。
-    if {"keyword_search", "thread_read"} <= set(XAdapter.CAPABILITIES):
+    # 片方だけ残っても縛るように、口ごとに見る（監査 5.14.0b の 6）。
+    caps = set(XAdapter.CAPABILITIES)
+    if "keyword_search" in caps:
         assert "search of other people's recent public posts" in text
-        assert "replies in one post's conversation" in text
-        assert "not saved" in text
         search = re.search(r"<strong>Keyword search\.</strong>(.*?)</p>", page, re.S)
         assert search and "Mastodon and X" in search.group(1)
         assert "Mastodon・X の検索" in page
+    if "thread_read" in caps:
+        assert "replies in one post's conversation" in text
+    if caps & {"keyword_search", "thread_read"}:
+        assert "not saved" in text
+
+
+def test_WhatsAppの項は口と合い_保存しないと言う():
+    """thth wa があるなら、privacy に WhatsApp の節があり、番号と本文を保存しないと日英で言う（監査 5.14.0b の 3）。
+    端末や確認の段数に縛った言い方はしない（原則 2026-11-08）。"""
+    import importlib.util
+    if importlib.util.find_spec("thth.wa.cli") is None:
+        return
+    page = PRIVACY.read_text(encoding="utf-8")
+    en = re.search(r"<h2>WhatsApp</h2>\s*<p>(.*?)</p>", page, re.S)
+    assert en, "privacy に WhatsApp の節が無い"
+    body = en.group(1)
+    assert "recipient's number" in body and "does not save them" in body
+    assert "terminal" not in body
+    ja = re.findall(r"<h2>WhatsApp</h2>\s*<p>(.*?)</p>", page, re.S)
+    assert len(ja) == 2, "WhatsApp の節が日英の 2 つでない"
+    assert "相手の番号" in ja[1] and "保存しません" in ja[1] and "端末" not in ja[1]

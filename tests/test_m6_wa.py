@@ -380,6 +380,20 @@ def test_1日の上限を越えたら送らない(env, capsys):
     assert len(posts(env)) == 1
 
 
+def test_今日の記録が読めなければ数えられないので送らない(env, capsys):
+    """監査 5.14.0b の 5: 読めない記録を 0 通と見ると上限が開いてしまう。読めないときは送らない側に倒す。"""
+    from thth import runs as runs_mod
+    from thth.wa import cli as wa_cli
+    ready(env, capsys)
+    ledger.ensure_state_dir(NAME)
+    runs_path = pathlib.Path(runs_mod.path_for(ledger.state_dir_for(NAME), jst.month_str(jst.now_jst())))
+    runs_path.mkdir(parents=True)           # 読もうとすると OSError（無いのとは違う）
+    assert wa_cli._sent_today(NAME, jst.now_jst()) is None
+    rc, _out, err = main(capsys, *send_args())
+    assert rc == 1 and "wa_daily_limit" in err and "数えられません" in err
+    assert posts(env) == []
+
+
 def test_結果が分からなければ済んだと言わず_打ち直さない(env, capsys):
     ready(env, capsys)
     env["send_reply"] = (200, {"messaging_product": "whatsapp"})     # メッセージの id が無い
@@ -439,11 +453,13 @@ def test_網の出入りはGETとPOSTの各1か所_書く関数を呼ぶのはcl
 
 
 def test_入口は手元のCLIだけ_MCPと遠くの道に出さない():
-    root = pathlib.Path(__file__).resolve().parents[1] / "thth"
-    for name in ("mcp_server.py", "remote.py"):
-        path = root / name
-        if path.exists():
-            assert "thth wa" not in path.read_text() and "wa_send" not in path.read_text()
+    # MCP の正本は repo の mcp/server.py（wheel の中でだけ thth/mcp_server.py）。見る先が無ければ素通りせず赤にする
+    # （監査 5.14.0b の気づき: 前は thth/mcp_server.py を見ていて、無いので何も縛っていなかった）。
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for path in (root / "mcp" / "server.py", root / "thth" / "remote.py"):
+        assert path.exists(), f"見る先が無い: {path}"
+        text = path.read_text(encoding="utf-8")
+        assert "thth wa" not in text and "wa_send" not in text
 
 
 def test_権限は審査の表と見張りに移った():
