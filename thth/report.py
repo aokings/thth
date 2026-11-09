@@ -395,10 +395,15 @@ def _unapproved_one(name, *, now, window, window_text, ledger) -> dict:
         return {"cannot_say": reason(exc)}
     except accounts_mod.AccountError as exc:
         return {"cannot_say": f"account_unreadable: {exc}"}
+    # 予約投稿を使わない口座（`scheduled: false`・同席専用）は timer が原稿を出さないので、
+    # 「未承認のまま時刻が来る」が起きない。repo の置き場が名だけでも数えられないとは言わない
+    # （11/09 運用 #7293: headlesson-threads が毎回「数えられません」と出ていた）。
     state = accounts_mod.repo_state(account_cfg)
-    if state == accounts_mod.REPO_BROKEN:
+    if account_cfg.get("scheduled", True) is False:
+        rows = []
+    elif state == accounts_mod.REPO_BROKEN:
         return {"cannot_say": "repo_unavailable: 原稿の repo が読めません"}
-    if state == accounts_mod.REPO_NONE:
+    elif state == accounts_mod.REPO_NONE:
         rows = []  # 原稿の置き場を持たない口座（承認を待つ原稿が無い）
     else:
         # 台帳が読めないと、閉じた（withdrawn）・取り消した原稿を見分けられない。

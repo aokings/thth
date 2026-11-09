@@ -202,6 +202,27 @@ def test_読めない口座はcannot_sayだけ(isolated_account):
     assert "broken" in result.stderr
 
 
+def test_予約を使わない口座は置き場が壊れていても0で数える(isolated_account):
+    """運用 #7293（11/09）: 同席専用（scheduled: false）で repo_dir が名だけの口座が、毎回「数えられません」と出た。"""
+    path = os.path.join(isolated_account["accounts_dir"], "attended.json")
+    with open(os.path.join(isolated_account["accounts_dir"], isolated_account["name"] + ".json"),
+              encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg.update({"account": "attended", "scheduled": False,
+                "repo_dir": os.path.join(isolated_account["accounts_dir"], "no-such-repo")})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+    assert _board_cell("attended") == {"count": 0, "first_at": None, "window": "-3d,+24h", "paths": []}
+    result = run_thth(["schedule", "--unapproved", "--json"])
+    assert result.returncode == 0 and "attended" not in result.stderr, result.stderr
+    # 予約を使う口座の壊れた置き場は、今までどおり数えられないと言う。
+    cfg.update({"account": "scheduled-broken", "scheduled": True})
+    with open(os.path.join(isolated_account["accounts_dir"], "scheduled-broken.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(cfg, f)
+    assert "repo_unavailable" in _board_cell("scheduled-broken")["cannot_say"]
+
+
 def test_承認の台帳が読めない口座はcannot_say(isolated_account):
     _draft(isolated_account, "x.md", _at(datetime.timedelta(hours=1)))
     ledger = approval_ledger.path_for(isolated_account["name"])
