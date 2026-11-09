@@ -50,6 +50,11 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # 監査が要らないと判断されたため）。
     "mcp": ("mcp/server.py",),
     "remote": ("thth/remote.py",),
+    # Meta に書く口と、利用者の鍵を一時的に持つ認可（11/09 の監査 5.14.0 で足した）。
+    # meta_write: Meta への書き込みの共通部・出来事の送信・ブランドの承認・商品タグ
+    "meta_write": ("thth/meta_write.py", "thth/meta_events.py", "thth/meta_brand.py", "thth/meta_shop.py"),
+    # auth_keys: 認可の流れと、認可のときに鍵やメールを扱う所
+    "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。
@@ -59,6 +64,10 @@ COMPAT_TESTS = (
     "tests/test_server_json.py",
     "tests/test_privacy_matches_code.py",
 )
+
+# privacy の生成物に、施行日が未設定のしるしが残っていないか（build_site.py が None のとき出す表示）。
+PRIVACY_PAGE = "callback/public/privacy/index.html"
+PRIVACY_UNSET_MARKS = ("Unpublished update", "未公開の更新案")
 
 TEST_WORKFLOW = "test.yml"
 AUDIT_GLOB = "docs/監査_*.md"
@@ -320,6 +329,13 @@ def check(root: Path = ROOT, ref: str = "HEAD", *, ci=ci_state, compat=run_compa
         if opened:
             blocks.append(_refuse("release_audit_dangers_open",
                                   "・".join(f"{a.path}: dangers {a.dangers}" for a in opened)))
+
+    # ③' privacy の施行日（tools/build_site.py の PRIVACY_EFFECTIVE が None のまま deploy されると、公開の
+    # privacy の頁が「未公開の更新案」と名乗る。監査 5.14.0 の危ない 1）。見るのは release を出すときだけ。
+    privacy = show(root, sha, PRIVACY_PAGE) or ""
+    left = [mark for mark in PRIVACY_UNSET_MARKS if mark in privacy]
+    if left:
+        blocks.append(_refuse("release_privacy_date_unset", f"{PRIVACY_PAGE} に「{'」「'.join(left)}」が残っている"))
 
     # ④ 互換の柵
     ok, seen = compat(root)

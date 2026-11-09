@@ -346,13 +346,15 @@ def build_privacy() -> str:
     add("  <li>X: publishing approved posts, deleting a post on request, reposts and likes on request, the account's "
         "own recent posts and their metrics (views, likes, replies, reposts, quotes, bookmarks; for posts made within "
         "the last 30 days, also link clicks, profile clicks, engagements and video playback), and replies to its "
-        "posts.</li>")
+        "posts; and, when the owner's session asks, a search of other people's recent public posts and the "
+        "replies in one post's conversation (paid reads, shown for that request only: the text and authors are "
+        "not saved).</li>")
     add("  <li>Facebook Pages: the Page's ID and name; the posts THTH published and their metrics (Page insights: "
         "views, engagements, media views); daily follower counts; comments on the Page's posts and mentions of the "
         "Page; on request, hiding or unhiding a comment (<code>thth reply hide</code>), the Page's call-to-action button, "
         "live videos, the Messenger inbox, and, for the owner's brand work, the branded content a business can advertise "
         "and the creator marketplace (described below). When the owner authorizes with Meta, THTH reads the "
-        "authorizing user's email address once, shows it on the owner's terminal and does not store it, so that the "
+        "authorizing user's email address once, only shows it to the owner (and the AI assistant the owner chose) and does not store it, so that the "
         "owner can confirm where service notices go; THTH records only that the address could be read.</li>")
     add("  <li>Instagram: for a professional account linked to a Page, the account's ID and username; its posts and "
         "their metrics (insights); daily reach and follower counts; comments on its posts; the ID of the Threads "
@@ -378,7 +380,7 @@ def build_privacy() -> str:
         "THTH through its collection and, for connected Facebook Pages, Instagram accounts and Threads accounts "
         "whose webhooks the owner subscribed, through the notifications Meta sends to thth.me.</p>")
     add("<p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on "
-        "Bluesky and Mastodon) runs on request: when the user's session asks for a search, or for the "
+        "Bluesky, Mastodon and X) runs on request: when the user's session asks for a search, or for the "
         "observation summary, which uses search terms the operator sets for the account. The only other search "
         "is the observation map below, when the operator turns it on. Results of a search on request are shown "
         "for that request only: counts, the number of distinct authors, the share of the most frequent "
@@ -471,17 +473,17 @@ def build_privacy() -> str:
         "(the creators' account IDs), and, from the creator's side, whether a brand may use a post that tags it in "
         "partnership ads. Changes are made only after a two-step confirmation. THTH also reads the partnership "
         "content a business can advertise (post IDs and types, not the text) and searches the Instagram and "
-        "Facebook creator marketplace for creators (their IDs). These answers are shown on the owner's terminal "
-        "and are not saved. What THTH keeps is one run-log line per command: the command name, the platform, the "
-        "permission used and the result, with no creator ID, name or text.</p>")
+        "Facebook creator marketplace for creators (their IDs). These answers are only shown to the owner (and the AI assistant the owner "
+        "chose); THTH does not save them. What THTH keeps in its run log is only the command name, the platform, "
+        "the permission used and the result.</p>")
 
     add("<h2>Shop product tags</h2>")
     add("<p>When the owner sells through an Instagram Shop, THTH can, at the owner's request, check whether the "
         "Instagram account can tag products, read the catalogs and products of that shop (IDs, names and review "
         "status) and the product tags on a post, and add a product tag to an existing post of the owner's account "
-        "after a two-step confirmation. These answers are shown on the owner's terminal and are not saved. What THTH "
-        "keeps is one run-log line per command: the command name, the platform, the permission used and the result, "
-        "with no product, catalog or post ID.</p>")
+        "after a two-step confirmation. These answers are only shown to the owner (and the AI assistant the owner chose); THTH "
+        "does not save them. What THTH keeps in its run log is only the command name, the platform, the permission "
+        "used and the result.</p>")
 
     add("<h2>Ads, catalogs and leads</h2>")
     add("<p>For a connected Meta ad account THTH keeps a ledger on the operator's server (<code>adaccounts/</code>: "
@@ -761,12 +763,14 @@ def build_privacy() -> str:
     add("  <li>Mastodon: 投稿とそのインサイト（いいね・返信・再投稿）、投稿への返信、アカウントへの公開の言及。</li>")
     add("  <li>X: 承認された投稿の公開、依頼による投稿の削除、求めたときの再投稿といいね、アカウント自身の最近の投稿と"
         "そのインサイト（表示・いいね・返信・再投稿・引用・ブックマーク。作って 30 日以内の投稿は、リンクのクリック・"
-        "プロフィールのクリック・エンゲージメント・動画の再生も）、投稿への返信。</li>")
+        "プロフィールのクリック・エンゲージメント・動画の再生も）、投稿への返信、本人のセッションが求めたときの、"
+        "他の人の最近の公開の投稿の検索と、1 つの投稿の会話の中の返信（有料の読み取りで、その求めに対してだけ表示し、"
+        "本文と投稿者は保存しません）。</li>")
     add("  <li>Facebook ページ: ページの ID と名前、THTH が出した投稿とそのインサイト（表示・反応・メディアの表示）、"
         "日ごとのフォロワー数、投稿へのコメントとページへの言及、求めたときのコメントを隠す・戻す（<code>thth reply hide</code>）・"
         "行動ボタン・ライブ・Messenger の受信箱・ブランドの仕事のための、広告に使える提携コンテンツと"
-        "クリエイターマーケットプレイス（下に書きます）。持ち主が Meta で認可するとき、認可したユーザーのメールアドレスを 1 回だけ読み、持ち主の端末に"
-        "出すだけで保存しません（サービスの知らせの送り先を持ち主が確かめるため。残すのは読めたという印だけです）。</li>")
+        "クリエイターマーケットプレイス（下に書きます）。持ち主が Meta で認可するとき、認可したユーザーのメールアドレスを 1 回だけ読み、持ち主（と持ち主が選んだ AI の助手）に"
+        "見せるだけで、THTH は保存しません（サービスの知らせの送り先を持ち主が確かめるため。残すのは読めたという印だけです）。</li>")
     add("  <li>Instagram（ページに紐づくプロ口座）: 口座の ID とユーザー名、投稿とそのインサイト、日ごとのリーチと"
         "フォロワー数、投稿へのコメント、結びついた Threads の口座の ID（1 回読みます）、求めたときのハッシュタグ検索・"
         "主催する予定・持ち主が付けるいいね（<code>thth like</code>・取り消せるようメディアの ID と一緒に記録）・"
@@ -786,8 +790,8 @@ def build_privacy() -> str:
         "同じ道で出します。本人の Facebook ページの投稿へのコメント、ページへの言及、本人の Instagram の投稿への"
         "コメントも同じように保存します（コメントした人の名前・本文・時刻・リンク）。採集で読むほか、持ち主が webhook を"
         "購読した Facebook ページ・Instagram・Threads では、Meta が thth.me へ送る通知でも届きます。</p>")
-    add("<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と "
-        "Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
+    add("<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky・"
+        "Mastodon・X の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
         "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"
         "下のトピックマップだけです。求めに応じた検索の結果は、その求めに対してだけ表示します。件数、"
         "投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・本文の全文です。"
@@ -862,15 +866,14 @@ def build_privacy() -> str:
         "設定を読み、変えます。タグ付けを承認するクリエイターの一覧（クリエイターの口座 ID）と、クリエイターの側から、"
         "ブランドをタグ付けした投稿をそのブランドが提携広告に使ってよいか、です。変えるのは二段確認のあとだけです。"
         "また、事業が広告に使える提携コンテンツ（投稿の ID と種類。本文は読みません）を読み、Instagram と Facebook の"
-        "クリエイターマーケットプレイスでクリエイターを探します（クリエイターの ID）。これらの答えは持ち主の端末に"
-        "出すだけで、保存しません。残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、"
-        "クリエイターの ID・名前・本文は入れません。</p>")
+        "クリエイターマーケットプレイスでクリエイターを探します（クリエイターの ID）。これらの答えは持ち主（と持ち主が選んだ AI の助手）に"
+        "見せるだけで、THTH は保存しません。実行記録に残すのは、命令の名前・媒体・使った権限・結果だけです。</p>")
 
     add("<h2>ショップの商品タグ</h2>")
     add("<p>持ち主が Instagram ショップで売るとき、THTH は持ち主の求めに応じて、Instagram 口座が商品タグを付けられるかを"
         "確かめ、そのショップのカタログと商品（ID・名前・審査の状態）と、投稿に付いている商品タグを読み、持ち主の口座の既存の"
-        "投稿に商品タグを足します。足すのは二段確認のあとだけです。これらの答えは持ち主の端末に出すだけで、保存しません。"
-        "残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、商品・カタログ・投稿の ID は入れません。</p>")
+        "投稿に商品タグを足します。足すのは二段確認のあとだけです。これらの答えは持ち主（と持ち主が選んだ AI の助手）に見せるだけで、"
+        "THTH は保存しません。実行記録に残すのは、命令の名前・媒体・使った権限・結果だけです。</p>")
 
     add("<h2>広告・カタログ・リード</h2>")
     add("<p>接続した Meta の広告アカウントについて、THTH は運営者のサーバーに台帳（<code>adaccounts/</code>: 広告"

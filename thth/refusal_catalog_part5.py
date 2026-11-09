@@ -707,6 +707,14 @@ ENTRIES = {
         "doors": _C,
         "since": "5.12.0",
     },
+    "release_privacy_date_unset": {
+        "kind": "refusal",
+        "why": "公開の privacy の頁（callback/public/privacy/index.html）に、施行日が未設定のしるし（「Unpublished update」「未公開の更新案」）が残っています。このまま deploy すると、頁が「まだ公開していない案」と名乗ります。",
+        "fix": "tools/build_site.py の PRIVACY_EFFECTIVE に deploy の日（YYYY-MM-DD）を入れ、python3 tools/build_site.py で生成し直して commit し、打ち直してください。",
+        "better": "deploy の日が決まったら、版上げの commit に施行日の更新も入れておくと、関門で止まらずに済みます。",
+        "doors": _C,
+        "since": "5.13.0",  # 版上げのときに 5.14.0 へ（試験が VERSION を越える since を断る）
+    },
     # 計画 Meta 全部盛り M3（読むだけの最小の口）。since は版上げのときに直す。
     "meta_feature_required": {
         "kind": "refusal",

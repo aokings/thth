@@ -655,8 +655,9 @@ class FacebookAdapter(base.Adapter):
             # subcode 33 の文面には必ず「missing permissions」が入る。権限の判定より先に見ないと、
             # 無い id や違う口を「認可し直して」と案内してしまう（11/08 本物の IG のいいねで見た）。
             if e.code == 404 or (err.get("code") == 100 and err.get("error_subcode") == 33):
-                raise AdapterError(f"{what}: post_missing: 媒体にその id がありません（既に消えているか、"
-                                   "この鍵から見えません）。何も変えていません",
+                raise AdapterError(f"{what}: post_missing: 渡した id（投稿・コメント・クリエイター・ブランド・商品など、この操作の対象）が"
+                                   "無いか、この鍵から見えません。どちらかは Meta の答えだけでは分かりません。"
+                                   "何も変えていません。読む命令（list や旗なしの命令）で id を確かめてください",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
                 raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
