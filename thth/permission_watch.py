@@ -108,7 +108,7 @@ PERMISSIONS = {
     "threads_business_basic": _p("instagram", READ, "connected_threads_user", also={"ads": ("ads_threads",)}),
     "ads_read": _p(ADS, READ, "ads_snapshot"),
     "ads_management": _p(ADS, WRITE, "ads_op"),
-    "catalog_management": _p(ADS, READ, "ads_catalog"),
+    "catalog_management": _p(ADS, READ, "ads_catalog", also={"instagram": ("shop_catalogs",)}),
     "leads_retrieval": _p(ADS, READ, "ads_leads"),
     "ads_mcp_management": _p(ADS, READ),     # 口が無い（外の公式の広告 MCP で使う・THTH の記録に残らない）
     # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ。
@@ -134,6 +134,9 @@ PERMISSIONS = {
     "instagram_manage_events": _p("instagram", WRITE, "dm_event"),
     # WhatsApp の口座の種類がまだ THTH に無い（口の形と試験だけ）。記録を残せないので evidence は空。
     "whatsapp_business_manage_events": _p("whatsapp", WRITE),
+    # 商品タグ（`thth/meta_shop.py`・計画 §1.11）。
+    "instagram_shopping_tag_products": _p("instagram", WRITE, "shop_eligibility", "shop_products", "shop_tags",
+                                          "shop_tag"),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -149,6 +152,7 @@ RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_
                "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like",
                "brand_creators", "brand_promote", "brand_ads_permissions", "brand_content", "creators_search",
                "dm_event",
+               "shop_eligibility", "shop_catalogs", "shop_products", "shop_tags", "shop_tag",
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",

@@ -50,8 +50,8 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert not set(appreview.DROPPED) & set(appreview.PRIVACY_WORDS)
     assert all(reason.strip() for reason in appreview.DROPPED.values())
     # 16 のうち、ブランドとクリエイターの 6 つ（2949689）と email・pages_events・instagram_manage_events・
-    # whatsapp_business_manage_events の 4 つ（1c5a5e0）は口ができて PERMISSIONS へ移した（11/09）。
-    assert len(appreview.PLANNED) == 6
+    # whatsapp_business_manage_events の 4 つ（1c5a5e0）と商品タグ（e500d33）は口ができて PERMISSIONS へ移した（11/09）。
+    assert len(appreview.PLANNED) == 5
 
 
 # ---------------------------------------------------------------- (d) 台本の表

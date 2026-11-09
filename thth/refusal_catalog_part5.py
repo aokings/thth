@@ -1032,4 +1032,16 @@ ENTRIES = {
         "doors": _C,
         "since": "5.13.0",
     },
+    # Instagram の商品タグ（thth/meta_shop.py）。since は版上げのときに直す。
+    "shop_args_invalid": {
+        "kind": "refusal",
+        "why": "thth shop に渡した id・位置が、Meta の商品タグの口の決まりに合っていません（id は数字、画像の位置 x・y は 0.0〜1.0 で 2 つ一緒、など）。",
+        "fix": "1 行目の指す引数を直して打ち直してください。商品の id は thth shop products <口座> --catalog <カタログの id>、"
+               "カタログの id は thth shop catalogs <口座> に出ます。付けるときは --product と --by <名前> が要ります",
+        "command": "thth shop tag <IG の口座> <media の id> --product <商品の id> --x 0.5 --y 0.5 --by <名前>",
+        "better": "先に thth shop eligibility で資格を、thth shop tags で今のタグを読むと、付ける一段目で何が変わるかを迷わず確かめられます。"
+                  "ショップが承認前のときは、自社のドメインで実際に売っている物を載せたショップを作って承認を受けるのが、Meta のコマースの要件に沿う近道です",
+        "doors": _C,
+        "since": "5.13.0",
+    },
 }
