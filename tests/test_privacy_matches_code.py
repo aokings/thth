@@ -144,3 +144,11 @@ def test_Xの項はadapterの口と合う():
         assert "replies to its posts" in text
     if {"repost", "like"} <= set(XAdapter.CAPABILITIES):
         assert "reposts and likes" in text
+    # 検索と会話の読み（監査 5.14.0）。他人の投稿を読む口があるなら、項に書き、検索の節にも X を挙げる。
+    if {"keyword_search", "thread_read"} <= set(XAdapter.CAPABILITIES):
+        assert "search of other people's recent public posts" in text
+        assert "replies in one post's conversation" in text
+        assert "not saved" in text
+        search = re.search(r"<strong>Keyword search\.</strong>(.*?)</p>", page, re.S)
+        assert search and "Mastodon and X" in search.group(1)
+        assert "Mastodon・X の検索" in page
