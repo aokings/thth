@@ -230,6 +230,14 @@ KNOWN_CAPABILITIES = frozenset({
     "live_video",
     # 受信箱を読む・24 時間の窓の中で返す・コメントへの非公開の返事（`dm_*`・`thth dm`）。
     "direct_messages",
+    # --- 計画 Meta 全部盛り（ブランドコンテンツ・クリエイターマーケットプレイス・`thth/meta_brand.py`）
+    # 承認クリエイターの一覧・パートナー昇格の許可・口座の段の広告の許可（`brand_*`・`promote_*`・`ad_permissions()`・
+    # `thth brand creators|promote|ads-permissions`・Instagram だけ）。
+    "branded_content",
+    # 提携広告に使える投稿を読む（`partnership_content()`・`thth brand content`）。
+    "partnership_content",
+    # クリエイターマーケットプレイスの検索（`creator_search()`・`thth creators search`）。
+    "creator_marketplace",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。

@@ -54,7 +54,8 @@ def test_REGISTRYにinstagramが載り境界の語彙に収まる():
     assert set(cls.CAPABILITIES) <= base.KNOWN_CAPABILITIES
     assert cls.capabilities() == {"recent_posts", "thread_read", "views", "account_insights", "carousel",
                                   "hide_reply", "comment_control", "quota", "embed", "public_search",
-                                  "profile_lookup", "upcoming_events", "like", "direct_messages"}
+                                  "profile_lookup", "upcoming_events", "like", "direct_messages", "branded_content",
+                                  "partnership_content", "creator_marketplace"}
     assert "edit_post" not in cls.CAPABILITIES
     assert cls.TOKEN_NO_EXPIRY is True and cls.AUTH_NEEDS_APP_ENV is True and cls.META_GRAPH is True
     assert cls.DELETE_PERMISSION == "instagram_manage_contents"
@@ -77,8 +78,9 @@ def test_コメント欄の開け閉めを呼ぶのはedit_cliだけ():
     for mod in (cli_mod, core, collect_mod, doctor, maintain_mod, retract_cli):
         assert ".set_comments_enabled(" not in inspect.getsource(mod)
     assert inspect.getsource(edit_cli).count(".set_comments_enabled(") == 1
-    # 投稿の取り下げとコメントの削除と、M4 のいいねの取り消し（`unlike`・`tests/test_m4_meta_writes.py`）だけ。
-    assert inspect.getsource(ig).count('"DELETE"') == 3
+    # 投稿の取り下げとコメントの削除と、M4 のいいねの取り消し（`unlike`・`tests/test_m4_meta_writes.py`）と、
+    # 承認クリエイターを一覧から外す口（`brand_creators_change` の検査と呼びの 2 か所・`tests/test_m6_meta_brand.py`）だけ。
+    assert inspect.getsource(ig).count('"DELETE"') == 5
 
 
 def test_台帳の性質_上限の根拠は本番の100で_THTHのpostdailyはその内側():

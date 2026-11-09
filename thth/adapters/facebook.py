@@ -175,6 +175,16 @@ WINDOW_CLOSED_SUBCODES = frozenset({2018278})
 USER_PROFILE_PERMISSIONS = {"locale": "pages_user_locale", "timezone": "pages_user_timezone",
                             "gender": "pages_user_gender"}
 # 台帳の `page_id` の正しい引き方（10/29 段 0・`account add`・`from_account` の断り文で同じ文）。
+# 提携広告に使える投稿（Content Discovery API）とクリエイターの検索（Facebook Creator Discovery API）。
+# 公式の頁: marketing-api/ad-creative/partnership-ads/content-discovery-api・fb-creator-discovery（2026-11-09 に原文を確認）。
+BRAND_ADS_PERMISSION = "facebook_branded_content_ads_brand"
+MARKET_PERMISSION = "facebook_creator_marketplace_discovery"
+BUSINESS_PERMISSION = "business_management"
+CONTENT_FIELDS = "content_id,platform,media_type,post_type,ad_usage"
+CONTENT_MAX = 50
+CREATORS_MAX = 50
+NUMERIC_ID = re.compile(r"[0-9]{1,32}")
+
 PAGE_ID_HINT = ("ページの「基本データ → ページの透明性」に出る「ページID」を書きます"
                 "（ページの URL の profile.php?id= の id は人の画面の id で、API のページ id ではありません）")
 
@@ -298,7 +308,8 @@ class FacebookAdapter(base.Adapter):
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
                                          "account_insights", "carousel", "edit_post", "hide_reply",
                                          "quota", "inbox", "mentions", "embed", "public_search",
-                                         "profile_lookup", "page_cta", "live_video", "direct_messages"})
+                                         "profile_lookup", "page_cta", "live_video", "direct_messages",
+                                         "partnership_content", "creator_marketplace"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",
@@ -883,6 +894,45 @@ class FacebookAdapter(base.Adapter):
         return out
 
     # ----- Webhook（段 6） ---------------------------------------------------
+
+    # ----- 提携広告に使える投稿・クリエイターの検索（読むだけ・呼ぶのは `thth/meta_brand.py` だけ） ----------
+
+    # 呼ぶ前に鍵に乗っているかを見る権限（Facebook は business_management を足す）。
+    CONTENT_PERMISSIONS = (BRAND_ADS_PERMISSION, BUSINESS_PERMISSION)
+    ADS_BRAND_PERMISSION = BRAND_ADS_PERMISSION
+    MARKET_PERMISSION = MARKET_PERMISSION
+    MARKET_PERMISSIONS = (MARKET_PERMISSION, "pages_show_list")
+
+    def _content_scope(self) -> dict:
+        return {"fb_page_id": self.page_id}
+
+    def partnership_content(self, business_id: str, *, limit: int = 25) -> list:
+        """`GET /{business-id}/partnership-ads-advertisable-content`（先頭 1 頁）。本文・作者は頼まない。"""
+        value = str(business_id or "").strip()
+        if not NUMERIC_ID.fullmatch(value):
+            raise AdapterError("提携広告に使える投稿: business-id は数字です", failure="definite")
+        body = self._get(f"/{value}/partnership-ads-advertisable-content", "提携広告に使える投稿",
+                         params={**self._content_scope(), "fields": CONTENT_FIELDS,
+                                 "limit": str(max(1, min(int(limit), CONTENT_MAX)))},
+                         permission=self.ADS_BRAND_PERMISSION)
+        return [{key: str(row[key]) for key in CONTENT_FIELDS.split(",") if isinstance(row.get(key), (str, int))}
+                for row in self._rows(body, "提携広告に使える投稿") if row.get("content_id")]
+
+    def creator_search(self, *, country: str | None = None, query: str | None = None,
+                       acting_business_id: str | None = None, limit: int = 10) -> list:
+        """`GET /creator_marketplace/creators`（ページの鍵・Standard は模擬のデータ）。id だけ頼む。"""
+        if acting_business_id:
+            raise AdapterError("クリエイターの検索: acting_business_id は Facebook の公式の頁に無いので送りません"
+                               "【未確認】", failure="definite")
+        params = {"fields": "creator_id", "limit": str(max(1, min(int(limit), CREATORS_MAX)))}
+        if country:
+            params["creator_countries"] = country
+        if query:
+            params["query"] = query
+        body = self._get("/creator_marketplace/creators", "クリエイターの検索", params=params,
+                         permission=self.MARKET_PERMISSION)
+        return [{"creator_id": str(row["creator_id"])} for row in self._rows(body, "クリエイターの検索")
+                if row.get("creator_id")]
 
     def subscribed_webhooks(self, *, app_id: str | None = None) -> list:
         """`GET /{page_id}/subscribed_apps`（このページに入っている THTH のアプリと購読の欄・読むだけ）。

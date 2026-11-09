@@ -29,6 +29,7 @@ Meta の共通層 `thth/meta/` に乗る（`appsecret_proof`・量の制限の�
 """
 from __future__ import annotations
 
+import json
 import re
 import urllib.error
 
@@ -104,6 +105,12 @@ UNSUPPORTED = {
 LIKE_PERMISSION = "instagram_manage_engagement"
 # IG の DM は本文 1,000 バイト未満（L2: instagram-messaging send-message「under 1,000 bytes」）。
 DM_TEXT_BYTES = 1000
+# ブランドコンテンツ・クリエイターマーケットプレイス（公式の頁は 2026-11-09 に原文を確認・`thth/meta_brand.py`）。
+BRAND_PERMISSION = "instagram_branded_content_brand"
+CREATOR_PERMISSION = "instagram_branded_content_creator"
+BRAND_ADS_PERMISSION = "instagram_branded_content_ads_brand"
+MARKET_PERMISSION = "instagram_creator_marketplace_discovery"
+BRAND_IDS_MAX = 100          # user_ids は 1 回に 100 まで（post-level-permissioning）
 
 
 def _number(value):
@@ -156,7 +163,8 @@ class InstagramAdapter(fb.FacebookAdapter):
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "account_insights",
                                          "carousel", "hide_reply", "comment_control", "quota", "embed",
                                          "public_search", "profile_lookup", "upcoming_events", "like",
-                                         "direct_messages"})
+                                         "direct_messages", "branded_content", "partnership_content",
+                                         "creator_marketplace"})
     UNSUPPORTED_REACTIONS = UNSUPPORTED
     REACTION_PERMISSIONS = {"like": LIKE_PERMISSION}
     MESSAGING_PLATFORM = "instagram"
@@ -164,6 +172,12 @@ class InstagramAdapter(fb.FacebookAdapter):
     DM_TEXT_LIMIT = ("bytes", DM_TEXT_BYTES)
     COMMENT_TIME_FIELD = "timestamp"
     COMMENT_READ_PERMISSION = "instagram_manage_comments"
+    # 提携広告に使える投稿（Instagram 側の権限は instagram_basic を足す）とマーケットプレイス（ページの鍵）。
+    CONTENT_PERMISSIONS = (BRAND_ADS_PERMISSION, "instagram_basic", "business_management")
+    ADS_BRAND_PERMISSION = BRAND_ADS_PERMISSION
+    MARKET_PERMISSION = MARKET_PERMISSION
+    MARKET_PERMISSIONS = (MARKET_PERMISSION, "instagram_basic", "pages_manage_metadata", "pages_show_list",
+                          "business_management")
     TOKEN_KEYS = ("access_token",)
     TOKEN_SETUP_HINT = "thth auth"
     POST_ID_FORM_HINT = "Instagram の post_id は数字です（例 17895695668004550）。"
@@ -709,6 +723,95 @@ class InstagramAdapter(fb.FacebookAdapter):
         self._write("DELETE", f"/{self.ig_user_id}/likes", "いいねの取り消し", permission=LIKE_PERMISSION,
                     params={"media_id": value})
         return {"undone": True}
+
+    # ----- ブランドコンテンツ・クリエイターマーケットプレイス（呼ぶのは `thth/meta_brand.py` だけ） ----------
+
+    def _content_scope(self) -> dict:
+        return {"ig_user_id": self.ig_user_id}
+
+    @staticmethod
+    def _id_list(ids, what: str) -> str:
+        values = [str(v).strip() for v in ids]
+        if not values or len(values) > BRAND_IDS_MAX or not all(IG_ID.fullmatch(v) for v in values):
+            raise fb.AdapterError(f"{what}: id は数字で 1〜{BRAND_IDS_MAX} 個です", failure="definite")
+        return ",".join(values)
+
+    def brand_creators_check(self, ids) -> list:
+        """`GET /{ig-user-id}/branded_content_tag_approval?user_ids=…`。尋ねた id のうち一覧にある id だけが返る。"""
+        body = self._get(f"/{self.ig_user_id}/branded_content_tag_approval", "承認クリエイターの確認",
+                         params={"user_ids": self._id_list(ids, "承認クリエイターの確認")},
+                         permission=BRAND_PERMISSION)
+        return [str(row["id"]) for row in self._rows(body, "承認クリエイターの確認") if row.get("id")]
+
+    def brand_creators_change(self, method: str, ids) -> dict:
+        """一覧に足す（POST）・外す（DELETE）。1 つでも失敗すれば Meta は 1 つも変えない（公式の頁）。"""
+        if method not in ("POST", "DELETE"):
+            raise fb.AdapterError("承認クリエイターの変更: POST か DELETE です", failure="definite")
+        joined = self._id_list(ids, "承認クリエイターの変更")
+        path = f"/{self.ig_user_id}/branded_content_tag_approval"
+        what = "承認クリエイターの追加" if method == "POST" else "承認クリエイターの削除"
+        if method == "POST":
+            self._write("POST", path, what, permission=BRAND_PERMISSION, form={"user_ids": joined})
+        else:
+            self._write("DELETE", path, what, permission=BRAND_PERMISSION, params={"user_ids": joined})
+        return {"changed": True, "count": len(joined.split(","))}
+
+    def promote_approved(self, media_id: str) -> list:
+        """`GET /{ig-media-id}/branded_content_partner_promote`（クリエイターの鍵）。許したブランドの id。"""
+        value = self._media_id(media_id, "広告に使う許可の確認")
+        body = self._get(f"/{value}/branded_content_partner_promote", "広告に使う許可の確認",
+                         permission=CREATOR_PERMISSION)
+        approved = body.get("approved")
+        if isinstance(approved, str):
+            approved = [v.strip() for v in approved.split(",")]
+        if approved is None:
+            approved = []
+        if not isinstance(approved, list):
+            raise fb.AdapterError("広告に使う許可の確認: 応答の approved の形が読めません（0 件とは言えません）")
+        return [str(v) for v in approved if str(v).strip()]
+
+    def promote_set(self, media_id: str, sponsor_id: str, allow: bool) -> dict:
+        """`POST /{ig-media-id}/branded_content_partner_promote`（`sponsor_id`・`permission=true|false`）。"""
+        value = self._media_id(media_id, "広告に使う許可")
+        sponsor = str(sponsor_id or "").strip()
+        if not IG_ID.fullmatch(sponsor):
+            raise fb.AdapterError("広告に使う許可: sponsor_id はブランドのビジネス口座の数字の id です", failure="definite")
+        self._write("POST", f"/{value}/branded_content_partner_promote", "広告に使う許可",
+                    permission=CREATOR_PERMISSION,
+                    form={"sponsor_id": sponsor, "permission": "true" if allow else "false"})
+        return {"allowed": bool(allow)}
+
+    def ad_permissions(self, *, creator_username: str | None = None) -> list:
+        """`GET /{ig-user-id}/branded_content_ad_permissions`（先頭 1 頁）。状態と相手の id だけ返す。"""
+        params = {}
+        if creator_username:
+            handle = str(creator_username).strip().lstrip("@")
+            if not USERNAME_RE.fullmatch(handle):
+                raise fb.AdapterError("広告の許可の一覧: username は英数・.・_ の 30 字までです", failure="definite")
+            params["creator_username"] = handle
+        body = self._get(f"/{self.ig_user_id}/branded_content_ad_permissions", "広告の許可の一覧",
+                         params=params or None, permission=BRAND_ADS_PERMISSION)
+        out = []
+        for row in self._rows(body, "広告の許可の一覧"):
+            who = row.get("creator_ig_id", row.get("creator_id"))
+            out.append({"status": row.get("permission_status") if isinstance(row.get("permission_status"), str)
+                        else None, "creator_id": str(who) if who is not None else None})
+        return out
+
+    def creator_search(self, *, country: str | None = None, query: str | None = None,
+                       acting_business_id: str | None = None, limit: int = 10) -> list:
+        """`GET /{ig-user-id}/creator_marketplace_creators`（ページの鍵・Standard は test data）。id だけ頼む。"""
+        params = {"fields": "id", "limit": str(max(1, min(int(limit), fb.CREATORS_MAX)))}
+        if country:
+            params["creator_countries"] = json.dumps([country])
+        if query:
+            params["query"] = query
+        if acting_business_id:
+            # 【未確認】公式の頁では acting_business_id は creator_marketplace_brand_info にだけ書いてある。
+            params["acting_business_id"] = acting_business_id
+        body = self._get(f"/{self.ig_user_id}/creator_marketplace_creators", "クリエイターの検索", params=params,
+                         permission=MARKET_PERMISSION)
+        return [{"creator_id": str(row["id"])} for row in self._rows(body, "クリエイターの検索") if row.get("id")]
 
     def dm_profile(self, user_id: str) -> dict:
         raise fb.AdapterError("相手の属性: pages_user_* は Messenger（Facebook ページ）の権限です。Instagram には使いません")

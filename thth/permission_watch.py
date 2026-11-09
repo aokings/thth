@@ -119,6 +119,13 @@ PERMISSIONS = {
     "pages_user_locale": _p("facebook", READ, "dm_profile"),
     "pages_user_timezone": _p("facebook", READ, "dm_profile"),
     "pages_user_gender": _p("facebook", READ, "dm_profile"),
+    # ブランドコンテンツとクリエイターマーケットプレイス（`thth/meta_brand.py`・計画 §1.4〜1.8・1.10）。
+    "instagram_branded_content_brand": _p("instagram", WRITE, "brand_creators"),
+    "instagram_branded_content_creator": _p("instagram", WRITE, "brand_promote"),
+    "instagram_branded_content_ads_brand": _p("instagram", READ, "brand_ads_permissions", "brand_content"),
+    "facebook_branded_content_ads_brand": _p("facebook", READ, "brand_content"),
+    "instagram_creator_marketplace_discovery": _p("instagram", READ, "creators_search"),
+    "facebook_creator_marketplace_discovery": _p("facebook", READ, "creators_search"),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -132,6 +139,7 @@ ADS_KEEPALIVE_READS = frozenset({"ads_read"})
 RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION,
                # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
                "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like",
+               "brand_creators", "brand_promote", "brand_ads_permissions", "brand_content", "creators_search",
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",

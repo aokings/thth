@@ -36,6 +36,10 @@ slot	EDITED	直したあとの本文
 slot	BUDGET	通しの予算（円・止めた形で作るのでお金は動かない）
 slot	END	終了の日時（ISO 8601）
 slot	CATALOG	カタログの id（thth ads catalog list に出る）
+slot	CREATOR	承認クリエイターに足す・外す相手の Instagram の数字の id（テストのクリエイター口座）
+slot	BRAND	ブランド（テストのビジネス口座）の Instagram の数字の id
+slot	TIEUP	タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id
+slot	BUSINESS	business-id（Business Suite の事業の数字の id）
 seg	th-basic	threads	threads_basic — the account's own posts.
 items	threads_basic
 cmd	thth posts {TH} --limit 3
@@ -179,6 +183,15 @@ seg	meta-embed	facebook	Meta oEmbed Read — the embed HTML of a public Facebook
 items	meta_oembed_read
 cmd	thth embed {FB} {FB_URL}
 end
+seg	fb-brand-content	facebook	facebook_branded_content_ads_brand — read the partnership content a business can advertise.
+items	facebook_branded_content_ads_brand
+cmd	thth brand content {FB} --business {BUSINESS}
+end
+seg	fb-creators	facebook	facebook_creator_marketplace_discovery — discover creators (Standard Access returns simulated data).
+items	facebook_creator_marketplace_discovery
+prep	ページで Facebook Creator Discovery の利用規約に同意しておく（ブランドの資格は Meta が見る）
+cmd	thth creators search {FB} --country JP
+end
 seg	flow-ig	instagram	Reviewer flow — an Instagram account, with the Threads account linked to it.
 items	threads_business_basic
 prep	招待の URL を運営者の端末から受け取り、ブラウザの app 窓（アドレス欄なし）で開いておく（Instagram の招待・Facebook ページの招待とは別の 1 本）
@@ -234,6 +247,34 @@ seg	ig-delete	instagram	instagram_manage_contents — delete the media.
 items	instagram_manage_contents
 two	thth retract {IG} {IG_POST} --reason {REASON} --by {BY}
 hand	Instagram から消えたのを見せたら Return
+end
+seg	ig-brand-creators	instagram	instagram_branded_content_brand — view, add and remove creators on the brand's approved list.
+items	instagram_branded_content_brand
+real	user_ids の GET が引数なしの全件を返すか・ページの鍵で通るかが【未確認】（公式の頁は Business access token）
+prep	Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする。追加の相手に 2 つ目のテスト口座を用意する
+cmd	thth brand creators {IG} list {CREATOR}
+two	thth brand creators {IG} approve {CREATOR} --by {BY}
+cmd	thth brand creators {IG} list {CREATOR}
+two	thth brand creators {IG} remove {CREATOR} --by {BY}
+end
+seg	ig-brand-promote	instagram	instagram_branded_content_creator — allow or revoke a brand's use of a tagged post in partnership ads.
+items	instagram_branded_content_creator
+real	sponsor_id が必須かどうかが【未確認】（公式の頁は例に出すが引数の表に無い）
+prep	クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく
+cmd	thth brand promote {IG} {TIEUP}
+two	thth brand promote {IG} {TIEUP} --allow --sponsor {BRAND} --by {BY}
+cmd	thth brand promote {IG} {TIEUP}
+end
+seg	ig-brand-ads	instagram	instagram_branded_content_ads_brand — read the account-level partnership ad permissions and the content a business can advertise.
+items	instagram_branded_content_ads_brand
+prep	Business Suite で自分の役割（ADS・CREATOR_MANAGEMENT・CREATOR_CONTENT のどれか）を確かめておく
+cmd	thth brand ads-permissions {IG}
+cmd	thth brand content {IG} --business {BUSINESS}
+end
+seg	ig-creators	instagram	instagram_creator_marketplace_discovery — discover creators (Standard Access returns test data).
+items	instagram_creator_marketplace_discovery
+prep	ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）
+cmd	thth creators search {IG} --country JP
 end
 seg	flow-ads	ads	Reviewer flow — an ad account, with Facebook Login for Business.
 items	-

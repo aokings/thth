@@ -96,7 +96,8 @@ def test_REGISTRYにfacebookが載り境界の語彙に収まる():
     assert cls.capabilities() == {"recent_posts", "thread_read", "views", "link_preview",
                                   "account_insights", "carousel", "edit_post", "hide_reply", "quota",
                                   "inbox", "mentions", "embed", "public_search", "profile_lookup",
-                                  "page_cta", "live_video", "direct_messages"}
+                                  "page_cta", "live_video", "direct_messages", "partnership_content",
+                                  "creator_marketplace"}
     assert cls.TOKEN_KEYS == ("access_token",) and cls.has_token({"access_token": "x"})
     assert cls.TOKEN_NO_EXPIRY is True and cls.AUTH_NEEDS_APP_ENV is True
     assert cls.DELETE_PERMISSION == "pages_manage_posts"
