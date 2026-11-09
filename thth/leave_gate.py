@@ -254,6 +254,9 @@ def bind(adapter,cfg):
              # 計画 Meta 全部盛り M4: 書く最小の口（行動ボタン・ライブ・DM）。止めた口座では呼べない。
              'page_cta','delete_page_cta','live_create','live_status','live_end','dm_conversations',
              'dm_messages','dm_send','private_reply','comment_created','dm_profile','_post_object','_write',
+             # ブランドコンテンツ・クリエイターマーケットプレイス（`thth/meta_brand.py`）。
+             'brand_creators_check','brand_creators_change','promote_approved','promote_set','ad_permissions',
+             'partnership_content','creator_search',
              # 計画 Meta 全部盛り 段 M5: 権限の不使用の見張りの最小の読み。
              'keepalive_read'}
     for name in methods:

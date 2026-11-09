@@ -5410,6 +5410,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth page cta`・`thth live`・`thth dm`（計画 Meta 全部盛り M4・書く最小の口・二段確認）。`thth/meta_write.py` に閉じる。
     from . import meta_write
     meta_write.register(sub)
+    # `thth brand`・`thth creators`（ブランドコンテンツとクリエイターマーケットプレイス・書く口は二段確認）。`thth/meta_brand.py` に閉じる。
+    from . import meta_brand
+    meta_brand.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

@@ -966,4 +966,24 @@ ENTRIES = {
         "doors": _C,
         "since": "5.13.0",
     },
+    # ブランドコンテンツとクリエイターマーケットプレイス（thth/meta_brand.py）。since は版上げのときに直す。
+    "brand_args_invalid": {
+        "kind": "refusal",
+        "why": "thth brand・thth creators に渡した id・旗・語が、Meta の口の決まりに合っていません（id は数字、--sponsor は書くとき必須、国は 2 字など）。",
+        "fix": "1 行目の指す引数を直して打ち直してください。承認クリエイターは list/approve/remove のあとに数字の id を 1〜100 個、"
+               "広告に使う許可を許す・取り消すときは --sponsor <ブランドのビジネス口座の id> と --by <名前> が要ります",
+        "command": "thth brand creators <IG の口座> list <数字の id>",
+        "better": "先に list や旗なしの promote で今の状態を読むと、足す・外すの一段目で何が変わるかを迷わず確かめられます",
+        "doors": _C,
+        "since": "5.13.0",
+    },
+    "creator_marketplace_not_ready": {
+        "kind": "refusal",
+        "why": "Meta がクリエイターの検索を断りました。鍵に権限が乗っていても、ブランドがクリエイターマーケットプレイスに onboard 前か、資格の外だと断られます。",
+        "fix": "Business Suite（Facebook は利用規約の同意の画面）でブランドを onboard し、規約に同意してから打ち直してください。資格は Meta が判定します",
+        "command": "thth creators search <口座> --country JP",
+        "better": "Standard Access の間は Meta が試験用のデータを返すので、onboard が済めば審査の前でも呼び出しの成功を作れます",
+        "doors": _C,
+        "since": "5.13.0",
+    },
 }

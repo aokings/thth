@@ -108,6 +108,8 @@ All subcommands `thth --help` lists, one line each:
 - `page` — a Facebook Page's call-to-action buttons (`page cta show|delete`; delete is two-step)
 - `live` — create a Facebook Page live video and get its stream address, or end it (`live create|end`; two-step)
 - `dm` — read the Page and Instagram inboxes and reply within the 24-hour window (`dm list|read|send`; send is two-step; nothing stored)
+- `brand` — branded content on Instagram and Facebook (`brand creators list|approve|remove` the approved-creators list, `brand promote` allows or revokes a brand's use of a tagged post, `brand ads-permissions`, `brand content --business`; approve, remove and allow/deny are two-step; nothing stored)
+- `creators` — search the creator marketplace (`creators search`; read-only, ids only, nothing stored)
 - `quota` — read the platform usage headers, any rate-limit wait and (Instagram) the daily publishing limit for an account (read-only; Facebook and Instagram)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH

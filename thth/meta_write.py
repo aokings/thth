@@ -194,12 +194,12 @@ def _guard_stopped(account) -> None:
                 "止めたまま媒体は呼びません", rc=1, guard="stopped")
 
 
-def _record(account, action, media, status, *, permission=None, error=None) -> None:
+def _record(account, action, media, status, *, permission=None, error=None, mode=None) -> None:
     """runs に 1 行（命令の名前・媒体・権限・結果だけ）。本文・相手・id は入れない。"""
     try:
         runs_mod.record_minimal(account, {"action": action, "account": account, "medium": media,
-                                          "mode": "read" if action in ("dm_list", "dm_read", "dm_profile")
-                                          else "production",
+                                          "mode": mode or ("read" if action in ("dm_list", "dm_read", "dm_profile")
+                                                         else "production"),
                                           "status": status, "error": error, "permission": permission})
     except (OSError, accounts_mod.AccountError):
         pass

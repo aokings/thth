@@ -64,6 +64,10 @@ SLOTS = {
     "MENTION": "ページへの言及（@[ページの id]）を含む本文", "EDITED": "直したあとの本文",
     "BUDGET": "通しの予算（円・止めた形で作るのでお金は動かない）", "END": "終了の日時（ISO 8601）",
     "CATALOG": "カタログの id（thth ads catalog list に出る）",
+    "CREATOR": "承認クリエイターに足す・外す相手の Instagram の数字の id（テストのクリエイター口座）",
+    "BRAND": "ブランド（テストのビジネス口座）の Instagram の数字の id",
+    "TIEUP": "タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id",
+    "BUSINESS": "business-id（Business Suite の事業の数字の id）",
 }
 
 
@@ -174,6 +178,13 @@ SEGMENTS = (
          ["page_public_metadata_access"], ("cmd", "thth who {FB} {FBPAGE} --profile")),
     _seg("meta-embed", "facebook", "Meta oEmbed Read — the embed HTML of a public Facebook post.",
          ["meta_oembed_read"], ("cmd", "thth embed {FB} {FB_URL}")),
+    _seg("fb-brand-content", "facebook", "facebook_branded_content_ads_brand — read the partnership content a "
+         "business can advertise.", ["facebook_branded_content_ads_brand"],
+         ("cmd", "thth brand content {FB} --business {BUSINESS}")),
+    _seg("fb-creators", "facebook", "facebook_creator_marketplace_discovery — discover creators "
+         "(Standard Access returns simulated data).", ["facebook_creator_marketplace_discovery"],
+         ("prep", "ページで Facebook Creator Discovery の利用規約に同意しておく（ブランドの資格は Meta が見る）"),
+         ("cmd", "thth creators search {FB} --country JP")),
     # ---------------------------------------------------------------- Instagram
     # 審査員の招待は媒体ごとに 1 本・鍵は口座 1 つ（Worker が口座ごとの鍵の表で引く）。FB の鍵で `doctor {IG}` を打つと
     # 401 `invalid_key` なので、IG の区間の前に IG の招待で login をやり直す（計画 §4 の「遠くの道で分かったこと」）。
@@ -214,6 +225,29 @@ SEGMENTS = (
     _seg("ig-delete", "instagram", "instagram_manage_contents — delete the media.", ["instagram_manage_contents"],
          ("two", "thth retract {IG} {IG_POST} --reason {REASON} --by {BY}"),
          ("hand", "Instagram から消えたのを見せたら Return")),
+    _seg("ig-brand-creators", "instagram", "instagram_branded_content_brand — view, add and remove creators on the "
+         "brand's approved list.", ["instagram_branded_content_brand"],
+         ("prep", "Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする。追加の相手に 2 つ目のテスト口座を用意する"),
+         ("cmd", "thth brand creators {IG} list {CREATOR}"),
+         ("two", "thth brand creators {IG} approve {CREATOR} --by {BY}"),
+         ("cmd", "thth brand creators {IG} list {CREATOR}"),
+         ("two", "thth brand creators {IG} remove {CREATOR} --by {BY}"),
+         real_first="user_ids の GET が引数なしの全件を返すか・ページの鍵で通るかが【未確認】（公式の頁は Business access token）"),
+    _seg("ig-brand-promote", "instagram", "instagram_branded_content_creator — allow or revoke a brand's use of a "
+         "tagged post in partnership ads.", ["instagram_branded_content_creator"],
+         ("prep", "クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく"),
+         ("cmd", "thth brand promote {IG} {TIEUP}"),
+         ("two", "thth brand promote {IG} {TIEUP} --allow --sponsor {BRAND} --by {BY}"),
+         ("cmd", "thth brand promote {IG} {TIEUP}"),
+         real_first="sponsor_id が必須かどうかが【未確認】（公式の頁は例に出すが引数の表に無い）"),
+    _seg("ig-brand-ads", "instagram", "instagram_branded_content_ads_brand — read the account-level partnership ad "
+         "permissions and the content a business can advertise.", ["instagram_branded_content_ads_brand"],
+         ("prep", "Business Suite で自分の役割（ADS・CREATOR_MANAGEMENT・CREATOR_CONTENT のどれか）を確かめておく"),
+         ("cmd", "thth brand ads-permissions {IG}"), ("cmd", "thth brand content {IG} --business {BUSINESS}")),
+    _seg("ig-creators", "instagram", "instagram_creator_marketplace_discovery — discover creators "
+         "(Standard Access returns test data).", ["instagram_creator_marketplace_discovery"],
+         ("prep", "ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）"),
+         ("cmd", "thth creators search {IG} --country JP")),
     # ---------------------------------------------------------------- 広告
     # 設計 広告の資格と遠くの道（2026-11-06）: 広告の招待も資格の行を作り、`thth login` の鍵が広告の台帳に結ばれる。
     # 鍵は口座 1 つなので、IG と同じく広告の区間の前に広告の招待で login をやり直す。審査員の台帳に結んだページは
@@ -251,10 +285,7 @@ SEGMENTS = (
 # 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す。
 PLANNED = {
     "email": "facebook", "pages_events": "facebook",
-    "facebook_branded_content_ads_brand": "facebook", "facebook_creator_marketplace_discovery": "facebook",
-    "instagram_manage_events": "instagram", "instagram_branded_content_brand": "instagram",
-    "instagram_branded_content_creator": "instagram", "instagram_branded_content_ads_brand": "instagram",
-    "instagram_creator_marketplace_discovery": "instagram", "instagram_creator_marketplace_messaging": "instagram",
+    "instagram_manage_events": "instagram", "instagram_creator_marketplace_messaging": "instagram",
     "instagram_shopping_tag_products": "instagram",
     "commerce_manage_accounts": "ads",
     "whatsapp_business_management": "whatsapp", "whatsapp_business_messaging": "whatsapp",
