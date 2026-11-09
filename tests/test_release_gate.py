@@ -226,6 +226,28 @@ def test_作業木の未commitの変更は見ない(repo):
     assert codes(repo) == ["release_version_not_bumped"]
 
 
+@pytest.mark.parametrize("mark", ["Unpublished update", "未公開の更新案"])
+def test_privacyの施行日が未設定のまま残っていれば止まる(repo, mark):
+    repo.version("1.1.0")
+    repo.commit("1.1.0", **{"callback__public__privacy__index.html": f"<p>{mark} — x</p>\n"})
+    blocks = gate.check(repo.path, "HEAD", ci=GREEN, compat=COMPAT_OK, skip_ci=True)
+    hit = [b for b in blocks if b.code == "release_privacy_date_unset"]
+    assert hit and mark in hit[0].seen
+
+
+def test_privacyに施行日が入っていれば止めない(repo):
+    repo.version("1.1.0")
+    repo.commit("1.1.0", **{"callback__public__privacy__index.html": "<p>Effective 2026-11-09</p>\n"})
+    assert "release_privacy_date_unset" not in codes(repo, skip_ci=True)
+
+
+def test_危ない領域にMetaの書く口と認可がある():
+    for path, name in (("thth/meta_write.py", "meta_write"), ("thth/meta_events.py", "meta_write"),
+                       ("thth/meta_brand.py", "meta_write"), ("thth/meta_shop.py", "meta_write"),
+                       ("thth/authflow.py", "auth_keys"), ("thth/adapters/auth_facebook.py", "auth_keys")):
+        assert name in gate.areas_of(path), path
+
+
 # ---- 出力の形（前向きな断り） ----
 
 def test_止めるときは1行目が符丁で3つが続く(repo):
@@ -243,7 +265,7 @@ def test_関門の符丁はすべて目録にあり3つがそろう():
     found = {node.args[0].value for node in ast.walk(tree)
              if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_refuse"
              and node.args and isinstance(node.args[0], ast.Constant)}
-    assert len(found) == 10
+    assert len(found) == 11
     for code in found:
         entry = rc.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"], code
