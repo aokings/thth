@@ -69,8 +69,8 @@ def test_Messengerの購入を送る_datasetを作って記録し次は使い回
     assert isinstance(event["event_time"], int) and abs(event["event_time"] - jst.now_jst().timestamp()) < 60
     assert made[1]["form"]["partner_agent"] == ["thth"]
     assert meta_events.stored_dataset(FB_ACCOUNT, PAGE, "messenger") == DATASET_FB
-    # 2 回目は dataset を作り直さない（記録を使う）。
-    (rc, out, err), again = two_steps(capsys, *FB_ARGV)
+    # 2 回目は dataset を作り直さない（記録を使う）。同じ日の同じ出来事は柵が断るので、別の出来事として --nth 2。
+    (rc, out, err), again = two_steps(capsys, *FB_ARGV, "--nth", "2")
     assert rc == 0, err
     assert again["dataset"] == "saved"
     assert [c["path"] for c in writes(ev)[2:]] == [V + f"/{DATASET_FB}/events"]
@@ -190,6 +190,75 @@ def test_datasetの応答に_idが無ければ作れたと言わない(ev, capsy
     (rc, out, err), _ = two_steps(capsys, *FB_ARGV)
     assert rc == 1 and "meta_write_unknown" in out
     assert meta_events.stored_dataset(FB_ACCOUNT, PAGE, "messenger") is None
+
+
+# ================================================================== 同じ日の打ち直しの柵（masaru 11/10）
+
+def _event_posts(ev):
+    return [c for c in writes(ev) if c["path"].endswith("/events")]
+
+
+def test_同じ日の同じ出来事は二度送らない_nthで別の出来事として送れる(ev, capsys):
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    rc, out, err = main(capsys, *FB_ARGV, "--json")              # 一段目は通る（digest は同じ）
+    digest = json.loads(out)["digest"]
+    rc, out, err = main(capsys, *FB_ARGV, "--confirm", digest, "--json")
+    assert rc == 1 and "meta_event_already_sent" in out
+    assert len(_event_posts(ev)) == 1
+    (rc, _out, err), first = two_steps(capsys, *FB_ARGV, "--nth", "2")
+    assert rc == 0, err
+    assert first["digest"] != digest
+    assert len(_event_posts(ev)) == 2
+    nothing_kept(ev, PSID, AMOUNT)
+
+
+def test_はっきり断られたら印を外し_結果が分からなければ印を残す(ev, capsys):
+    route = ("POST", V + f"/{DATASET_FB}/events")
+    ev["routes"][route] = (200, {"events_received": 0})          # Meta が数えなかった: 送り直してよい
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_write_refused" in out
+    ev["routes"][route] = (200, {"events_received": 1})
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    ev["routes"][route] = (503, {"error": {"message": "unavailable", "code": 2}})
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "3")
+    assert rc == 1 and "meta_write_unknown" in out
+    ev["routes"][route] = (200, {"events_received": 1})
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "3")   # 分からなかったものは打ち直さない
+    assert rc == 1 and "meta_event_already_sent" in out
+    assert len(_event_posts(ev)) == 3
+
+
+def test_前の日の印は数えない(ev, capsys):
+    rc, out, _err = main(capsys, *FB_ARGV, "--json")
+    digest = json.loads(out)["digest"]
+    path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.SENT_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"date": "2000-01-01", "marks": [meta_events.sent_mark(digest, "2000-01-01")]}))
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    kept = json.loads(path.read_text())
+    assert kept["date"] == jst.now_jst().date().isoformat() and len(kept["marks"]) == 1
+
+
+@pytest.mark.parametrize("broken", ["dir", "garbage"])
+def test_印が読めなければ確かめられないので送らない(ev, capsys, broken):
+    path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.SENT_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if broken == "dir":
+        path.mkdir()
+    else:
+        path.write_text("{not json")
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_event_already_sent" in out and "確かめられません" in out
+    assert _event_posts(ev) == []
+
+
+def test_印には相手のidも金額も入らない():
+    mark = meta_events.sent_mark("abcdef012345", "2026-11-10")
+    assert re.fullmatch(r"[0-9a-f]{24}", mark)
+    assert meta_events.sent_mark("abcdef012345", "2026-11-11") != mark
 
 
 # ================================================================== 二段確認・安全装置・leave_gate

@@ -25,12 +25,20 @@
 `production: true` があり、安全装置が止めていないときだけ 1 回打つ（dataset が無ければ同じロックの中で先に作る）。
 Meta は重複を除かないので、結果が分からないときは打ち直さない。
 
-**保存**: dataset の id（`state/<口座>/event_dataset.json`・秘密でも個人でもない）と、runs の 1 行（いつ・種類・件数 1・
+**打ち直しの柵**（masaru 11/10「入れて」）: Meta は重複を除かないので、同じ口座・同じ日（日本時間）に同じ digest の出来事は
+2 回送らない。二段目でロックの中、媒体を呼ぶ前に印を置き、Meta がはっきり断ったときだけ印を外す（結果が分からないときは
+残す＝打ち直さない）。印は digest と日付を混ぜたハッシュで、相手の id・金額は読み戻せない。同じ相手が同じ日に同じ金額で
+本当に 2 回買ったときは `--nth 2`（digest が変わる）で別の出来事として送る。印の置き場が読めない・書けないときは送らない。
+
+**保存**: dataset の id（`state/<口座>/event_dataset.json`・秘密でも個人でもない）、その日の送った印
+（`state/<口座>/event_sent.json`・日付とハッシュだけ・翌日に捨てる）と、runs の 1 行（いつ・種類・件数 1・
 使った権限・結果）だけ。相手の id・金額・会話はどこにも残さない。
 """
 from __future__ import annotations
 
+import argparse
 import decimal
+import hashlib
 import json
 import os
 import re
@@ -40,6 +48,7 @@ from . import approval as approval_mod
 from . import jst
 from . import meta_write as mw
 from . import secrets_fs
+from .adapters import base as adapter_base
 
 # 柔らかい名前 → Meta の名前（`event_name`）。Meta の名前そのもの（大文字小文字を問わない）も通す。
 EVENT_TYPES = {
@@ -56,6 +65,8 @@ CURRENCY = re.compile(r"[A-Z]{3}")
 PERSON_ID = re.compile(r"[0-9]{1,32}")
 VALUE_MAX = decimal.Decimal("1000000000")
 DATASET_FILE = "event_dataset.json"
+SENT_FILE = "event_sent.json"
+SENT_MAX = 10000   # 1 日の印の数の上限（ファイルが際限なく育たないように）
 
 
 # ------------------------------------------------------------------ 純粋な部分（試験が直接見る）
@@ -138,6 +149,77 @@ def remember_dataset(account, owner_id, channel, dataset_id) -> None:
         "dataset_id": str(dataset_id), "owner_id": str(owner_id), "channel": channel, "saved_at": jst.iso()})
 
 
+def sent_mark(digest, day) -> str:
+    """その日の送った印。digest（相手の id・金額から作る）と日付を混ぜたハッシュで、元の値は読み戻せない。"""
+    return hashlib.sha256(f"thth-dm-event-sent\x1f{digest}\x1f{day}".encode("utf-8")).hexdigest()[:24]
+
+
+def _sent_path(account) -> str:
+    return os.path.join(accounts_mod.state_dir_for(account), SENT_FILE)
+
+
+def _sent_marks(account, day):
+    """今日の印の list。ファイルが無い・前の日のものなら空。読めない・壊れているなら None（送らない側に倒す）。"""
+    try:
+        with open(_sent_path(account), encoding="utf-8") as stream:
+            row = json.loads(stream.read())
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError):
+        return None
+    if not isinstance(row, dict) or not isinstance(row.get("marks"), list):
+        return None
+    if row.get("date") != day:
+        return []
+    return [m for m in row["marks"] if isinstance(m, str)]
+
+
+def _save_marks(account, day, marks) -> None:
+    secrets_fs.atomic_write_json(_sent_path(account), {"date": day, "marks": marks[-SENT_MAX:]})
+
+
+def _cannot_count(account, reason):
+    mw._refuse("meta_event_already_sent", f"{account}: 今日送った出来事の印が{reason}ので、同じ出来事を二重に送って"
+               "いないか確かめられません。確かめられないまま送ると Meta で二重に数えられうるので送りません", rc=1)
+
+
+def claim_mark(account, digest, day) -> str:
+    """二段目（ロックの中）で、媒体を呼ぶ前に今日の印を置く。既にあれば断る。"""
+    marks = _sent_marks(account, day)
+    if marks is None:
+        _cannot_count(account, "読めない")
+    mark = sent_mark(digest, day)
+    if mark in marks:
+        mw._refuse("meta_event_already_sent", f"{account}: 同じ出来事（同じ相手・種類・金額）を今日（日本時間）もう送って"
+                   "います。Meta は重複を除かないので、もう一度送ると二重に数えられます。送っていません", rc=1)
+    try:
+        _save_marks(account, day, [*marks, mark])
+    except OSError:
+        _cannot_count(account, "書けない")
+    return mark
+
+
+def release_mark(account, mark, day) -> None:
+    """Meta がはっきり断った（何も数えられていない）ときだけ印を外す。外せなくても害は打ち直せないことだけ。"""
+    marks = _sent_marks(account, day)
+    if not marks or mark not in marks:
+        return
+    try:
+        _save_marks(account, day, [m for m in marks if m != mark])
+    except OSError:
+        pass
+
+
+def _nth(value) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("--nth は 1〜100 の整数です") from None
+    if not 1 <= number <= 100:
+        raise argparse.ArgumentTypeError("--nth は 1〜100 の整数です")
+    return number
+
+
 # ------------------------------------------------------------------ 命令
 
 def _event_permission(args, adapter_cls, token) -> str:
@@ -193,8 +275,9 @@ def cmd_event(args) -> int:
     owner = adapter.event_owner_id()
     saved = stored_dataset(args.account, owner, channel)
     refresh = bool(getattr(args, "refresh_dataset", False))
+    nth = getattr(args, "nth", None) or 1
     digest = mw.digest_of("dm_event", args.account, channel, name, person, value if value is not None else "",
-                          currency or "")
+                          currency or "", *([f"nth={nth}"] if nth > 1 else []))
     if not args.confirm:
         shown = f"{value} {currency}" if value is not None else "—"
         return mw._stage_one(args, digest=digest, payload={
@@ -206,17 +289,30 @@ def cmd_event(args) -> int:
              else "  dataset: 無いので二段目で作ります（1 ページ 1 つ・既にあれば Meta が同じ id を返します）"),
             "  Meta に送るのは出来事の種類・金額・相手の id です（広告の最適化と計測のため）。Meta は重複を除かないので、"
             "同じ出来事は 1 回だけ送ってください",
-            "  THTH に残すのは dataset の id と、いつ・種類・件数の 1 行だけです（相手の id・金額は残しません）",
+            "  同じ出来事は今日はもう送れません（同じ相手が同じ金額で本当に 2 回なら --nth 2）",
+            "  THTH に残すのは dataset の id・今日送った印（ハッシュ）と、いつ・種類・件数の 1 行だけです（相手の id・金額は残しません）",
             *([] if approval_mod.is_true(account_cfg.get("production"))
               else ["  ⚠ 台帳に production: true が無いので、二段目でも媒体は呼びません"])],
             again=(f"thth dm event {args.account} --type {args.type}"
                    + (f" --conversation {args.conversation}" if getattr(args, "conversation", None) else f" --psid {person}")
                    + (f" --value {args.value} --currency {args.currency}" if value is not None else "")
+                   + (f" --nth {nth}" if nth > 1 else "")
                    + f" --by {json.dumps(by, ensure_ascii=False)}"))
     mw._check_confirm(args, digest)
     mw._ready(args, account_cfg)
 
+    day = jst.now_jst().date().isoformat()
+
     def send():
+        mark = claim_mark(args.account, digest, day)        # ロックの中・媒体を呼ぶ前
+        try:
+            return _send()
+        except adapter_base.AdapterError as exc:
+            if getattr(exc, "failure", None) != "ambiguous" and not str(exc).startswith("messaging_window_closed"):
+                release_mark(args.account, mark, day)       # はっきり断られた: 何も数えられていない
+            raise
+
+    def _send():
         dataset = None if refresh else saved
         if dataset is None:
             dataset = adapter.event_dataset()

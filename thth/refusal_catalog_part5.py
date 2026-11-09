@@ -1013,6 +1013,15 @@ ENTRIES = {
         "doors": _C,
         "since": "5.14.0",
     },
+    "meta_event_already_sent": {
+        "kind": "refusal",
+        "why": "同じ出来事（同じ相手・種類・金額）を、今日（日本時間）もう送っているか、今日送った印が読めず確かめられません。Meta は出来事の重複を除かないので、二度送ると広告の計測で二重に数えられます。",
+        "fix": "同じ相手が同じ日に同じ金額で本当にもう一度買ったなど、別の出来事なら --nth 2 を付けて一段目から打ち直してください。印が読めないときは、運営者が state/<口座>/event_sent.json の持ち主と権限を確かめて直します",
+        "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --nth 2 --by <名前>",
+        "better": "出来事は起きたときに 1 回だけ送る流れにしておくと、計測が正しくなり、広告の最適化にもそのまま効きます",
+        "doors": _C,
+        "since": "5.14.1",
+    },
     "meta_event_recipient_unknown": {
         "kind": "refusal",
         "why": "出来事の相手が 1 人に決まりません（--conversation と --psid の両方か、どちらも無いか、会話の相手が 1 人でないか、id が数字でない）。",

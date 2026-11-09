@@ -582,10 +582,17 @@ def register(sub) -> None:
     dm.add_argument("--value", default=None, help="event の金額（--currency と一緒に。purchase は必須）")
     dm.add_argument("--currency", default=None, help="event の通貨コード（JPY など）")
     dm.add_argument("--channel", default=None, help="event のチャネル（messenger・instagram・whatsapp。既定は口座の媒体から）")
+    dm.add_argument("--nth", type=_event_nth, default=1,
+                    help="event で、同じ相手・同じ金額の出来事が今日 2 回目以降のとき（2・3…）。同じ日の二重送信を防ぐ柵を通す")
     dm.add_argument("--refresh-dataset", dest="refresh_dataset", action="store_true",
                     help="event で記録した dataset の id を使わず、Meta に訊き直す（1 ページ 1 つなので同じ id が返る）")
     _write_flags(dm)
     dm.set_defaults(func=_run(cmd_dm))
+
+
+def _event_nth(value):
+    from .meta_events import _nth
+    return _nth(value)
 
 
 def _write_flags(parser) -> None:
