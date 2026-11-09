@@ -53,6 +53,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'principal_auth', 'principal_auth_forgotten',
                    # Meta 計画 段 4: 広告の口座の台帳を書いた・鍵を取った（値は入れない・有無と通貨の語だけ）。
                    'adaccount_added', 'adaccount_auth',
+                   # WhatsApp の口座の台帳を書いた・鍵を取った（`thth wa add|auth`・値は入れない）。
+                   'waba_added', 'waba_auth',
                    # Meta 計画 段 5: 広告の書く操作（作る・始める・止める・減らす）・止めの印・月の上限を下げた。
                    # 値は入れない——操作の語・id・最小単位の額・hub の番号だけ。
                    'adaccount_op', 'adaccount_stopped', 'adaccount_lowered',

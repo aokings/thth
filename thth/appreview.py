@@ -69,6 +69,11 @@ SLOTS = {
     "TIEUP": "タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id",
     "BUSINESS": "business-id（Business Suite の事業の数字の id）",
     "VALUE": "購入の金額（円・数字だけ。例 1200）",
+    "WA": "WhatsApp の台帳の名前（thth wa add で作ったもの）",
+    "WANUM": "送る側の番号の phone-number-id（thth wa numbers に出る・試験用の番号）",
+    "WATO": "受信する端末の番号（国番号から・確認コードで登録済みのもの）",
+    "WATPL": "作るテンプレートの名前（小文字の英数字と _・録画のたびに別の名前）",
+    "WABODY": "テンプレートの本文（変数なし）",
     "SHOPCAT": "ショップのカタログの id（thth shop catalogs に出る）",
     "PRODUCT": "タグに使う商品の id（thth shop products に出る・review_status が approved のもの）",
 }
@@ -269,6 +274,24 @@ SEGMENTS = (
          ("prep", "ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）"),
          ("cmd", "thth creators search {IG} --country JP")),
     # ---------------------------------------------------------------- WhatsApp（口の形と試験だけ・口座の種類がまだ無い）
+    # WhatsApp の口座は広告と同じ型の台帳（`thth wa add`）。鍵は WABA に結んだユーザーの長い鍵（`thth wa auth`）で、
+    # 審査員の流れ（招待）には載らない。録画は試験用の番号（支払い方法なしで hello_world を送れる）で撮る。
+    _seg("wa-manage", "whatsapp", "whatsapp_business_management — read the WhatsApp Business Account's phone numbers "
+         "and message templates, and create a message template.", ["whatsapp_business_management"],
+         ("prep", "Dashboard でアプリに WhatsApp の用途を足し、テスト用の WABA と試験用の番号を用意しておく。台帳は "
+                  "thth wa add、鍵は thth wa auth（録画の外）。審査の間だけ運営者が VM の台帳の production を true にする"),
+         ("cmd", "thth wa numbers {WA}"), ("cmd", "thth wa templates {WA}"),
+         ("two", "thth wa template create {WA} --name {WATPL} --language ja --category UTILITY --body {WABODY} --by {BY}"),
+         ("cmd", "thth wa templates {WA}"),
+         real_first="THTH のユーザーの長い鍵が、WABA の phone_numbers・message_templates を通すか・テンプレートの POST が通るか"
+                    "が【未確認】（本物で 1 回）"),
+    _seg("wa-messaging", "whatsapp", "whatsapp_business_messaging — send an approved template message to a phone number.",
+         ["whatsapp_business_messaging"],
+         ("prep", "試験用の番号から、受信する端末の番号（確認コードで登録済み）へ hello_world を送る。受信する端末の画面も映す"),
+         ("cmd", "thth wa numbers {WA}"),
+         ("two", "thth wa send {WA} --from {WANUM} --to {WATO} --template hello_world --language en_US --by {BY}"),
+         ("hand", "受信する端末の WhatsApp にメッセージが届いたのを見せたら Return"),
+         real_first="POST /{phone-number-id}/messages の `to` の形（国番号・符号）と、THTH の鍵で通るかが【未確認】（本物で 1 回）"),
     _seg("wa-events", "whatsapp", "whatsapp_business_manage_events — report a purchase that came from a WhatsApp "
          "conversation.", ["whatsapp_business_manage_events"],
          door="thth dm event <口座> --channel whatsapp（WhatsApp の口座の種類がまだ THTH に無い・口の形と試験だけ）"),
@@ -318,11 +341,10 @@ SEGMENTS = (
 )
 
 # 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す
-# （ブランドとクリエイターの 6 つ・商品タグと、`email`・`pages_events`・`instagram_manage_events`・`whatsapp_business_manage_events` は 11/09 に口ができて移した）。
+# （ブランドとクリエイターの 6 つ・商品タグと、`email`・`pages_events`・`instagram_manage_events`・`whatsapp_business_manage_events`・`whatsapp_business_management`・`whatsapp_business_messaging` は 11/09 に口ができて移した）。
 PLANNED = {
     "instagram_creator_marketplace_messaging": "instagram",
     "commerce_manage_accounts": "ads",
-    "whatsapp_business_management": "whatsapp", "whatsapp_business_messaging": "whatsapp",
     "manage_app_solution": "whatsapp",
 }
 

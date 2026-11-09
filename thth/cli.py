@@ -5398,6 +5398,9 @@ def build_parser() -> argparse.ArgumentParser:
     # 口は `thth/ads/cli.py` に閉じる。**Meta に書く命令はこの段に無い**（tests/test_meta_stage4.py）。
     from .ads import cli as ads_cli
     ads_cli.register(sub)
+    # `thth wa`（WhatsApp・広告と同じ型の台帳と認可・書く口は二段確認）。口は `thth/wa/` に閉じる。
+    from .wa import cli as wa_cli
+    wa_cli.register(sub)
     # `thth gads auth|accounts|keywords|report`（Google 広告・読むだけ）。口は `thth/gads/cli.py` に閉じる。
     from .gads import cli as gads_cli
     gads_cli.register(sub)

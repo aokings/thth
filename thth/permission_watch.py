@@ -134,6 +134,9 @@ PERMISSIONS = {
     "instagram_manage_events": _p("instagram", WRITE, "dm_event"),
     # WhatsApp の口座の種類がまだ THTH に無い（口の形と試験だけ）。記録を残せないので evidence は空。
     "whatsapp_business_manage_events": _p("whatsapp", WRITE),
+    # WhatsApp の口（`thth/wa/`・計画 §1.13・1.14）。記録は `waba_state/<名前>/` の runs（`_wa_row` が読む）。
+    "whatsapp_business_management": _p("whatsapp", WRITE, "wa_numbers", "wa_templates", "wa_template_create"),
+    "whatsapp_business_messaging": _p("whatsapp", WRITE, "wa_send"),
     # 商品タグ（`thth/meta_shop.py`・計画 §1.11）。
     "instagram_shopping_tag_products": _p("instagram", WRITE, "shop_eligibility", "shop_products", "shop_tags",
                                           "shop_tag"),
@@ -153,6 +156,7 @@ RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_
                "brand_creators", "brand_promote", "brand_ads_permissions", "brand_content", "creators_search",
                "dm_event",
                "shop_eligibility", "shop_catalogs", "shop_products", "shop_tags", "shop_tag",
+               "wa_numbers", "wa_templates", "wa_template_create", "wa_send",
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",
@@ -363,6 +367,19 @@ def _ad_row(name, now):
             "keepalive": keepalive, "obtained": obtained, "data_access": access}
 
 
+def _wa_row(name, now):
+    """WhatsApp の口座（`waba/<名前>.json`）の行。持ち主の口座の 90 日・データに触れる期限・アプリ全体の話には載せない
+    （`owner` は False）。記録は `waba_state/<名前>/` の runs だけ。"""
+    from .wa import ledger
+    cfg = ledger.load(name)
+    token = ledger.load_token(cfg)
+    found, keepalive = {}, {}
+    _read_runs(ledger.state_dir_for(name), now, found, keepalive)
+    obtained = jst.parse(token.get("obtained_at")) if isinstance(token, dict) else None
+    return {"name": name, "media": ledger.MEDIA, "owner": False, "cfg": cfg, "held": _held(ledger.MEDIA, token),
+            "found": found, "keepalive": keepalive, "obtained": obtained, "data_access": None}
+
+
 def _rows(now) -> list:
     """Meta の口座と広告の口座の行。止めた口座と読めない台帳は飛ばす。X はここに入らない。"""
     rows = []
@@ -377,6 +394,12 @@ def _rows(now) -> list:
     for name in ledger.list_names():
         try:
             rows.append(_ad_row(name, now))
+        except (accounts.AccountError, OSError, ValueError):
+            continue
+    from .wa import ledger as wa_ledger
+    for name in wa_ledger.list_names():
+        try:
+            rows.append(_wa_row(name, now))
         except (accounts.AccountError, OSError, ValueError):
             continue
     return rows

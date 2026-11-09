@@ -41,6 +41,11 @@ slot	BRAND	ブランド（テストのビジネス口座）の Instagram の数�
 slot	TIEUP	タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id
 slot	BUSINESS	business-id（Business Suite の事業の数字の id）
 slot	VALUE	購入の金額（円・数字だけ。例 1200）
+slot	WA	WhatsApp の台帳の名前（thth wa add で作ったもの）
+slot	WANUM	送る側の番号の phone-number-id（thth wa numbers に出る・試験用の番号）
+slot	WATO	受信する端末の番号（国番号から・確認コードで登録済みのもの）
+slot	WATPL	作るテンプレートの名前（小文字の英数字と _・録画のたびに別の名前）
+slot	WABODY	テンプレートの本文（変数なし）
 slot	SHOPCAT	ショップのカタログの id（thth shop catalogs に出る）
 slot	PRODUCT	タグに使う商品の id（thth shop products に出る・review_status が approved のもの）
 seg	th-basic	threads	threads_basic — the account's own posts.
@@ -297,6 +302,23 @@ seg	ig-creators	instagram	instagram_creator_marketplace_discovery — discover c
 items	instagram_creator_marketplace_discovery
 prep	ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）
 cmd	thth creators search {IG} --country JP
+end
+seg	wa-manage	whatsapp	whatsapp_business_management — read the WhatsApp Business Account's phone numbers and message templates, and create a message template.
+items	whatsapp_business_management
+real	THTH のユーザーの長い鍵が、WABA の phone_numbers・message_templates を通すか・テンプレートの POST が通るかが【未確認】（本物で 1 回）
+prep	Dashboard でアプリに WhatsApp の用途を足し、テスト用の WABA と試験用の番号を用意しておく。台帳は thth wa add、鍵は thth wa auth（録画の外）。審査の間だけ運営者が VM の台帳の production を true にする
+cmd	thth wa numbers {WA}
+cmd	thth wa templates {WA}
+two	thth wa template create {WA} --name {WATPL} --language ja --category UTILITY --body {WABODY} --by {BY}
+cmd	thth wa templates {WA}
+end
+seg	wa-messaging	whatsapp	whatsapp_business_messaging — send an approved template message to a phone number.
+items	whatsapp_business_messaging
+real	POST /{phone-number-id}/messages の `to` の形（国番号・符号）と、THTH の鍵で通るかが【未確認】（本物で 1 回）
+prep	試験用の番号から、受信する端末の番号（確認コードで登録済み）へ hello_world を送る。受信する端末の画面も映す
+cmd	thth wa numbers {WA}
+two	thth wa send {WA} --from {WANUM} --to {WATO} --template hello_world --language en_US --by {BY}
+hand	受信する端末の WhatsApp にメッセージが届いたのを見せたら Return
 end
 seg	wa-events	whatsapp	whatsapp_business_manage_events — report a purchase that came from a WhatsApp conversation.
 items	whatsapp_business_manage_events
