@@ -25,6 +25,7 @@ from thth import permission_watch as pw
 from thth import refusal_catalog as rc
 from thth.adapters import facebook, instagram
 from thth.ads import auth as ads_auth
+from thth.wa import auth as wa_auth
 
 ROOT = Path(__file__).resolve().parent.parent
 TSV = ROOT / "tools" / "appreview_segments.tsv"
@@ -51,7 +52,7 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert all(reason.strip() for reason in appreview.DROPPED.values())
     # 16 のうち、ブランドとクリエイターの 6 つ（2949689）と email・pages_events・instagram_manage_events・
     # whatsapp_business_manage_events の 4 つ（1c5a5e0）と商品タグ（e500d33）は口ができて PERMISSIONS へ移した（11/09）。
-    assert len(appreview.PLANNED) == 5
+    assert len(appreview.PLANNED) == 3
 
 
 # ---------------------------------------------------------------- (d) 台本の表
@@ -69,7 +70,7 @@ def test_権限の正本はPERMISSIONSの1か所で_台本の表は重ねない(
 
 
 def test_認可が求める権限は全部台本の表に出る():
-    wanted = {*scopes.DEFAULT_SCOPES, *facebook.SCOPES, *instagram.SCOPES, *ads_auth.SCOPES}
+    wanted = {*scopes.DEFAULT_SCOPES, *facebook.SCOPES, *instagram.SCOPES, *ads_auth.SCOPES, *wa_auth.SCOPES}
     for extra in scopes.META_INVITE_EXTRA.values():
         wanted |= set(extra)
     assert sorted(wanted - {item["name"] for item in appreview.items()}) == []

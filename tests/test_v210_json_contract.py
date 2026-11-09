@@ -128,6 +128,8 @@ COMMANDS += ['page cta', 'live', 'dm']
 COMMANDS += ['brand creators', 'brand promote', 'brand ads-permissions', 'brand content', 'creators search']
 # Instagram の商品タグ（`thth/meta_shop.py`・--json は 1 つの値）。
 COMMANDS += ['shop eligibility', 'shop catalogs', 'shop products', 'shop tags', 'shop tag']
+# WhatsApp の口（`thth/wa/`・--json は 1 つの値）。
+COMMANDS += ['wa add', 'wa numbers', 'wa templates', 'wa template create', 'wa send']
 # 段 M5 の (d)(e)（審査の台本と提出の前の点検）: --json は 1 つの値（check は赤でも 1 つの値・rc 2）。
 COMMANDS += ['admin appreview script', 'admin appreview check']
 # 設計 広告の資格と遠くの道 段 5: 広告の口座の退出（--json は 1 つの値・断りは {"completed": false, …}）。

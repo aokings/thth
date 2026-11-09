@@ -52,9 +52,10 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     "remote": ("thth/remote.py",),
     # Meta に書く口と、利用者の鍵を一時的に持つ認可（11/09 の監査 5.14.0 で足した）。
     # meta_write: Meta への書き込みの共通部・出来事の送信・ブランドの承認・商品タグ
-    "meta_write": ("thth/meta_write.py", "thth/meta_events.py", "thth/meta_brand.py", "thth/meta_shop.py"),
+    "meta_write": ("thth/meta_write.py", "thth/meta_events.py", "thth/meta_brand.py", "thth/meta_shop.py",
+                   "thth/wa/*"),
     # auth_keys: 認可の流れと、認可のときに鍵やメールを扱う所
-    "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py"),
+    "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py", "thth/wa/auth.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

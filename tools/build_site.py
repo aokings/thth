@@ -367,6 +367,10 @@ def build_privacy() -> str:
         "numbers of its campaigns, ad sets and ads; on request, a boost of a Page post (created paused), lowering a "
         "budget, the business's Audience Network numbers, its shop settings, its product catalogs and the Page's lead "
         "forms (described under Ads, catalogs and leads).</li>")
+    add("  <li>WhatsApp: the business account's ID, its phone numbers (IDs, display names and quality ratings) and "
+        "message templates (names, statuses and languages); on request, a new message template, a message sent from "
+        "an approved template, and the events (such as a purchase) that followed a conversation, reported to Meta "
+        "for measurement (described under WhatsApp).</li>")
     add("</ul>")
     add("<p>Meta's permissions for Instagram, product catalogs and Threads ads expire 90 days after the user was last "
         "active; THTH tells the operator before that and the owner authorizes again to extend them. Once a year the "
@@ -484,6 +488,17 @@ def build_privacy() -> str:
         "after a two-step confirmation. These answers are only shown to the owner (and the AI assistant the owner chose); THTH "
         "does not save them. What THTH keeps in its run log is only the command name, the platform, the permission "
         "used and the result.</p>")
+
+    add("<h2>WhatsApp</h2>")
+    add("<p>For a connected WhatsApp Business Account THTH keeps a ledger on the operator's server "
+        "(<code>waba/</code>: the account's ID, the project and the daily limit of messages the owner set) and a state "
+        "directory (<code>waba_state/&lt;name&gt;/</code>: the sign-in state, a stop mark and run logs). At the owner's "
+        "request THTH reads the account's phone numbers and message templates and shows them on the owner's terminal; "
+        "they are not saved. After a two-step confirmation it can submit a new message template to Meta for review, or "
+        "send one message built from an approved template to the phone number the owner gives. The recipient's number "
+        "and the text of a template or message are used for that one request and are not saved. What THTH keeps is one "
+        "run-log line per command: the command name, the platform, the permission used and the result, with no phone "
+        "number, template or message text.</p>")
 
     add("<h2>Ads, catalogs and leads</h2>")
     add("<p>For a connected Meta ad account THTH keeps a ledger on the operator's server (<code>adaccounts/</code>: "
@@ -622,6 +637,7 @@ def build_privacy() -> str:
     add("  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of "
         "administrative events.</li>")
     add("  <li>The ad account ledger and state described under Ads, catalogs and leads.</li>")
+    add("  <li>The WhatsApp account ledger and state described under WhatsApp.</li>")
     add("  <li>Instagram hashtags searched (the hashtag and the first time only, for 7 days).</li>")
     add("  <li>Per Meta permission, the last day it was used successfully (computed from the records above), and a "
         "ledger the operator fills by hand (<code>state/_meta/ledger.json</code>: the Data Use Checkup due date, the "
@@ -780,6 +796,9 @@ def build_privacy() -> str:
     add("  <li>Meta の広告: 広告アカウントの ID・名前・通貨・spend_cap・消費額、キャンペーン・広告セット・広告の状態と"
         "成績の数、求めたときのページの投稿の宣伝（止めた状態で作る）・予算を下げる・ビジネスの Audience Network の数・"
         "ショップの設定・商品カタログとページのリードのフォーム（下の「広告・カタログ・リード」）。</li>")
+    add("  <li>WhatsApp: ビジネスアカウントの ID、電話番号（ID・表示名・品質）とメッセージテンプレート（名前・状態・言語）、"
+        "求めたときの新しいテンプレートの作成、承認済みのテンプレートからのメッセージの送信、会話のあとに起きた出来事"
+        "（購入など）の Meta への報告（計測のため）（下の「WhatsApp」）。</li>")
     add("</ul>")
     add("<p>Instagram・商品カタログ・Threads 広告の Meta の権限には、利用者が最後に使ってから 90 日のデータアクセスの"
         "期限があります。THTH は切れる前に運営者に知らせ、持ち主がもう一度認可して延ばします。運営者は年 1 回、Meta の "
@@ -874,6 +893,15 @@ def build_privacy() -> str:
         "確かめ、そのショップのカタログと商品（ID・名前・審査の状態）と、投稿に付いている商品タグを読み、持ち主の口座の既存の"
         "投稿に商品タグを足します。足すのは二段確認のあとだけです。これらの答えは持ち主（と持ち主が選んだ AI の助手）に見せるだけで、"
         "THTH は保存しません。実行記録に残すのは、命令の名前・媒体・使った権限・結果だけです。</p>")
+
+    add("<h2>WhatsApp</h2>")
+    add("<p>接続した WhatsApp ビジネスアカウントについて、THTH は運営者のサーバーに台帳（<code>waba/</code>: アカウントの ID、"
+        "プロジェクト、持ち主が決めた 1 日に送れる通数の上限）と状態の置き場（<code>waba_state/&lt;名前&gt;/</code>: "
+        "認可の途中の状態・止めの印・実行記録）を持ちます。持ち主の求めに応じて、アカウントの電話番号とメッセージテンプレートを読み、"
+        "持ち主の端末に出します（保存しません）。二段確認のあとにだけ、新しいテンプレートを Meta の審査に出すか、承認済みの"
+        "テンプレートから作ったメッセージを、持ち主が指定した電話番号に 1 通送ります。相手の番号とテンプレート・メッセージの"
+        "本文は、その 1 回の依頼にだけ使い、保存しません。残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、"
+        "電話番号・テンプレート・本文は入れません。</p>")
 
     add("<h2>広告・カタログ・リード</h2>")
     add("<p>接続した Meta の広告アカウントについて、THTH は運営者のサーバーに台帳（<code>adaccounts/</code>: 広告"
@@ -991,6 +1019,7 @@ def build_privacy() -> str:
     add("  <li>プラザの書き込みと返信、どの書き込みを読んだか（書き込みの ID と時刻）。</li>")
     add("  <li>ログ（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>")
     add("  <li>広告の台帳と状態（上の「広告・カタログ・リード」）。</li>")
+    add("  <li>WhatsApp の台帳と状態（上の「WhatsApp」）。</li>")
     add("  <li>Instagram で調べたハッシュタグ（タグと最初の時刻だけ・7 日）。</li>")
     add("  <li>Meta の権限ごとに最後に成功した日（上の記録から数えます）と、運営者が手で入れる台帳"
         "（<code>state/_meta/ledger.json</code>: Data Use Checkup の期日・Marketing API の段・承認済みの権限）。"
