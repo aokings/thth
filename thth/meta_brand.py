@@ -143,6 +143,9 @@ def cmd_creators(args) -> int:
 # ------------------------------------------------------------------ brand promote
 
 def cmd_promote(args) -> int:
+    if args.sponsor and not (args.allow or args.deny):
+        _bad("--sponsor だけでは何も書きません（読むだけになり、--sponsor が使われません）。許すなら --allow、取り消すなら --deny を"
+             f"付けてください: thth brand promote {args.account} {args.media_id} --allow --sponsor {args.sponsor} --by <名前>")
     account_cfg, adapter_cls, token = mw._load(args, "branded_content", "ブランドコンテンツ")
     media = account_cfg.get("media")
     media_id = _digits(args.media_id, "投稿（media）")

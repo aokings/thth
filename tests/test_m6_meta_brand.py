@@ -255,3 +255,8 @@ def test_符丁は目録にあり3つがそろう():
     for code in ("brand_args_invalid", "creator_marketplace_not_ready"):
         entry = refusal_catalog.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"], code
+
+
+def test_sponsorだけで許す取り消すが無ければ断る(m6, capsys):
+    rc, out, err = main(capsys, "brand", "promote", IG_ACCOUNT, MEDIA, "--sponsor", BRAND)
+    assert rc == 2 and "brand_args_invalid" in err and "--allow" in err and "--deny" in err
