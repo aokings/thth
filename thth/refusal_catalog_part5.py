@@ -713,7 +713,7 @@ ENTRIES = {
         "fix": "tools/build_site.py の PRIVACY_EFFECTIVE に deploy の日（YYYY-MM-DD）を入れ、python3 tools/build_site.py で生成し直して commit し、打ち直してください。",
         "better": "deploy の日が決まったら、版上げの commit に施行日の更新も入れておくと、関門で止まらずに済みます。",
         "doors": _C,
-        "since": "5.13.0",  # 版上げのときに 5.14.0 へ（試験が VERSION を越える since を断る）
+        "since": "5.14.0",
     },
     # 計画 Meta 全部盛り M3（読むだけの最小の口）。since は版上げのときに直す。
     "meta_feature_required": {
@@ -983,7 +983,7 @@ ENTRIES = {
         "command": "thth brand creators <IG の口座> list <数字の id>",
         "better": "先に list や旗なしの promote で今の状態を読むと、足す・外すの一段目で何が変わるかを迷わず確かめられます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "creator_marketplace_not_ready": {
         "kind": "refusal",
@@ -992,7 +992,7 @@ ENTRIES = {
         "command": "thth creators search <口座> --country JP",
         "better": "Standard Access の間は Meta が試験用のデータを返すので、onboard が済めば審査の前でも呼び出しの成功を作れます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     # 会話から起きた出来事を Meta に送る口（Conversions API for Business Messaging・thth/meta_events.py）。
     "meta_event_type_unknown": {
@@ -1002,7 +1002,7 @@ ENTRIES = {
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --by <名前>",
         "better": "購入のあとに届いた注文を order_created、発送を order_shipped と段ごとに送ると、広告の最適化に使える流れが残ります",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "meta_event_value_invalid": {
         "kind": "refusal",
@@ -1011,7 +1011,7 @@ ENTRIES = {
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --by <名前>",
         "better": "購入の金額を付けると、Meta が広告の費用に対する売上を数えられ、最適化に使われます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "meta_event_recipient_unknown": {
         "kind": "refusal",
@@ -1020,7 +1020,7 @@ ENTRIES = {
         "command": "thth dm list <口座>",
         "better": "thth dm read で相手と会話の中身を確かめてから送ると、別の人の出来事にしてしまう間違いを防げます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "meta_event_channel_unknown": {
         "kind": "refusal",
@@ -1029,7 +1029,7 @@ ENTRIES = {
         "command": "thth dm event <口座> --type lead --psid <相手の id> --by <名前>",
         "better": "口座の名前を正しく選べば --channel は要りません。迷うときは thth account <口座> で媒体を確かめてください",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "meta_event_whatsapp_unavailable": {
         "kind": "refusal",
@@ -1038,7 +1038,7 @@ ENTRIES = {
         "command": "thth dm event <口座> --type lead --psid <相手の id> --by <名前>",
         "better": "WhatsApp の口座の台帳（thth wa add）は用意できています。dataset の path と広告クリックの id（ctwa_clid）の取り方を本物で確かめたら、同じ命令で --channel whatsapp を付けるだけで送れるようにします。開発のセッションに伝えてください",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     # Instagram の商品タグ（thth/meta_shop.py）。since は版上げのときに直す。
     "shop_args_invalid": {
@@ -1050,7 +1050,7 @@ ENTRIES = {
         "better": "先に thth shop eligibility で資格を、thth shop tags で今のタグを読むと、付ける一段目で何が変わるかを迷わず確かめられます。"
                   "ショップが承認前のときは、自社のドメインで実際に売っている物を載せたショップを作って承認を受けるのが、Meta のコマースの要件に沿う近道です",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     # WhatsApp の口（thth/wa/）。since は版上げのときに直す。
     "wa_args_invalid": {
@@ -1060,7 +1060,7 @@ ENTRIES = {
         "command": "thth wa send <名前> --from <phone-number-id> --to <番号> --template <テンプレート名> --language ja --by <名前>",
         "better": "先に thth wa numbers と thth wa templates で今の番号と審査の状態を読むと、送る一段目で何が起きるかを迷わず確かめられます。送れるのは承認済みのテンプレートだけなので、自由な文を送りたいときは、先に thth wa template create で近い文面のテンプレートを作って審査に出します",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "wa_template_not_ready": {
         "kind": "refusal",
@@ -1069,7 +1069,7 @@ ENTRIES = {
         "command": "thth wa templates <名前>",
         "better": "試験用の番号には hello_world という承認済みのテンプレートが最初から付いていることがあります（言語 en_US）。まずそれで送り方を確かめると、審査を待たずに録画の流れを通せます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "wa_daily_limit": {
         "kind": "refusal",
@@ -1078,7 +1078,7 @@ ENTRIES = {
         "command": "thth wa templates <名前>",
         "better": "同じ内容を多くの人へ送りたいときは、1 通ずつ打つより、宛先の確認と上限の相談を開発のセッションにしてください。大量に送る口は、宛先の同意の確認と一緒に作るのが安全です",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "wa_waba_not_granted": {
         "kind": "refusal",
@@ -1087,7 +1087,7 @@ ENTRIES = {
         "command": "thth wa auth <名前> --by <名前>",
         "better": "WABA の id が分からないときは、ビジネス設定の「WhatsApp アカウント」の一覧で id を確かめてから thth wa add を打つと、認可を 1 回で通せます。アプリに WhatsApp の用途を足していないと許可の画面に出ないので、先に Dashboard で足してください",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
     "wa_waba_mismatch": {
         "kind": "refusal",
@@ -1096,6 +1096,6 @@ ENTRIES = {
         "command": "thth wa auth <名前> --by <名前>",
         "better": "同じ名前で別の WABA に繋ぎ替えると、送る先を取り違えるおそれがあります。WABA ごとに台帳を分けておくと、取り違えを機械で防げます",
         "doors": _C,
-        "since": "5.13.0",
+        "since": "5.14.0",
     },
 }
