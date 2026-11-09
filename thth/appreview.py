@@ -68,6 +68,8 @@ SLOTS = {
     "BRAND": "ブランド（テストのビジネス口座）の Instagram の数字の id",
     "TIEUP": "タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id",
     "BUSINESS": "business-id（Business Suite の事業の数字の id）",
+    "SHOPCAT": "ショップのカタログの id（thth shop catalogs に出る）",
+    "PRODUCT": "タグに使う商品の id（thth shop products に出る・review_status が approved のもの）",
 }
 
 
@@ -248,6 +250,17 @@ SEGMENTS = (
          "(Standard Access returns test data).", ["instagram_creator_marketplace_discovery"],
          ("prep", "ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）"),
          ("cmd", "thth creators search {IG} --country JP")),
+    _seg("ig-shop", "instagram", "instagram_shopping_tag_products — check eligibility, find the catalog and its products, "
+         "and tag a product on an existing post (catalog_management reads the catalogs).",
+         ["instagram_shopping_tag_products"],
+         ("prep", "承認済みの Instagram ショップに録画の口座を結び、商品の入ったカタログを用意しておく（ショップを持つビジネスの"
+                  "管理者の鍵で。自社のドメインで実際に売っている物を載せる）。タグを付ける画像の投稿を 1 本出しておく"),
+         ("cmd", "thth shop eligibility {IG}"), ("cmd", "thth shop catalogs {IG}"),
+         ("cmd", "thth shop products {IG} --catalog {SHOPCAT}"),
+         ("two", "thth shop tag {IG} {IG_POST} --product {PRODUCT} --x 0.5 --y 0.5 --by {BY}"),
+         ("cmd", "thth shop tags {IG} {IG_POST}"),
+         ("hand", "Instagram の投稿に商品タグが付いたのを見せたら Return"),
+         real_first="eligibility が true になるか・ページの鍵で product_tags の POST が通るかが【未確認】（本物のショップで 1 回）"),
     # ---------------------------------------------------------------- 広告
     # 設計 広告の資格と遠くの道（2026-11-06）: 広告の招待も資格の行を作り、`thth login` の鍵が広告の台帳に結ばれる。
     # 鍵は口座 1 つなので、IG と同じく広告の区間の前に広告の招待で login をやり直す。審査員の台帳に結んだページは
@@ -286,7 +299,6 @@ SEGMENTS = (
 PLANNED = {
     "email": "facebook", "pages_events": "facebook",
     "instagram_manage_events": "instagram", "instagram_creator_marketplace_messaging": "instagram",
-    "instagram_shopping_tag_products": "instagram",
     "commerce_manage_accounts": "ads",
     "whatsapp_business_management": "whatsapp", "whatsapp_business_messaging": "whatsapp",
     "whatsapp_business_manage_events": "whatsapp", "manage_app_solution": "whatsapp",

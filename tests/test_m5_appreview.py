@@ -49,7 +49,7 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert not set(appreview.DROPPED) & set(appreview.names())
     assert not set(appreview.DROPPED) & set(appreview.PRIVACY_WORDS)
     assert all(reason.strip() for reason in appreview.DROPPED.values())
-    assert len(appreview.PLANNED) == 10
+    assert len(appreview.PLANNED) == 9
 
 
 # ---------------------------------------------------------------- (d) 台本の表

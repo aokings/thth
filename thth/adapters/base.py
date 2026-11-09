@@ -238,6 +238,8 @@ KNOWN_CAPABILITIES = frozenset({
     "partnership_content",
     # クリエイターマーケットプレイスの検索（`creator_search()`・`thth creators search`）。
     "creator_marketplace",
+    # 商品タグ（資格・カタログ・商品・既存の投稿に付ける。`shop_*`・`thth shop`・Instagram だけ）。
+    "shopping_tags",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。

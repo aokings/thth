@@ -55,7 +55,7 @@ def test_REGISTRYにinstagramが載り境界の語彙に収まる():
     assert cls.capabilities() == {"recent_posts", "thread_read", "views", "account_insights", "carousel",
                                   "hide_reply", "comment_control", "quota", "embed", "public_search",
                                   "profile_lookup", "upcoming_events", "like", "direct_messages", "branded_content",
-                                  "partnership_content", "creator_marketplace"}
+                                  "partnership_content", "creator_marketplace", "shopping_tags"}
     assert "edit_post" not in cls.CAPABILITIES
     assert cls.TOKEN_NO_EXPIRY is True and cls.AUTH_NEEDS_APP_ENV is True and cls.META_GRAPH is True
     assert cls.DELETE_PERMISSION == "instagram_manage_contents"

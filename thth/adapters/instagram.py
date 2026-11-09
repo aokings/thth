@@ -111,6 +111,10 @@ CREATOR_PERMISSION = "instagram_branded_content_creator"
 BRAND_ADS_PERMISSION = "instagram_branded_content_ads_brand"
 MARKET_PERMISSION = "instagram_creator_marketplace_discovery"
 BRAND_IDS_MAX = 100          # user_ids は 1 回に 100 まで（post-level-permissioning）
+# 商品タグ（公式の頁は 2026-11-09 に原文を確認・`thth/meta_shop.py`）。
+SHOP_PERMISSION = "instagram_shopping_tag_products"
+SHOP_CATALOG_PERMISSION = "catalog_management"
+SHOP_TAGS_MAX = 20           # 既存の投稿に付けるのは、フィードの投稿で 20・リールで 30（product-tagging）
 
 
 def _number(value):
@@ -164,7 +168,7 @@ class InstagramAdapter(fb.FacebookAdapter):
                                          "carousel", "hide_reply", "comment_control", "quota", "embed",
                                          "public_search", "profile_lookup", "upcoming_events", "like",
                                          "direct_messages", "branded_content", "partnership_content",
-                                         "creator_marketplace"})
+                                         "creator_marketplace", "shopping_tags"})
     UNSUPPORTED_REACTIONS = UNSUPPORTED
     REACTION_PERMISSIONS = {"like": LIKE_PERMISSION}
     MESSAGING_PLATFORM = "instagram"
@@ -812,6 +816,71 @@ class InstagramAdapter(fb.FacebookAdapter):
         body = self._get(f"/{self.ig_user_id}/creator_marketplace_creators", "クリエイターの検索", params=params,
                          permission=MARKET_PERMISSION)
         return [{"creator_id": str(row["id"])} for row in self._rows(body, "クリエイターの検索") if row.get("id")]
+
+    # ----- 商品タグ（呼ぶのは `thth/meta_shop.py` だけ） ----------------------------------
+
+    def shop_eligibility(self) -> bool:
+        """`GET /{ig-user-id}?fields=shopping_product_tag_eligibility`。承認済みのショップに結ばれていれば true。"""
+        body = self._get(f"/{self.ig_user_id}", "商品タグの資格", params={"fields": "shopping_product_tag_eligibility"},
+                         permission=SHOP_PERMISSION)
+        value = body.get("shopping_product_tag_eligibility")
+        if not isinstance(value, bool):
+            raise fb.AdapterError("商品タグの資格: 応答に shopping_product_tag_eligibility（true/false）がありません")
+        return value
+
+    def shop_catalogs(self) -> list:
+        """`GET /{ig-user-id}/available_catalogs`。応答は `available_catalogs.data`。id・名前・店の名前・商品数。"""
+        body = self._get(f"/{self.ig_user_id}/available_catalogs", "使えるカタログ", permission=SHOP_CATALOG_PERMISSION)
+        inner = body.get("available_catalogs")
+        rows = self._rows(inner if isinstance(inner, dict) else body, "使えるカタログ")
+        return [{"catalog_id": str(row["catalog_id"]), "catalog_name": row.get("catalog_name"),
+                 "shop_name": row.get("shop_name"),
+                 "product_count": row.get("product_count") if isinstance(row.get("product_count"), int) else None}
+                for row in rows if row.get("catalog_id") is not None]
+
+    def shop_products(self, catalog_id: str, *, query: str | None = None) -> list:
+        """`GET /{ig-user-id}/catalog_product_search`（`catalog_id` 必須・`q` は任意・先頭 1 頁）。"""
+        value = str(catalog_id or "").strip()
+        if not IG_ID.fullmatch(value):
+            raise fb.AdapterError("商品の検索: catalog_id は数字です", failure="definite")
+        params = {"catalog_id": value}
+        if query:
+            params["q"] = query
+        body = self._get(f"/{self.ig_user_id}/catalog_product_search", "商品の検索", params=params,
+                         permission=SHOP_PERMISSION)
+        return [{"product_id": str(row["product_id"]), "product_name": row.get("product_name"),
+                 "review_status": row.get("review_status") if isinstance(row.get("review_status"), str) else None}
+                for row in self._rows(body, "商品の検索") if row.get("product_id") is not None]
+
+    def shop_tags(self, media_id: str) -> list:
+        """`GET /{ig-media-id}/product_tags`。付いている商品の id・名前・審査の状態・位置。"""
+        value = self._media_id(media_id, "商品タグの確認")
+        body = self._get(f"/{value}/product_tags", "商品タグの確認", permission=SHOP_PERMISSION)
+        return [{"product_id": str(row["product_id"]), "name": row.get("name"),
+                 "review_status": row.get("review_status") if isinstance(row.get("review_status"), str) else None,
+                 "x": row.get("x") if isinstance(row.get("x"), (int, float)) else None,
+                 "y": row.get("y") if isinstance(row.get("y"), (int, float)) else None}
+                for row in self._rows(body, "商品タグの確認") if row.get("product_id") is not None]
+
+    def shop_tag(self, media_id: str, product_id: str, *, x: float | None = None, y: float | None = None) -> dict:
+        """`POST /{ig-media-id}/product_tags`（`updated_tags`＝JSON の配列）。足すだけ・同じ商品なら位置の更新。
+
+        x・y は画像だけ必須（0.0〜1.0）。動画・リールは付けない。1 回だけ投げる（再試行しない）。
+        """
+        value = self._media_id(media_id, "商品タグを付ける")
+        product = str(product_id or "").strip()
+        if not IG_ID.fullmatch(product):
+            raise fb.AdapterError("商品タグを付ける: product_id は数字です", failure="definite")
+        tag = {"product_id": product}
+        if (x is None) != (y is None):
+            raise fb.AdapterError("商品タグを付ける: x と y は 2 つ一緒に渡します", failure="definite")
+        if x is not None:
+            if not (0.0 <= float(x) <= 1.0 and 0.0 <= float(y) <= 1.0):
+                raise fb.AdapterError("商品タグを付ける: x・y は 0.0〜1.0 です", failure="definite")
+            tag["x"], tag["y"] = float(x), float(y)
+        self._write("POST", f"/{value}/product_tags", "商品タグを付ける", permission=SHOP_PERMISSION,
+                    form={"updated_tags": json.dumps([tag])})
+        return {"tagged": True}
 
     def dm_profile(self, user_id: str) -> dict:
         raise fb.AdapterError("相手の属性: pages_user_* は Messenger（Facebook ページ）の権限です。Instagram には使いません")

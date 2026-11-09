@@ -358,7 +358,7 @@ def build_privacy() -> str:
         "owner gives (<code>thth like</code>, recorded with the media ID so they can be undone), the Direct inbox, "
         "that is, its direct messages, and, for the owner's brand work, branded content settings (the creators the "
         "brand approves for tagging, the use of a tagged post in partnership ads), the branded content a business "
-        "can advertise and the creator marketplace (described below).</li>")
+        "can advertise and the creator marketplace, and, for the owner's shop, product tags (described below).</li>")
     add("  <li>Ad accounts: the ad account's ID, name, currency, spend cap and amount spent; the status and insight "
         "numbers of its campaigns, ad sets and ads; on request, a boost of a Page post (created paused), lowering a "
         "budget, the business's Audience Network numbers, its shop settings, its product catalogs and the Page's lead "
@@ -468,6 +468,14 @@ def build_privacy() -> str:
         "Facebook creator marketplace for creators (their IDs). These answers are shown on the owner's terminal "
         "and are not saved. What THTH keeps is one run-log line per command: the command name, the platform, the "
         "permission used and the result, with no creator ID, name or text.</p>")
+
+    add("<h2>Shop product tags</h2>")
+    add("<p>When the owner sells through an Instagram Shop, THTH can, at the owner's request, check whether the "
+        "Instagram account can tag products, read the catalogs and products of that shop (IDs, names and review "
+        "status) and the product tags on a post, and add a product tag to an existing post of the owner's account "
+        "after a two-step confirmation. These answers are shown on the owner's terminal and are not saved. What THTH "
+        "keeps is one run-log line per command: the command name, the platform, the permission used and the result, "
+        "with no product, catalog or post ID.</p>")
 
     add("<h2>Ads, catalogs and leads</h2>")
     add("<p>For a connected Meta ad account THTH keeps a ledger on the operator's server (<code>adaccounts/</code>: "
@@ -757,7 +765,7 @@ def build_privacy() -> str:
         "主催する予定・持ち主が付けるいいね（<code>thth like</code>・取り消せるようメディアの ID と一緒に記録）・"
         "Direct の受信箱（ダイレクトメッセージ）・ブランドの仕事のための、ブランドコンテンツの設定"
         "（タグ付けを承認するクリエイター、タグ付けされた投稿の提携広告への利用）、広告に使える提携コンテンツと"
-        "クリエイターマーケットプレイス（下に書きます）。</li>")
+        "クリエイターマーケットプレイス・ショップの商品タグ（下に書きます）。</li>")
     add("  <li>Meta の広告: 広告アカウントの ID・名前・通貨・spend_cap・消費額、キャンペーン・広告セット・広告の状態と"
         "成績の数、求めたときのページの投稿の宣伝（止めた状態で作る）・予算を下げる・ビジネスの Audience Network の数・"
         "ショップの設定・商品カタログとページのリードのフォーム（下の「広告・カタログ・リード」）。</li>")
@@ -847,6 +855,12 @@ def build_privacy() -> str:
         "クリエイターマーケットプレイスでクリエイターを探します（クリエイターの ID）。これらの答えは持ち主の端末に"
         "出すだけで、保存しません。残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、"
         "クリエイターの ID・名前・本文は入れません。</p>")
+
+    add("<h2>ショップの商品タグ</h2>")
+    add("<p>持ち主が Instagram ショップで売るとき、THTH は持ち主の求めに応じて、Instagram 口座が商品タグを付けられるかを"
+        "確かめ、そのショップのカタログと商品（ID・名前・審査の状態）と、投稿に付いている商品タグを読み、持ち主の口座の既存の"
+        "投稿に商品タグを足します。足すのは二段確認のあとだけです。これらの答えは持ち主の端末に出すだけで、保存しません。"
+        "残すのは命令ごとの実行記録 1 行（命令の名前・媒体・使った権限・結果）で、商品・カタログ・投稿の ID は入れません。</p>")
 
     add("<h2>広告・カタログ・リード</h2>")
     add("<p>接続した Meta の広告アカウントについて、THTH は運営者のサーバーに台帳（<code>adaccounts/</code>: 広告"

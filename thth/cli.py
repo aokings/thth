@@ -5413,6 +5413,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth brand`・`thth creators`（ブランドコンテンツとクリエイターマーケットプレイス・書く口は二段確認）。`thth/meta_brand.py` に閉じる。
     from . import meta_brand
     meta_brand.register(sub)
+    # `thth shop`（Instagram の商品タグ・書く口は二段確認）。`thth/meta_shop.py` に閉じる。
+    from . import meta_shop
+    meta_shop.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

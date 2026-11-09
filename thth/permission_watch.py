@@ -108,7 +108,7 @@ PERMISSIONS = {
     "threads_business_basic": _p("instagram", READ, "connected_threads_user", also={"ads": ("ads_threads",)}),
     "ads_read": _p(ADS, READ, "ads_snapshot"),
     "ads_management": _p(ADS, WRITE, "ads_op"),
-    "catalog_management": _p(ADS, READ, "ads_catalog"),
+    "catalog_management": _p(ADS, READ, "ads_catalog", also={"instagram": ("shop_catalogs",)}),
     "leads_retrieval": _p(ADS, READ, "ads_leads"),
     "ads_mcp_management": _p(ADS, READ),     # 口が無い（外の公式の広告 MCP で使う・THTH の記録に残らない）
     # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ。
@@ -126,6 +126,9 @@ PERMISSIONS = {
     "facebook_branded_content_ads_brand": _p("facebook", READ, "brand_content"),
     "instagram_creator_marketplace_discovery": _p("instagram", READ, "creators_search"),
     "facebook_creator_marketplace_discovery": _p("facebook", READ, "creators_search"),
+    # 商品タグ（`thth/meta_shop.py`・計画 §1.11）。
+    "instagram_shopping_tag_products": _p("instagram", WRITE, "shop_eligibility", "shop_products", "shop_tags",
+                                          "shop_tag"),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -140,6 +143,7 @@ RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_
                # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
                "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like",
                "brand_creators", "brand_promote", "brand_ads_permissions", "brand_content", "creators_search",
+               "shop_eligibility", "shop_catalogs", "shop_products", "shop_tags", "shop_tag",
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",
