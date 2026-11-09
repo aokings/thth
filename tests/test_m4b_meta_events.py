@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import time
 
 import pytest
 
@@ -192,17 +193,36 @@ def test_datasetの応答に_idが無ければ作れたと言わない(ev, capsy
     assert meta_events.stored_dataset(FB_ACCOUNT, PAGE, "messenger") is None
 
 
-# ================================================================== 同じ日の打ち直しの柵（masaru 11/10）
+# ================================================================== 打ち直しの柵（masaru 11/10・監査 5.14.1 で直した）
 
 def _event_posts(ev):
     return [c for c in writes(ev) if c["path"].endswith("/events")]
 
 
-def test_同じ日の同じ出来事は二度送らない_nthで別の出来事として送れる(ev, capsys):
+def _sent_file():
+    return pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.SENT_FILE
+
+
+def _digest(capsys, *extra):
+    rc, out, _err = main(capsys, *FB_ARGV, *extra, "--json")
+    return json.loads(out)["digest"]
+
+
+def _plant(capsys, ago, *extra):
+    """前に送った印を `ago` 秒前の時刻で置く（鍵は本物と同じ作り方）。"""
+    digest = _digest(capsys, *extra)
+    pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)).mkdir(parents=True, exist_ok=True)
+    key = meta_events._mark_key(FB_ACCOUNT, create=True)
+    at = int(time.time()) - ago
+    _sent_file().write_text(json.dumps({"marks": [{"m": meta_events.sent_mark(key, digest), "at": at}]}))
+
+
+def test_同じ出来事は二度送らない_nthで別の出来事として送れる(ev, capsys):
     (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
     assert rc == 0, err
-    rc, out, err = main(capsys, *FB_ARGV, "--json")              # 一段目は通る（digest は同じ）
-    digest = json.loads(out)["digest"]
+    rc, out, err = main(capsys, *FB_ARGV)                          # 一段目は送らずに知らせる
+    assert rc == 1 and "少し前に送っています" in out
+    digest = _digest(capsys)
     rc, out, err = main(capsys, *FB_ARGV, "--confirm", digest, "--json")
     assert rc == 1 and "meta_event_already_sent" in out
     assert len(_event_posts(ev)) == 1
@@ -211,6 +231,12 @@ def test_同じ日の同じ出来事は二度送らない_nthで別の出来事�
     assert first["digest"] != digest
     assert len(_event_posts(ev)) == 2
     nothing_kept(ev, PSID, AMOUNT)
+
+
+def test_nthは前の回を送っていなければ通さない(ev, capsys):
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "3")
+    assert rc == 2 and "meta_event_nth_unused" in out
+    assert _event_posts(ev) == []
 
 
 def test_はっきり断られたら印を外し_結果が分からなければ印を残す(ev, capsys):
@@ -222,43 +248,65 @@ def test_はっきり断られたら印を外し_結果が分からなければ�
     (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
     assert rc == 0, err
     ev["routes"][route] = (503, {"error": {"message": "unavailable", "code": 2}})
-    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "3")
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "2")
     assert rc == 1 and "meta_write_unknown" in out
     ev["routes"][route] = (200, {"events_received": 1})
-    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "3")   # 分からなかったものは打ち直さない
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV, "--nth", "2")   # 分からなかったものは打ち直さない
     assert rc == 1 and "meta_event_already_sent" in out
     assert len(_event_posts(ev)) == 3
 
 
-def test_前の日の印は数えない(ev, capsys):
-    rc, out, _err = main(capsys, *FB_ARGV, "--json")
-    digest = json.loads(out)["digest"]
-    path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.SENT_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"date": "2000-01-01", "marks": [meta_events.sent_mark(digest, "2000-01-01")]}))
+def test_datasetで失敗したら印は残らない(ev, capsys):
+    """監査 5.14.1 の 1: 出来事を 1 件も送っていないのに印が残り、打ち直しが止まっていた。"""
+    route = ("POST", V + f"/{PAGE}/dataset")
+    ev["routes"][route] = (503, {"error": {"message": "unavailable", "code": 2}})
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_write_unknown" in out
+    assert _event_posts(ev) == []
+    ev["routes"][route] = (200, {"id": DATASET_FB})
     (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
     assert rc == 0, err
-    kept = json.loads(path.read_text())
-    assert kept["date"] == jst.now_jst().date().isoformat() and len(kept["marks"]) == 1
+    assert len(_event_posts(ev)) == 1
 
 
-@pytest.mark.parametrize("broken", ["dir", "garbage"])
-def test_印が読めなければ確かめられないので送らない(ev, capsys, broken):
-    path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.SENT_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if broken == "dir":
-        path.mkdir()
-    else:
-        path.write_text("{not json")
+def test_日付でなく送った時刻から数える_0時をまたいでも二度送らない(ev, capsys):
+    """監査 5.14.1 の 2: 日付で区切ると、0 時をまたいだ打ち直しが通っていた。"""
+    _plant(capsys, 3600)                                              # 1 時間前（日付が変わっていても）
     (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
-    assert rc == 1 and "meta_event_already_sent" in out and "確かめられません" in out
+    assert rc == 1 and "meta_event_already_sent" in out
+    _plant(capsys, meta_events.MARK_WINDOW + 60)                     # 窓より前の印は数えず、読むときに捨てる
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    kept = json.loads(_sent_file().read_text())["marks"]
+    assert len(kept) == 1 and kept[0]["at"] > int(time.time()) - 60
+
+
+@pytest.mark.parametrize("broken", ["dir", "garbage", "key"])
+def test_印か鍵が読めなければ確かめられないので送らない(ev, capsys, broken):
+    state = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT))
+    state.mkdir(parents=True, exist_ok=True)
+    if broken == "dir":
+        _sent_file().mkdir()
+    elif broken == "garbage":
+        _sent_file().write_text("{not json")
+    else:
+        (state / meta_events.MARK_KEY_FILE).write_text("not a key")
+    (rc, out, _err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 1 and "meta_event_marks_unreadable" in out and "確かめられません" in out
     assert _event_posts(ev) == []
 
 
-def test_印には相手のidも金額も入らない():
-    mark = meta_events.sent_mark("abcdef012345", "2026-11-10")
-    assert re.fullmatch(r"[0-9a-f]{24}", mark)
-    assert meta_events.sent_mark("abcdef012345", "2026-11-11") != mark
+def test_印は鍵つきで_鍵が違えば別の印になり_相手のidも金額も入らない(ev, capsys):
+    """監査 5.14.1 の 3: 塩の無いハッシュは、相手の id の候補から総当たりで当てられた。"""
+    a, b = bytes(32), bytes([1]) * 32
+    assert re.fullmatch(r"[0-9a-f]{24}", meta_events.sent_mark(a, "abcdef012345"))
+    assert meta_events.sent_mark(a, "abcdef012345") != meta_events.sent_mark(b, "abcdef012345")
+    (rc, _out, err), _ = two_steps(capsys, *FB_ARGV)
+    assert rc == 0, err
+    key_path = pathlib.Path(accounts.state_dir_for(FB_ACCOUNT)) / meta_events.MARK_KEY_FILE
+    assert oct(key_path.stat().st_mode & 0o777) == "0o600"
+    text = _sent_file().read_text()
+    assert PSID not in text and AMOUNT not in text
 
 
 # ================================================================== 二段確認・安全装置・leave_gate

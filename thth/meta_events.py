@@ -25,13 +25,15 @@
 `production: true` があり、安全装置が止めていないときだけ 1 回打つ（dataset が無ければ同じロックの中で先に作る）。
 Meta は重複を除かないので、結果が分からないときは打ち直さない。
 
-**打ち直しの柵**（masaru 11/10「入れて」）: Meta は重複を除かないので、同じ口座・同じ日（日本時間）に同じ digest の出来事は
-2 回送らない。二段目でロックの中、媒体を呼ぶ前に印を置き、Meta がはっきり断ったときだけ印を外す（結果が分からないときは
-残す＝打ち直さない）。印は digest と日付を混ぜたハッシュで、相手の id・金額は読み戻せない。同じ相手が同じ日に同じ金額で
-本当に 2 回買ったときは `--nth 2`（digest が変わる）で別の出来事として送る。印の置き場が読めない・書けないときは送らない。
+**打ち直しの柵**（masaru 11/10「入れて」・監査 5.14.1 で直した）: Meta は重複を除かないので、同じ口座で、同じ digest
+（相手・種類・金額）の出来事を、前に送ってから `MARK_WINDOW` の間は送らない（日付でなく送った時刻から数えるので、
+日本時間の 0 時をまたいでも二度送れない）。二段目でロックの中、出来事の POST の直前に印を置き、結果が分からない
+とき以外（Meta がはっきり断った・会話の窓・権限）は印を外す。印は口座ごとの秘密の鍵で digest を混ぜた HMAC で、
+相手の id の候補を持っていても鍵なしには当てられない。同じ相手が同じ金額で本当にもう一度買ったときは `--nth 2`
+（digest が変わる）。`--nth N` は N−1 回目の印があるときだけ通す。印の置き場か鍵が読めない・書けないときは送らない。
 
-**保存**: dataset の id（`state/<口座>/event_dataset.json`・秘密でも個人でもない）、その日の送った印
-（`state/<口座>/event_sent.json`・日付とハッシュだけ・翌日に捨てる）と、runs の 1 行（いつ・種類・件数 1・
+**保存**: dataset の id（`state/<口座>/event_dataset.json`・秘密でも個人でもない）、送った印（`state/<口座>/event_sent.json`・
+HMAC と時刻だけ・読むたびに古いものを捨てる）とその鍵（`event_mark.key`・600）、runs の 1 行（いつ・種類・件数 1・
 使った権限・結果）だけ。相手の id・金額・会話はどこにも残さない。
 """
 from __future__ import annotations
@@ -39,6 +41,9 @@ from __future__ import annotations
 import argparse
 import decimal
 import hashlib
+import hmac
+import secrets
+import time
 import json
 import os
 import re
@@ -66,7 +71,9 @@ PERSON_ID = re.compile(r"[0-9]{1,32}")
 VALUE_MAX = decimal.Decimal("1000000000")
 DATASET_FILE = "event_dataset.json"
 SENT_FILE = "event_sent.json"
-SENT_MAX = 10000   # 1 日の印の数の上限（ファイルが際限なく育たないように）
+MARK_KEY_FILE = "event_mark.key"
+MARK_WINDOW = 24 * 3600   # 送ってからこの秒数の間、同じ出来事を断る
+SENT_MAX = 10000          # 窓の中の印の数の上限（越えたら送らない側に倒す）
 
 
 # ------------------------------------------------------------------ 純粋な部分（試験が直接見る）
@@ -149,63 +156,106 @@ def remember_dataset(account, owner_id, channel, dataset_id) -> None:
         "dataset_id": str(dataset_id), "owner_id": str(owner_id), "channel": channel, "saved_at": jst.iso()})
 
 
-def sent_mark(digest, day) -> str:
-    """その日の送った印。digest（相手の id・金額から作る）と日付を混ぜたハッシュで、元の値は読み戻せない。"""
-    return hashlib.sha256(f"thth-dm-event-sent\x1f{digest}\x1f{day}".encode("utf-8")).hexdigest()[:24]
+def sent_mark(key: bytes, digest: str) -> str:
+    """送った印。口座ごとの秘密の鍵で digest を混ぜた HMAC。鍵なしには相手の id・金額から当てられない。"""
+    return hmac.new(key, f"thth-dm-event-sent\x1f{digest}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
 
 
-def _sent_path(account) -> str:
-    return os.path.join(accounts_mod.state_dir_for(account), SENT_FILE)
+def _state_file(account, name) -> str:
+    return os.path.join(accounts_mod.state_dir_for(account), name)
 
 
-def _sent_marks(account, day):
-    """今日の印の list。ファイルが無い・前の日のものなら空。読めない・壊れているなら None（送らない側に倒す）。"""
+def _mark_key(account, *, create):
+    """印の鍵（32 バイト）。無ければ create のとき作る。読めない・壊れている・作れないなら None。"""
+    path = _state_file(account, MARK_KEY_FILE)
     try:
-        with open(_sent_path(account), encoding="utf-8") as stream:
+        with open(path, encoding="utf-8") as stream:
+            text = stream.read(200).strip()
+    except FileNotFoundError:
+        if not create:
+            return b""
+        text = secrets.token_hex(32)
+        try:
+            secrets_fs.atomic_write_text(path, text + "\n")
+        except OSError:
+            return None
+    except OSError:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{64}", text):
+        return None
+    return bytes.fromhex(text)
+
+
+def _recent_marks(account, now):
+    """窓の中の印 {印: 時刻}。ファイルが無ければ空。読めない・壊れているなら None（送らない側に倒す）。"""
+    try:
+        with open(_state_file(account, SENT_FILE), encoding="utf-8") as stream:
             row = json.loads(stream.read())
     except FileNotFoundError:
-        return []
+        return {}
     except (OSError, ValueError):
         return None
     if not isinstance(row, dict) or not isinstance(row.get("marks"), list):
         return None
-    if row.get("date") != day:
-        return []
-    return [m for m in row["marks"] if isinstance(m, str)]
+    recent = {}
+    for item in row["marks"]:
+        if (isinstance(item, dict) and isinstance(item.get("m"), str) and isinstance(item.get("at"), int)
+                and now - MARK_WINDOW < item["at"] <= now + 300):
+            recent[item["m"]] = item["at"]
+    return recent
 
 
-def _save_marks(account, day, marks) -> None:
-    secrets_fs.atomic_write_json(_sent_path(account), {"date": day, "marks": marks[-SENT_MAX:]})
+def _save_marks(account, recent) -> None:
+    secrets_fs.atomic_write_json(_state_file(account, SENT_FILE),
+                                 {"marks": [{"m": m, "at": at} for m, at in sorted(recent.items(), key=lambda x: x[1])]})
 
 
-def _cannot_count(account, reason):
-    mw._refuse("meta_event_already_sent", f"{account}: 今日送った出来事の印が{reason}ので、同じ出来事を二重に送って"
-               "いないか確かめられません。確かめられないまま送ると Meta で二重に数えられうるので送りません", rc=1)
+def _unreadable(account, what):
+    mw._refuse("meta_event_marks_unreadable", f"{account}: 送った出来事の{what}ので、同じ出来事を二重に送っていないか"
+               "確かめられません。確かめられないまま送ると Meta で二重に数えられうるので送りません", rc=1)
 
 
-def claim_mark(account, digest, day) -> str:
-    """二段目（ロックの中）で、媒体を呼ぶ前に今日の印を置く。既にあれば断る。"""
-    marks = _sent_marks(account, day)
-    if marks is None:
-        _cannot_count(account, "読めない")
-    mark = sent_mark(digest, day)
-    if mark in marks:
-        mw._refuse("meta_event_already_sent", f"{account}: 同じ出来事（同じ相手・種類・金額）を今日（日本時間）もう送って"
-                   "います。Meta は重複を除かないので、もう一度送ると二重に数えられます。送っていません", rc=1)
+def already_sent(account, digest) -> bool:
+    """一段目の見せる用（ロックの外・何も書かない）。確かめられないときは False（二段目で断る）。"""
+    key = _mark_key(account, create=False)
+    recent = _recent_marks(account, int(time.time()))
+    return bool(key) and recent is not None and sent_mark(key, digest) in recent
+
+
+def claim_mark(account, digest, previous=None) -> str:
+    """二段目（ロックの中）で、出来事の POST の直前に印を置く。既にあれば断る。`previous` は --nth の 1 つ前の digest。"""
+    now = int(time.time())
+    key = _mark_key(account, create=True)
+    if not key:
+        _unreadable(account, "印の鍵が読めない（か作れない）")
+    recent = _recent_marks(account, now)
+    if recent is None:
+        _unreadable(account, "印が読めない")
+    if len(recent) >= SENT_MAX:
+        _unreadable(account, f"印が多すぎる（{SENT_MAX} 件）")
+    mark = sent_mark(key, digest)
+    if mark in recent:
+        mw._refuse("meta_event_already_sent", f"{account}: 同じ出来事（同じ相手・種類・金額）を少し前に送っています。"
+                   "Meta は重複を除かないので、もう一度送ると二重に数えられます。送っていません", rc=1)
+    if previous is not None and sent_mark(key, previous) not in recent:
+        mw._refuse("meta_event_nth_unused", f"{account}: --nth の 1 つ前の回（同じ相手・種類・金額）をまだ送っていません。"
+                   "送っていない回を飛ばして数えると、二重送信の柵が効かなくなります。送っていません", rc=2)
+    recent[mark] = now
     try:
-        _save_marks(account, day, [*marks, mark])
+        _save_marks(account, recent)
     except OSError:
-        _cannot_count(account, "書けない")
+        _unreadable(account, "印が書けない")
     return mark
 
 
-def release_mark(account, mark, day) -> None:
-    """Meta がはっきり断った（何も数えられていない）ときだけ印を外す。外せなくても害は打ち直せないことだけ。"""
-    marks = _sent_marks(account, day)
-    if not marks or mark not in marks:
+def release_mark(account, mark) -> None:
+    """結果が分からないとき以外（何も数えられていない）に印を外す。外せなくても害は少しの間打ち直せないことだけ。"""
+    recent = _recent_marks(account, int(time.time()))
+    if not recent or mark not in recent:
         return
+    recent.pop(mark)
     try:
-        _save_marks(account, day, [m for m in marks if m != mark])
+        _save_marks(account, recent)
     except OSError:
         pass
 
@@ -276,8 +326,12 @@ def cmd_event(args) -> int:
     saved = stored_dataset(args.account, owner, channel)
     refresh = bool(getattr(args, "refresh_dataset", False))
     nth = getattr(args, "nth", None) or 1
-    digest = mw.digest_of("dm_event", args.account, channel, name, person, value if value is not None else "",
-                          currency or "", *([f"nth={nth}"] if nth > 1 else []))
+
+    def digest_for(n):
+        return mw.digest_of("dm_event", args.account, channel, name, person, value if value is not None else "",
+                            currency or "", *([f"nth={n}"] if n > 1 else []))
+
+    digest = digest_for(nth)
     if not args.confirm:
         shown = f"{value} {currency}" if value is not None else "—"
         return mw._stage_one(args, digest=digest, payload={
@@ -289,8 +343,9 @@ def cmd_event(args) -> int:
              else "  dataset: 無いので二段目で作ります（1 ページ 1 つ・既にあれば Meta が同じ id を返します）"),
             "  Meta に送るのは出来事の種類・金額・相手の id です（広告の最適化と計測のため）。Meta は重複を除かないので、"
             "同じ出来事は 1 回だけ送ってください",
-            "  同じ出来事は今日はもう送れません（同じ相手が同じ金額で本当に 2 回なら --nth 2）",
-            "  THTH に残すのは dataset の id・今日送った印（ハッシュ）と、いつ・種類・件数の 1 行だけです（相手の id・金額は残しません）",
+            *(["  ⚠ 同じ出来事を少し前に送っています。二段目では送りません（本当に別の購入なら --nth で数え分ける）"]
+              if already_sent(args.account, digest) else []),
+            "  THTH に残すのは dataset の id・送った印（鍵つきのハッシュ）と、いつ・種類・件数の 1 行だけです（相手の id・金額は残しません）",
             *([] if approval_mod.is_true(account_cfg.get("production"))
               else ["  ⚠ 台帳に production: true が無いので、二段目でも媒体は呼びません"])],
             again=(f"thth dm event {args.account} --type {args.type}"
@@ -301,25 +356,20 @@ def cmd_event(args) -> int:
     mw._check_confirm(args, digest)
     mw._ready(args, account_cfg)
 
-    day = jst.now_jst().date().isoformat()
-
     def send():
-        mark = claim_mark(args.account, digest, day)        # ロックの中・媒体を呼ぶ前
-        try:
-            return _send()
-        except adapter_base.AdapterError as exc:
-            if getattr(exc, "failure", None) != "ambiguous" and not str(exc).startswith("messaging_window_closed"):
-                release_mark(args.account, mark, day)       # はっきり断られた: 何も数えられていない
-            raise
-
-    def _send():
         dataset = None if refresh else saved
         if dataset is None:
             dataset = adapter.event_dataset()
             remember_dataset(args.account, owner, channel, dataset)
         body = event_body(name, channel, adapter.event_user_data(person),
                           event_time=jst.now_jst().timestamp(), value=value, currency=currency)
-        return adapter.event_send(dataset, body)
+        mark = claim_mark(args.account, digest, digest_for(nth - 1) if nth > 1 else None)   # ロックの中・POST の直前
+        try:
+            return adapter.event_send(dataset, body)
+        except adapter_base.AdapterError as exc:
+            if getattr(exc, "failure", None) != "ambiguous":
+                release_mark(args.account, mark)            # 何も数えられていない: 送り直してよい
+            raise
 
     result = mw._write(args, account_cfg, "dm_event", permission, send, extra={"event_type": name, "n": 1})
     if args.json:

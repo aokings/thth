@@ -461,9 +461,9 @@ def build_privacy() -> str:
         "measured and optimized: the kind of outcome, an optional amount and currency, and the other person's ID within "
         "the Page or account. What THTH keeps is one run-log line per command: the command name, the platform, the "
         "permission used and the result (for a reported outcome, also its kind), with no text, name, ID or amount; "
-        "it also keeps the ID of the Meta dataset that receives the outcomes and, for the current day only, one-way "
-        "hashes that tell whether the same outcome was already reported, because Meta does not remove duplicates and "
-        "a second report would be counted twice.</p>")
+        "it also keeps the ID of the Meta dataset that receives the outcomes and, for a short time after each report, a "
+        "keyed one-way hash that tells whether the same outcome was just reported, because Meta does not remove "
+        "duplicates and a second report would be counted twice.</p>")
 
     add("<h2>Live video and call-to-action button</h2>")
     add("<p><code>thth live create</code> creates a live video on the owner's Page after a two-step confirmation and "
@@ -873,8 +873,8 @@ def build_privacy() -> str:
         "問い合わせの結果を Meta に報告できます（Conversions API for Business Messaging）。持ち主の広告を計測し、最適化"
         "するためで、送るのは結果の種類・任意の金額と通貨・ページまたは口座の中での相手の ID です。THTH が残すのは"
         "命令ごとのログ 1 行（命令の名前・SNS・使った権限・結果。報告した結果ならその種類も）だけで、本文・名前・ID・金額は"
-        "含みません。結果を受け取る Meta の dataset の ID と、その日のうちだけ、同じ結果をもう報告したかを見分ける"
-        "一方向のハッシュも残します（Meta は重複を除かず、二度報告すると二重に数えられるため）。</p>")
+        "含みません。結果を受け取る Meta の dataset の ID と、報告のあと少しの間、同じ結果をいま報告したかを見分ける"
+        "鍵つきの一方向のハッシュも残します（Meta は重複を除かず、二度報告すると二重に数えられるため）。</p>")
 
     add("<h2>ライブ配信と行動ボタン</h2>")
     add("<p><code>thth live create</code> は二段確認のあとに本人のページにライブを作り、配信の宛先を持ち主の端末に "
