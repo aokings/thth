@@ -174,6 +174,15 @@ WINDOW_CLOSED_SUBCODES = frozenset({2018278})
 # 相手の属性（pages_user_*・端末に出すだけ）。L2: permissions の各項の用途。
 USER_PROFILE_PERMISSIONS = {"locale": "pages_user_locale", "timezone": "pages_user_timezone",
                             "gender": "pages_user_gender"}
+# Conversions API for Business Messaging（`thth dm event`・L2: marketing-api/conversions-api/business-messaging 11/09）。
+# `POST /{DATASET_ID}/events`（data[]・partner_agent）・dataset は `POST /{PAGE_ID}/dataset`（1 ページ 1 つ・既にあれば
+# その id が返る）。要る権限は Messenger が `page_events`（Dashboard の綴り）で、権限の参照の見出しは `pages_events`
+# ——どちらの綴りで乗っていても通す（`EVENT_PERMISSION_ALIASES`）。
+EVENT_PERMISSION = "pages_events"
+EVENT_PERMISSION_ALIASES = ("page_events",)
+EVENT_CHANNEL = "messenger"
+EVENT_PARTNER_AGENT = "thth"
+DATASET_ID = re.compile(r"[0-9]{1,32}")
 # 台帳の `page_id` の正しい引き方（10/29 段 0・`account add`・`from_account` の断り文で同じ文）。
 # 提携広告に使える投稿（Content Discovery API）とクリエイターの検索（Facebook Creator Discovery API）。
 # 公式の頁: marketing-api/ad-creative/partnership-ads/content-discovery-api・fb-creator-discovery（2026-11-09 に原文を確認）。
@@ -351,6 +360,10 @@ class FacebookAdapter(base.Adapter):
     # コメントの作られた時刻の欄と、それを読む権限（非公開の返事の 7 日の判定）。
     COMMENT_TIME_FIELD = "created_time"
     COMMENT_READ_PERMISSION = "pages_read_user_content"
+    # Conversions API for Business Messaging（`thth dm event`）。
+    EVENT_PERMISSION = EVENT_PERMISSION
+    EVENT_PERMISSION_ALIASES = EVENT_PERMISSION_ALIASES
+    EVENT_CHANNEL = EVENT_CHANNEL
 
     prepared_media_supported = True
 
@@ -373,6 +386,8 @@ class FacebookAdapter(base.Adapter):
         self.auth_account = "<account>"
         # `.token` に保存したデータの期限（`thth auth` が書いた値・doctor が今の値と比べる）。
         self.recorded_data_access_expires_at = None
+        # 認可のとき 1 回だけメールを読めた日（`.token` の `email_read_at`・印だけで値は無い・doctor が言う）。
+        self.email_read_at = None
         # Webhook の記録を読む口座（`from_account` が台帳の名前を入れる）。None なら inbox・mentions は空。
         self.webhook_account = None
 
@@ -402,6 +417,8 @@ class FacebookAdapter(base.Adapter):
         if (token.get("scopes_source") == "response" and type(scopes) is list
                 and all(type(v) is str for v in scopes)):
             adapter.granted_scopes = frozenset(scopes)
+        if token.get("email_readable") is True and isinstance(token.get("email_read_at"), str):
+            adapter.email_read_at = token["email_read_at"]
         adapter.auth_account = cfg.get("account") or "<account>"
         from .. import accounts as accounts_mod
         if accounts_mod.is_invite_account(cfg):
@@ -893,6 +910,44 @@ class FacebookAdapter(base.Adapter):
             out[field] = found if isinstance(found, (str, int, float)) and not isinstance(found, bool) else None
         return out
 
+    # ----- Conversions API for Business Messaging（`thth dm event`・呼ぶのは `thth/meta_events.py` だけ） --------
+
+    def event_owner_id(self) -> str:
+        """dataset を結ぶ相手の id（Messenger はページ・Instagram は IG の user・WhatsApp は WABA）。"""
+        return self.page_id
+
+    def event_user_data(self, person_id: str) -> dict:
+        """イベントの `user_data`（Messenger は `page_id`＋`page_scoped_user_id`）。個人を指す値はここで 1 回組むだけ。"""
+        return {"page_id": self.page_id, "page_scoped_user_id": str(person_id)}
+
+    def event_dataset(self) -> str:
+        """このページの dataset の id（`POST /{owner}/dataset`・既にあれば同じ id が返る）。**1 回だけ・再試行しない。**"""
+        body = self._post_object(f"/{self.event_owner_id()}/dataset", "dataset の作成", permission=self.EVENT_PERMISSION,
+                                 form={}, expect=())
+        found = body.get("dataset_id") or body.get("id")
+        found = str(found) if isinstance(found, (str, int)) and not isinstance(found, bool) else ""
+        if not DATASET_ID.fullmatch(found):
+            raise AdapterError("dataset の作成: 応答に dataset の id がありません（作れたとは言えません）",
+                               failure="ambiguous")
+        return found
+
+    def event_send(self, dataset_id: str, event: dict) -> dict:
+        """イベントを 1 件送る（`POST /{dataset}/events`・`data` に 1 件）。**再試行しない。**
+
+        応答に `events_received` が書いてあって 0 なら、Meta は受け取っていない（変わっていない）。
+        """
+        value = str(dataset_id or "").strip()
+        if not DATASET_ID.fullmatch(value):
+            raise AdapterError("イベントの送信: dataset の id の形が違います", failure="definite")
+        body = self._post_object(f"/{value}/events", "イベントの送信", permission=self.EVENT_PERMISSION,
+                                 form={"data": json.dumps([event], ensure_ascii=False, separators=(",", ":")),
+                                       "partner_agent": EVENT_PARTNER_AGENT}, expect=())
+        received = body.get("events_received")
+        if isinstance(received, int) and not isinstance(received, bool) and received < 1:
+            raise AdapterError("イベントの送信: Meta は 0 件しか受け取りませんでした（events_received=0）",
+                               failure="definite")
+        return {"received": received if isinstance(received, int) and not isinstance(received, bool) else None}
+
     # ----- Webhook（段 6） ---------------------------------------------------
 
     # ----- 提携広告に使える投稿・クリエイターの検索（読むだけ・呼ぶのは `thth/meta_brand.py` だけ） ----------
@@ -1300,6 +1355,23 @@ class FacebookAdapter(base.Adapter):
             raise AdapterError("鍵の権限: 応答に data がありません")
         return data
 
+    def _email_probe(self, row, granted) -> None:
+        """`email` を求めた口座（`--review-scopes` の招待）の doctor の 1 行。ページの鍵しか持たないので、ここでは読まない
+        ——認可のとき（`thth auth`）にユーザーの鍵で 1 回読んだ印だけを言う。値は保存していないので出せない。"""
+        if "email" not in self.expected_scopes and not self.email_read_at and (
+                self.granted_scopes is None or "email" not in self.granted_scopes):
+            return
+        label = "認可したユーザーのメール（サービスの知らせの送り先・保存しない）"
+        if self.email_read_at:
+            row("email", label, "email", True,
+                f"認可のとき（{self.email_read_at}）に 1 回読めました。値は保存していません"
+                "（画面に出るのは thth auth を打った端末だけです）")
+        elif granted is not None and "email" not in granted:
+            row("email", label, "email", False, base.not_granted_message("email").replace("<account>", self.auth_account))
+        else:
+            row("email", label, "email", None,
+                "読んだ印がありません。thth auth をやり直すと、認可のとき 1 回だけ読みます（権限が乗っているとき）")
+
     def probe(self, *, get=None) -> list:
         """読み取りだけで能力を測る（`thth doctor`）。**投稿・返信・削除は呼ばない。**
 
@@ -1410,6 +1482,8 @@ class FacebookAdapter(base.Adapter):
                 row(key, label, permission, permission in granted,
                     "トークンに乗っています（/debug_token）" if permission in granted
                     else base.not_granted_message(permission).replace("<account>", self.auth_account))
+
+        self._email_probe(row, granted)
 
         # `appsecret_proof`（段 2）。付けて上の読みが通れば、Meta がこの鍵とアプリの組を認めた。
         if self.app_secret:

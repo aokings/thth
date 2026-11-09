@@ -37,6 +37,11 @@ MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
 # 構成（`config_id`）があるときは構成の側の一覧が効く。
 THREADS_REVIEW_SCOPES = ("threads_share_to_instagram",)
 META_INVITE_EXTRA = {
+    # `pages_events`・`instagram_manage_events` はまだ足さない（11/09 合流のとき外した）: 綴りが Dashboard と違うと Meta の
+    # 認可の画面が権限の名を断り、招待がまるごと通らない。M0 で Dashboard の綴りと構成を見てから足す（`pages_user_*` と同じ）。
+    # `email` はここに足さない: Worker の招待の形の検査（`callback/src/invite-object.js` の META_SCOPE）が
+    # `<頭>_<名前>` の形だけを通し、`email` は断られる。メールの権限は Dashboard の構成（`config_id`）に足す
+    # （Worker を直して deploy したあとなら、ここに足せる）。
     "facebook": ("pages_manage_ads", "pages_manage_cta", "publish_video", "pages_messaging",
                  "pages_utility_messaging"),
     "instagram": ("instagram_manage_engagement", "instagram_manage_messages", "pages_read_user_content",

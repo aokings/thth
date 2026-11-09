@@ -9,6 +9,10 @@
     thth dm read <FB|IG の口座> <会話の id> [--profile] [--json]          直近の通を画面に出す
     thth dm send <FB|IG の口座> (<会話の id> | --comment <id>) (--text T | --text-file F)
                  --by 名前 [--human-agent] [--confirm D]                   返す（二段・24 時間の窓）
+    thth dm event <FB|IG の口座> --type purchase|lead|… (--conversation <id> | --psid <id>)
+                 [--value N --currency JPY] --by 名前 [--confirm D]        会話から起きた出来事を Meta に送る（二段・
+                                                                           Conversions API for Business Messaging・
+                                                                           `thth/meta_events.py`）
 
 **`build_parser()` には 1 行しか足さない**（`meta_write.register(sub)`）。媒体の書く口（`delete_page_cta`・
 `live_create`・`live_end`・`dm_send`・`private_reply`）を呼ぶのはこのモジュールだけ（`tests/test_m4_meta_writes.py`
@@ -62,7 +66,7 @@ LIVE_TITLE_MAX = 255
 LIVE_DESCRIPTION_MAX = 2000
 
 # runs の `action`（`permission_watch.RUN_ACTIONS` に同じ名前で載る）。
-RUN_ACTIONS = ("page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile")
+RUN_ACTIONS = ("page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "dm_event")
 
 
 class Refused(Exception):
@@ -194,18 +198,22 @@ def _guard_stopped(account) -> None:
                 "止めたまま媒体は呼びません", rc=1, guard="stopped")
 
 
-def _record(account, action, media, status, *, permission=None, error=None, mode=None) -> None:
-    """runs に 1 行（命令の名前・媒体・権限・結果だけ）。本文・相手・id は入れない。"""
+def _record(account, action, media, status, *, permission=None, error=None, mode=None, extra=None) -> None:
+    """runs に 1 行（命令の名前・媒体・権限・結果だけ）。本文・相手・id は入れない。
+
+    `extra` は静的な欄だけ（`thth dm event` の `event_type`・件数 `n`）。
+    """
     try:
         runs_mod.record_minimal(account, {"action": action, "account": account, "medium": media,
                                           "mode": mode or ("read" if action in ("dm_list", "dm_read", "dm_profile")
                                                          else "production"),
-                                          "status": status, "error": error, "permission": permission})
+                                          "status": status, "error": error, "permission": permission,
+                                          **(extra or {})})
     except (OSError, accounts_mod.AccountError):
         pass
 
 
-def _write(args, account_cfg, action, permission, call):
+def _write(args, account_cfg, action, permission, call, *, extra=None):
     """二段目の 1 回だけの書き込み。ロック・止めの印・結果不明の扱いをそろえる。"""
     state_dir = accounts_mod.state_dir_for(args.account)
     media = account_cfg.get("media")
@@ -231,7 +239,7 @@ def _write(args, account_cfg, action, permission, call):
     except lock_mod.LockBusy:
         _refuse("meta_write_busy", f"{args.account} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます",
                 rc=1)
-    _record(args.account, action, media, "ok", permission=permission)
+    _record(args.account, action, media, "ok", permission=permission, extra=extra)
     return result
 
 
@@ -419,6 +427,9 @@ def _name(person) -> str:
 
 
 def cmd_dm(args) -> int:
+    if args.action == "event":      # 会話から起きた出来事を Meta に送る（`thth/meta_events.py`）
+        from . import meta_events
+        return meta_events.cmd_event(args)
     account_cfg, adapter_cls, token = _load(args, "direct_messages", "ダイレクトメッセージ")
     permission = adapter_cls.MESSAGING_PERMISSION
     media = account_cfg.get("media")
@@ -555,7 +566,7 @@ def register(sub) -> None:
 
     dm = sub.add_parser("dm", help="ページと Instagram の受信箱を読む・24 時間の窓の中で返す（send は二段確認・"
                                    "自動返信なし・本文は保存しない）")
-    dm.add_argument("action", choices=("list", "read", "send"))
+    dm.add_argument("action", choices=("list", "read", "send", "event"))
     dm.add_argument("account")
     dm.add_argument("target", nargs="?", default=None, help="read・send の会話の id（list に出る）")
     dm.add_argument("--comment", default=None, help="send でコメントへ非公開の返事を送る（コメントの id・7 日の内）")
@@ -564,6 +575,15 @@ def register(sub) -> None:
     dm.add_argument("--human-agent", dest="human_agent", action="store_true",
                     help="24 時間を過ぎた会話に人の担当者が 7 日の内に返す（HUMAN_AGENT の札・宣伝は不可）")
     dm.add_argument("--profile", action="store_true", help="read で相手の言語・時間帯・性別も出す（Facebook・保存しない）")
+    # event: 会話から起きた購入・問い合わせを Meta に送る（Conversions API for Business Messaging・二段確認）。
+    dm.add_argument("--type", default=None, help="event の出来事（purchase・lead・qualified_lead・add_to_cart など）")
+    dm.add_argument("--conversation", default=None, help="event の相手を会話の id で（会話の相手が 1 人のとき）")
+    dm.add_argument("--psid", default=None, help="event の相手の id（thth dm list・read に出る）")
+    dm.add_argument("--value", default=None, help="event の金額（--currency と一緒に。purchase は必須）")
+    dm.add_argument("--currency", default=None, help="event の通貨コード（JPY など）")
+    dm.add_argument("--channel", default=None, help="event のチャネル（messenger・instagram・whatsapp。既定は口座の媒体から）")
+    dm.add_argument("--refresh-dataset", dest="refresh_dataset", action="store_true",
+                    help="event で記録した dataset の id を使わず、Meta に訊き直す（1 ページ 1 つなので同じ id が返る）")
     _write_flags(dm)
     dm.set_defaults(func=_run(cmd_dm))
 

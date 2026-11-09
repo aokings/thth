@@ -257,6 +257,8 @@ def bind(adapter,cfg):
              # ブランドコンテンツ・クリエイターマーケットプレイス（`thth/meta_brand.py`）。
              'brand_creators_check','brand_creators_change','promote_approved','promote_set','ad_permissions',
              'partnership_content','creator_search',
+             # Conversions API for Business Messaging（dataset を作る・イベントを送る）。止めた口座では呼べない。
+             'event_dataset','event_send',
              # 計画 Meta 全部盛り 段 M5: 権限の不使用の見張りの最小の読み。
              'keepalive_read'}
     for name in methods:

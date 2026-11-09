@@ -40,6 +40,7 @@ slot	CREATOR	承認クリエイターに足す・外す相手の Instagram の�
 slot	BRAND	ブランド（テストのビジネス口座）の Instagram の数字の id
 slot	TIEUP	タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id
 slot	BUSINESS	business-id（Business Suite の事業の数字の id）
+slot	VALUE	購入の金額（円・数字だけ。例 1200）
 seg	th-basic	threads	threads_basic — the account's own posts.
 items	threads_basic
 cmd	thth posts {TH} --limit 3
@@ -171,6 +172,18 @@ real	HUMAN_AGENT の札の綴りと窓の外の断りの符丁が【推】（計
 prep	24 時間より前に届いたメッセージを用意する
 two	thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}
 end
+seg	fb-events	facebook	pages_events — report a purchase that came from a Messenger conversation.
+items	pages_events
+real	events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）
+prep	別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）
+two	thth dm event {FB} --type purchase --conversation {FB_PSID} --value {VALUE} --currency JPY --by {BY}
+hand	Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return
+end
+seg	fb-email	facebook	email — the authorizing user's email address, read once at authorization.
+items	email
+prep	email を求める認可は端末で thth auth <口座> --by <名前> を打つ（招待の画面では値は出ない）。認可の最後に出る「認可したユーザーのメール」の行を映す（画面に出すだけ・保存しない）
+cmd	thth doctor {FB}
+end
 seg	fb-search	facebook	Page Public Content Access — search public Pages and their posts (counts only).
 items	page_public_content_access
 cmd	thth where {FB} {WORD}
@@ -235,6 +248,13 @@ cmd	thth dm list {IG}
 two	thth dm send {IG} {IG_PSID} --text {REPLY} --by {BY}
 hand	Instagram で返事が届いたのを見せたら Return
 end
+seg	ig-events	instagram	instagram_manage_events — report a purchase that came from an Instagram conversation.
+items	instagram_manage_events
+real	events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）
+prep	別のテストの口座から Instagram に DM を 1 通送っておく（thth dm list に出る会話の id を使う）
+two	thth dm event {IG} --type purchase --conversation {IG_PSID} --value {VALUE} --currency JPY --by {BY}
+hand	Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return
+end
 seg	ig-hashtag	instagram	Instagram Public Content Access — hashtag search (counts only).
 items	instagram_public_content_access
 cmd	thth where {IG} {TAG}
@@ -275,6 +295,9 @@ seg	ig-creators	instagram	instagram_creator_marketplace_discovery — discover c
 items	instagram_creator_marketplace_discovery
 prep	ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）
 cmd	thth creators search {IG} --country JP
+end
+seg	wa-events	whatsapp	whatsapp_business_manage_events — report a purchase that came from a WhatsApp conversation.
+items	whatsapp_business_manage_events
 end
 seg	flow-ads	ads	Reviewer flow — an ad account, with Facebook Login for Business.
 items	-

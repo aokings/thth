@@ -178,6 +178,11 @@ class InstagramAdapter(fb.FacebookAdapter):
     MARKET_PERMISSION = MARKET_PERMISSION
     MARKET_PERMISSIONS = (MARKET_PERMISSION, "instagram_basic", "pages_manage_metadata", "pages_show_list",
                           "business_management")
+    # Conversions API for Business Messaging（`thth dm event`）。dataset は IG の user に結び、user_data は
+    # `instagram_business_account_id`＋`ig_sid`（L2: conversions-api/business-messaging 11/09）。
+    EVENT_PERMISSION = "instagram_manage_events"
+    EVENT_PERMISSION_ALIASES = ()
+    EVENT_CHANNEL = "instagram"
     TOKEN_KEYS = ("access_token",)
     TOKEN_SETUP_HINT = "thth auth"
     POST_ID_FORM_HINT = "Instagram の post_id は数字です（例 17895695668004550）。"
@@ -249,6 +254,8 @@ class InstagramAdapter(fb.FacebookAdapter):
         if (token.get("scopes_source") == "response" and type(scopes) is list
                 and all(type(v) is str for v in scopes)):
             adapter.granted_scopes = frozenset(scopes)
+        if token.get("email_readable") is True and isinstance(token.get("email_read_at"), str):
+            adapter.email_read_at = token["email_read_at"]
         adapter.auth_account = cfg.get("account") or "<account>"
         from .. import accounts as accounts_mod
         if accounts_mod.is_invite_account(cfg):
@@ -812,6 +819,11 @@ class InstagramAdapter(fb.FacebookAdapter):
         body = self._get(f"/{self.ig_user_id}/creator_marketplace_creators", "クリエイターの検索", params=params,
                          permission=MARKET_PERMISSION)
         return [{"creator_id": str(row["id"])} for row in self._rows(body, "クリエイターの検索") if row.get("id")]
+    def event_owner_id(self) -> str:
+        return self.ig_user_id
+
+    def event_user_data(self, person_id: str) -> dict:
+        return {"instagram_business_account_id": self.ig_user_id, "ig_sid": str(person_id)}
 
     def dm_profile(self, user_id: str) -> dict:
         raise fb.AdapterError("相手の属性: pages_user_* は Messenger（Facebook ページ）の権限です。Instagram には使いません")
@@ -994,6 +1006,8 @@ class InstagramAdapter(fb.FacebookAdapter):
                 row(key, label, permission, permission in granted,
                     "トークンに乗っています（/debug_token）" if permission in granted
                     else base.not_granted_message(permission).replace("<account>", self.auth_account))
+
+        self._email_probe(row, granted)
 
         if self.app_secret:
             row(self.APPSECRET_PROOF_KEY, "appsecret_proof", "（全部の呼び出し）", True,

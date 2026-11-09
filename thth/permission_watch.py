@@ -126,6 +126,14 @@ PERMISSIONS = {
     "facebook_branded_content_ads_brand": _p("facebook", READ, "brand_content"),
     "instagram_creator_marketplace_discovery": _p("instagram", READ, "creators_search"),
     "facebook_creator_marketplace_discovery": _p("facebook", READ, "creators_search"),
+    # `thth dm event`（会話から起きた出来事を Meta に送る・`thth/meta_events.py`）と、認可のときに 1 回だけ読むメール
+    # （`thth/adapters/auth_facebook.py` が `.token` に `email_read_at` の印だけを残す・値は保存しない）。
+    # `pages_events` は権限の参照の見出しの綴り（Dashboard は `page_events` の見込み・M0 で合わせる）。
+    "email": _p("facebook", READ, "auth_email", also={"instagram": ("auth_email",)}),
+    "pages_events": _p("facebook", WRITE, "dm_event"),
+    "instagram_manage_events": _p("instagram", WRITE, "dm_event"),
+    # WhatsApp の口座の種類がまだ THTH に無い（口の形と試験だけ）。記録を残せないので evidence は空。
+    "whatsapp_business_manage_events": _p("whatsapp", WRITE),
 }
 # 承認済み（Threads は 10/9 までに 10 権限）と、Standard でも 30 日で下げられうる広告の 2 つ（devpolicy 10.4）。
 WATCHED_BASE = frozenset({
@@ -140,6 +148,7 @@ RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_
                # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
                "page_cta_delete", "live_create", "live_end", "dm_list", "dm_read", "dm_send", "dm_profile", "ig_like",
                "brand_creators", "brand_promote", "brand_ads_permissions", "brand_content", "creators_search",
+               "dm_event",
                # 審査の録画で本物を打つ読む口（命令の名前・媒体・結果だけを runs に残す）。広告のものは
                # `adaccount_state/<名前>/` の runs（`_ad_row` が読む）。
                "location_search", "webhook_subscribe", "connected_threads_user",
@@ -304,6 +313,9 @@ def _account_row(name, cfg, now):
     _read_sent(state_dir, found)
     obtained = jst.parse(token.get("obtained_at")) if isinstance(token, dict) else None
     _note(found, "auth", obtained)
+    if isinstance(token, dict):
+        # 認可のとき 1 回だけメールを読めた日（値は保存していない・印だけ）。
+        _note(found, "auth_email", jst.parse(token.get("email_read_at")))
     return {"name": name, "media": cfg.get("media"), "owner": not accounts.is_invite_account(cfg), "cfg": cfg,
             "held": _held(cfg.get("media"), token), "found": found, "keepalive": keepalive, "obtained": obtained,
             "data_access": _data_access(cfg, now)}

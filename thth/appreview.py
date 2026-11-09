@@ -68,6 +68,7 @@ SLOTS = {
     "BRAND": "ブランド（テストのビジネス口座）の Instagram の数字の id",
     "TIEUP": "タイアップ投稿（ブランドをタグ付けした投稿）の Instagram の media の数字の id",
     "BUSINESS": "business-id（Business Suite の事業の数字の id）",
+    "VALUE": "購入の金額（円・数字だけ。例 1200）",
 }
 
 
@@ -172,6 +173,17 @@ SEGMENTS = (
          ("prep", "24 時間より前に届いたメッセージを用意する"),
          ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}"),
          real_first="HUMAN_AGENT の札の綴りと窓の外の断りの符丁が【推】（計画 M4）"),
+    _seg("fb-events", "facebook", "pages_events — report a purchase that came from a Messenger conversation.",
+         ["pages_events"],
+         ("prep", "別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）"),
+         ("two", "thth dm event {FB} --type purchase --conversation {FB_PSID} --value {VALUE} --currency JPY --by {BY}"),
+         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return"),
+         real_first="events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）"),
+    _seg("fb-email", "facebook", "email — the authorizing user's email address, read once at authorization.",
+         ["email"],
+         ("prep", "email を求める認可は端末で thth auth <口座> --by <名前> を打つ（招待の画面では値は出ない）。"
+                  "認可の最後に出る「認可したユーザーのメール」の行を映す（画面に出すだけ・保存しない）"),
+         ("cmd", "thth doctor {FB}")),
     _seg("fb-search", "facebook", "Page Public Content Access — search public Pages and their posts (counts only).",
          ["page_public_content_access"], ("cmd", "thth where {FB} {WORD}")),
     _seg("fb-who", "facebook", "Page Public Metadata Access — public metadata of another Page.",
@@ -218,6 +230,12 @@ SEGMENTS = (
          ("cmd", "thth dm list {IG}"), ("two", "thth dm send {IG} {IG_PSID} --text {REPLY} --by {BY}"),
          ("hand", "Instagram で返事が届いたのを見せたら Return"),
          real_first="messaging_type の綴りが【推】（計画 M4）"),
+    _seg("ig-events", "instagram", "instagram_manage_events — report a purchase that came from an Instagram conversation.",
+         ["instagram_manage_events"],
+         ("prep", "別のテストの口座から Instagram に DM を 1 通送っておく（thth dm list に出る会話の id を使う）"),
+         ("two", "thth dm event {IG} --type purchase --conversation {IG_PSID} --value {VALUE} --currency JPY --by {BY}"),
+         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return"),
+         real_first="events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）"),
     _seg("ig-hashtag", "instagram", "Instagram Public Content Access — hashtag search (counts only).",
          ["instagram_public_content_access"], ("cmd", "thth where {IG} {TAG}")),
     _seg("ig-upcoming", "instagram", "instagram_manage_upcoming_events — the account's upcoming events.",
@@ -248,6 +266,10 @@ SEGMENTS = (
          "(Standard Access returns test data).", ["instagram_creator_marketplace_discovery"],
          ("prep", "ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）"),
          ("cmd", "thth creators search {IG} --country JP")),
+    # ---------------------------------------------------------------- WhatsApp（口の形と試験だけ・口座の種類がまだ無い）
+    _seg("wa-events", "whatsapp", "whatsapp_business_manage_events — report a purchase that came from a WhatsApp "
+         "conversation.", ["whatsapp_business_manage_events"],
+         door="thth dm event <口座> --channel whatsapp（WhatsApp の口座の種類がまだ THTH に無い・口の形と試験だけ）"),
     # ---------------------------------------------------------------- 広告
     # 設計 広告の資格と遠くの道（2026-11-06）: 広告の招待も資格の行を作り、`thth login` の鍵が広告の台帳に結ばれる。
     # 鍵は口座 1 つなので、IG と同じく広告の区間の前に広告の招待で login をやり直す。審査員の台帳に結んだページは
@@ -282,14 +304,14 @@ SEGMENTS = (
          door="claude mcp add（公式の広告 MCP に THTH のアプリで繋ぐ・計画 §1.5）"),
 )
 
-# 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す。
+# 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す
+# （ブランドとクリエイターの 6 つと、`email`・`pages_events`・`instagram_manage_events`・`whatsapp_business_manage_events` は 11/09 に口ができて移した）。
 PLANNED = {
-    "email": "facebook", "pages_events": "facebook",
-    "instagram_manage_events": "instagram", "instagram_creator_marketplace_messaging": "instagram",
+    "instagram_creator_marketplace_messaging": "instagram",
     "instagram_shopping_tag_products": "instagram",
     "commerce_manage_accounts": "ads",
     "whatsapp_business_management": "whatsapp", "whatsapp_business_messaging": "whatsapp",
-    "whatsapp_business_manage_events": "whatsapp", "manage_app_solution": "whatsapp",
+    "manage_app_solution": "whatsapp",
 }
 
 # 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。
