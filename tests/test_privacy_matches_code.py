@@ -127,35 +127,71 @@ def test_PBKDF2の回数はWorkerとththで同じ():
     assert js_const("person.js", "ITERATIONS") == relay.ITERATIONS
 
 
+def _x_mismatches(page, caps, *, metrics, conversation):
+    """X の項と adapter の口の食い違いを両方の向きで並べる（空なら合っている）。
+
+    「口があるのに文が無い」と「口が無くなったのに文が残る」の両方を見る（監査 5.14.0b の 6 の残り）。
+    """
+    item = re.search(r"<li>X: (.*?)</li>", page, re.S)
+    if not item:
+        return ["privacy に X の項が無い"]
+    text = item.group(1)
+    search = re.search(r"<strong>Keyword search\.</strong>(.*?)</p>", page, re.S)
+    search_en = bool(search and "Mastodon and X" in search.group(1))
+    claims = {
+        # 口: (英の項にその文があるか, 日の文があるか)
+        "metrics": ("metrics" in text and "not collected" not in text, None),
+        "conversation": ("replies to its posts" in text, None),
+        "repost_like": ("reposts and likes" in text, None),
+        "keyword_search": ("search of other people's recent public posts" in text and search_en,
+                           "Mastodon・X の検索" in page),
+        "thread_read": ("replies in one post's conversation" in text, None),
+    }
+    has = {
+        "metrics": metrics,
+        "conversation": conversation,
+        "repost_like": {"repost", "like"} <= caps,
+        "keyword_search": "keyword_search" in caps,
+        "thread_read": "thread_read" in caps,
+    }
+    out = []
+    for name, (en, ja) in claims.items():
+        said = en if ja is None else (en or ja)
+        whole = en if ja is None else (en and ja)
+        if has[name] and not whole:
+            out.append(f"{name}: 口があるのに privacy に文が無い")
+        if not has[name] and said:
+            out.append(f"{name}: 口が無いのに privacy に文が残っている")
+    reads_others = has["keyword_search"] or has["thread_read"]
+    if reads_others and "not saved" not in text:
+        out.append("他人の投稿を読むのに「保存しない」が無い")
+    return out
+
+
 def test_Xの項はadapterの口と合う():
-    """X の adapter が自分の投稿の数・返信・反応を取れるなら、privacy は「集めない／できない」と言わない（11/09）。
+    """X の adapter の口と privacy の X の項が、両方の向きで合う（11/09・監査 5.14.0 と 5.14.0b）。
 
     9/27 の文「Replies and metrics are not collected」が、c8511ae（5.13.0）で数を記録したあとも残っていた。
     """
     from thth.adapters.x import XAdapter
 
     page = PRIVACY.read_text(encoding="utf-8")
-    item = re.search(r"<li>X: (.*?)</li>", page, re.S)
-    assert item, "privacy に X の項が無い"
-    text = item.group(1)
-    if hasattr(XAdapter, "owned_metrics"):
-        assert "metrics" in text and "not collected" not in text
-    if hasattr(XAdapter, "conversation"):
-        assert "replies to its posts" in text
-    if {"repost", "like"} <= set(XAdapter.CAPABILITIES):
-        assert "reposts and likes" in text
-    # 検索と会話の読み（監査 5.14.0）。他人の投稿を読む口があるなら、項に書き、検索の節にも X を挙げる。
-    # 片方だけ残っても縛るように、口ごとに見る（監査 5.14.0b の 6）。
+    assert _x_mismatches(page, set(XAdapter.CAPABILITIES), metrics=hasattr(XAdapter, "owned_metrics"),
+                         conversation=hasattr(XAdapter, "conversation")) == []
+
+
+def test_X_口が無くなったのに文が残れば赤になる():
+    """柵が逆の向きでも効くことを、口を 1 つずつ外した形で確かめる（わざと壊して赤を見る）。"""
+    from thth.adapters.x import XAdapter
+
+    page = PRIVACY.read_text(encoding="utf-8")
     caps = set(XAdapter.CAPABILITIES)
-    if "keyword_search" in caps:
-        assert "search of other people's recent public posts" in text
-        search = re.search(r"<strong>Keyword search\.</strong>(.*?)</p>", page, re.S)
-        assert search and "Mastodon and X" in search.group(1)
-        assert "Mastodon・X の検索" in page
-    if "thread_read" in caps:
-        assert "replies in one post's conversation" in text
-    if caps & {"keyword_search", "thread_read"}:
-        assert "not saved" in text
+    for gone in ("keyword_search", "thread_read"):
+        found = _x_mismatches(page, caps - {gone}, metrics=True, conversation=True)
+        assert f"{gone}: 口が無いのに privacy に文が残っている" in found
+    assert any("metrics" in m for m in _x_mismatches(page, caps, metrics=False, conversation=True))
+    assert any("conversation" in m for m in _x_mismatches(page, caps, metrics=True, conversation=False))
+    assert any("repost_like" in m for m in _x_mismatches(page, caps - {"like"}, metrics=True, conversation=True))
 
 
 def test_WhatsAppの項は口と合い_保存しないと言う():

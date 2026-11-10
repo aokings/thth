@@ -248,6 +248,14 @@ def test_危ない領域にMetaの書く口と認可がある():
         assert name in gate.areas_of(path), path
 
 
+def test_危ない領域に広告の書く口と認可がある():
+    for path, name in (("thth/ads/graphwrite.py", "ads_write"), ("thth/ads/ops.py", "ads_write"),
+                       ("thth/ads/budget.py", "ads_write"), ("thth/oauth.py", "oauth"),
+                       ("thth/ads/auth.py", "oauth")):
+        assert name in gate.areas_of(path), path
+    assert gate.areas_of("thth/ads/graphread.py") == []   # 読むだけの所は入れない
+
+
 # ---- 出力の形（前向きな断り） ----
 
 def test_止めるときは1行目が符丁で3つが続く(repo):

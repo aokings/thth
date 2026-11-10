@@ -27,6 +27,7 @@ from tests.test_facebook_adapter import fake_graph
 from tests.test_v212_server_writes import env  # noqa: F401
 from tests.test_v3140_remote_cli import ACCOUNT, KEY, _echo, home, run, worker  # noqa: F401
 from tests.test_v3140_server_reads import media  # noqa: F401
+from tests.kept_bytes import kept_bytes
 
 V = "/" + fb.GRAPH_VERSION
 PAGE, IG_ID, OTHER_PAGE, HASHTAG = "61596075596464", "17841437318552220", "20531316728", "17843826142012701"
@@ -118,7 +119,7 @@ def nothing_kept(m3, *markers):
     """置き場の全部のファイルに目印が無い（本文・リード・自己紹介は画面に出すだけ）。"""
     for path in pathlib.Path(m3["tmp"]).rglob("*"):
         if path.is_file():
-            raw = path.read_bytes()
+            raw = kept_bytes(path)
             for marker in markers:
                 assert marker.encode() not in raw, f"{path} に {marker} が残っている"
 

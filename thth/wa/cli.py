@@ -88,8 +88,10 @@ def _record(name, action, status, *, permission, error=None, mode=None) -> None:
         runs_mod.append_run(ledger.ensure_state_dir(name), {
             "account": name, "run_id": f"{action}-{jst.iso(now)}", "mode": mode or "read", "action": action,
             "medium": ledger.MEDIA, "status": status, "error": error, "permission": permission}, jst.month_str(now))
-    except (OSError, ValueError, accounts.AccountError):
-        pass
+    except (OSError, ValueError, accounts.AccountError) as exc:
+        mw.record_failed(action, status, exc)
+        if action == "wa_send" and status in ("ok", "unknown"):
+            sys.stderr.write("注意: この 1 通は今日の通数に入っていません。1 日の上限を数え直すまで、送る数に気を付けてください。\n")
 
 
 def _guard_stopped(name) -> None:

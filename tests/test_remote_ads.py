@@ -30,6 +30,7 @@ from tests.test_facebook_adapter import fake_graph
 from tests.test_meta_stage5 import ACT, STORY, Meta, Router
 from tests.test_v212_server_writes import env, save_config  # noqa: F401
 from tests.test_v3140_remote_cli import FakeWorker
+from tests.kept_bytes import kept_bytes
 
 V = "/" + meta_graph.GRAPH_VERSION
 NAME = "rev-ads"
@@ -155,7 +156,7 @@ def writes(vm):
 def nothing_kept(vm, *markers):
     for path in pathlib.Path(vm["root"]).rglob("*"):
         if path.is_file():
-            raw = path.read_bytes()
+            raw = kept_bytes(path)
             for marker in markers:
                 assert marker.encode() not in raw, f"{path} に {marker} が残っている"
     for marker in markers:

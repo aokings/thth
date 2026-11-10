@@ -26,6 +26,7 @@ from thth import permission_watch as pw
 from thth import refusal_catalog
 from thth.adapters import facebook as fb
 from tests.test_facebook_adapter import fake_graph
+from tests.kept_bytes import kept_bytes
 
 V = "/" + fb.GRAPH_VERSION
 PAGE, IG_ID = "61596075596464", "17841437318552220"
@@ -130,7 +131,7 @@ def two_steps(capsys, *argv):
 def nothing_kept(m4, *markers):
     for path in pathlib.Path(m4["tmp"]).rglob("*"):
         if path.is_file():
-            raw = path.read_bytes()
+            raw = kept_bytes(path)
             for marker in markers:
                 assert marker.encode() not in raw, f"{path} に {marker} が残っている"
 

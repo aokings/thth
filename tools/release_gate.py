@@ -56,6 +56,11 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
                    "thth/wa/*"),
     # auth_keys: 認可の流れと、認可のときに鍵やメールを扱う所
     "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py", "thth/wa/auth.py"),
+    # お金が動く広告の書く口と、広告と各媒体の認可（11/10・監査 5.14.0b の「危ない領域の穴」）。
+    # facebook.py・instagram.py の `_write` は入れない: 読む口と同じ大きなファイルで、入れると媒体の読みの
+    # 直しのたびに監査が要る。`_write` を通る書き込みは、呼ぶ側（meta_write ほか）が表に入っている。
+    "ads_write": ("thth/ads/graphwrite.py", "thth/ads/ops.py", "thth/ads/budget.py"),
+    "oauth": ("thth/oauth.py", "thth/ads/auth.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

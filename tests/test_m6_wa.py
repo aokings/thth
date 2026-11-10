@@ -29,6 +29,7 @@ from thth.wa import auth as wa_auth
 from thth.wa import graph as wa_graph
 from thth.wa import ledger
 from tests.test_facebook_adapter import fake_graph
+from tests.kept_bytes import kept_bytes
 
 V = "/" + meta_graph.GRAPH_VERSION
 NAME = "m6-wa"
@@ -60,7 +61,7 @@ def posts(env):
 def nothing_kept(env, *markers):
     for path in pathlib.Path(env["tmp"]).rglob("*"):
         if path.is_file() and path.name != "app.env":     # app.env は運営者が置いた設定（試験の道具）
-            raw = path.read_bytes()
+            raw = kept_bytes(path)
             for marker in markers:
                 assert marker.encode() not in raw, f"{path} に {marker} が残っている"
 

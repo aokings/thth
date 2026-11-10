@@ -31,6 +31,7 @@ from thth.adapters import facebook as fb
 from tests.test_facebook_adapter import fake_graph
 from tests.test_v212_server_writes import env, save_config  # noqa: F401
 from tests.test_v3140_remote_cli import ACCOUNT, KEY, FakeWorker, home, run, worker  # noqa: F401
+from tests.kept_bytes import kept_bytes
 
 V = "/" + fb.GRAPH_VERSION
 PAGE, IG_ID = "61596075596464", "17841437318552220"
@@ -165,7 +166,7 @@ def nothing_kept(far, *markers):
     """VM の置き場の全部のファイル（依頼の印・runs・記録）と VM の stderr に目印が無い。"""
     for path in pathlib.Path(far["root"]).rglob("*"):
         if path.is_file():
-            raw = path.read_bytes()
+            raw = kept_bytes(path)
             for marker in markers:
                 assert marker.encode() not in raw, f"{path} に {marker} が残っている"
     for marker in markers:

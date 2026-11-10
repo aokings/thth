@@ -209,8 +209,18 @@ def _record(account, action, media, status, *, permission=None, error=None, mode
                                                          else "production"),
                                           "status": status, "error": error, "permission": permission,
                                           **(extra or {})})
-    except (OSError, accounts_mod.AccountError):
-        pass
+    except (OSError, accounts_mod.AccountError) as exc:
+        record_failed(action, status, exc)
+
+
+def record_failed(action, status, exc) -> None:
+    """実行記録（runs）に書けなかったことを画面に知らせる（監査 5.14.0b の 5）。
+
+    媒体を呼んだあとなので取り消せないが、黙っていると「記録に無い＝していない」と読まれる。
+    """
+    reason = exc.__class__.__name__
+    sys.stderr.write(f"注意: 実行記録（runs）に書けませんでした（{action}・{status}・{reason}）。"
+                     "この実行は記録に残っていません。state の置き場の空きと権限を確かめてください。\n")
 
 
 def _write(args, account_cfg, action, permission, call, *, extra=None):
