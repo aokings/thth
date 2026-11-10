@@ -59,6 +59,8 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # お金が動く広告の書く口と、広告と各媒体の認可（11/10・監査 5.14.0b の「危ない領域の穴」）。
     # facebook.py・instagram.py の `_write` は入れない: 読む口と同じ大きなファイルで、入れると媒体の読みの
     # 直しのたびに監査が要る。`_write` を通る書き込みは、呼ぶ側（meta_write ほか）が表に入っている。
+    # `thth/ads/cli.py`（二段確認の入口）・`ads/watch.py`・`server_ads.py` も入れない: 書き込みと予算の判断は
+    # 上の 3 つに集まっていて、入口の直しは CI の全件と互換の柵で縛る（監査 5.14.2 の気づき）。
     "ads_write": ("thth/ads/graphwrite.py", "thth/ads/ops.py", "thth/ads/budget.py"),
     "oauth": ("thth/oauth.py", "thth/ads/auth.py"),
 }

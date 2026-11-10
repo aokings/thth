@@ -53,7 +53,7 @@ def test_run_guidance_names_the_account(root, monkeypatch, capsys):
 
 def _run_with(monkeypatch, capsys, summary, notify=lambda *a, **k: "processed", ready=None):
     monkeypatch.setattr(selfupdate, "pull_and_reexec", lambda *a, **k: None)
-    monkeypatch.setattr(healthcheck, "diagnostic", lambda *a, **k: object())
+    monkeypatch.setattr(healthcheck, "diagnostic", lambda *a, **k: SimpleNamespace(state="success", reason_code="healthy"))
     monkeypatch.setattr(healthcheck, "notify", lambda *a, **k: SimpleNamespace(
         delivery="not_configured", category=None, state_saved=True))
     monkeypatch.setattr(incident, "notify", notify)
@@ -100,3 +100,17 @@ def test_ほかの例外は今までどおり完了できなかったと言う(r
         raise ValueError("invalid_outbox")
     err = _run_with(monkeypatch, capsys, dict(HUB_ONLY), notify=boom)
     assert "運用通知を完了できませんでした: incident_notification_pending" in err
+
+
+def test_錠の枝で宛先の確かめが落ちても死活通知と脈は飛ばない(root, monkeypatch, capsys):
+    """監査 5.14.2: readiness が例外を投げると外側に抜け、死活通知と hub への脈が飛んでいた。"""
+    from thth import pulse
+    pulses = []
+    monkeypatch.setattr(pulse, "send", lambda *a, **k: pulses.append(k) or "sent")
+
+    def broken(*_a, **_k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(incident, "readiness", broken)
+    err = _run_with(monkeypatch, capsys, dict(HUB_ONLY), notify=_busy)
+    assert "incident_notification_busy" in err and "notification_internal_error" not in err
+    assert pulses

@@ -3945,7 +3945,12 @@ def cmd_run(args) -> int:
             except lock_mod.LockBusy:
                 # 同じ repo の別の口座の回と錠がぶつかった（kopicha-ig と kopicha-threads は同じ分に回る）。
                 # 通知の状態は次の回に進む。hub が拾う口座では黙る。
-                if not _hub_only(incident_mod.readiness(account_cfg) | {"hub_reads_stuck": incident_mod.hub_reads_stuck()}):
+                try:
+                    quiet = _hub_only(incident_mod.readiness(account_cfg)
+                                      | {"hub_reads_stuck": incident_mod.hub_reads_stuck()})
+                except Exception:
+                    quiet = False  # 確かめられなければ出す側に倒す。下の死活通知と脈を飛ばさない（監査 5.14.2）
+                if not quiet:
                     print("運用通知は別の実行と重なったので次の回に回します: incident_notification_busy", file=sys.stderr)
             except Exception:
                 print("運用通知を完了できませんでした: incident_notification_pending", file=sys.stderr)
