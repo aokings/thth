@@ -3908,6 +3908,11 @@ def cmd_run(args) -> int:
     state_dir = (accounts_mod.state_dir_for(args.account)
                  if accounts_mod.name_is_safe(args.account) else None)
 
+    def _hub_only(summary) -> bool:
+        """メールの宛先が無く、止まりは hub が拾う口座か（`thth notifications status` の欄で決める）。"""
+        return (summary.get("hub_reads_stuck") is True and not summary.get("user_configured")
+                and not summary.get("admin_configured"))
+
     def _pulse_note(diag) -> str | None:
         """理由の区分と本数だけ（原稿名・本文は入れない・media-hub 依頼 §4）。"""
         if diag.state == "success":
@@ -3930,9 +3935,18 @@ def cmd_run(args) -> int:
                                     result=result, reapproval=reapproval,
                                     confirm_due=confirm_due)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
-                if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
+                # 宛先を付けずに hub が止まりを拾う口座（hub_reads_stuck）では、この行を出さない。送る先が無いので
+                # 済んだ事象も「未送」のまま残り、毎回の表示が知らせにならない（運用 11/10・masaru はメールを見ない）。
+                # 未完了の中身は `thth notifications status` に今までどおり出る。止まりそのものは board の stuck で hub へ。
+                if not _hub_only(incident_summary) and (incident_summary.get("mail_pending")
+                                                        or incident_summary.get("repo_pending")):
                     # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
                     print(f"運用通知に未完了があります: thth notifications status {args.account} で確認してください", file=sys.stderr)
+            except lock_mod.LockBusy:
+                # 同じ repo の別の口座の回と錠がぶつかった（kopicha-ig と kopicha-threads は同じ分に回る）。
+                # 通知の状態は次の回に進む。hub が拾う口座では黙る。
+                if not _hub_only(incident_mod.readiness(account_cfg) | {"hub_reads_stuck": incident_mod.hub_reads_stuck()}):
+                    print("運用通知は別の実行と重なったので次の回に回します: incident_notification_busy", file=sys.stderr)
             except Exception:
                 print("運用通知を完了できませんでした: incident_notification_pending", file=sys.stderr)
             attempt = healthcheck_mod.notify(

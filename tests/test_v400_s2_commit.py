@@ -145,3 +145,51 @@ def test_T_S2_5a_承認のあとに記法を変えるとtimerは何も送らな�
         throw(adapter)
     assert "blog_syntax_unsupported" in str(exc.value)
     assert adapter.calls == [] and states(delivery) == ["wanted"] and inflight.read(s2lane.state) is None
+
+
+# --------------------------------------------------------------------------
+# commit-graph が object に無い commit を指すとき（にがみラボ 11/10）
+# --------------------------------------------------------------------------
+
+def _committed_repo(tmp_path):
+    repo = tmp_path / "repo-cg"
+    (repo / "articles").mkdir(parents=True)
+    run_git(repo.parent, ["init", "-q", "-b", "main", str(repo)])
+    path = repo / "articles" / "a.md"
+    path.write_bytes(b"# t\n\nbody\n")
+    run_git(repo, ["add", "articles/a.md"])
+    run_git(repo, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "a"])
+    return repo, str(path)
+
+
+def test_logがcommit_graphで落ちてもgraphを使わずに辿り直して通る(tmp_path, monkeypatch):
+    from thth import writeback
+    repo, path = _committed_repo(tmp_path)
+    real = writeback._run_git
+    calls = []
+
+    def flaky(top, args):
+        calls.append(list(args))
+        if args[:1] == ["log"]:                      # 1 回目の log だけ、11/10 の VM と同じ形で落とす
+            return type("R", (), {"returncode": 128, "stdout": "",
+                                  "stderr": "fatal: commit d6d4 exists in commit-graph but not in the object database"})()
+        return real(top, args)
+
+    monkeypatch.setattr(writeback, "_run_git", flaky)
+    assert hatena_entry.committed_commit(path, b"# t\n\nbody\n") == head(repo)
+    assert ["-c", "core.commitGraph=false", "log"] == calls[-1][:3]
+
+
+def test_graphを使わなくても読めなければ今までどおりarticle_not_committed(tmp_path, monkeypatch):
+    from thth import writeback
+    repo, path = _committed_repo(tmp_path)
+    real = writeback._run_git
+
+    def broken(top, args):
+        if "log" in args:
+            return type("R", (), {"returncode": 128, "stdout": "", "stderr": "fatal: bad object"})()
+        return real(top, args)
+
+    monkeypatch.setattr(writeback, "_run_git", broken)
+    with pytest.raises(hatena_entry.EntryError, match="article_not_committed"):
+        hatena_entry.committed_commit(path, b"# t\n\nbody\n")

@@ -395,7 +395,7 @@ ENTRIES = {
     "article_not_committed": {
         "kind": "refusal",
         "why": "記事のファイルが commit されておらず（作業ツリーが HEAD と違う）、どの版か言えません",
-        "fix": "記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・まだ追跡されていない）。記事を commit してから",
+        "fix": "記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・まだ追跡されていない）。記事を commit してから（commit してあるのに出るときは、git がその記事の履歴を読めていません。次の取り込みのあとに打ち直すと治ることが多く、治らなければ git fsck で確かめて）",
         "better": "記事を直したら commit してから承認すると、出す版と承認した版がそろいます",
         "doors": ("cli", "mcp"),
     },

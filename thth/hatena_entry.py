@@ -262,8 +262,14 @@ def committed_commit(path: str, data: bytes) -> str | None:
         raise EntryError("article_not_committed")
     top = writeback.repo_toplevel(path)
     rel = posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
+    log = ["log", "-1", "--format=%H", "HEAD", "--", rel]
     try:
-        r = writeback._run_git(top, ["log", "-1", "--format=%H", "HEAD", "--", rel])
+        r = writeback._run_git(top, log)
+        if r.returncode != 0:
+            # 取り込みの途中などで commit-graph が object に無い commit を指すと、log が
+            # 「exists in commit-graph but not in the object database」で落ちる（にがみラボ 11/10・1 時間止まった）。
+            # commit-graph を使わずに object から辿り直す。記事が HEAD の blob と同じことは上で確かめ済み。
+            r = writeback._run_git(top, ["-c", "core.commitGraph=false", *log])
     except (OSError, ValueError):
         raise EntryError("article_not_committed") from None
     head = (r.stdout or "").strip()
