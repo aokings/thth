@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-10"  # 5.14.1。前: 2026-11-10（5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -327,8 +327,9 @@ def build_privacy() -> str:
         "in one of two ways: an invited user opens the invitation link the operator sent and presses the button "
         "on that page, or the operator starts it from the server with <code>thth auth</code>. Either way, the "
         "user reviews the account and permissions on the platform and approves. Afterwards, posts, replies and "
-        "deletions happen only when the user asks for them, through their own CLI or AI assistant; THTH does "
-        "nothing on its own. People who install the THTH software and run it themselves operate their own "
+        "deletions happen only when the user asks for them, through any of THTH's tools (the command line, an AI "
+        "assistant the user chose, or the owner's page); THTH does not act without the owner's permission, given "
+        "each time or through rules the owner set. People who install the THTH software and run it themselves operate their own "
         "copy; this policy describes the operator's service.</p>")
 
     add("<h2>Platforms and the data THTH uses</h2>")
@@ -446,16 +447,17 @@ def build_privacy() -> str:
 
     add("<h2>Direct messages (Messenger and Instagram Direct)</h2>")
     add("<p>THTH reads a Page's Messenger inbox or an Instagram professional account's Direct inbox only when the "
-        "owner runs <code>thth dm</code>. <code>thth dm list</code> shows the conversations without text, and "
+        "owner (or the assistant the owner chose) asks for it. <code>thth dm list</code> shows the conversations without text, and "
         "<code>thth dm read</code> shows the latest messages of one conversation (the text, the other person's name "
         "and ID, the times) on the owner's terminal; with <code>--profile</code> on Facebook it also shows the other "
         "person's locale, time zone and gender. None of this is saved. A reply is written by the owner (or the "
-        "owner's assistant) and sent with <code>thth dm send</code> only after a two-step confirmation; THTH never "
-        "replies on its own and never sends a message first. A reply is sent only within 24 hours of the other "
+        "owner's assistant) and sent with <code>thth dm send</code> only after a two-step confirmation; THTH does not "
+        "send a message without the owner's permission, given each time or through rules the owner set. A reply is sent only within 24 hours of the other "
         "person's last message; after that, only a human agent's reply marked with Meta's human_agent tag, within 7 days "
         "of it. To decide this, THTH reads the time of the last message at the moment of sending and keeps no record "
         "of it. A private reply to a comment (<code>thth dm send --comment</code>) is sent within 7 days of the "
-        "comment, one per comment. THTH does not send utility messages or marketing messages. On the owner's "
+        "comment, one per comment. THTH sends utility or marketing messages only when the owner decided them with a "
+        "two-step confirmation, and only to people who agreed to receive them. On the owner's "
         "request, and only after a two-step confirmation, THTH can also report the outcome of a conversation, such as a "
         "purchase or an inquiry, to Meta (Conversions API for Business Messaging) so that the owner's advertising can be "
         "measured and optimized: the kind of outcome, an optional amount and currency, and the other person's ID within "
@@ -511,8 +513,8 @@ def build_privacy() -> str:
         "and the result), the monthly budget estimate, and Marketing API call counts (<code>meta_calls.json</code>: "
         "per-day counts for the last 16 days of calls and errors, no content). Everything THTH creates "
         "(<code>thth ads boost</code>, from a post the owner's Page published, with the budget the owner gave) is "
-        "paused; delivery starts only after the owner's two-step confirmation, and THTH can only lower a budget, "
-        "never raise one. THTH's budget estimate is not an invoice; "
+        "paused; delivery starts only after the owner's two-step confirmation, and THTH raises a budget "
+        "only after the owner's two-step confirmation. THTH's budget estimate is not an invoice; "
         "Meta's billing applies. <code>thth ads catalog</code> shows the business's product catalogs and products, "
         "<code>thth ads leads</code> shows lead forms and, on request, the leads of a form (the fields the person "
         "entered) on the owner's terminal, and <code>thth ads network</code> and <code>thth ads shop</code> show "
@@ -527,7 +529,8 @@ def build_privacy() -> str:
         "run only on the user's own computer: the refresh token is kept in a file only the user can read "
         "(<code>~/.config/thth/</code>, mode 600), and nothing from Google is sent to the operator's server, to "
         "thth.me or to any other party. Results are shown on the user's terminal (or as JSON for the user's own "
-        "tools) and are not saved by THTH. THTH does not create, change or pay for ads through Google. The user can "
+        "tools) and are not saved by THTH. These tools only read; if THTH changes Google Ads, it does so only after "
+        "the owner's two-step confirmation, and Google bills the owner directly. The user can "
         "revoke access at any time in their Google Account (Security, third-party access) and delete the token "
         "file. THTH's use and transfer to any other app of information received from Google APIs will adhere to the "
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data '
@@ -671,7 +674,8 @@ def build_privacy() -> str:
         "addresses to its records.</p>")
 
     add("<h2>AI (LLM) sessions</h2>")
-    add("<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own "
+    add("<p>THTH passes data to an AI model provider only when the owner chose that provider and asks for it; THTH "
+        "does not choose a provider or send anything to one on its own. Users work with THTH through their own "
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. The user chooses that provider, and what is passed "
         "is passed at the user's own instruction; THTH sends nothing to any provider on its own. Depending on the tool, this includes the "
@@ -765,8 +769,9 @@ def build_privacy() -> str:
     add("<p>招待された利用者は、自分のサーバーを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は"
         "2 つです。招待された利用者が運営者から届いた招待リンクを開いてそのページのボタンを押すか、運営者がサーバーで"
         "<code>thth auth</code> から始めます。どちらでも、利用者はSNSの画面でアカウントと権限を確かめて承認します。"
-        "その後の投稿・返信・削除は、利用者が自分の CLI か AI アシスタントで頼んだときだけ行われ、THTH が自分から"
-        "動くことはありません。THTH を自分で導入して動かす人は、その複製を自分で"
+        "その後の投稿・返信・削除は、利用者が THTH の道具（コマンド・利用者が選んだ AI アシスタント・持ち主の画面の"
+        "どの入口でも）で頼んだときだけ行われます。THTH が持ち主の許し（その都度か、持ち主が決めた規則）無しに動くことは"
+        "ありません。THTH を自分で導入して動かす人は、その複製を自分で"
         "運用しています。このポリシーは運営者のサービスについての説明です。</p>")
 
     add("<h2>SNSと使うデータ</h2>")
@@ -861,15 +866,15 @@ def build_privacy() -> str:
 
     add("<h2>ダイレクトメッセージ（Messenger と Instagram Direct）</h2>")
     add("<p>THTH がページの Messenger の受信箱や Instagram のプロ口座の Direct の受信箱を読むのは、持ち主が "
-        "<code>thth dm</code> を打ったときだけです。<code>thth dm list</code> は会話の一覧を本文なしで、"
+        "持ち主（か持ち主が選んだアシスタント）が求めたときだけです。<code>thth dm list</code> は会話の一覧を本文なしで、"
         "<code>thth dm read</code> は 1 つの会話の直近の通（本文・相手の名前と ID・時刻）を持ち主の端末に出します。"
         "Facebook で <code>--profile</code> を付けると相手の言語・時間帯・性別も出します。どれも保存しません。返事は"
         "持ち主（か持ち主のアシスタント）が書き、<code>thth dm send</code> で二段確認のあとにだけ送ります。THTH が"
-        "自分から返事をしたり、先にメッセージを送ったりすることはありません。返事を送れるのは相手の最後の通から 24 時間の内"
+        "持ち主の許し（その都度か、持ち主が決めた規則）無しにメッセージを送ることはありません。返事を送れるのは相手の最後の通から 24 時間の内"
         "だけで、それを過ぎた会話には、人の担当者が 7 日の内に Meta の human_agent の札を付けて返すときだけです。"
         "この判定のために THTH は送る直前に最後の通の時刻を読み、記録には残しません。コメントへの非公開の返事"
-        "（<code>thth dm send --comment</code>）はコメントから 7 日の内に、1 コメントに 1 通です。THTH は utility の"
-        "メッセージや宣伝のメッセージを送りません。持ち主が求めたときに限り、二段確認のあとに、会話から起きた購入や"
+        "（<code>thth dm send --comment</code>）はコメントから 7 日の内に、1 コメントに 1 通です。utility の"
+        "メッセージや宣伝のメッセージを THTH が送るのは、持ち主が二段確認で決めたものを、受け取ることに同意した人へだけです。持ち主が求めたときに限り、二段確認のあとに、会話から起きた購入や"
         "問い合わせの結果を Meta に報告できます（Conversions API for Business Messaging）。持ち主の広告を計測し、最適化"
         "するためで、送るのは結果の種類・任意の金額と通貨・ページまたは口座の中での相手の ID です。THTH が残すのは"
         "命令ごとのログ 1 行（命令の名前・SNS・使った権限・結果。報告した結果ならその種類も）だけで、本文・名前・ID・金額は"
@@ -914,7 +919,7 @@ def build_privacy() -> str:
         "THTH が行った操作ごとの記録（操作・ID・結果）、月の消費の見積もり、Marketing API の呼び出しの数"
         "（<code>meta_calls.json</code>: 呼び出しと誤りの日ごとの数を直近 16 日分。中身は持ちません）です。THTH が"
         "作るもの（<code>thth ads boost</code>・本人のページの投稿から・持ち主が渡した予算で）はすべて PAUSED で、"
-        "配信が始まるのは持ち主の二段確認のあとだけです。予算は下げることしかできず、上げる命令はありません。THTH の見積もりは請求書ではなく、"
+        "配信が始まるのは持ち主の二段確認のあとだけです。予算を上げるのも持ち主の二段確認のあとだけです。THTH の見積もりは請求書ではなく、"
         "請求は Meta の側で行われます。<code>thth ads catalog</code> はビジネスの商品カタログと商品を、"
         "<code>thth ads leads</code> はリードのフォームと、求めたときにそのフォームのリード（本人が入力した項目）を"
         "持ち主の端末に、<code>thth ads network</code> と <code>thth ads shop</code> は Audience Network の数と"
@@ -928,7 +933,7 @@ def build_privacy() -> str:
         "ときに限ります。動くのは利用者自身のコンピューターの中だけです。refresh token は本人だけが読めるファイル"
         "（<code>~/.config/thth/</code>・600）に置き、Google から得たものを運営者のサーバー・thth.me・その他の"
         "誰にも送りません。結果は利用者の端末（または利用者自身の道具のための JSON）に出すだけで、THTH は保存しません。"
-        "THTH が Google で広告を作る・変える・支払うことはありません。利用者は Google アカウントの「セキュリティ」の"
+        "これらの道具は読むだけです。THTH が Google 広告を変えるときは持ち主の二段確認のあとだけで、支払いは Google の請求です。利用者は Google アカウントの「セキュリティ」の"
         "サードパーティのアクセスからいつでも許可を取り消し、鍵のファイルを消せます。Google API から受け取った情報の"
         "THTH による利用と他のアプリへの移転は、限定使用（Limited Use）の要件を含む"
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API サービスのユーザーデータに関するポリシー</a>'
@@ -1050,7 +1055,8 @@ def build_privacy() -> str:
         "IP アドレスのハッシュを Cloudflare の流量制限に渡します。THTH の記録に IP アドレスは書きません。</p>")
 
     add("<h2>AI（LLM）のセッション</h2>")
-    add("<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から "
+    add("<p>THTH が AI モデルの提供者へデータを渡すのは、持ち主が選んだ提供者に、持ち主が求めたときだけです。THTH が"
+        "自分で提供者を選んだり、自分から送ったりすることはありません。利用者は自分の LLM のセッション（例: MCP）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
         "LLM 提供者に渡ります。提供者を選ぶのは利用者で、渡るのは利用者の指示によるものです。THTH が自分から提供者へ"
         "送ることはありません。道具によって、本人の下書き・投稿の履歴・インサイト・報告、そのセッションが読めるプラザの書き込みと返信、トピックマップの語と日々の集計、求めに応じて残した検索の語ごとの数と、公開の返信・言及・検索結果の"
@@ -1120,7 +1126,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = "2026-11-08"  # 5.13.0 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-09-26（3.13.0）・初版 2026-09-25
+TERMS_EFFECTIVE = "2026-11-12"  # 5.14.4 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-08（5.13.0）・2026-09-26（3.13.0）・初版 2026-09-25
 
 
 def contact_html(lang: str) -> str:
@@ -1188,8 +1194,8 @@ def build_terms() -> str:
 
     add("<h2>What the operator does and does not do</h2>")
     add("<ul>")
-    add("  <li>THTH acts only when you ask for it, through your CLI or your assistant; it does not post, reply "
-        "or delete on its own. Every account has safety limits you control: a minimum interval between posts, "
+    add("  <li>THTH acts only when you ask for it, through any of its tools (the command line, your assistant or "
+        "your page), or through rules you set; it does not post, reply or delete without your permission. Every account has safety limits you control: a minimum interval between posts, "
         "daily caps on posts and deletions, and an automatic stop on bursts of actions. An assistant can only "
         "tighten them; loosening them, resuming a stopped account and issuing or revoking an assistant key "
         "are done by you on https://thth.me/activity with your account secret.</li>")
@@ -1197,9 +1203,9 @@ def build_terms() -> str:
         "flow or from standard input, kept in owner-only files on the operator's server, and redacted from "
         "logs and printed output. They are not passed through chats or command arguments, and THTH's tools "
         "do not return them to LLM sessions.</li>")
-    add("  <li>THTH reads a Page's Messenger inbox or an Instagram Direct inbox only when you run <code>thth dm</code>; "
+    add("  <li>THTH reads a Page's Messenger inbox or an Instagram Direct inbox only when you (or your assistant) ask; "
         "what it shows is printed for you and not saved, a reply is sent only after your two-step confirmation and "
-        "inside the platform's messaging window, and THTH never replies or messages anyone on its own.</li>")
+        "inside the platform's messaging window, and THTH does not message anyone without your permission.</li>")
     add("  <li>Ads run on your own Meta ad account. THTH creates everything paused and starts delivery only after "
         "your two-step confirmation (and, where the operator requires it, an approval number). What is spent, and "
         "its consequences, are yours; THTH's budget estimate is not an invoice. A platform may stop or limit ads, "
@@ -1259,17 +1265,17 @@ def build_terms() -> str:
 
     add("<h2>運営者がすること・しないこと</h2>")
     add("<ul>")
-    add("  <li>THTH は、利用者が自分の CLI か AI アシスタントで頼んだときだけ動き、自分から投稿・返信・削除を"
-        "しません。どのアカウントにも利用者が決めるガードがあります。投稿の最短間隔、投稿と削除の 1 日の上限、"
+    add("  <li>THTH は、利用者が THTH の道具（コマンド・アシスタント・持ち主の画面）で頼んだときか、利用者が決めた"
+        "規則によってだけ動き、利用者の許し無しに投稿・返信・削除をしません。どのアカウントにも利用者が決めるガードがあります。投稿の最短間隔、投稿と削除の 1 日の上限、"
         "短時間に操作が多すぎたときの自動停止です。アシスタントはこれを厳しくする向きにしか変えられません。緩める・"
         "止まったアカウントを戻す・API キーを発行する／取り消すのは、利用者が https://thth.me/activity で"
         "アカウントのシークレット を使って行います。</li>")
     add("  <li>認証情報（SNSの token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者の"
         "サーバーのオーナーだけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を"
         "通さず、THTH の道具が LLM のセッションに返すこともありません。</li>")
-    add("  <li>THTH がページの Messenger や Instagram の Direct の受信箱を読むのは、利用者が <code>thth dm</code> を"
-        "打ったときだけです。見せたものは画面に出すだけで保存せず、返事は利用者の二段確認のあとに、SNS の決めた窓の内で"
-        "だけ送ります。THTH が自分から返事やメッセージを送ることはありません。</li>")
+    add("  <li>THTH がページの Messenger や Instagram の Direct の受信箱を読むのは、利用者（か利用者の"
+        "アシスタント）が求めたときだけです。見せたものは画面に出すだけで保存せず、返事は利用者の二段確認のあとに、SNS の決めた窓の内で"
+        "だけ送ります。THTH が利用者の許し無しに返事やメッセージを送ることはありません。</li>")
     add("  <li>広告は利用者自身の Meta の広告アカウントで動きます。THTH はすべて止まった状態（PAUSED）で作り、配信を"
         "始めるのは利用者の二段確認（運営者が求めるときは承認の番号も）のあとだけです。使ったお金とその結果は利用者の"
         "ものです。THTH の予算の見積もりは請求書ではありません。SNS は自らの判断で広告・権限・アカウントを止めたり"

@@ -268,8 +268,9 @@ def test_プライバシーポリシーは正本から生成され_外へ出る�
     for must in ("the other person's username, the text", "相手のユーザー名・本文",
                  "The text and authors of search results are not saved", "検索結果の本文と投稿者は保存しません",
                  "thth account leave", "30 days", "24 hours after it was created",
-                 "THTH itself does not send data to an AI model provider",
-                 "THTH 自身は AI モデルの提供者へデータを送りません",
+                 # 原則の書 11/12: 「送らない」でなく「持ち主が選び、求めたときだけ」
+                 "THTH passes data to an AI model provider only when the owner chose that provider and asks for it",
+                 "THTH が AI モデルの提供者へデータを渡すのは、持ち主が選んだ提供者に、持ち主が求めたときだけです",
                  "unverified, verified or completed", "未照合・照合済み・完了"):
         assert must in page, must
     # 紹介ページから辿れる・robots は開いている
@@ -353,7 +354,8 @@ def test_利用規約は正本から生成され_英日の見出しがあり_外
     assert all(f"<h2>{h}</h2>" in en for h in TERMS_EN_HEADINGS)
     assert all(f"<h2>{h}</h2>" in ja for h in TERMS_JA_HEADINGS)
     # 事実だけ（頼んだときだけ動く・ガード・退出・連絡先・MIT とサービスの区別・データは privacy へ）
-    for must in ("it does not post, reply or delete on its own", "自分から投稿・返信・削除をしません",
+    # 原則の書 11/12: 「自分からしない」でなく「許し（その都度か、決めた規則）無しにしない」
+    for must in ("it does not post, reply or delete without your permission", "利用者の許し無しに投稿・返信・削除をしません",
                  "https://thth.me/activity",
                  "thth account leave", 'href="/privacy/"', "https://github.com/aokings/thth/issues",
                  "MIT License", "these terms cover the operator's service",
