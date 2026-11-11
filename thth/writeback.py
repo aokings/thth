@@ -17,9 +17,11 @@ push の直前・取り込み（rebase）の後にもう一度「送った本文
 from __future__ import annotations
 
 import os
+import sys
 import re
 import subprocess
 
+from . import gitopts
 from . import jst as jst_mod
 from . import postid as postid_mod
 from . import queuefile as queuefile_mod
@@ -190,10 +192,7 @@ def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     from . import managed_repo
     if managed_repo.account_for(repo_dir) is not None:
         return managed_repo.run(repo_dir, args)
-    return subprocess.run(
-        ["git", "-C", repo_dir, *args],
-        capture_output=True, text=True,
-    )
+    return subprocess.run(gitopts.git(repo_dir, *args), capture_output=True, text=True)
 
 
 def _run_git_bytes(repo_dir: str, args: list, *, input: bytes | None = None) -> subprocess.CompletedProcess:
@@ -201,7 +200,7 @@ def _run_git_bytes(repo_dir: str, args: list, *, input: bytes | None = None) -> 
     from . import managed_repo
     if managed_repo.account_for(repo_dir) is not None:
         return managed_repo.run(repo_dir, args, text=False, input=input)
-    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, input=input)
+    return subprocess.run(gitopts.git(repo_dir, *args), capture_output=True, input=input)
 
 
 def upstream_sha(repo_dir: str) -> str | None:
@@ -991,9 +990,40 @@ def _confirm_synced(repo_dir: str, *, push: bool = True) -> tuple:
             or head.stdout.strip() != upstream.stdout.strip()):
         return False, "取り込みの後、HEAD が upstream に追いついたことを確認できませんでした", None
 
+    damaged = history_damage(repo_dir)
+    if damaged:
+        return False, damaged, None
+
     # **確かめた OID をそのまま返す**（外部レビュー第 5 巡 P1）。呼び出し側は
     # これを持ち回り、queue の照合先に使う。HEAD を引き直させない。
     return True, "", head.stdout.strip()
+
+
+REPAIR_HINT = ("直し方: reflog を空にし（git reflog expire --expire=now --all）、"
+               "git fetch --refetch origin で取り直し、git commit-graph write --reachable で作り直す。"
+               "直らなければ thth report file で開発へ")
+
+
+def history_damage(repo_dir: str) -> str:
+    """HEAD から辿れる commit が欠けていないか（運用 #7497・2026-11-11）。欠けていれば断りの文、無ければ ""。
+
+    部分 clone の repo で自動の gc が commit を消すと、はてなの記事の確かめ（`log -- 記事`）が
+    落ちて止まる（11/7・11/11）。投げる前に履歴を 1 度辿り、落ちたら壊れの形と直し方を言って止める。
+    commit-graph だけが古い（graph を使わなければ辿れる）ときは止めない（道具は graph を使わずに
+    辿り直す・5.14.2）。stderr に直し方を 1 行出す。
+    """
+    count = ["rev-list", "--count", "HEAD"]
+    r = _run_git(repo_dir, count)
+    if r.returncode == 0:
+        return ""
+    plain = _run_git(repo_dir, ["-c", "core.commitGraph=false", *count])
+    if plain.returncode == 0:
+        print("注意: この repo の commit-graph が無い commit を指しています（道具は graph を使わずに進みます）。"
+              "git commit-graph write --reachable で作り直せます: " + os.path.abspath(repo_dir), file=sys.stderr)
+        return ""
+    return ("repo の履歴に欠けた commit があります（git の object が消えています。自動の gc の壊れの形）。"
+            "このままだと記事の確かめが落ちるので投稿しません。" + REPAIR_HINT + ": "
+            + redact_mod.redact(plain.stderr.strip()))
 
 
 def _head_is_upstream(repo_dir: str) -> bool:

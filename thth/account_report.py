@@ -23,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import gitopts
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import bundle as bundle_mod
@@ -57,7 +58,7 @@ AGE_BAND_HOURS = {24: (24.0, 30.0)}
 
 
 def _git(repo_dir: str, args: list):
-    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
+    return subprocess.run(gitopts.git(repo_dir, *args), capture_output=True, text=True)
 
 
 def _repo_state(account_cfg: dict) -> dict:

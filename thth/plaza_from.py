@@ -24,7 +24,7 @@ import datetime
 import os
 import subprocess
 
-from . import accounts, jst, private_store
+from . import accounts, gitopts, jst, private_store
 
 FROM_TOOLS = ("analytics-report", "after", "study-report")
 DOC_MAX = 4000
@@ -525,7 +525,7 @@ def compose(draft, human):
 # ------------------------------------------------------------ 文書
 
 def _git(repo, *args):
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+    return subprocess.run(gitopts.git(repo, *args), capture_output=True, text=True,
                           timeout=30, check=False)
 
 

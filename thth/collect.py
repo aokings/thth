@@ -44,6 +44,7 @@ import math
 import os
 import re
 
+from . import gitopts
 from . import accounts as accounts_mod
 from . import core
 from .collection_context import followers as followers_context
@@ -81,7 +82,7 @@ INBOX_DIR = ("data", "sns", "inbox")
 
 def _git(repo_dir: str, args: list):
     import subprocess
-    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
+    return subprocess.run(gitopts.git(repo_dir, *args), capture_output=True, text=True)
 
 
 def _safe_post_id(post_id) -> bool:

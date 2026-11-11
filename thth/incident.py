@@ -22,7 +22,7 @@ import subprocess
 import uuid
 from email.message import EmailMessage
 
-from . import accounts, healthcheck, inflight, jst, lock, queuefile, redact, writeback
+from . import accounts, gitopts, healthcheck, inflight, jst, lock, queuefile, redact, writeback
 
 STATE_FILE = "incident-outbox.json"
 # outbox の事象の種類。`blocked` には承認済みなのに出られない（held）も入る（3.3.0 A1）。
@@ -185,7 +185,7 @@ def _send(s, recipient, event, account):
 
 
 def _git(repo, *args):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(gitopts.git(repo, *args), capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise ValueError("repo_operation_failed")
     return result.stdout.strip()
