@@ -457,3 +457,39 @@ def test_privacy_はプラザを英日で書く():
         assert must in page, must
     # トピックマップの数はプラザに出さない（従前の文を残す）
     assert "on the shared plaza" in page and "ほかのオーナー、プラザ" in page
+
+
+def test_privacy_の約束は原則の書の形で英日に書く():
+    """原則の書（11/12 承認）の向き。「しない」でなく「持ち主の許しのときだけ」。監査 5.14.4 の気づき 7。
+
+    柵: 古い「しない」の文に戻すと赤。utility の同意を THTH が確かめるように書くと赤（確かめられない）。
+    """
+    page = (PUBLIC / "privacy" / "index.html").read_text(encoding="utf-8")
+    flat = " ".join(page.split())
+    for must in (
+            # DM
+            "THTH does not send a message without the owner's permission, given each time or through rules the owner set",
+            "持ち主の許し（その都度か、持ち主が決めた規則）無しにメッセージを送ることはありません",
+            # utility と宣伝（同意は持ち主の責任）
+            "getting the recipients' agreement to receive them is the owner's responsibility",
+            "受け取る人の同意を取るのは、Meta の決まりのとおり持ち主の責任です",
+            # 予算
+            "THTH raises a budget only after the owner's two-step confirmation",
+            "予算を上げるのも持ち主の二段確認のあとだけです",
+            # Google 広告
+            "These tools only read; if THTH changes Google Ads, it does so only after",
+            "これらの道具は読むだけです",
+    ):
+        assert must in flat, must
+    for gone in ("can only lower a budget", "never raise one", "does not send utility messages or marketing messages",
+                 "上げる命令はありません", "宣伝のメッセージを送りません", "only to people who agreed to receive them",
+                 "THTH itself does not send data to an AI model provider", "never replies on its own"):
+        assert gone not in flat, gone
+
+
+def test_Google広告の道具は読むだけ():
+    """privacy の「These tools only read」の裏。gads に変更の口（mutate）が入ったら privacy を見直す。"""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent / "thth" / "gads"
+    found = [str(f) for f in root.rglob("*.py") if "mutate" in f.read_text(encoding="utf-8").lower()]
+    assert found == [], found

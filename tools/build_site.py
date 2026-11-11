@@ -457,7 +457,8 @@ def build_privacy() -> str:
         "of it. To decide this, THTH reads the time of the last message at the moment of sending and keeps no record "
         "of it. A private reply to a comment (<code>thth dm send --comment</code>) is sent within 7 days of the "
         "comment, one per comment. THTH sends utility or marketing messages only when the owner decided them with a "
-        "two-step confirmation, and only to people who agreed to receive them. On the owner's "
+        "two-step confirmation; getting the recipients' agreement to receive them is the owner's responsibility, "
+        "as Meta's rules require. On the owner's "
         "request, and only after a two-step confirmation, THTH can also report the outcome of a conversation, such as a "
         "purchase or an inquiry, to Meta (Conversions API for Business Messaging) so that the owner's advertising can be "
         "measured and optimized: the kind of outcome, an optional amount and currency, and the other person's ID within "
@@ -500,7 +501,7 @@ def build_privacy() -> str:
         "request THTH reads the account's phone numbers and message templates and only shows them to the owner (and the "
         "AI assistant the owner chose); THTH does not save them. With the owner's confirmation it can submit a new "
         "message template to Meta for review, or send one message built from an approved template to the phone number "
-        "the owner gives. The recipient's number and the text of a template or message are used for that request only "
+        "the owner gives; getting that person's agreement to receive it is the owner's responsibility. The recipient's number and the text of a template or message are used for that request only "
         "and THTH does not save them. What THTH keeps in its run log is only the command name, the platform, the "
         "permission used and the result.</p>")
 
@@ -874,7 +875,7 @@ def build_privacy() -> str:
         "だけで、それを過ぎた会話には、人の担当者が 7 日の内に Meta の human_agent の札を付けて返すときだけです。"
         "この判定のために THTH は送る直前に最後の通の時刻を読み、記録には残しません。コメントへの非公開の返事"
         "（<code>thth dm send --comment</code>）はコメントから 7 日の内に、1 コメントに 1 通です。utility の"
-        "メッセージや宣伝のメッセージを THTH が送るのは、持ち主が二段確認で決めたものを、受け取ることに同意した人へだけです。持ち主が求めたときに限り、二段確認のあとに、会話から起きた購入や"
+        "メッセージや宣伝のメッセージを THTH が送るのは、持ち主が二段確認で決めたものだけです。受け取る人の同意を取るのは、Meta の決まりのとおり持ち主の責任です。持ち主が求めたときに限り、二段確認のあとに、会話から起きた購入や"
         "問い合わせの結果を Meta に報告できます（Conversions API for Business Messaging）。持ち主の広告を計測し、最適化"
         "するためで、送るのは結果の種類・任意の金額と通貨・ページまたは口座の中での相手の ID です。THTH が残すのは"
         "命令ごとのログ 1 行（命令の名前・SNS・使った権限・結果。報告した結果ならその種類も）だけで、本文・名前・ID・金額は"
@@ -907,7 +908,7 @@ def build_privacy() -> str:
         "プロジェクト、1 日に送れる通数の上限）と状態の置き場（<code>waba_state/&lt;名前&gt;/</code>: "
         "認可の途中の状態・止めの印・実行記録）を持ちます。持ち主の求めに応じて、アカウントの電話番号とメッセージテンプレートを読み、"
         "持ち主（と持ち主が選んだ AI の助手）に見せるだけで、THTH は保存しません。持ち主の確認を経て、新しいテンプレートを Meta の"
-        "審査に出すか、承認済みのテンプレートから作ったメッセージを、持ち主が指定した電話番号に 1 通送ります。相手の番号と"
+        "審査に出すか、承認済みのテンプレートから作ったメッセージを、持ち主が指定した電話番号に 1 通送ります。その相手から受け取る同意を取るのは持ち主の責任です。相手の番号と"
         "テンプレート・メッセージの本文は、その依頼にだけ使い、THTH は保存しません。実行記録に残すのは、命令の名前・媒体・"
         "使った権限・結果だけです。</p>")
 
