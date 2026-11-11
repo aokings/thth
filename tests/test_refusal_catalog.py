@@ -36,6 +36,7 @@ NO_BETTER_LIMITS = {
     "5.14.0": {"internal": 196, "terminal": 13},
     "5.14.1": {"internal": 196, "terminal": 13},
     "5.14.2": {"internal": 196, "terminal": 13},
+    "5.14.3": {"internal": 196, "terminal": 13},
 }
 # 目録の項目の数の下限（消すときは項目を残して retired を立てる）。
 CATALOG_FLOOR = 750

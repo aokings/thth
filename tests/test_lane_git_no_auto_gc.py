@@ -12,7 +12,7 @@ import os
 import subprocess
 
 from tests.conftest import init_git_pair, run_git
-from thth import account_report, collect, gitopts, plaza_from, writeback
+from thth import account_report, collect, gitopts, incident, plaza_from, writeback
 
 
 def _argv_of(monkeypatch, module, call):
@@ -37,6 +37,7 @@ def test_道具の打つgitには自動のgcを止める設定が付く(monkeypa
         (collect, lambda: collect._git(repo, ["commit", "-m", "x"])),
         (account_report, lambda: account_report._git(repo, ["status"])),
         (plaza_from, lambda: plaza_from._git(repo, "commit", "-m", "x")),
+        (incident, lambda: incident._git(repo, "commit", "-m", "x")),  # 監査 5.14.3: 運用通知の git も縛る
     ]
     for module, call in calls:
         argv = _argv_of(monkeypatch, module, call)
@@ -96,3 +97,21 @@ def test_同期は履歴の欠けで止まる(tmp_path, monkeypatch):
     monkeypatch.setattr(writeback, "history_damage", lambda repo: "repo の履歴に欠けた commit があります")
     ok, why, head = writeback.sync_repo_no_push(pair["work"])
     assert not ok and "欠けた commit" in why and head is None
+
+
+def test_commit_graphが残りcommitの本体が消えた形も捕まえる(tmp_path):
+    """VM の壊れそのもの（graph は残り、gc が commit の object を消した・11/11）。監査 5.14.3 の 1。
+
+    柵: history_damage が graph を使って数えるだけだと、消えた本体を開かずに通る。
+    """
+    repo, _ = _two_loose_commits(tmp_path)
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    with open(os.path.join(repo, "a.md"), "w", encoding="utf-8") as f:
+        f.write("3")
+    run_git(repo, ["add", "a.md"])
+    run_git(repo, [*ident, "commit", "-q", "-m", "3"])
+    run_git(repo, ["commit-graph", "write", "--reachable"])
+    middle = run_git(repo, ["rev-parse", "HEAD~1"]).stdout.strip()
+    os.remove(os.path.join(repo, ".git", "objects", middle[:2], middle[2:]))
+    msg = writeback.history_damage(repo)
+    assert "欠けた commit" in msg and "投稿しません" in msg

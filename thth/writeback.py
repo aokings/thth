@@ -1013,11 +1013,12 @@ def history_damage(repo_dir: str) -> str:
     辿り直す・5.14.2）。stderr に直し方を 1 行出す。
     """
     count = ["rev-list", "--count", "HEAD"]
-    r = _run_git(repo_dir, count)
-    if r.returncode == 0:
-        return ""
+    # 先に graph を使わずに辿る（graph で数えると commit の本体を開かないので、graph が残り本体が
+    # 消えた 11/11 の形を通してしまう・監査 5.14.3 の 1）。記事と台帳の repo なので費用は小さい。
     plain = _run_git(repo_dir, ["-c", "core.commitGraph=false", *count])
     if plain.returncode == 0:
+        if _run_git(repo_dir, count).returncode == 0:
+            return ""
         print("注意: この repo の commit-graph が無い commit を指しています（道具は graph を使わずに進みます）。"
               "git commit-graph write --reachable で作り直せます: " + os.path.abspath(repo_dir), file=sys.stderr)
         return ""
