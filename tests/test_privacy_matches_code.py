@@ -426,6 +426,7 @@ def _article_leave_facts():
             return str(exc)
 
     manual = all(remote(m) == "unconfirmed_manual" for m in media)
+    stops = callable(getattr(leave, "_guard_principal_credentials", None))
     wp_place = "プロフィール" in leave.MANUAL_REVOKE["wordpress"]
     hatena_place = "連携アプリ" in leave.MANUAL_REVOKE["hatenablog"]
     return [
@@ -444,6 +445,9 @@ def _article_leave_facts():
         ("はてなの取り消しの場所（leave.MANUAL_REVOKE と同じ）",
          "removing THTH from the applications linked" if hatena_place else "完了の案内と場所が違う",
          "アカウントの設定の連携アプリから THTH を外します" if hatena_place else "完了の案内と場所が違う"),
+        ("主体の鍵が消す所の中にあれば何も消さずに止まる（leave._guard_principal_credentials・監査 5.18.1 の 1）",
+         "the exit stops before deleting anything" if stops else "主体の鍵が消す所にあっても進む",
+         "にあるときは、何も消さずに止まります" if stops else "主体の鍵が消す所にあっても進む"),
         ("主体の鍵を消す命令（--forget）",
          "<code>thth principal auth &lt;name&gt; --forget</code> deletes it on the computer where it runs",
          "<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを消せます"),

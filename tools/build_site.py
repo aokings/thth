@@ -788,7 +788,9 @@ def build_privacy() -> str:
         'described under <a href="#plaza">Plaza</a>. Reports and the change log are not removed by this step.</p>')
     add("<p>For a WordPress or Hatena Blog account, the WordPress application password or the Hatena token belongs "
         "to the principal (the WordPress user or Hatena ID the account publishes as), which other blogs may also "
-        "use, so <code>thth account leave</code> keeps that file. <code>thth principal auth &lt;name&gt; --forget</code> "
+        "use, so <code>thth account leave</code> keeps that file. If that file (or the Hatena consumer file) sits "
+        "where the exit deletes the account's own files (its server state, its server-side repository or its "
+        "environment file), the exit stops before deleting anything. <code>thth principal auth &lt;name&gt; --forget</code> "
         "deletes it on the computer where it runs. Revoking it is done by the person: for WordPress, under the "
         "user's profile (Application Passwords); for Hatena, by removing THTH from the applications linked in the "
         "Hatena account settings. The account's own settings entry, environment file and server state are deleted "
@@ -1244,7 +1246,9 @@ def build_privacy() -> str:
         "返信は上の「プラザ」のとおり削除します。報告と変更ログはこの手順では消えません。</p>")
     add("<p>WordPress とはてなブログの口座では、WordPress のアプリケーションパスワードとはてなの token は主体（口座が"
         "名乗る WordPress の利用者・はてな ID）の物で、ほかのブログも使うことがあるので、<code>thth account leave</code> は"
-        "そのファイルを残します。<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを"
+        "そのファイルを残します。そのファイル（はてなは consumer のファイルも）が、口座の物として消す所（サーバーの state・"
+        "サーバー側のリポジトリ・環境のファイル）にあるときは、何も消さずに止まります。"
+        "<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを"
         "消せます。取り消しは本人が行います。WordPress は利用者のプロフィール（アプリケーションパスワード）で、はてなは"
         "アカウントの設定の連携アプリから THTH を外します。口座の設定の項目・環境のファイル・サーバーの state は上の"
         "とおり削除し、退会の記録には主体の名も残します。</p>")

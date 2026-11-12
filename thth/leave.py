@@ -206,6 +206,59 @@ def _principal_owns_token(cfg):
     return article_media.is_article_account(cfg)
 
 
+class PrincipalCredentialsInside(ValueError):
+    """主体の鍵（はてなは consumer も）が、口座の leave で消す所の中にある（監査 5.18.1 直したほうがよい 1）。"""
+    def __init__(self,principal,where):
+        super().__init__('owned_tree_contains_principal_credentials')
+        self.principal=principal;self.where=where
+
+
+def _principal_credentials(cfg):
+    """記事の口座が使う主体の鍵のパス（`[(欄, Path)]`）。口座の台帳の `token`（主体の鍵の写し）と、主体の台帳の
+    `token`・`consumer`。値は読まない（パスとファイルの同一性だけ）。主体の台帳が無ければ口座の写しだけを見る。"""
+    from . import principals
+    rows=[]
+    if cfg.get('token'):rows.append(('token',cfg['token']))
+    name=cfg.get('principal')
+    if isinstance(name,str) and accounts.name_is_safe(name):
+        try:p=principals.load_principal(name)
+        except principals.PrincipalError as exc:
+            # 台帳が壊れていると、どこに鍵があるかを言えない——消す前に止める（無いだけなら口座の写しで見る）。
+            if exc.code!='principal_missing':raise ValueError('principal_unreadable') from None
+        else:
+            for key in ('token','consumer'):
+                if isinstance(p.get(key),str) and os.path.isabs(p[key]):rows.append((key,p[key]))
+    out=[]
+    for key,value in rows:
+        try:path=_path(value)
+        except (ValueError,OSError):continue
+        if (key,path) not in out:out.append((key,path))
+    return out
+
+
+def _guard_principal_credentials(cfg,targets,trees):
+    """主体の鍵が消す木（state・管理する repo）の中か、消す env と同じファイルなら、何も消さずに止める。
+
+    `thth principal add` が書く既定の置き場（`~/.config/thth/<主体>.token`）では起きない。主体の台帳を手で
+    書き換えて鍵を口座の置き場に置いた形を、消してから「残しました」と言わないように、消す前に見る。"""
+    principal=cfg.get('principal') if isinstance(cfg.get('principal'),str) and accounts.name_is_safe(cfg.get('principal') or '') else None
+    envs=[target for target in targets if target['category']=='env']
+    for key,path in _principal_credentials(cfg):
+        where=None
+        for tree in trees:
+            if path.is_relative_to(tree) or path.is_relative_to(tree.resolve()):where='state' if tree==trees[0] else 'managed_repo'
+        if where is None:
+            identity=None
+            for target in envs:
+                if Path(target['path'])==path:where='env';break
+                if identity is None:
+                    try:identity=_identity(path,private=True) or {}
+                    except (ValueError,OSError):identity={}
+                own=target.get('identity') or {}
+                if identity and own and (identity['dev'],identity['ino'])==(own['dev'],own['ino']):where='env';break
+        if where:raise PrincipalCredentialsInside(principal,where)
+
+
 def inventory(account,cfg):
     root=Path(accounts.thth_root()).resolve();registry=_registry();targets=[];preserved=[]
     principal_token=_principal_owns_token(cfg)
@@ -276,6 +329,7 @@ def inventory(account,cfg):
     trees=[state]+([clone] if cfg.get('repo_dir')==str(clone) else [])
     if any(path.is_relative_to(tree) or tree.is_relative_to(path) for path in _shared_globals() for tree in trees):
         raise ValueError('owned_tree_contains_global_credentials')
+    if principal_token:_guard_principal_credentials(cfg,targets,trees)
     targets.append({'category':'state','path':str(state),'tree':_tree(state)})
     ledger=Path(accounts.accounts_dir()).absolute()/(account+'.json')
     if ledger.parent!=root/'accounts':raise ValueError('external_ledger_ownership_unproved')
@@ -631,6 +685,17 @@ def _incomplete_detail(exc):
     """`leave_incomplete` に添える理由の 1 行（3.14.3 穴 7）。3.14.2 までは理由を丸めて出さなかった。"""
     text=' '.join(str(exc).split())[:200] or type(exc).__name__
     where=getattr(exc,'path',None)
+    if isinstance(exc,PrincipalCredentialsInside):
+        who=f'主体 {exc.principal}' if exc.principal else '主体'
+        place={'state':'この口座の state の置き場の中','managed_repo':'この口座の管理する repo の中',
+               'env':'この口座の env と同じファイル'}.get(exc.where,'この口座の leave で消す所')
+        name=exc.principal or '<主体>'
+        return (f'owned_tree_contains_principal_credentials {who} の鍵（はてなは consumer も）が{place}（{exc.where}）にあり、'
+                'leave が口座の物と一緒に消してしまうので、何も消さずに止めました（口座は止めたままです）。'
+                f'通すには、鍵のファイルを ~/.config/thth/{name}.token（consumer は ~/.config/thth/{name}.consumer）へ移し、'
+                f'主体の台帳 principals/{name}.json の token（consumer）をそのパスに直して、thth principal show {name} で'
+                '「ある」を確かめてから、同じ leave をもう一度打ってください（続きから進みます）。'
+                'もっと良くするには、主体の鍵は thth principal add が書く既定の置き場に置くと、口座の出入りで鍵が巻き込まれません')
     if str(exc)=='unsafe_owned_directory' and isinstance(where,str):
         return f'unsafe_owned_directory {where}（group/other が書けます。chmod -R go-w {where} で直してから）'
     return text

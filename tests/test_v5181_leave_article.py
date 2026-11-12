@@ -226,3 +226,90 @@ def test_はてなの主体の口座のleaveは最後まで進みOAuthの鍵とc
     else:
         assert "この主体を使う口座はもうありません" in kept[0]
     assert SECRET_VALUE not in out + err
+
+
+# --- 監査 5.18.1 直したほうがよい 1: 主体の鍵が口座の leave で消す所にあれば、消す前に止まる ---
+
+def _move_principal_file(env, principal, key, new_path, accounts_=("alpha",)):
+    """主体の台帳の `token`（か `consumer`）を `new_path` に置き直す（手で台帳を書き換えた形）。"""
+    root = env["root"]
+    pp = root / "principals" / f"{principal}.json"
+    p = json.loads(pp.read_text())
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    old = pathlib.Path(p[key]) if p.get(key) else None
+    if old is not None and old.exists():
+        new_path.write_bytes(old.read_bytes())
+        old.unlink()
+    else:
+        new_path.write_text(json.dumps({"consumer_key": SECRET_VALUE, "consumer_secret": SECRET_VALUE}))
+    new_path.chmod(0o600)
+    p[key] = str(new_path)
+    pp.write_text(json.dumps(p, ensure_ascii=False))
+    if key == "token":
+        for a in accounts_:
+            ap = root / "accounts" / f"{a}.json"
+            c = json.loads(ap.read_text())
+            c["token"] = str(new_path)
+            ap.write_text(json.dumps(c, ensure_ascii=False))
+
+
+def _assert_stopped_before_delete(env, capsys, keep, principal, where):
+    before = keep.read_bytes()
+    rc, out, err = _leave_cli("alpha", capsys)
+    assert rc == 2, out
+    assert "owned_tree_contains_principal_credentials" in err
+    # 前向きな断り: なぜ・通る直し方・もっと良く の 3 つ
+    assert f"主体 {principal} の" in err and where in err
+    assert "何も消さずに止めました" in err
+    assert f"~/.config/thth/{principal}" in err and "同じ leave をもう一度" in err
+    assert "既定の置き場" in err
+    assert SECRET_VALUE not in out + err
+    # 何も消えていない（主体の鍵も、口座の物も）
+    assert keep.read_bytes() == before
+    assert (env["root"] / "accounts" / "alpha.json").exists()
+    row = leave.read("alpha")
+    assert row["phase"] == "stopped" and not row["deleted"]
+    # 打ち直しても同じ所で止まる（消さない）
+    rc2, _, err2 = _leave_cli("alpha", capsys)
+    assert rc2 == 2 and "owned_tree_contains_principal_credentials" in err2 and keep.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind,principal", [
+    ("wordpress", "alpha"), ("wordpress", "alpha-wp"), ("hatenablog", "alpha-hatena"),
+])
+def test_柵_主体の鍵が口座のstateの中にあればleaveは消さずに止まる(env, worker, capsys, kind, principal):
+    token, blog = _principal(env, kind, principal, ["alpha"])
+    _article_account(env, "alpha", kind, principal, blog)
+    inside = env["root"] / "state" / "alpha" / "principal.token"
+    _move_principal_file(env, principal, "token", inside)
+    assert accounts.load_account("alpha")["token"] == str(inside)
+    _assert_stopped_before_delete(env, capsys, inside, principal, "state")
+
+
+def test_柵_はてなのconsumerが口座のstateの中にあればleaveは消さずに止まる(env, worker, capsys):
+    token, blog = _principal(env, "hatenablog", "alpha-hatena", ["alpha"])
+    _article_account(env, "alpha", "hatenablog", "alpha-hatena", blog)
+    inside = env["root"] / "state" / "alpha" / "nested" / "consumer.json"
+    _move_principal_file(env, "alpha-hatena", "consumer", inside)
+    _assert_stopped_before_delete(env, capsys, inside, "alpha-hatena", "state")
+    assert token.exists()
+
+
+def test_柵_口座のenvが主体の鍵と同じファイルならleaveは消さずに止まる(env, worker, capsys):
+    token, blog = _principal(env, "wordpress", "alpha", ["alpha"])
+    own_env = _article_account(env, "alpha", "wordpress", "alpha", blog)
+    own_env.unlink()
+    ap = env["root"] / "accounts" / "alpha.json"
+    c = json.loads(ap.read_text())
+    c["env"] = c["token"]
+    ap.write_text(json.dumps(c))
+    _assert_stopped_before_delete(env, capsys, token, "alpha", "env")
+
+
+def test_柵_はてなのconsumerが口座のenvと同じファイルならleaveは消さずに止まる(env, worker, capsys):
+    token, blog = _principal(env, "hatenablog", "alpha", ["alpha"])
+    _article_account(env, "alpha", "hatenablog", "alpha", blog)
+    # consumer を口座の env の既定の名（~/.config/thth/alpha.env）に置き、口座の env もそこを指す形
+    own_env = _config_dir() / "alpha.env"
+    _move_principal_file(env, "alpha", "consumer", own_env)
+    _assert_stopped_before_delete(env, capsys, own_env, "alpha", "env")
