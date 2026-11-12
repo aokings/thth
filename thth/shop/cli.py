@@ -24,7 +24,7 @@
 
 **注文と買い手の情報は読まない。店には書かない（BASE と STORES は GET だけ・Shopify は決まった 2 つの問い合わせと
 鍵を取る口だけ）。鍵は引数で受けない・出力しない。** 手元の MCP と thth.me の鍵の道には出さない（鍵は手元の thth に
-置く形だけ）。STORES のクレデンシャルは注文も読める鍵だが、THTH が呼ぶのは店と商品の一覧の 2 つの道だけ（柵は
+置く形だけ）。STORES のクレデンシャルに何が許されているかは THTH が選べないが、THTH が呼ぶのは店と商品の一覧の 2 つの道だけ（柵は
 `wire.ROUTES`）。台帳の `public_url`（STORES の店の頁）には何も送らない。
 この道具は BASE・Shopify・STORES が提供するものではありません。
 """
@@ -116,7 +116,9 @@ def _expiry_note(when, kind: str = "base") -> str | None:
     if when["state"] == "soon":
         if kind == "stores":
             return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日・token set で入れた日）です。"
-                    f"STORES から新しいクレデンシャルを受け取り、thth {COMMAND} token set で差し替えてください")
+                    f"STORES から新しいクレデンシャルを受け取り、thth {COMMAND} token set で差し替えてください。"
+                    f"今のクレデンシャルがまだ使えるなら、同じものを新しい日を付けて（か日を付けずに）thth {COMMAND} "
+                    "token set で置き直せば通ります")
         return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日）です。BASE Developers で新しい PAT を"
                 f"発行し、thth {COMMAND} token set で差し替えてください（期限はあとから変えられません）")
     if when["state"] == "unknown":
@@ -160,8 +162,8 @@ def cmd_add(args) -> int:
         print(f"次に、店の持ち主が STORES の開発パートナーの登録でプライベートアプリを申し込み（スタンダードプランが要ります）、"
               f"発行されたクレデンシャルを thth {COMMAND} token set {args.store} --by <名前> で渡してください"
               "（期限の日を知っていれば --expires <日>）。")
-        print("  クレデンシャルは権限を選べず、注文も読める鍵です。THTH が呼ぶのは api.stores.dev の店と商品の一覧の"
-              " 2 つの道だけ（GET）で、注文・入金・店舗の道は呼ばず、店には書きません。")
+        print("  クレデンシャルに何が許されているかを THTH は選べません。何が許されていても、THTH が呼ぶのは"
+              " api.stores.dev の店と商品の一覧の 2 つの道だけ（GET）で、注文・入金の道は呼ばず、店には書きません。")
         print(f"  店の頁の URL（{extra['public_url']}）は下書きに載せるだけで、THTH はそこに何も送りません。")
     else:
         print(f"次に、店の持ち主が BASE Developers で読むだけの権限（items.read・user.read）の PAT を発行し、"

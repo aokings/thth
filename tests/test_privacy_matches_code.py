@@ -168,7 +168,7 @@ def facts() -> list[tuple[str, str]]:
          f"with the read scope <code>{shop_shopify.REQUIRED_SCOPE}</code>"),
         ("Shopify の短い鍵の長さ（shop/access.MAX_LIFETIME_SECONDS）",
          "valid for about 24 hours" if shop_access.MAX_LIFETIME_SECONDS == 24 * 3600 else "短い鍵の長さが privacy と違う"),
-        # STORES（5.18.0・設計 Shopify と STORES §9）。注文を読まない柵は道の表だけ（クレデンシャルは注文も読める鍵）。
+        # STORES（5.18.0・設計 Shopify と STORES §9）。注文を読まない柵は道の表だけ（クレデンシャルに何が許されているかを THTH は選べない）。
         ("STORES の送り先（shop/wire.STORES_HOST）",
          f"THTH sends only GET requests to <code>{shop_wire.STORES_HOST}</code>, to "
          + ("two" if len(shop_wire.STORES_PATHS) == 2 else "道の数が privacy と違う") + " paths"),
@@ -393,3 +393,12 @@ def test_店の画像のURLを下書きに書くとは言わない():
     page = PRIVACY.read_text(encoding="utf-8")
     for old in ("are only written into drafts", "下書きに書くだけ"):
         assert old not in page
+
+
+def test_STORESの鍵の中身を言い切らずTHTHの事実だけを書く():
+    """監査 5.18.0 直したほうがよい 3: 「権限を絞れず、注文も読める鍵」は STORES の側のことで【推測】だった。"""
+    page = PRIVACY.read_text(encoding="utf-8")
+    for old in ("cannot be narrowed", "it can also read orders", "権限を絞れず", "注文も読める鍵"):
+        assert old not in page, old
+    assert "THTH cannot choose what the credential is allowed to do" in page
+    assert "クレデンシャルに何が許されているかを THTH は選べません" in page

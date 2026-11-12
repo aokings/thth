@@ -4,7 +4,7 @@
   - 鍵はプライベートアプリのクレデンシャル（固定の文字列）を `Authorization: Bearer` に載せるだけ。引数では受けない。
     店が見えたとき（`GET /retail/202211/store` が通ったとき）だけ保存する。`--expires` は任意。
   - 打つのは GET だけ・道は `/retail/202211/store` と `/retail/202211/items` の 2 つ・引数は limit と offset だけ。
-    クレデンシャルは注文も読める鍵なので、注文を読まない柵は wire.py の表（偽の transport が本物の口と同じ柵を通す）。
+    クレデンシャルに何が許されているかを THTH は選べないので、注文を読まない柵は wire.py の表（偽の transport が本物の口と同じ柵を通す）。
   - 店の URL は応答に無いので、台帳の `public_url`（持ち主が入れる）。https だけ・userinfo と query と fragment なし。
     THTH はこの URL に何も送らない（下書きに載せるだけ）。
   - 行への直し方: id は文字列・公開は shown だけ・在庫は種類のどれかが null なら None（数えない）・予約販売と
@@ -213,6 +213,8 @@ def test_期限の日を付ければ14日前から知らせる(capsys, env):
     saved = json.loads(pathlib.Path(ledger.load(STORE)["token"]).read_text())
     assert saved["expires_on"] == soon and saved["no_expiry"] is False
     assert f"鍵の期限 {soon}" in text and "STORES から新しいクレデンシャル" in text
+    assert "同じものを新しい日を付けて" in text                          # 監査 5.18.0 直したほうがよい 4
+    assert "置き直せば通ります" in rc.CATALOG["store_token_expired"]["fix"]["text"]
     _, out, err = run(capsys, "shop", "whoami", STORE)
     assert "STORES から新しいクレデンシャル" in err and "BASE Developers" not in out + err
     from thth import morning

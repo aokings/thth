@@ -87,7 +87,9 @@ ENTRIES = {
         "置いてある鍵（BASE の PAT か、--expires を付けて置いた STORES のクレデンシャル）の期限を過ぎています。"
         "BASE の PAT は期限を発行のあとに延ばせません。",
         "BASE なら" + _PAT + "、新しい期限の日と一緒に thth shop token set で差し替えてください。STORES なら、"
-        "STORES から新しいクレデンシャルを受け取って " + _STORES_TOKEN + " で差し替えてください。",
+        "STORES から新しいクレデンシャルを受け取って " + _STORES_TOKEN + " で差し替えてください。STORES の期限の日は"
+        "持ち主が入れた日なので、今のクレデンシャルがまだ使えるなら、同じものを新しい日を付けて（か日を付けずに）"
+        + _STORES_TOKEN + " で置き直せば通ります。",
         _TOKEN,
         "期限は長めにして控えておくと、THTH が 14 日前から thth morning で知らせるので、切れる前に差し替えられます。"),
     "store_token_rejected": _entry(

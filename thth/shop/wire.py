@@ -6,7 +6,8 @@
   「店の myshopify のラベル＋定数の `SHOPIFY_SUFFIX`」（台帳に持つのはラベルだけ・ホストや URL は受けない）。
 - (メソッド, 道) と問い合わせの引数の名前は表にあるものだけ。BASE と STORES は GET だけ。Shopify は POST だけ
   （鍵を取る口と Admin GraphQL。GraphQL の決まりで POST だが、店は変えない）。
-- STORES（5.18.0）のクレデンシャルは権限を選べず、注文も入金も書く道も通る鍵【公式: 登録の項目に権限が無い】。
+- STORES（5.18.0）のクレデンシャルに何が許されているかを THTH は選べない（登録の項目に権限が無い【公式】・注文も
+  入金も書く道も通ると見る【推測】）。
   だから注文を読まない柵は**この表だけ**: 道は `/retail/202211/store` と `/retail/202211/items` の 2 つ、引数は
   `limit` と `offset` だけ（`ids`・`keyword`・`status` も使わない）。
 - POST の本文も見る: 鍵を取る口は決まった 3 つの欄の form、GraphQL は `QUERIES` の文のどれかと**1 字も違わず**、
@@ -42,7 +43,7 @@ BASE_ORIGIN = "https://" + BASE_HOST
 BASE_PATHS = frozenset(("/api/user", "/api/items"))
 
 # STORES（5.18.0・設計 Shopify と STORES §7）: 版 202211 の 2 つの道だけ。注文 `/retail/202211/orders`・入金・
-# 販売チャネル・商品 1 件の道・書く道は入れない（クレデンシャルはそれらも通る鍵なので、柵はこの表）。
+# 販売チャネル・商品 1 件の道・書く道は入れない（クレデンシャルはそれらも通ると見る【推測】ので、柵はこの表）。
 STORES_HOST = "api.stores.dev"
 STORES_API_VERSION = "202211"
 STORES_PATHS = frozenset((f"/retail/{STORES_API_VERSION}/store", f"/retail/{STORES_API_VERSION}/items"))

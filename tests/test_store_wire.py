@@ -62,7 +62,7 @@ def test_BASEはGETで表の道だけ():
     _refused("GET", "https://apiv2.thebase.com/api/items", b"")                    # GET に本文
 
 
-# STORES（5.18.0）: クレデンシャルは権限を選べず注文も通る鍵なので、注文を読まない柵はこの表だけ。
+# STORES（5.18.0）: クレデンシャルに何が許されているかを THTH は選べないので、注文を読まない柵はこの表だけ。
 STORES_DENIED_PATHS = (
     "/retail/202211/orders", "/retail/202211/orders/x", "/retail/202211/remittances",
     "/retail/202211/sales_channels", "/retail/202211/categories", "/retail/202211/items/x",

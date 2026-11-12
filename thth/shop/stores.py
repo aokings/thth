@@ -10,7 +10,7 @@ OAuth も取り直しも作らない（公開アプリの話・設計 §0 の 1�
   非公開・`unlisted` 限定公開）・`price`（整数か null・種類の中でいちばん高い `sales_price`）・`image_urls`・
   `preorder_sales`・`sales_period`・`variations[].quantity`（整数か null・null は在庫数が無制限）ほか。
   **更新の時刻・商品頁の URL は無い。** `description`・品番・バーコード・`category_ids` などは読み捨てる。
-- 注文・入金・販売チャネル・書く道は呼ばない。**クレデンシャルはそれらも通る鍵**（権限を選べない）なので、
+- 注文・入金・販売チャネル・書く道は呼ばない。**クレデンシャルはそれらも通ると見る**【推測】（THTH は権限を選べない）ので、
   柵は `wire.ROUTES` の表（道 2 つ・引数は `limit` と `offset` だけ）。
 
 行への直し方（`rows.ROW_FIELDS` は変えない・設計 §7.3）: id は文字列のまま・公開は `status == "shown"`（ほかは

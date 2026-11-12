@@ -588,9 +588,9 @@ def build_privacy() -> str:
         "the shop or creating a new secret. THTH is not provided by Shopify.</p>")
     add("<p><strong>STORES.</strong> The owner applies to STORES for a private app and gives THTH the credential "
         "that STORES issues for the shop. THTH sends only GET requests to <code>api.stores.dev</code>, to two "
-        "paths: the shop (of which THTH keeps only the shop's ID and name) and the item list. The credential's "
-        "permissions cannot be narrowed and it can also read orders, but THTH calls only those two paths, so it "
-        "does not read orders or payouts. The STORES API does not return the shop's URL, so the owner enters the shop "
+        "paths: the shop (of which THTH keeps only the shop's ID and name) and the item list. THTH cannot choose "
+        "what the credential is allowed to do. Whatever it allows, THTH calls only those two paths, so it does "
+        "not read orders or payouts. The STORES API does not return the shop's URL, so the owner enters the shop "
         "page's URL when adding the shop; THTH writes it into drafts and sends nothing to it. If the owner gives "
         "the credential's expiry date, THTH keeps it, and <code>thth morning</code> on that computer can warn "
         "14 days ahead. THTH cannot revoke the credential on STORES itself; the owner arranges that with STORES. "
@@ -1069,8 +1069,8 @@ def build_privacy() -> str:
         "ではありません。</p>")
     add("<p><strong>STORES</strong>: 持ち主が STORES にプライベートアプリを申し込み、STORES がそのショップに発行する"
         "クレデンシャルを THTH に渡します。THTH が送るのは <code>api.stores.dev</code> への GET だけで、道は 2 つです。"
-        "ショップ（THTH が残すのはショップの ID と名前だけです）と商品の一覧です。クレデンシャルは権限を絞れず、注文も"
-        "読める鍵ですが、THTH が呼ぶのはこの 2 つの道だけなので、注文や入金は読みません。STORES の API はショップの URL を"
+        "ショップ（THTH が残すのはショップの ID と名前だけです）と商品の一覧です。クレデンシャルに何が許されているかを"
+        " THTH は選べません。何が許されていても、THTH が呼ぶのはこの 2 つの道だけなので、注文や入金は読みません。STORES の API はショップの URL を"
         "返さないので、持ち主がショップを足すときにショップの頁の URL を入れます。THTH はそれを下書きに書き、そこには何も"
         "送りません。持ち主がクレデンシャルの期限の日を渡せば残し、その"
         "コンピューターの <code>thth morning</code> が 14 日前から知らせられます。STORES の側のクレデンシャルは THTH には"
