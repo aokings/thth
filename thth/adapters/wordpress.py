@@ -506,7 +506,10 @@ class WordPressAdapter:
         組む）のホストが入口（`site_url`）のホストと違えば `wordpress_home_host_mismatch`。記事の URL も home の
         上に組まれるので、そのままでは 1 本めが出たあと `_record_outcome` が conflict で止まる。出す前に知らせる
         ためで、出したあとの柵は緩めない。`link` が無い・読めないときは比べない（分からないことを言わない）。
-        道は増やさない（同じ users/me の応答の 1 欄）。ホストは残さない（比べて、違うときに画面で言うだけ）。
+        道は増やさない（同じ users/me の応答の 1 欄）。ここではホストを残さない（返すだけ）。違うときは、
+        `thth principal auth` は画面で言うだけで何も残さず、`thth doctor` は画面と診断の記録
+        （`state/<口座>/doctor.json` の `detail`。`doctor --json`・管理の報告・遠くの道の doctor にも載る）に
+        両方のホストを入れる（あとで記録を読んで直す人に見えるように。privacy の WordPress の節に書く事柄）。
         """
         empty = {"user": None, "roles": None, "strong": None, "home_host": None}
         try:

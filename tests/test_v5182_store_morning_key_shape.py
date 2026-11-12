@@ -29,7 +29,8 @@ WRONG_SHAPES = {
 def put_token(value):
     path = pathlib.Path(ledger.load(STORE)["token"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{not json" if value is None else json.dumps(value), encoding="utf-8")
+    # 読めないファイルにも印を入れる（監査 次の版 の気づき 7: 中身を行に足す壊し方を 3 本とも赤にする）。
+    path.write_text("{not json " + MARKER if value is None else json.dumps(value), encoding="utf-8")
     path.chmod(0o600)
 
 

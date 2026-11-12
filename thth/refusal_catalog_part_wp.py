@@ -40,8 +40,12 @@ ENTRIES = {
     "wordpress_home_host_mismatch": dict(_entry(
         "WordPress が記事の URL に使うホスト（設定の「サイトアドレス (URL)」）が、THTH が要求を送る入口のホストと"
         "違います。このまま出すと、記事は出ても THTH の台帳は「別の所に出た」と見て止まります（conflict）。",
-        "主体のブログの行の site_url（無ければ blog_id）を、記事の URL のホストにそろえてください（REST の入口は"
-        "サイトアドレスの上にあります）。そろえたら鍵を置き直すか thth doctor <口座> で確かめます。",
+        "主体のブログの行（principals/<主体>.json の blogs）の blog_id と、その口座の台帳（accounts/<口座>.json）の "
+        "blog_id の両方を、記事の URL のホスト（上に出たホスト）にそろえてください。その行に site_url を書いているなら、"
+        "それも https://<そのホスト> にするか欄を消します（片方だけ替えると主体と口座が噛み合わず、site_url だけ替えると "
+        "site_url_invalid で止まります）。どちらも JSON を手で直します。REST の入口もサイトアドレスの上にあるので、"
+        "そろえたホストで届きます。そろえたら thth principal auth <主体> --force --by <名前> か thth doctor <口座> で"
+        "確かめます。",
         "thth principal show <主体>",
         "WordPress の「一般設定」の WordPress アドレスとサイトアドレスを同じホストにしておくと、入口と記事の URL が"
         "いつも合い、どちらのホストで読んでも同じサイトだと確かめやすくなります。"), since="5.18.0"),

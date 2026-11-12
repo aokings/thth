@@ -953,7 +953,12 @@ def _store_key_lines(projects, now) -> list:
 
 
 # 店の種類ごとに、`token set` に要る旗（BASE の PAT は期限の日が要る）。
-_STORE_TOKEN_SET_ARGS = {"base": " --expires <期限の日>"}
+_STORE_TOKEN_SET_ARGS = {"base": " --expires <期限の日>",
+                         # 監査 次の版（2026-11-13）の 3: --auth の既定は client。固定の鍵の店はそのままでは通らない。
+                         # 壊れた鍵のファイルからは今の種類を読めないので、thth shop の助けと同じ書き方で選んでもらう。
+                         "shopify": " [--auth client|token]"}
+_STORE_TOKEN_SET_HINT = {"shopify": "（client id と secret の 2 行なら --auth client、管理画面のカスタムアプリの固定の鍵 1 行なら "
+                                    "--auth token）"}
 
 
 def _store_key_unusable_line(name, cfg, command, store_kinds) -> str:
@@ -962,6 +967,7 @@ def _store_key_unusable_line(name, cfg, command, store_kinds) -> str:
     return (f"店 {name} の鍵（{spec['key_name']}）: 鍵のファイルはありますが、{spec['label']} の鍵の形ではないので"
             "（ほかの種類の店の鍵か、読めないファイル）、期限を見ずに飛ばしました。"
             f"thth {command} token set {name}{args} --by <名前> で{spec['key_name']}を置き直すと通ります"
+            f"{_STORE_TOKEN_SET_HINT.get(cfg['kind'], '')}"
             "（置き直すとその場で店が見えるかを確かめ、以後は期限もここで知らせます）")
 
 
