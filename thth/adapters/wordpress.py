@@ -39,6 +39,11 @@ READ_TIMEOUT = 30
 WRITE_TIMEOUT = 60
 DEFAULT_CONTACT = "https://thth.me/"
 REST_PATH = "/wp-json/wp/v2"
+# この口が要求を送る REST の道（これだけ・`_route` の外で REST_PATH を組まない）。privacy の WordPress の節が
+# 同じ 4 つを名指しする（`tests/test_privacy_matches_code.py` が結ぶ）。
+ROUTES = ("posts", "categories", "tags", "users/me")
+# 結果不明の照合で読む最近の記事の数（privacy の「最近の 20 件」）。
+RECENT_POSTS = 20
 TAG_PREFIX = "#"
 SEND_AS = ("publish", "draft")
 # 鍵の利用者の役割のうち、強すぎるもの（断らずに、編集者の利用者を作ってその鍵にするよう勧める）。
@@ -62,6 +67,14 @@ WP_REFUSALS = frozenset((
     "wordpress_app_passwords_disabled", "wordpress_permission_missing", "wordpress_blocked_by_security",
     "wordpress_https_required", "wordpress_term_unknown", "wordpress_term_lookup_failed",
     "wordpress_status_unexpected", "wordpress_transport_failed", "wp_user_mismatch", "site_url_invalid",
+    # はてなと共通の符丁を WordPress の口では分けて返す（はてなの文が出ないよう・5.16.0 監査 直したほうがよい 2）。
+    "wordpress_redirect_blocked", "wordpress_token_missing", "wordpress_token_invalid", "wordpress_auth_unsupported",
+    "wordpress_response_invalid", "wordpress_response_too_large", "wordpress_endpoint_rejected",
+    "wordpress_rate_limited",
+    # `wordpress_http_<番号>` は目録の 1 つの項目に寄せる（`refusal_catalog.get` が引く）。
+    "wordpress_http_status",
+    # 台帳の記事の ID と編集の URL の検査（はてなの口も同じ符丁）。
+    "entry_id_invalid", "edit_uri_mismatch",
 ))
 
 
@@ -90,20 +103,20 @@ def check_token(token, wp_user) -> dict:
     """鍵のファイルの形（`schema`・`wp_user`・`application_password`）。外れれば `token_invalid`。"""
     if (not isinstance(token, dict) or token.get("schema") != TOKEN_SCHEMA
             or token.get("wp_user") != wp_user or not good_password(token.get("application_password"))):
-        raise _unavailable("token_invalid")
+        raise _unavailable("wordpress_token_invalid")
     return token
 
 
 def load_credentials(account_cfg, principal_cfg) -> dict:
     from .. import accounts
     if (principal_cfg or {}).get("auth", "app_password") != "app_password":
-        raise _unavailable("auth_unsupported")
+        raise _unavailable("wordpress_auth_unsupported")
     try:
         token = accounts.load_token(account_cfg)
     except (ValueError, OSError):
-        raise _unavailable("token_invalid") from None
+        raise _unavailable("wordpress_token_invalid") from None
     if token is None:
-        raise _unavailable("token_missing")
+        raise _unavailable("wordpress_token_missing")
     check_token(token, principal_cfg.get("wp_user"))
     redact_mod.register_secret(token["application_password"])
     redact_mod.register_secret(token["application_password"].replace(" ", ""))
@@ -165,13 +178,13 @@ def classify(status, body: bytes | None, *, op: str) -> str:
     if status in (401, 403):
         return "wordpress_auth_rejected" if status == 401 else "wordpress_permission_missing"
     if status == 429:
-        return "provider_rate_limited"
+        return "wordpress_rate_limited"
     return f"wordpress_http_{status}"
 
 
 def _endpoint_code(exc) -> str:
     text = str(exc)
-    return "wordpress_https_required" if text.startswith("endpoint_http_forbidden") else "endpoint_rejected"
+    return "wordpress_https_required" if text.startswith("endpoint_http_forbidden") else "wordpress_endpoint_rejected"
 
 
 class WordPressAdapter:
@@ -192,9 +205,15 @@ class WordPressAdapter:
 
     # ----- URL ---------------------------------------------------------------
 
+    def _route(self, route) -> str:
+        """REST の道の URL（`ROUTES` の外は組まない）。"""
+        if route not in ROUTES:
+            raise ValueError("wordpress_route_unknown")
+        return f"{self.site}{REST_PATH}/{route}"
+
     @property
     def collection_url(self) -> str:
-        return f"{self.site}{REST_PATH}/posts"
+        return self._route("posts")
 
     def member_url(self, entry_id) -> str:
         text = str(entry_id or "")
@@ -242,14 +261,14 @@ class WordPressAdapter:
         try:
             return self._request(method, url, payload=payload)
         except httpsafe.RedirectBlocked:
-            return EntryResult(ok=False, ambiguous=True, error="redirect_blocked")
+            return EntryResult(ok=False, ambiguous=True, error="wordpress_redirect_blocked")
         except urllib.error.HTTPError as exc:
             return EntryResult(ok=False, ambiguous=exc.code >= 500,
                                error=classify(exc.code, self._error_body(exc), op=op))
         except httpsafe.EndpointRejected as exc:
             return EntryResult(ok=False, ambiguous=False, error=_endpoint_code(exc))
         except ResponseTooLarge:
-            return EntryResult(ok=False, ambiguous=True, error="response_too_large")
+            return EntryResult(ok=False, ambiguous=True, error="wordpress_response_too_large")
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException):
             return EntryResult(ok=False, ambiguous=True, error="wordpress_transport_failed")
 
@@ -259,7 +278,7 @@ class WordPressAdapter:
         try:
             status, data = self._request("GET", url)
         except httpsafe.RedirectBlocked:
-            raise WordPressError("redirect_blocked") from None
+            raise WordPressError("wordpress_redirect_blocked") from None
         except httpsafe.EndpointRejected as exc:
             raise WordPressError(_endpoint_code(exc)) from None
         except urllib.error.HTTPError as exc:
@@ -268,7 +287,7 @@ class WordPressAdapter:
                 raise EntryMissing(ENTRY_MISSING) from None
             raise WordPressError(code) from None
         except ResponseTooLarge:
-            raise WordPressError("response_too_large") from None
+            raise WordPressError("wordpress_response_too_large") from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException):
             raise WordPressError("wordpress_transport_failed") from None
         if status != 200:
@@ -297,7 +316,7 @@ class WordPressAdapter:
         if key in self._terms:
             return self._terms[key]
         query = urllib.parse.urlencode({"search": name, "per_page": 100, "context": "view"})
-        rows = self._get(f"{self.site}{REST_PATH}/{kind}?{query}")
+        rows = self._get(f"{self._route(kind)}?{query}")
         for row in rows if isinstance(rows, list) else []:
             if (isinstance(row, dict) and isinstance(row.get("id"), int)
                     and html.unescape(str(row.get("name") or "")) == name):
@@ -332,7 +351,7 @@ class WordPressAdapter:
             query = urllib.parse.urlencode({"include": ",".join(str(i) for i in missing), "per_page": 100,
                                             "context": "view"})
             try:
-                rows = self._get(f"{self.site}{REST_PATH}/{kind}?{query}")
+                rows = self._get(f"{self._route(kind)}?{query}")
             except Exception:  # noqa: BLE001
                 return None
             for row in rows if isinstance(rows, list) else []:
@@ -377,15 +396,15 @@ class WordPressAdapter:
         if status != expect:
             return EntryResult(ok=False, ambiguous=True, error=f"wordpress_http_{status}")
         if not isinstance(data, dict):
-            return EntryResult(ok=False, ambiguous=True, error="response_invalid")
+            return EntryResult(ok=False, ambiguous=True, error="wordpress_response_invalid")
         try:
             fields = self._fields(data, sent)
         except ValueError:
-            return EntryResult(ok=False, ambiguous=True, error="response_invalid")
+            return EntryResult(ok=False, ambiguous=True, error="wordpress_response_invalid")
         got = fields["entry_id"]
         if (not got or not postid.is_usable(got) or (op == "create" and not fields["published_url"])
                 or (entry_id is not None and got != entry_id) or fields["content"] is None):
-            return EntryResult(ok=False, ambiguous=True, error="response_invalid", entry_id=got)
+            return EntryResult(ok=False, ambiguous=True, error="wordpress_response_invalid", entry_id=got)
         if statuses is not None and fields["status"] not in statuses:
             # 出たが、頼んだ状態でない（例: 公開の権限が無く pending になった）。人が見るまで出し直さない。
             return EntryResult(ok=False, ambiguous=True, error="wordpress_status_unexpected", entry_id=got,
@@ -408,12 +427,12 @@ class WordPressAdapter:
             raise EntryRefused(str(exc)) from None
         data = self._get(f"{url}?context=edit")
         if not isinstance(data, dict):
-            raise WordPressError("response_invalid")
+            raise WordPressError("wordpress_response_invalid")
         fields = self._fields(data)
         if fields["status"] == "trash":
             raise EntryMissing(ENTRY_MISSING)
         if fields["content"] is None:
-            raise WordPressError("response_invalid")   # context=edit の raw が無い＝比べられない
+            raise WordPressError("wordpress_response_invalid")   # context=edit の raw が無い＝比べられない
         return fields
 
     def _payload(self, title, body, categories):
@@ -459,7 +478,7 @@ class WordPressAdapter:
 
     def _list(self):
         """最近の記事（結果不明の照合の候補・`hatena_publish.candidates`）。"""
-        query = urllib.parse.urlencode({"context": "edit", "per_page": 20, "orderby": "date",
+        query = urllib.parse.urlencode({"context": "edit", "per_page": RECENT_POSTS, "orderby": "date",
                                         "status": "publish,draft,pending,private"})
         rows = self._get(f"{self.collection_url}?{query}")
         entries = []
@@ -478,7 +497,7 @@ class WordPressAdapter:
         その鍵にするよう勧める）。
         """
         try:
-            data = self._get(f"{self.site}{REST_PATH}/users/me?context=edit")
+            data = self._get(f"{self._route('users/me')}?context=edit")
         except WordPressError as exc:
             return {"ok": False, "user": None, "roles": None, "strong": None, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001

@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しと 5.15.0 のネットショップの節も同じ日（出す日がずれたら直す）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しと 5.15.0 のネットショップの節と 5.16.0 の WordPress の節も同じ日（出す日がずれたら直す）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -565,6 +565,32 @@ def build_privacy() -> str:
         "<code>thth leave</code> deletes the shop files on the computer where it runs; files on the owner's own "
         "computer are deleted there with <code>thth shop remove</code>. The token on BASE itself is revoked on BASE. THTH is not provided by BASE.</p>")
 
+    add("<h2>Blog articles on WordPress</h2>")
+    add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
+        "a person approves it. The owner creates an application password in WordPress for the user that writes the "
+        "articles and enters it into THTH on the computer that sends them (the operator's server for accounts that "
+        "run there, or the owner's own computer). THTH keeps it in an owner-only file (by default "
+        "<code>~/.config/thth/</code>, mode 600) on that computer and uses it only to authenticate requests to that "
+        "site. THTH sends requests to the site's own address over HTTPS (plain HTTP is accepted only for a test site "
+        "on the same computer) and does not follow a redirect to another host. It uses four REST paths: posts (to "
+        "create a post as published or as a draft, to update a post THTH created, and to read it back), categories "
+        "and tags (to look up the names written in the draft), and users/me (to check which user the password "
+        "belongs to and its roles). Each request carries the WordPress user name and the application password, and "
+        "a User-Agent with the THTH version and a contact URL. The article THTH sends is the title, the body "
+        "converted to HTML, the categories and tags, and whether to create it as published or as a draft. Before "
+        "updating a post, THTH reads its current title, body and categories and compares them with what it last "
+        "saw; if the post was changed elsewhere, THTH stops and reports instead of overwriting it. When the result "
+        "of a send is unknown, THTH reads the 20 most recent posts that the user can see, drafts and private posts "
+        "included, and shows on the terminal those whose title and time match. From users/me THTH keeps the user "
+        "name and its roles in the account's check record. On the computer that sends, THTH keeps the approved "
+        "body, the exact HTML it sent, the title, categories, the post's ID and URLs, hashes of what the site "
+        "returned, the history of each delivery, run logs, and a record of who entered or removed the application "
+        "password, without the password. It writes the post's ID, URL and time back to the draft file in the "
+        "owner's repository. <code>thth principal auth &lt;name&gt; --forget</code> deletes the application "
+        "password file on the computer where it runs; the application password itself is revoked in WordPress, "
+        "under the user's profile. Published articles stay on the WordPress site until the owner removes them "
+        "there. THTH is not provided by WordPress.</p>")
+
     add("<h2>Attachments</h2>")
     add("<p>Images, video and audio attached to a draft are checked before use. For images, THTH removes "
         "location data and other embedded metadata (XMP, IPTC, MakerNote, thumbnails, comments) without "
@@ -659,8 +685,8 @@ def build_privacy() -> str:
 
     add("<h2>What the operator's server keeps</h2>")
     add("<ul>")
-    add("  <li>Long-lived credentials (platform tokens, Bluesky App Passwords) in owner-only files, used to "
-        "authenticate platform API requests.</li>")
+    add("  <li>Long-lived credentials (platform tokens, Bluesky App Passwords, WordPress application passwords) in "
+        "owner-only files, used to authenticate platform API requests.</li>")
     add("  <li>Account settings, including an optional email address for operational notices.</li>")
     add("  <li>Drafts, the exact text of published posts, post history, and stop records of the safety limits.</li>")
     add("  <li>The metrics, replies and mentions described above, and checked attachments.</li>")
@@ -685,7 +711,7 @@ def build_privacy() -> str:
 
     add("<h2>Where data goes</h2>")
     add("<ul>")
-    add("  <li>The platform API of each connected account.</li>")
+    add("  <li>The platform API of each connected account, and the owner's own WordPress site.</li>")
     add("  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, the owner's "
         "activity page, attachment transfer, data deletion requests, and the notifications Meta sends for "
         "connected Facebook Pages and Instagram accounts.</li>")
@@ -990,6 +1016,27 @@ def build_privacy() -> str:
         " <code>thth shop remove</code> で消します。BASE の側のトークンは BASE で取り消します。THTH は"
         " BASE が提供するものではありません。</p>")
 
+    add("<h2>WordPress の記事</h2>")
+    add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"
+        "持ち主は、記事を書く利用者のアプリケーションパスワードを WordPress で作り、記事を送るコンピューター（運営者の"
+        "サーバーで動かす口座ならそのサーバー、持ち主の手元で動かすなら手元）で THTH に入れます。THTH はそれを、その"
+        "コンピューターの本人だけが読めるファイル（既定は <code>~/.config/thth/</code>・600）に置き、そのサイトへの要求の"
+        "認証にだけ使います。THTH が要求を送るのはそのサイト自身のアドレスで、HTTPS で送ります（平文の HTTP は、同じ"
+        "コンピューターの中の試しのサイトだけ）。別のホストへの転送には付いて行きません。道は 4 つです。投稿（公開か"
+        "下書きで作る・THTH が作った投稿を直す・読み戻す）、カテゴリーとタグ（下書きに書いた名前を引く）、users/me"
+        "（パスワードがどの利用者のものか、その役割は何か）です。どの要求にも、WordPress の利用者名とアプリケーション"
+        "パスワード、THTH の版と連絡先の URL を入れた User-Agent が付きます。記事として送るのは、題・HTML に変えた本文・"
+        "カテゴリーとタグ・公開か下書きかです。投稿を直す前に、THTH はその投稿の今の題・本文・カテゴリーを読み、前に見た"
+        "ものと比べます。ほかで変えられていれば、上書きせずに止めて知らせます。送った結果が分からないときは、その利用者に"
+        "見える最近の 20 件（下書きと非公開を含む）を読み、題と時刻が合うものを端末に出します。users/me からは、利用者名と"
+        "役割を口座の診断の記録に残します。送るコンピューターには、承認した本文、送った HTML そのもの、題、カテゴリー、"
+        "投稿の ID と URL、サイトが返した内容のハッシュ、配信ごとの履歴、実行のログ、誰がアプリケーションパスワードを"
+        "入れ・消したかの記録（パスワードは入れません）を残します。投稿の ID・URL・時刻は、持ち主の repo の下書きの"
+        "ファイルに書き戻します。<code>thth principal auth &lt;主体&gt; --forget</code> は、打ったコンピューターの"
+        "アプリケーションパスワードのファイルを消します。アプリケーションパスワードそのものは、WordPress の利用者の"
+        "プロフィールで取り消します。出した記事は、持ち主が WordPress で消すまでサイトに残ります。THTH は WordPress が"
+        "提供するものではありません。</p>")
+
     add("<h2>添付</h2>")
     add("<p>下書きに付けた画像・動画・音声は、使う前に検査します。画像は、位置情報などの埋め込みメタデータ"
         "（XMP・IPTC・MakerNote・サムネイル・コメント）を、再圧縮せずに取り除きます。動画と音声は変えません。"
@@ -1068,7 +1115,7 @@ def build_privacy() -> str:
 
     add("<h2>運営者のサーバーに保存するもの</h2>")
     add("<ul>")
-    add("  <li>長期の認証情報（SNSの token、Bluesky の App Password）。オーナーだけが読めるファイルに置き、SNSの "
+    add("  <li>長期の認証情報（SNSの token、Bluesky の App Password、WordPress のアプリケーションパスワード）。オーナーだけが読めるファイルに置き、SNSの "
         "API への認証に使います。</li>")
     add("  <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>")
     add("  <li>下書き、公開した本文そのもの、投稿の履歴、ガードで止めた印。</li>")
@@ -1090,7 +1137,7 @@ def build_privacy() -> str:
 
     add("<h2>データの行き先</h2>")
     add("<ul>")
-    add("  <li>接続したアカウントのSNSの API。</li>")
+    add("  <li>接続したアカウントのSNSの API と、持ち主自身の WordPress のサイト。</li>")
     add("  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可コードの一時保管、オーナーのアクティビティ、添付の"
         "受け渡し、データ削除の依頼、接続した Facebook ページと Instagram について Meta が送る通知。</li>")
     add("  <li>運用通知のメール（設定したときだけ）。運営者のメールサーバーから、アカウント名・原稿のファイル名・"

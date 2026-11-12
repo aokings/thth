@@ -163,7 +163,8 @@ def send_as_of(fm) -> str:
 def target(fm, account_cfg, op, images, body) -> dict:
     """出し先（口座の媒体）ごとの形: 受ける操作・公開の状態（`send_as`）・画像・送る本文（WordPress は HTML）。
 
-    戻り値は `{"kind", "send_as", "body", "site_url", "site_host"}`。外れれば `EntryError`（何も書かない）。
+    戻り値は `{"kind", "send_as", "body", "title", "site_url", "site_host"}`（`title` は送る題・WordPress は
+    `wp_html.render_title` を通したもの）。外れれば `EntryError`（何も書かない）。
     出し先の違いは主体の種類の表（`principals.ARTICLE_KINDS`）から引く——ここで媒体名では分けない。
     """
     from . import principals, wp_html
@@ -180,12 +181,15 @@ def target(fm, account_cfg, op, images, body) -> dict:
         raise EntryError("send_as_unsupported", spec["label"])
     if images and not spec["images"]:
         raise EntryError("wp_image_unsupported", images[0]["path"])
+    title = _text(fm, "title")
     if op != "delete" and kind in BODY_RENDER:
         try:
             body = BODY_RENDER[kind](body)
+            if title and kind in TITLE_RENDER:
+                title = TITLE_RENDER[kind](title)
         except wp_html.WpMarkupError as exc:
             raise EntryError(exc.code, exc.detail) from None
-    out = {"kind": kind, "send_as": send_as, "body": body, "site_url": None, "site_host": None}
+    out = {"kind": kind, "send_as": send_as, "body": body, "title": title, "site_url": None, "site_host": None}
     blog_id = str((account_cfg or {}).get("blog_id") or "").strip().lower()
     try:
         principal_cfg = principals.load_principal((account_cfg or {}).get("principal"))
@@ -219,8 +223,15 @@ def _wp_render(body):
     return wp_html.render(body)
 
 
+def _wp_title(title):
+    from . import wp_html
+    return wp_html.render_title(title)
+
+
 # 主体の種類 → 送る本文の形（無ければ Markdown のまま）。変換したあとの本文が指紋に入る。
 BODY_RENDER = {"wordpress": _wp_render}
+# 主体の種類 → 送る題の形（無ければ原稿の題のまま）。変換したあとの題が指紋・台帳・読み戻しの比べに入る。
+TITLE_RENDER = {"wordpress": _wp_title}
 
 
 # ------------------------------------------------------------------ lint
@@ -499,6 +510,8 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
         commit = committed_commit(path, data)
     t = target(fm, account_cfg, op, images, body)
     body = t["body"]
+    if op != "delete":
+        title = t["title"]   # 送る題（WordPress はエスケープしたあと・5.16.0 監査 危ない 2）
     entry_id = ledger.get("entry_id") if (ledger and op != "create") else None
     base = (ledger.get("readback_sha") or "") if (ledger and op != "create") else ""
     if op != "create" and not entry_id:

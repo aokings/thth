@@ -129,6 +129,70 @@ ENTRIES = {
         "WordPress の画面で記事の状態を確かめ、thth inflight <口座> resolve で出たかどうかを決めてください。",
         "thth inflight <口座> resolve",
         "鍵の利用者を編集者にすると、頼んだ状態のまま出ます。"),
+    # ------------------------------------------------------------------ はてなと共通の符丁の WordPress の分（監査 直したほうがよい 2）
+    "wordpress_redirect_blocked": _entry(
+        "WordPress のサイトが転送（3xx）を返しました。鍵は転送先に送っていません（記事を送ったあとなら、届いたかは分かりません）。",
+        "主体のブログの行の site_url を、転送された先のホスト（www あり・なしなど）に合わせてください。"
+        "記事を送ったあとに出たなら、WordPress の画面で確かめて thth inflight <口座> resolve で決めてください。",
+        "thth principal show <主体>",
+        "ブラウザで <サイト>/wp-json/ を開き、アドレス欄が変わらないホストを site_url にすると、転送で止まらなくなります。"),
+    "wordpress_token_missing": _entry(
+        "WordPress の主体のアプリケーションパスワード（鍵）がまだ入っていません。",
+        "WordPress の「プロフィール」でアプリケーションパスワードを作り、端末から入れてください。",
+        "thth principal auth <主体> --by <名前>",
+        "記事を書くだけの「編集者」の利用者で鍵を作ると、鍵が漏れたときの害が記事だけに収まります。"),
+    "wordpress_token_invalid": _entry(
+        "WordPress の鍵のファイルが読めない形か、主体の wp_user と合っていません（アプリケーションパスワードの形でない値も入れません）。",
+        "WordPress の「プロフィール」で作ったアプリケーションパスワード（英数 24 字）を入れ直してください。",
+        _AUTH,
+        "入れたあと thth doctor <口座> で鍵の利用者と役割が出れば、記事も同じ鍵で出せます。"),
+    "wordpress_auth_unsupported": _entry(
+        "WordPress の主体の auth が app_password ではありません（この版はアプリケーションパスワードだけを使います）。",
+        "主体の台帳の auth を app_password にするか欄を消し、鍵を入れ直してください。",
+        "thth principal show <主体>",
+        "WordPress.com のサイトは後の版で受けます。自分で置いたサイトなら、アプリケーションパスワードがいちばん短い道です。"),
+    "wordpress_response_invalid": _entry(
+        "WordPress の答えが、THTH の読める形（REST の JSON・context=edit の raw）ではありませんでした。何も上書きしていません。",
+        "少し置いてからもう一度出してください。記事を送ったあとに出たなら、WordPress の画面で確かめて thth inflight <口座> resolve で決めてください。",
+        "thth doctor <口座>",
+        "ブラウザで <サイト>/wp-json/wp/v2/posts を開いて JSON が出るなら、部品やテーマが答えを書き換えていないかを見ると早く片づきます。"),
+    "wordpress_response_too_large": _entry(
+        "WordPress の答えが大きすぎて、読み切りませんでした（記事を送ったあとなら、届いたかは分かりません）。",
+        "WordPress の画面で記事を確かめ、送ったあとなら thth inflight <口座> resolve で決めてください。",
+        "thth inflight <口座> resolve",
+        "答えに大きな部品の出力が付くサイトなら、REST の答えに足す部品を外すと読み切れるようになります。"),
+    "wordpress_endpoint_rejected": _entry(
+        "WordPress のサイトの宛先が、安全な宛先の検査（名前解決・プロキシ・内向きのアドレス）を通りませんでした。鍵は送っていません。",
+        "主体の site_url が外から引けるサイトのアドレスか、名前解決とプロキシの設定を確かめてから打ち直してください。",
+        "thth doctor <口座>",
+        "サイトのアドレスを https の公開の名前にそろえると、検査で止まる道がなくなります。"),
+    "wordpress_rate_limited": _entry(
+        "WordPress のサイト（か前のサーバ）が、短い間の回数の上限（429）を返しました。",
+        "少し時間を置いてください（timer が次の回にもう一度出します）。",
+        "thth doctor <口座>",
+        "口座の min_interval_hours を空けると、サイトの上限に当たりにくくなります。"),
+    "wordpress_http_status": _entry(
+        "WordPress が、THTH の見分けない番号の HTTP の答え（1 行目の wordpress_http_<番号>）を返しました。",
+        "番号を見て、500 番台ならサイトの誤りの記録を、400 番台なら部品やサーバの設定を確かめてから出し直してください。"
+        "記事を送ったあとに出たなら thth inflight <口座> resolve で決めてください。",
+        "thth doctor <口座>",
+        "thth doctor <口座> が通るまで直してから出すと、記事の公開も同じ道で通ります。"),
+    "entry_id_invalid": _entry(
+        "配信の台帳の記事の ID が、出し先の記事の ID の形ではありません（台帳が手で書き換えられた見込み）。何も送っていません。",
+        "thth deliveries <口座> で台帳の entry_id を見て、出し先の画面の記事の ID と合うか確かめてください。",
+        "thth deliveries <口座>",
+        "台帳は手で書き換えず、記事を取り込むときは thth conflict <口座> の道を使うと、ID が崩れなくなります。"),
+    "edit_uri_mismatch": _entry(
+        "配信の台帳の編集の URL が、主体のサイトと記事の ID から組んだ URL と違います（サイトか台帳が替わった）。何も送っていません。",
+        "thth deliveries <口座> で台帳の edit_uri と、thth principal show <主体> のサイトのアドレスを見比べてください。",
+        "thth deliveries <口座>",
+        "サイトのアドレスを替えるときは、新しい主体の行で新しい配信として出すと、古い台帳と混ざりません。"),
+    # ------------------------------------------------------------------ 告知（監査 直したほうがよい 1）
+    "announces_target_draft": _entry(
+        "告知が結ぶ記事は WordPress に下書きで出した配信です。下書きの URL は読者には開けないので、告知に入れません。",
+        "WordPress の画面で記事を公開し、告知の原稿の announces: を外して、公開の URL を本文に直に書いてください。",
+        None,
+        "告知したい記事は send_as: を外して（公開で）出すと、告知が記事の公開を待ってから自動で URL を入れます。", _CM),
     "wordpress_transport_failed": _entry(
         "WordPress まで届いたか分からないまま、つながりが切れました（出し直しはしません）。",
         "WordPress の画面で記事が出たか確かめ、thth inflight <口座> resolve で決めてください。",

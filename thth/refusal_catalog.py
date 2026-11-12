@@ -137,6 +137,7 @@ FIX_VIEWS = {
     "announce._MESSAGES": (
         "invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",
         "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces",
+        "announces_target_draft",
     ),
     "queuefile.REPLY_TO_FILE_MESSAGES": (
         "reply_to_conflict", "reply_to_file_invalid", "reply_to_file_self", "reply_to_file_missing",
@@ -372,8 +373,21 @@ def _catalog() -> dict[str, dict]:
     return globals().get("CATALOG") or __getattr__("CATALOG")
 
 
+# 番号の付く符丁（`wordpress_http_<番号>`）は、目録の 1 つの項目に寄せて引く（番号は 1 行目に残る）。
+_NUMBERED = ((re.compile(r"wordpress_http_\d{3}"), "wordpress_http_status"),)
+
+
+def canonical(code: str) -> str:
+    """目録を引く符丁（番号の付く符丁はその項目の名に）。"""
+    if isinstance(code, str):
+        for pattern, name in _NUMBERED:
+            if pattern.fullmatch(code):
+                return name
+    return code
+
+
 def get(code: str) -> dict | None:
-    return _catalog().get(code)
+    return _catalog().get(canonical(code))
 
 
 def door_parts(code: str, door: str) -> dict | None:
@@ -459,7 +473,7 @@ def render(code: str, **values) -> dict:
 
     返す形: `{"code", "why", "fix", "command", "better"}`。符丁が目録に無ければ KeyError。
     """
-    entry = _catalog()[code]
+    entry = _catalog()[canonical(code)]
 
     def fill(text):
         return fill_slots(text, **values)

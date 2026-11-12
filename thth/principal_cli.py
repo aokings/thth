@@ -759,7 +759,7 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
         err(NOT_A_TTY_WP)
         return 2
     if not wordpress.good_password(value):
-        err("token_invalid: アプリケーションパスワードの形ではありません（英数 24 字・4 字ごとの空白は可）。"
+        err("wordpress_token_invalid: アプリケーションパスワードの形ではありません（英数 24 字・4 字ごとの空白は可）。"
             "何も書いていません。WordPress の「プロフィール」→「アプリケーションパスワード」で作った値を入れてください")
         return 2
     redact.register_secret(value)
@@ -788,7 +788,7 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
         try:
             who = make(cfg, principal_cfg).whoami()
         except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ）
-            who = {"ok": False, "error": getattr(exc, "code", "token_invalid"), "strong": None}
+            who = {"ok": False, "error": getattr(exc, "code", "wordpress_token_invalid"), "strong": None}
         if who["ok"]:
             out(f"{blog['blog_id']}: 読めました（鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}）")
             if who["strong"]:

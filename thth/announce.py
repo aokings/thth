@@ -26,7 +26,10 @@ PREFIX = "announces_unresolved"
 WAITING_FOR = "waiting_for"
 # lint の符丁（`lint._REASON_TABLE` に載る）。
 LINT_CODES = ("invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",
-              "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces")
+              "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces",
+              "announces_target_draft")
+# 下書きで出した配信（WordPress の `send_as: draft`）。台帳は `published` でも、URL は読者に開けない。
+TARGET_DRAFT = "target_draft"
 _MESSAGES = refusal_catalog.fix_view("announce._MESSAGES")
 
 
@@ -123,6 +126,8 @@ def lint_errors(fm: dict, section, account_cfg: dict | None, *, hatena: bool) ->
     except AnnounceError as exc:
         code = exc.code if exc.code in LINT_CODES else "announces_not_found"
         return out + [f"{code}: {_MESSAGES[code]}（{announces!r}）"]
+    if record.get("send_as") == "draft":
+        out.append(f"announces_target_draft: {_MESSAGES['announces_target_draft']}（{announces!r}）")
     article = (fm or {}).get("article")
     if article is not None and str(article).strip() and str(article).strip() != record.get("article"):
         out.append(f"article_mismatch: {_MESSAGES['article_mismatch']}（{record.get('article')!r}）")
@@ -173,6 +178,7 @@ def resolve(fm: dict, account_cfg: dict) -> AnnounceResolution | None:
     - `wanted`・`inflight`・`unknown` → `announces_unresolved: waiting_for <配信 id>`（待つ・held に数えない）
     - `conflict`・`deleted`・`no_follow` → `announces_unresolved: target_<state>`（held）
     - `published` なのに `published_url` が無い → `target_no_url`（held・待っても来ない）
+    - 下書きで出した配信（`send_as: draft`）→ `target_draft`（held・下書きの URL は読者に開けない）
     - 置き換えた本文が上限を越える → `too_long_after_fill`（held・select と core が見る）
     - 無い → `target_missing`・別レーン → `target_other_lane`・読めない → `target_unreadable`（held）
     """
@@ -190,6 +196,11 @@ def resolve(fm: dict, account_cfg: dict) -> AnnounceResolution | None:
     state = record.get("state")
     url = record.get("published_url")
     article = record.get("article")
+    if record.get("send_as") == "draft":
+        # 下書きで出した配信（5.16.0 監査 直したほうがよい 1）。台帳は published でも URL は読者に開けず、
+        # WordPress の画面で公開しても台帳は替わらないので、待たずに held（人が見る・lint の
+        # `announces_target_draft` と同じ根）。
+        return AnnounceResolution(announces, None, article, unresolved(TARGET_DRAFT))
     if state == "published" and isinstance(url, str) and url.startswith(("https://", "http://")):
         return AnnounceResolution(announces, url, article, None)
     if state == "published":

@@ -233,3 +233,82 @@ def test_WhatsAppの項は口と合い_保存しないと言う():
     ja = re.findall(r"<h2>WhatsApp</h2>\s*<p>(.*?)</p>", page, re.S)
     assert len(ja) == 2, "WhatsApp の節が日英の 2 つでない"
     assert "相手の番号" in ja[1] and "保存しません" in ja[1] and "端末" not in ja[1]
+
+
+# ------------------------------------------------------------------ WordPress の記事（5.16.0 監査 直したほうがよい 3）
+
+_NUMBER_WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
+
+
+def _wp_section(page: str, heading: str) -> str:
+    found = re.search(rf"<h2>{re.escape(heading)}</h2>\s*<p>(.*?)</p>", page, re.S)
+    assert found, f"privacy に「{heading}」の節が無い"
+    return found.group(1)
+
+
+def test_WordPressの節の道はadapterのROUTESと同じ():
+    """privacy の WordPress の節が名指しする REST の道が、adapter の `ROUTES`（これ以外は組まない）と同じ数・同じ名。"""
+    from thth.adapters import wordpress
+
+    page = PRIVACY.read_text(encoding="utf-8")
+    en = _wp_section(page, "Blog articles on WordPress")
+    ja = _wp_section(page, "WordPress の記事")
+    n = len(wordpress.ROUTES)
+    assert f"It uses {_NUMBER_WORDS[n]} REST paths" in en
+    assert f"道は {n} つです" in ja
+    names = {"posts": ("posts (", "投稿（"), "categories": ("categories", "カテゴリー"), "tags": ("tags", "タグ"),
+             "users/me": ("users/me", "users/me")}
+    assert set(wordpress.ROUTES) == set(names), "adapter の道が増えた・減った。privacy の WordPress の節を直す"
+    for route in wordpress.ROUTES:
+        assert names[route][0] in en and names[route][1] in ja, route
+
+
+def test_WordPressのadapterはROUTESの外でRESTを組まない():
+    """REST の URL は `_route` の 1 か所でだけ組む（privacy の 4 つの道の柵が、道を足しても素通りしないように）。"""
+    src = (ROOT / "thth" / "adapters" / "wordpress.py").read_text(encoding="utf-8")
+    uses = [line for line in src.splitlines() if "REST_PATH}" in line]
+    assert uses == ['        return f"{self.site}{REST_PATH}/{route}"'], uses
+
+
+def test_WordPressの照合で読む件数はRECENT_POSTSと同じ():
+    from thth.adapters import wordpress
+
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert f"reads the {wordpress.RECENT_POSTS} most recent posts" in _wp_section(page, "Blog articles on WordPress")
+    assert f"最近の {wordpress.RECENT_POSTS} 件" in _wp_section(page, "WordPress の記事")
+    src = (ROOT / "thth" / "adapters" / "wordpress.py").read_text(encoding="utf-8")
+    assert '"per_page": RECENT_POSTS' in src
+
+
+def test_WordPressの鍵を消す道は今ある旗():
+    """privacy が書く `thth principal auth <主体> --forget` が、命令の旗として今ある。"""
+    from thth import cli
+
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if getattr(a, "choices", None) and "principal" in a.choices)
+    auth = next(a for a in sub.choices["principal"]._actions if getattr(a, "choices", None)
+                and "auth" in a.choices).choices["auth"]
+    assert "--forget" in {o for a in auth._actions for o in a.option_strings}
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert "thth principal auth &lt;name&gt; --forget" in _wp_section(page, "Blog articles on WordPress")
+    assert "thth principal auth &lt;主体&gt; --forget" in _wp_section(page, "WordPress の記事")
+
+
+# 文字列だけの柵（コードの定数と結んでいない・字面がある・無いだけを見る）。WordPress の節の事実のうち、
+# 定数に寄せられないもの（https・転送・上書きしない・題と本文と分類）。
+WORDPRESS_WORDS_ONLY = (
+    ("文字列だけ: https で送る", "over HTTPS (plain HTTP is accepted only for a test site", "HTTPS で送ります"),
+    ("文字列だけ: 別のホストへの転送に付いて行かない", "does not follow a redirect to another host",
+     "別のホストへの転送には付いて行きません"),
+    ("文字列だけ: 外の手直しは上書きしない", "THTH stops and reports instead of overwriting it", "上書きせずに止めて知らせます"),
+    ("文字列だけ: 送る中身", "the title, the body converted to HTML, the categories and tags",
+     "題・HTML に変えた本文・カテゴリーとタグ"),
+    ("文字列だけ: 鍵の置き場と 600", "<code>~/.config/thth/</code>, mode 600", "<code>~/.config/thth/</code>・600"),
+)
+
+
+@pytest.mark.parametrize("what,en,ja", WORDPRESS_WORDS_ONLY, ids=[w[0] for w in WORDPRESS_WORDS_ONLY])
+def test_WordPressの節の文字列だけの柵(what, en, ja):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert en in _wp_section(page, "Blog articles on WordPress"), what
+    assert ja in _wp_section(page, "WordPress の記事"), what

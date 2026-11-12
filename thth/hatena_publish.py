@@ -315,7 +315,8 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     except AdapterUnavailable as exc:
         code = exc.code
         hint = (f"。thth principal auth {principal_cfg['principal']} --by <名前> で入れてください"
-                if code in ("token_missing", "token_invalid", "consumer_missing", "consumer_invalid") else "")
+                if code in ("token_missing", "token_invalid", "consumer_missing", "consumer_invalid",
+                             "wordpress_token_missing", "wordpress_token_invalid") else "")
         log(f"{principals.media_label(account_cfg)}の認証の材料が使えないので出しません（{code}）{hint}")
         run("post", "error", code)
         return _result(core, exit_code=2, mode=mode, action="refused", message=code, file=path, error=code)
