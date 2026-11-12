@@ -106,7 +106,7 @@
 - 本文の変換: Markdown の狭い部分集合（段落・見出し・強調・リンク・箇条書き・コード）だけ HTML にする（依存 0 なので自前）。外れる記法と手元の画像は前向きに断る。変換の決まりは指紋の一部。
 - 読み戻しは `context=edit` の `content.raw`。初回の読み戻しを基準にする（権限の弱い利用者は kses で削られる）。
 - `whoami`（`/wp/v2/users/me?context=edit`）で権限を見て、管理者の鍵なら「編集者の利用者を作ってその鍵を」と前向きに勧める（断らない）。
-- 試しの平文 HTTP は今の `httpsafe` の柵（`THTH_TEST_ALLOW_HTTP=1` かつ loopback）の内。VM に載せる日までに、内向きのアドレスを試しのとき以外は断る検査を足す。
+- 試しの平文 HTTP は今の `httpsafe` の柵（`THTH_TEST_ALLOW_HTTP=1` かつ loopback）の内。内向きのアドレスを断る検査は 11/13 に足した（5.16.0 監査 直したほうがよい 6）: 台帳の時点で IP の形・localhost の site_url と blog_id を断り（loopback は試しの印のときだけ）、送る時点で `httpsafe.public_opener()` が名前を引いた答えを全部見て、内向きが 1 つでもあればつながず、確かめた IP へつなぐ。柵は `tests/test_v5181_wordpress_internal_address.py`。
 - 断りは「REST が閉じている・Authorization が落とされる・https でない・セキュリティの部品が止めている」を分ける。国内のレンタルサーバが海外の IP からの REST を止める件は要確認。
 - 初めは 作る・直す・下書きと公開 まで。
 

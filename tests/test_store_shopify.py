@@ -42,7 +42,10 @@ def product(i, *, title=None, status="ACTIVE", url=True, total=3, tracks=True, a
             "totalInventory": total, "tracksInventory": tracks, "updatedAt": "2026-11-10T00:00:00Z",
             "priceRangeV2": {"minVariantPrice": {"amount": amount, "currencyCode": currency}},
             "featuredMedia": {"preview": {"image": {"url": f"https://cdn.example.invalid/{i}.jpg"}}} if media else None,
-            "descriptionHtml": f"説明の本文 {i}", "futureField": {"x": 1}}
+            "descriptionHtml": f"説明の本文 {i}", "futureField": {"x": 1},
+            # 種類の値段（5.18.1）: 既定は種類 1 つで、値段は商品のいちばん安い値と同じ。
+            "variants": {"nodes": [{"legacyResourceId": str(i * 100), "price": amount}],
+                         "pageInfo": {"hasNextPage": False}}}
     node.update(extra)
     return node
 
@@ -331,7 +334,8 @@ def test_商品は許した欄だけで公開でない商品はidだけ(capsys, 
     rows = {row["id"]: row for row in value["items"]}
     assert rows[1] == {"id": 1, "name": "豆 1", "price": 1200, "stock": 3, "visible": True, "sales_status": "active",
                        "image_url": "https://cdn.example.invalid/1.jpg",
-                       "item_url": f"https://{LABEL}.example.invalid/products/p1", "modified_at": "2026-11-10T00:00:00Z"}
+                       "item_url": f"https://{LABEL}.example.invalid/products/p1", "modified_at": "2026-11-10T00:00:00Z",
+                       "variant_prices": {"100": 1200}}
     for hidden in (2, 3, 4, 5):
         assert rows[hidden] == {"id": hidden, "visible": False}
     assert rows[6]["stock"] is None and rows[7]["stock"] == 0 and rows[8]["stock"] == -2
@@ -368,8 +372,11 @@ def test_頁を送って読み上限の頁で終わらなければ読み切れ�
 
 
 def test_点数が少なければ回復を待ち読めなければ1秒():
-    assert shopify.throttle_wait({"extensions": cost(requested=312, available=500, restore=100.0)}) == 3.12
-    assert shopify.throttle_wait({"extensions": cost(requested=1000, available=10, restore=50.0)}) == 5.0
+    # 足りない点（頼む点 − 残り）が戻るまで ＋ 0.5 秒・長くて 10 秒。足りていれば 0.5 秒（監査 5.18.1 の確かめの危ない 1）。
+    assert shopify.throttle_wait({"extensions": cost(requested=312, available=500, restore=100.0)}) == 0.5
+    assert shopify.throttle_wait({"extensions": cost(requested=728, available=128, restore=100.0)}) == 6.5
+    assert shopify.throttle_wait({"extensions": cost(requested=728, available=128, restore=100.0)}, 1.5) == 9.5
+    assert shopify.throttle_wait({"extensions": cost(requested=1000, available=10, restore=50.0)}) == 10.0
     assert shopify.throttle_wait({"extensions": cost()}) == shopify.MIN_INTERVAL_SECONDS
     assert shopify.throttle_wait({"data": {}}) == 1.0
     assert shopify.throttle_wait({"extensions": {"cost": {"requestedQueryCost": "x"}}}) == 1.0

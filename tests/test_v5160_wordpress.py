@@ -465,9 +465,14 @@ def test_httpは手元の試しだけ_柵は緩めない(lane, monkeypatch):
     assert principals.valid_site_url("http://127.0.0.1:8080", "wp.test")
     put_key(lane)
     lane.wp.calls.clear()
+    # 台帳は印のあるうちに読む（印が無ければ台帳の時点で loopback の site_url を断る・5.16.0 監査 直したほうがよい 6）。
+    loaded = principals.load_principal(PRINCIPAL)
     monkeypatch.delenv("THTH_TEST_ALLOW_HTTP")
+    with pytest.raises(principals.PrincipalError) as exc:
+        principals.load_principal(PRINCIPAL)
+    assert exc.value.code == "site_url_invalid"
     adapter = wordpress.factory({"blog_id": "wp.test", "token": str(lane.token), "media": "wordpress",
-                                 "principal": PRINCIPAL}, principals.load_principal(PRINCIPAL))
+                                 "principal": PRINCIPAL}, loaded)
     assert adapter.whoami()["error"] == "wordpress_https_required"
     assert lane.wp.calls == []   # 鍵を http で送っていない
 

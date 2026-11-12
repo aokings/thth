@@ -59,7 +59,7 @@ def _shopify_client(cfg, token, transport):
 
 def _shopify_cap() -> int:
     from . import shopify
-    return shopify.PAGE_FIRST * shopify.MAX_PAGES
+    return shopify.MAX_ITEMS
 
 
 def _stores_client(cfg, token, transport):

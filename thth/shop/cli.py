@@ -52,12 +52,14 @@ PROMPT_STORES = "STORES のプライベートアプリのクレデンシャル�
 
 
 def _refuse(args, exc: StoreRefused) -> int:
-    found = refusal.parts(exc.code) or {}
+    # 詳細の語（`store_args_invalid` の `url` など）を `reason` に渡すと、目録の `by_detail` のその語の通し方が出る。
+    reason = {"reason": exc.detail} if exc.detail else {}
+    found = refusal.parts(exc.code, **reason) or {}
     line = f"{exc.code}: {found.get('why') or exc.code}"
     if exc.detail:
         line += f"（{exc.detail}）"
     payload = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}
-    return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload)
+    return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload, **reason)
 
 
 def _run(handler):
@@ -396,6 +398,23 @@ def _incomplete_note(read, cfg) -> str | None:
             "消えた・売り切れは言わず、写しも進めません")
 
 
+def _adjusted_note(read) -> str | None:
+    """点数の見込みが外れて読み方を変えたときの知らせ（Shopify・5.18.1）。読めた分はいつもどおり使える。"""
+    adjusted = read.get("adjusted")
+    if not adjusted:
+        return None
+    parts = []
+    if adjusted["shrinks"]:
+        parts.append(f"Shopify の点数が見込みより大きかったので、1 頁を {adjusted['shrinks'][0]['from']} 件から "
+                     f"{adjusted['page_first']} 件に減らして読みました")
+    if adjusted["throttled_retries"]:
+        parts.append(f"Shopify が混んでいたので {adjusted['throttled_retries']} 回待って打ち直しました")
+    cost = adjusted.get("requested_cost_max")
+    return ("・".join(parts) + "。読めた分はそのまま使えます"
+            + (f"（頼んだ点の最大 {cost}）" if cost else "")
+            + "。続くなら --json の read_adjusted を添えて thth report file で開発のセッションへ知らせると、頁の大きさを直せます")
+
+
 def _stock_text(stock) -> str:
     return "—（数えない）" if stock is None else str(stock)
 
@@ -404,7 +423,8 @@ def cmd_items(args) -> int:
     cfg, _token, when, client = _open(args)
     read = client.items()
     value = {"store": args.store, "complete": read["complete"], "pages": read["pages"], "items": read["items"],
-             "token": when, "note": _incomplete_note(read, cfg)}
+             "token": when, "note": _incomplete_note(read, cfg), "read_adjusted": read.get("adjusted"),
+             "read_note": _adjusted_note(read)}
     if args.json:
         _print(value)
         return 0
@@ -415,6 +435,8 @@ def cmd_items(args) -> int:
         price = "—" if row["price"] is None else f"{row['price']:,} 円"
         print(f"{row['id']}  {row['name']}  {price}  在庫 {_stock_text(row['stock'])}  {row['sales_status']}")
     print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
+    if value["read_note"]:
+        print(value["read_note"])
     _note(args, when, cfg["kind"])
     return 0
 
@@ -435,6 +457,37 @@ def _read_and_compare(args, client, token):
     return read, snapshot, changes, switched
 
 
+# 下書きを作らない値段と種類の違いの一言（5.18.1・監査 5.18.0 の 5）。なぜ上下を言わないかと、確かめ方を添える。
+_PRICE_WORDS = {
+    "mixed": "上がった種類と下がった種類があります。値上げとも値下げとも言わず、下書きは作りません。店で確かめてください",
+    "snapshot_without_variants": "前の写しに種類ごとの値段が無いので、種類が増えた・減っただけかもしれません。"
+                                 "上下を言わず、下書きは作りません",
+    "variants_unread": "種類が多くて全部は読めないので、種類が減っただけかもしれません。上下を言わず、下書きは作りません。"
+                       "店で確かめてください",
+}
+
+
+def _change_hint(change: dict) -> str:
+    if change["kind"] == "price_changed":
+        return "・" + _PRICE_WORDS.get(change.get("why"), _PRICE_WORDS["mixed"])
+    if change["kind"] == "sale_started":
+        return f"（販売が始まりました。thth {COMMAND} draft <店> --kind new で新着と同じように下書きを作れます）"
+    if change["kind"] == "variants_changed":
+        return (f"（種類が {change.get('added', 0)} 増え {change.get('removed', 0)} 減りました。値段の上下ではないので、"
+                "下書きは作りません）")
+    return ""
+
+
+def _variant_note(changes: list, accepted: bool) -> str | None:
+    """前の版の写しと比べた 1 回目の知らせ（写しを進めれば、次から種類ごとに比べる）。"""
+    if not any(c.get("why") == "snapshot_without_variants" for c in changes):
+        return None
+    if accepted:
+        return "写しに種類ごとの値段を入れました。次の diff から、値段の上下は同じ種類の値段で決めます"
+    return (f"前の写しには種類ごとの値段が無いので、今回は値段の上下を言いません。thth {COMMAND} diff <店> --accept で"
+            "写しを進めると、次から同じ種類の値段で上下を決めます")
+
+
 def cmd_diff(args) -> int:
     cfg, token, when, client = _open(args)
     read, snapshot, changes, switched = _read_and_compare(args, client, token)
@@ -448,7 +501,9 @@ def cmd_diff(args) -> int:
         accepted = True
     value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
              "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
-             "accepted": accepted, "token": when, "note": _incomplete_note(read, cfg), "shop_switched": switched}
+             "accepted": accepted, "token": when, "note": _incomplete_note(read, cfg), "shop_switched": switched,
+             "variant_note": _variant_note(changes, accepted), "read_adjusted": read.get("adjusted"),
+             "read_note": _adjusted_note(read)}
     if args.json:
         _print(value)
         return 0
@@ -457,14 +512,20 @@ def cmd_diff(args) -> int:
     if baseline:
         print(f"{args.store}: 基準を取りました（{len(read['items'])} 件）。違いはまだありません。次からの thth {COMMAND} diff が"
               "この写しと比べます")
+        if value["read_note"]:
+            print(value["read_note"])
         _note(args, when, cfg["kind"])
         return 0
     for change in changes:
         extra = f"（{change['before']} → {change['after']} 円）" if "before" in change else ""
-        print(f"{change['kind']:<12} {change['id']}  {change.get('name') or ''}{extra}")
+        print(f"{change['kind']:<12} {change['id']}  {change.get('name') or ''}{extra}{_change_hint(change)}")
     print(f"違い {len(changes)} 件（{value['since']} の写しと比べて）"
           + ("・写しを今の読みに進めました" if accepted else f"・写しは進めていません（--accept で進めます）")
           + (f"・{value['note']}" if value["note"] else ""))
+    if value["variant_note"]:
+        print(value["variant_note"])
+    if value["read_note"]:
+        print(value["read_note"])
     _note(args, when, cfg["kind"])
     return 0
 
@@ -582,9 +643,14 @@ def cmd_remove(args) -> int:
         _print({"ok": True, "deleted": done, **payload})
         return 0
     words = {"token": "鍵", "access": "短い鍵", "state": "写し", "ledger": "台帳"}
+    shown = set()
     for target in found["targets"]:
         if target["category"] in done:
             print(f"消しました: {words[target['category']]} {target['path']}")
+            shown.add(target["category"])
+    for category in done:
+        if category not in shown:                  # 一段目のあと鎖の中で見つけて消した機械の物（remove.execute）
+            print(f"消しました: {words.get(category, category)}（一段目のあと、取り直しの途中に書かれた物）")
     for line in _remove_lines({"targets": [], "kept": found["kept"]}):
         print(line)
     print(revoke_done)

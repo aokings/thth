@@ -1,7 +1,7 @@
 """店の違いから queue の下書きを作る（**承認されていない形**・設計 §2「出すのは承認のあとだけ」）。
 
 - まとめて作らない: 1 回に 1 商品（`--item`）か、種類を選んで上限 `MAX_DRAFTS` 本。
-- 作るのは「公開で買える」商品の `new`（と `published`）・`restock`・`price_down` だけ。売り切れ・値上げ・
+- 作るのは「公開で買える」商品の `new`（と `published`・販売が始まった `sale_started`）・`restock`・`price_down` だけ。売り切れ・値上げ・
   非公開・消えた商品の下書きは作らない。
 - 本文は素の 1〜2 行（商品名・「新しく入りました」などの一言・URL）。文は利用者の LLM が書く前提。
   値下げの「前 → 今」の数は本文に書かず、頭（front-matter）に材料として置くだけ。
@@ -18,6 +18,10 @@
   写しを進めたあと（`diff --accept`）の同じ商品の違いは、別の違いとして作れる。
 - 承認のときに読み直すための材料として、下書きを作ったときの値段（`from_store_price`）を頭に置く
   （本文には書かない・`recheck.py`）。
+- 種類のある店（STORES・Shopify）は、下書きを作ったときの種類ごとの値段を頭に置く
+  （`from_store_variant_prices: <種類の id>=<円>,…`・本文には書かない・5.18.1）。承認の読み直しが「値段が変わったのか、
+  種類が増えた・減っただけか」を分けるため。種類が `VARIANTS_IN_DRAFT_MAX` を超える・読み切れていない商品は置かない
+  （読み直しは行の値段で比べる・今までどおり）。
 - 商品名の頭の `#` は落とす（`## …` だと本文の 1 行目が節の見出しと読まれる）。名前が空になる商品は作らない。
 """
 from __future__ import annotations
@@ -33,8 +37,11 @@ from .diff import DRAFT_KINDS
 from .wire import StoreRefused
 
 MAX_DRAFTS = 3
+VARIANTS_IN_DRAFT_MAX = 50
 DRAFT_NAME_MAX = 80
 PHRASES = {"new": "新しく入りました", "restock": "再入荷しました", "price_down": "お値下げしました"}
+# 違いの種類で一言を変えるもの（下書きの選び方は `new` のまま・5.18.1）。
+CHANGE_PHRASES = {"sale_started": "販売を始めました"}
 
 
 def queue_dir(cfg) -> Path:
@@ -84,6 +91,15 @@ def material(change: dict) -> str | None:
     return None
 
 
+def variant_line(row: dict) -> str | None:
+    """頭の `from_store_variant_prices` の値（id の順・値段が整数の種類だけ）。置かないなら None。"""
+    prices = rows_mod.variant_prices(row)
+    if prices is None or len(prices) > VARIANTS_IN_DRAFT_MAX:
+        return None
+    pairs = [f"{key}={value}" for key, value in sorted(prices.items()) if rows_mod.is_int(value)]
+    return ",".join(pairs) or None
+
+
 def text_for(store: str, account: str, media: str, change: dict, row: dict, *, shop_url: str, read_at: str,
              publish_at: str, since=None) -> str:
     kind = change["draft_kind"]
@@ -95,9 +111,11 @@ def text_for(store: str, account: str, media: str, change: dict, row: dict, *, s
         lines.append(f"from_store_since: {rows_mod.clean_text(since, 40)}")
     if isinstance(row.get("price"), int) and not isinstance(row.get("price"), bool):
         lines.append(f"from_store_price: {row['price']}")
+    if variant_line(row):
+        lines.append(f"from_store_variant_prices: {variant_line(row)}")
     if material(change):
         lines.append(f"from_store_material: {material(change)}")
-    lines += ["---", "", f"## {media}", "", f"{name} {PHRASES[kind]}", row_url(row) or shop_url, ""]
+    lines += ["---", "", f"## {media}", "", f"{name} {CHANGE_PHRASES.get(change['kind'], PHRASES[kind])}", row_url(row) or shop_url, ""]
     return "\n".join(lines)
 
 

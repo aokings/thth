@@ -309,7 +309,8 @@ def test_viaを渡すのはshopのwire_pyだけ():
             if (isinstance(node, ast.Call) and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "urlopen"
                     and any(k.arg == "via" for k in node.keywords)):
                 found.append(str(path.relative_to(root.parent)))
-    assert found == ["thth/shop/wire.py"]
+    # WordPress の口は内向きのアドレスへつながない opener を渡す（5.16.0 監査 直したほうがよい 6）。
+    assert found == ["thth/adapters/wordpress.py", "thth/shop/wire.py"]
 
 
 def test_httpsafeは危ない領域に入っている():

@@ -237,7 +237,13 @@ def validate(name: str, data) -> None:
                 data["kind"] != "wordpress" or not valid_site_url(row["site_url"], row.get("blog_id"))):
             raise PrincipalError("site_url_invalid",
                                  f"{name}: blogs の site_url は WordPress の主体だけの欄で、https://<blog_id> の形です"
-                                 "（手元の試しの localhost・127.0.0.1 だけ http とポートを許します）")
+                                 "（ホストは IP の形でも localhost でもない公開の名前。手元の試しの印があるときだけ"
+                                 " localhost・127.0.0.1 に http とポートを許します）")
+        if (isinstance(row, dict) and "site_url" not in row and data["kind"] == "wordpress"
+                and internal_site_host(row.get("blog_id"))):
+            # site_url が無ければ https://<blog_id> へ送る。IP の形の blog_id は内向きを指しうるので断る。
+            raise PrincipalError("site_url_invalid",
+                                 f"{name}: WordPress の blog_id はサイトの公開の名前です（IP の形・localhost は使えません）")
     for key in ("token", "consumer"):
         if key in data and (not isinstance(data[key], str) or not data[key].strip()):
             raise PrincipalError("principal_invalid", f"{name}: {key} はファイルのパスです")
@@ -356,10 +362,25 @@ def site_host(principal_cfg: dict, blog_id) -> str:
 _LOOPBACK = ("localhost", "127.0.0.1", "::1")
 
 
+def _test_mark() -> bool:
+    """手元の試しの印（`httpsafe` の平文 HTTP の柵と同じ `THTH_TEST_ALLOW_HTTP=1`）。"""
+    return os.environ.get("THTH_TEST_ALLOW_HTTP") == "1"
+
+
+def internal_site_host(host) -> bool:
+    """WordPress のサイトのホストとして台帳の時点で断る形: IP の形（`192.168.1.10`・`0x7f.0.0.1` など）・
+    `localhost` と `*.localhost`。名前で書かれて内向きを指すものは、送る時点で `httpsafe` が名前を引いて断る
+    （5.16.0 監査 直したほうがよい 6）。"""
+    from . import httpsafe
+    text = str(host or "").strip().lower().rstrip(".")
+    return httpsafe.ip_literal(text) or text == "localhost" or text.endswith(".localhost")
+
+
 def valid_site_url(value, blog_id) -> bool:
-    """ブログの行の `site_url`（WordPress だけ）: `https://<blog_id>[/パス]`。手元の試し（localhost・
-    127.0.0.1・::1）だけは `http://` とポートを許す。平文で送れるのは、さらに `httpsafe` の柵
-    （`THTH_TEST_ALLOW_HTTP=1` かつ loopback）を通るときだけ（ここで柵は緩めない）。query・# は付けない。"""
+    """ブログの行の `site_url`（WordPress だけ）: `https://<blog_id>[/パス]`。ホストは IP の形でも
+    localhost でもない公開の名前。手元の試し（`THTH_TEST_ALLOW_HTTP=1` のとき、localhost・127.0.0.1・::1）
+    だけは `http://` とポートを許す（印が無ければ loopback は https でも断る）。平文で送れるのは、さらに
+    `httpsafe` の柵を通るときだけ（ここで柵は緩めない）。query・# は付けない。"""
     import urllib.parse
     if (not isinstance(value, str) or not value or len(value) > 2048
             or any(ord(c) <= 32 or ord(c) == 127 for c in value)):
@@ -372,8 +393,10 @@ def valid_site_url(value, blog_id) -> bool:
     if parsed.query or parsed.fragment or parsed.username is not None or parsed.password is not None:
         return False
     host = (parsed.hostname or "").lower()
-    if host in _LOOPBACK:
+    if host in _LOOPBACK and _test_mark():
         return parsed.scheme in ("http", "https")
+    if internal_site_host(host):
+        return False
     return parsed.scheme == "https" and host == str(blog_id or "") and parsed.port is None
 
 

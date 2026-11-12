@@ -402,3 +402,112 @@ def test_STORESの鍵の中身を言い切らずTHTHの事実だけを書く():
         assert old not in page, old
     assert "THTH cannot choose what the credential is allowed to do" in page
     assert "クレデンシャルに何が許されているかを THTH は選べません" in page
+
+
+# ------------------------------------------------------------------ 記事の口座の退出（5.18.1）
+
+def _leave_section(page: str, heading: str) -> str:
+    found = re.search(rf"<h2[^>]*>{re.escape(heading)}</h2>(.*?)<h2", page, re.S)
+    assert found, f"privacy に「{heading}」の節が無い"
+    return found.group(1)
+
+
+def _article_leave_facts():
+    """privacy の退出の節の記事の口座の文を、`thth/leave.py` の振る舞いから組む（違えば赤になる文を返す）。"""
+    from thth import article_media, leave
+
+    media = sorted(article_media.ARTICLE_MEDIA)
+    named = media == ["hatenablog", "wordpress"]
+    keeps = all(leave._principal_owns_token({"media": m}) for m in media)
+    def remote(m):
+        try:
+            return leave.revoke({"media": m}, {}, [], lambda: None)
+        except ValueError as exc:
+            return str(exc)
+
+    manual = all(remote(m) == "unconfirmed_manual" for m in media)
+    stops = callable(getattr(leave, "_guard_principal_credentials", None))
+    wp_place = "プロフィール" in leave.MANUAL_REVOKE["wordpress"]
+    hatena_place = "連携アプリ" in leave.MANUAL_REVOKE["hatenablog"]
+    return [
+        ("記事の媒体は WordPress とはてなブログ（article_media.ARTICLE_MEDIA）",
+         "For a WordPress or Hatena Blog account" if named else "記事の媒体が増えた・減った",
+         "WordPress とはてなブログの口座では" if named else "記事の媒体が増えた・減った"),
+        ("主体の鍵は口座の leave で残す（leave._principal_owns_token）",
+         "so <code>thth account leave</code> keeps that file" if keeps else "口座の leave が主体の鍵を数える",
+         "<code>thth account leave</code> はそのファイルを残します" if keeps else "口座の leave が主体の鍵を数える"),
+        ("遠隔の取り消しは本人の手（leave.revoke が unconfirmed_manual）",
+         "Revoking it is done by the person" if manual else "THTH が遠隔で取り消す",
+         "取り消しは本人が行います" if manual else "THTH が遠隔で取り消す"),
+        ("WordPress の取り消しの場所（leave.MANUAL_REVOKE と同じ）",
+         "under the user's profile (Application Passwords)" if wp_place else "完了の案内と場所が違う",
+         "利用者のプロフィール（アプリケーションパスワード）" if wp_place else "完了の案内と場所が違う"),
+        ("はてなの取り消しの場所（leave.MANUAL_REVOKE と同じ）",
+         "removing THTH from the applications linked" if hatena_place else "完了の案内と場所が違う",
+         "アカウントの設定の連携アプリから THTH を外します" if hatena_place else "完了の案内と場所が違う"),
+        ("主体の鍵が消す所の中にあれば何も消さずに止まる（leave._guard_principal_credentials・監査 5.18.1 の 1）",
+         "the exit stops before deleting anything" if stops else "主体の鍵が消す所にあっても進む",
+         "にあるときは、何も消さずに止まります" if stops else "主体の鍵が消す所にあっても進む"),
+        ("主体の鍵を消す命令（--forget）",
+         "<code>thth principal auth &lt;name&gt; --forget</code> deletes it on the computer where it runs",
+         "<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを消せます"),
+    ]
+
+
+@pytest.mark.parametrize("what,en,ja", _article_leave_facts(), ids=[f[0] for f in _article_leave_facts()])
+def test_記事の口座の退出の文はleaveの振る舞いと同じ(what, en, ja):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert en in _leave_section(page, "Stopping access and deleting data"), what
+    assert ja in _leave_section(page, "停止とデータの削除"), what
+
+
+def test_5181_種類ごとの値段と下書きの上限はコードと同じ():
+    """5.18.1: 写しと下書きに種類ごとの値段が入った（160c664）。下書きの上限は draft.VARIANTS_IN_DRAFT_MAX。"""
+    from thth.shop import draft as shop_draft
+    page = PRIVACY.read_text(encoding="utf-8")
+    n = shop_draft.VARIANTS_IN_DRAFT_MAX
+    assert f"the price of each variant with its ID (at most {n} variants)" in page
+    assert f"種類ごとの値段とその ID（{n} 種類まで）" in page
+    assert "the price of each variant with the variant's ID" in page
+    assert "種類（バリエーション）ごとの値段とその種類の ID" in page
+
+
+def test_5181_Shopifyの送り直しの文は回数の上限があるときだけ():
+    """「数回だけ送り直す」は、shopify.py の 1 回の読み全体の上限（打ち直しの和・眠る秒の和）と結ぶ（4e4dd4d・監査 5.18.1 の 2）。
+
+    問い合わせごとの回数（`MAX_SHRINKS`・`THROTTLE_RETRIES`）だけでは、頁ごとに混むと読み全体で数十回になりうる。
+    """
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert 0 < shop_shopify.MAX_SHRINKS <= 3 and 0 < shop_shopify.THROTTLE_RETRIES <= 3
+    n, seconds = shop_shopify.READ_RESENDS_MAX, shop_shopify.READ_WAIT_SECONDS_MAX
+    assert 0 < n <= 4 and float(seconds).is_integer() and 0 < seconds <= 60
+    assert "sends the same fixed query again a few" in page
+    assert (f"(at most {n} times in one read, and at most {int(seconds)} seconds in all of waiting after Shopify "
+            "says the shop is busy;") in page
+    assert "同じ決まった問い合わせを、頁を小さくするか待ってから数回だけ送り直します" in page
+    assert f"（1 回の読みで合わせて {n} 回まで、混んでいると言われて待つのは合わせて {int(seconds)} 秒まで。" in page
+    # 「混んでいると言われて待つ」の秒だけを上限に数える（頁の間の待ちは数えない・監査 5.18.1 の確かめの危ない 1）。
+    # 頁の間の待ちを上限に数え直すと、文の「混んでいると言われて」が偽になるので赤。
+    client = shop_shopify.Client({"shop": "x", "store": "x"}, {})
+    real = shop_shopify.SLEEP
+    shop_shopify.SLEEP = lambda seconds: None
+    try:
+        client._pace(1.0)
+        assert client.slept == 0.0
+        client._sleep(1.0)
+        assert client.slept == 1.0
+    finally:
+        shop_shopify.SLEEP = real
+    assert "Between pages, THTH also waits until Shopify's allowance has refilled enough" in page
+    assert "頁と頁の間でも、次の頁に足りるだけ Shopify の枠が戻るまで待ちます。" in page
+
+
+def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapterの口が合う():
+    """5.18.1（6760757）: WordPress の口は httpsafe.public_opener を使う。文があるのに口が外れたら赤。"""
+    from thth import httpsafe
+    page = PRIVACY.read_text(encoding="utf-8")
+    source = (ROOT / "thth" / "adapters" / "wordpress.py").read_text(encoding="utf-8")
+    assert callable(getattr(httpsafe, "public_opener", None))
+    assert re.search(r"httpsafe\.urlopen\([^\n]*via=httpsafe\.public_opener\(\)\)", source)
+    assert "connects only to an address" in _wp_section(page, "Blog articles on WordPress")
+    assert "引いた先が外の網のアドレスのときだけつなぎます" in _wp_section(page, "WordPress の記事")

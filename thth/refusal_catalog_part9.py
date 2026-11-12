@@ -29,20 +29,62 @@ _STORES_KEY = ("STORES なら、開発パートナーの登録でプライベー
 _NOT_BASE = "この道具は BASE・Shopify・STORES が提供するものではないので、店の窓口でなく THTH の開発のセッションへ thth report file で知らせると早く届きます。"
 
 
-def _entry(why, fix, command, better, kind="refusal", since=_SINCE):
-    return {"kind": kind, "why": why, "fix": fix, "command": command, "better": better, "doors": _C,
-            "since": since}
+def _entry(why, fix, command, better, kind="refusal", since=_SINCE, by_detail=None):
+    entry = {"kind": kind, "why": why, "fix": fix, "command": command, "better": better, "doors": _C,
+             "since": since}
+    if by_detail:
+        entry["by_detail"] = by_detail
+    return entry
 
 
 ENTRIES = {
     "store_args_invalid": _entry(
         "thth shop に渡した値が決まりに合っていません（店の名前は英数字と _・.・-、期限は YYYY-MM-DD、--by は誰が頼んだか、"
         "draft は --item か --kind のどちらか 1 つ、Shopify の --shop は myshopify のラベル、Shopify の鍵に --expires は付けず、"
-        "BASE と STORES の鍵に --auth は付けない、STORES の --url は店の頁の https の URL で、ユーザー名・? の問い合わせ・# の"
-        "ない形）。",
+        "BASE と STORES の鍵に --auth は付けない、STORES の --url は店の頁の https の URL を ASCII の字だけで、ユーザー名・? の"
+        "問い合わせ・# のない形）。",
         "1 行目の（）が指す引数を直して打ち直してください。",
-        _ADD,
-        "店の名前は <project>-base の形にそろえると、どの project の店か名前だけで分かります。"),
+        "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+        "店の名前は <project>-base・<project>-shopify・<project>-stores のように project と店の種類をつなげると、どの店か名前だけで分かります。",
+        by_detail={
+            # 1 行目の（）の語ごとの通し方（`thth/shop/` が添える語・`tests/test_store_args_refusal.py` が縛る）。
+            "store_name": {
+                "fix": "店の名前を英数字と _・.・- だけで付け直して打ち直してください（空白・斜線・日本語は使えません）。",
+                "command": "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+                "better": "店の名前は <project>-base・<project>-shopify・<project>-stores のように project と店の種類をつなげると、どの店か名前だけで分かります。"},
+            "project": {
+                "fix": "--project に thth の project の名前（英数字と _・.・-）を入れて打ち直してください。",
+                "command": "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+                "better": "口座の台帳と同じ project の名前にそろえると、下書きをどの project の queue に置くかで迷いません。"},
+            "by": {
+                "fix": "--by に、頼んだ人の名前を入れて打ち直してください（変更の記録に残ります）。",
+                "command": "thth shop token set <店> --by <名前>",
+                "better": "いつも同じ名前で --by を付けると、記録をあとで読んだとき誰が足した・差し替えたかがすぐ分かります。"},
+            "shop": {
+                "fix": "--shop は Shopify の店だけに付けます。Shopify なら myshopify のラベル（admin.shopify.com/store/<ここ> か <ここ>.myshopify.com の <ここ>・英小文字と数字と -）を入れ、BASE・STORES なら --shop を外して打ち直してください。",
+                "command": "thth shop add <店> --kind shopify --project <project> --shop <ラベル> --by <名前>",
+                "better": "独自ドメインでなく管理画面の番地にあるラベルを写すと、THTH が送る先が店の myshopify のホストに決まります。"},
+            "url": {
+                "fix": "--url は STORES の店だけに付けます。STORES なら、店の頁の https の URL を ASCII の字だけで入れてください。日本語のドメインは punycode（xn--…）、日本語の道は % で包んだ形にします。ブラウザの番地の欄から写すと、その形になります。ユーザー名・? の問い合わせ・# は外します。BASE・Shopify なら --url を外して打ち直してください。",
+                "command": "thth shop add <店> --kind stores --project <project> --url <店の頁の URL> --by <名前>",
+                "better": "お客さんが開く店の頁（トップの頁）の URL にすると、下書きを見た人がそのまま店に着きます。"},
+            "auth": {
+                "fix": "--auth は Shopify の鍵だけに付けます（Dev Dashboard の Client ID と secret なら client、既にあるカスタムアプリの固定の鍵なら token）。BASE と STORES の鍵は --auth を外して打ち直してください。",
+                "command": "thth shop token set <店> --auth client --by <名前>",
+                "better": "Shopify は client にすると、短い鍵を THTH が取り直すので、固定の鍵を手で差し替える手間がありません。"},
+            "expires": {
+                "fix": "--expires は店の種類で付け方が違います。BASE は PAT を発行したときに決めた期限の日を YYYY-MM-DD で付け、STORES は知っていれば付け（任意）、Shopify の鍵には付けないで打ち直してください。",
+                "command": "thth shop token set <店> --expires <日付> --by <名前>",
+                "better": "期限の日を入れておくと、thth morning が 14 日前から知らせるので、鍵が切れて読めなくなる前に差し替えられます。"},
+            "item": {
+                "fix": "--item に商品の id を入れて打ち直してください（BASE と Shopify は数字、STORES は英数字）。id は thth shop items <店> の行の頭にあります。",
+                "command": "thth shop items <店>",
+                "better": "thth shop diff <店> の違いの行の id を写すと、下書きにできる違いのある商品をそのまま選べます。"},
+            "item_or_kind": {
+                "fix": "thth shop draft には --item <id> か --kind new|restock|price_down のどちらか 1 つだけを付けて打ち直してください。",
+                "command": "thth shop draft <店> --to <口座> --kind new",
+                "better": "まず --kind で種類ごとに作り（3 本まで）、残りを --item で 1 つずつ選ぶと、出しすぎずに済みます。"},
+        }),
     "store_name_taken": _entry(
         "その名前の店の台帳が既にあります。上書きすると前の鍵の置き場と写しを取り違えるので、書きませんでした。",
         "別の名前で thth shop add を打ち直すか、今の台帳のまま thth shop whoami <店> で中身を確かめてください。",
@@ -120,12 +162,37 @@ ENTRIES = {
         "時間を置いて同じ命令を打ち直してください。続くなら、命令と時刻を添えて thth report file で開発のセッションへ知らせてください。",
         _ITEMS,
         "BASE Developers の変更履歴（https://apiv2.thebase.com/docs/changelog/）・Shopify の changelog（https://shopify.dev/changelog）・"
-        "STORES の API の頁（https://heyinc.github.io/retail-api-docs/）を見ると、何が変わったかの手がかりになります。" + _NOT_BASE),
+        "STORES の API の頁（https://heyinc.github.io/retail-api-docs/）を見ると、何が変わったかの手がかりになります。" + _NOT_BASE,
+        by_detail={
+            # Shopify の 1 回の点数の上限（5.18.1・`thth/shop/shopify.py` が添える語）。型の変わりでなく、点数の見込みの外れ。
+            "max_cost_exceeded": {
+                "fix": "Shopify の商品の問い合わせが 1 回の点数の上限（1000 点）を超え、1 頁を小さくして打ち直しても収まりませんでした。打ち直しても同じになるので、命令と時刻と --json の出力を添えて thth report file で開発のセッションへ知らせてください。",
+                "command": _ITEMS + " --json",
+                "better": "知らせが届けば、1 頁の件数と 1 商品で読む種類の数を Shopify の今の点数に合わせて直せます。それまでも thth shop whoami <店> で鍵と店の様子は確かめられます。"},
+        }),
     "store_unavailable": _entry(
-        "店（BASE・Shopify・STORES）に届かないか、一時的に応えませんでした（保守・5xx・混雑 429・Shopify の点数の上限 throttled・凍った店 shop_frozen）。再試行はしていません。",
+        "店（BASE・Shopify・STORES）に届かないか、一時的に応えませんでした（保守・5xx・混雑 429・Shopify の点数の上限 throttled・Shopify の中の誤り internal_error・凍った店 shop_frozen）。"
+        "Shopify の throttled は点数が戻るまで待って 2 回まで、商品を読むときの internal_error は頁を小さくして 2 回まで打ち直しました"
+        "（1 回の読みで打ち直すのは合わせて 4 回まで・混んでいると言われて待つのは合わせて 60 秒まで・頁の間に点の戻りを待つのは合わせて 180 秒まで。"
+        "超えそうなら read_budget で打ち切ります）。ほかは再試行していません。",
         "少し時間を置いて打ち直してください。保守中なら、終わってから打ち直します。",
         _ITEMS,
-        "定期に読むなら間を広めに空けると、上限に当たりにくくなります。1 行目の（）が shop_frozen なら、Shopify の管理画面で店の契約を確かめてください。"),
+        "定期に読むなら間を広めに空けると、上限に当たりにくくなります。1 行目の（）が shop_frozen なら、Shopify の管理画面で店の契約を確かめてください。",
+        by_detail={
+            # Shopify の点数と中の誤り（5.18.1・`thth/shop/shopify.py` が添える語）。
+            "throttled": {
+                "fix": "Shopify の点数（同じアプリと店の 1 秒あたりの枠）が戻るまで、1 分ほど置いて打ち直してください。同じ店を読むほかの道具が動いていれば、終わってからにします。",
+                "command": _ITEMS,
+                "better": "定期に読むなら、ほかのアプリが店を読む時刻と重ならない時刻にすると、待たずに読めます（枠はアプリと店の組ごとで、プランが上がると大きくなります）。"},
+            "read_budget": {
+                "fix": "Shopify が混んだままで（ほかのアプリが店の点数を使っていて）、1 回の読みの打ち直し（合わせて 4 回まで）か、混んでいると言われての待ち（合わせて 60 秒まで）か、頁の間に点の戻りを待つ時間（合わせて 180 秒まで）の上限に届いたので、長く止まらないよう打ち切りました。店の大きさだけでは届きません（混んでいない店なら、種類の多い商品 500 件も 2 分ほどで読めます）。何も書き換えていません。数分置いて打ち直してください。同じ店を読むほかのアプリが動いていれば、終わってからにします。",
+                "command": _ITEMS,
+                "better": "定期に読むなら、ほかのアプリが店を読む時刻と重ならない時刻にすると、待たずに 1 回で読み切れます。承認の確定で出たときも、少し置いて確定を打ち直せば読み直します。"},
+            "internal_error": {
+                "fix": "Shopify の中の誤りが続きました（商品を読むときは、頁を小さくして打ち直したあとです）。少し時間を置いて打ち直し、続くなら https://www.shopifystatus.com で Shopify の様子を確かめてください。",
+                "command": _ITEMS,
+                "better": "種類の多い商品が多い店でこれが続くなら、命令と時刻を添えて thth report file で開発のセッションへ知らせてください。1 頁の件数を店に合わせて直せます。"},
+        }),
     "store_request_rejected": _entry(
         "店がこの問い合わせを受け付けなかったか、THTH の柵（決まった送り先の決まった道に決まった中身だけ・リダイレクトは追わない）が"
         "打たずに止めました（1 行目の（）が redirect なら、店がリダイレクトを返しました）。",
@@ -133,7 +200,8 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> が通るかを先に見ると、鍵の問題か問い合わせの問題かを切り分けられます。" + _NOT_BASE),
     "store_read_incomplete": _entry(
-        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE と STORES は 100 件ずつ 5 頁、Shopify は 50 件ずつ 10 頁で、"
+        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE と STORES は 100 件ずつ 5 頁、Shopify は 25 件ずつ 20 頁"
+        "（点数が見込みより大きければ頁を小さくして頁の数を増やす）で、"
         "どれも 500 件まで。ちょうど 500 件の BASE と STORES の店もここに当たります）。"
         "読み切れないまま写しにすると、読めなかった商品を「消えた」と取り違えます。",
         "写しは進めていません。商品が上限より多い店は、開発のセッションへ thth report file で上限の相談をしてください。",
@@ -144,7 +212,7 @@ ENTRIES = {
         "在庫 0・販売前・販売終了・予約販売・名前が空の商品は作りません）。",
         "thth shop diff <店> で今の違いを確かめてから、--item か --kind を選び直してください。",
         _DIFF,
-        "売り切れ・値上げの下書きは作りません。新着や再入荷のときに作ると、見た人がそのまま買えるお知らせになります。"),
+        "売り切れ・値上げの下書きは作りません。販売前や予約販売の商品は、販売が始まると diff に sale_started が出て、--kind new で新着と同じように作れます。新着・再入荷・販売の開始のときに作ると、見た人がそのまま買えるお知らせになります。"),
     "store_draft_no_baseline": _entry(
         "比べる写しがまだ無いので、違いが分かりません（初めての店か、別の店の鍵に替えて写しを捨てたあと）。",
         "先に thth shop diff <店> で基準を取ってください。そのあとに増えた・戻った・下がった商品から下書きを作れます。",
@@ -156,8 +224,8 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> の「公開」が「はい」になってから作ると、お知らせを見た人がそのまま買えます。"),
     "store_item_changed": _entry(
-        "下書きを作ったあとに、その商品の値段・公開・在庫が変わっていました（1 行目の（）が変わった所）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
-        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price）を今に合わせて直すか、出さないなら下書きを閉じてください。",
+        "下書きを作ったあとに、その商品の値段・公開・在庫・種類が変わっていました（1 行目の（）が変わった所。variant は種類ごとの値段、variants_changed は値下げの下書きの種類が減ったこと）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
+        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price・from_store_variant_prices）を今に合わせて直すか、出さないなら下書きを閉じてください。",
         _ITEMS,
         "売り切れなら、再入荷のあとの thth shop draft --kind restock で作り直すと、見た人がそのまま買えるお知らせになります。"),
     "store_draft_exists": _entry(

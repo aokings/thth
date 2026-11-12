@@ -434,3 +434,17 @@ def test_confirm_fileの確定でも店の下書きを読み直して断る(caps
     rc_, out, err = run(capsys, "approve", "--confirm-file", str(listing), "--by", "m")
     assert rc_ != 0 and "store_item_changed" in out + err, (out, err)
     assert "not_buyable" in out + err
+
+
+def test_removeの文字の表示は一段目のあと鎖の中で消した物も言う(capsys, env, monkeypatch):
+    """監査 5.17.0 残っていること 1 の直し（c8e7cf8）で、鎖の中で一覧に無い短い鍵も消すようになった。
+    JSON の deleted には入るが、文字の表示が一段目の一覧の物だけを言うと、消した物を黙る。"""
+    from thth.shop import remove as remove_mod
+    setup_store(capsys, env)
+    rc_, value, _ = jrun(capsys, "shop", "remove", STORE, "--by", "m")
+    real = remove_mod.execute
+    monkeypatch.setattr(remove_mod, "execute", lambda found: real(found) + ["access"])
+    rc_, out, err = run(capsys, "shop", "remove", STORE, "--by", "m", "--confirm", value["digest"])
+    assert rc_ == 0, err
+    assert "消しました: 短い鍵（一段目のあと、取り直しの途中に書かれた物）" in out
+    assert out.count("取り直しの途中に書かれた物") == 1

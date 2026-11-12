@@ -8,6 +8,7 @@
 - symlink・普通のファイルでない物は消さずに断る（`store_remove_unsafe`）。
 - 無い物は数えない。何度打っても同じ結果（台帳が無くても、残った写しと鍵は消せる）。
 - 短い鍵も既定の置き場のものだけ消す（symlink は断る）。無い物は数えないので、BASE の店の digest は変わらない。
+- 二段目は鎖の中で一覧を取り直す。鎖を持っていた読みが書いた短い鍵・状態の置き場は、一覧に無くても消す（`execute`）。
 - 網には出ない（BASE の PAT の取り消しは BASE Developers・Shopify の鍵は Dev Dashboard で店の持ち主がする）。
 """
 from __future__ import annotations
@@ -75,11 +76,56 @@ def digest(found: dict) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
 
 
+# 機械が既定の置き場に書く物（人が中身を選ばない）。鎖の中で一覧を取り直したとき、確かめた一覧に無くても消す。
+MACHINE_MADE = ("access", "state")
+
+
 def execute(found: dict) -> list:
-    """`plan` の順に消す。消した分類の並びを返す。短い鍵の鎖を持って消す（取り直しの途中で消さない・`access.py`）。"""
+    """`plan` の順に消す。消した分類の並びを返す。短い鍵の鎖を持って消す（取り直しの途中で消さない・`access.py`）。
+
+    鎖の中で `plan` を取り直す（監査 5.17.0 残っていること 1）。一覧を作ったのは鎖の前なので、そのあと鎖を持っていた
+    読みが短い鍵を書いていると、一覧に無い短い鍵が残る。取り直した一覧で:
+      - 機械が既定の置き場に書く物（`MACHINE_MADE`）は、確かめた一覧に無くても消す（店を外すと決めた人が残したい物でない）。
+      - 人が確かめた物（鍵・台帳・残す物）が増えていたら、何も消さずに `store_remove_unconfirmed`（今の digest）。
+      - symlink・普通でない物は、取り直しの `plan` が `store_remove_unsafe` で断る（同じ決まり）。
+    鎖はいつも取る（状態の置き場が無ければ作る）。無かった置き場を鎖のために作ったときは、消しても数えない。
+    """
     from . import access
-    with access.locked(found["store"], create=False):
-        return _execute(found)
+    name = found["store"]
+    directory = ledger.state_dir_for(name)
+    had_state = _kind(directory) is not None
+    confirmed = {(t["category"], t["path"]) for t in found["targets"]}
+    kept = {(k["category"], k["path"]) for k in found["kept"]}
+    try:
+        with access.locked(name):
+            again = plan(name)
+            grown = [t for t in again["targets"]
+                     if (t["category"], t["path"]) not in confirmed and t["category"] not in MACHINE_MADE]
+            done = None
+            if not grown and all((k["category"], k["path"]) in kept for k in again["kept"]):
+                done = _execute(again)
+    except BaseException:
+        if not had_state:
+            _drop_lock_only(directory)
+        raise
+    if done is None:
+        if not had_state:
+            _drop_lock_only(directory)
+        # 返す digest は、鎖のために作った置き場を片づけたあとの一覧（一段目を打ち直したときと同じ）。
+        raise StoreRefused("store_remove_unconfirmed", digest(plan(name)))
+    if not had_state and "state" in done and ("state", directory) not in confirmed:
+        done.remove("state")                       # 鎖のために作った置き場（ほかに何も無ければ数えない）
+    return done
+
+
+def _drop_lock_only(directory: str) -> None:
+    """鎖のために作った状態の置き場を、鎖のファイルしか無ければ消す（断ったときに置き場を残さない）。"""
+    from . import access
+    try:
+        if _kind(directory) == "dir" and os.listdir(directory) in ([], [access.LOCK_FILE]):
+            shutil.rmtree(directory)
+    except OSError:
+        pass
 
 
 def _execute(found: dict) -> list:

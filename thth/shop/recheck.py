@@ -5,6 +5,10 @@
 （`store_item_changed`）。見せる段（1 段目）は網に出ない。
 
 - 読むのは店の種類の口（`kinds.py`）の商品の一覧だけ（`wire.py` の網の口・表にある道だけ）。注文は読まない。
+- 値段は、下書きの頭に種類ごとの値段（`from_store_variant_prices`・5.18.1）があれば**種類ごと**に比べる: 両方にある
+  種類の値段が 1 つでも違えば断る。種類が増えた・減っただけなら値段の断りにせず、知らせを 1 行返して通す
+  （ただし値下げの下書きは、種類が減っていれば断る。下がった種類が無くなったのかもしれないので）。両方にある
+  種類が 1 つも無ければ断る。頭に無い下書き（5.18.0 まで・BASE・種類を読み切れない商品）は行の値段で比べる。
 - 店の台帳が**この機械に無い**ときは読み直せない（店の台帳と鍵は手元の thth にだけ置く決め）。断らずに 1 行の
   知らせを返す（承認の道を止めない・人が `thth shop items` で確かめる）。
 - 台帳はあるのに読めない（鍵の期限切れ・BASE に届かない・読み切れずに見つからない）ときは、確かめられない
@@ -21,11 +25,17 @@ from .wire import StoreRefused
 # 商品の id は整数の店と文字列の店がある（設計 Shopify と STORES §6.2）。比べるのは `str()` 同士。
 _ORIGIN = re.compile(r"store/([A-Za-z0-9_.-]{1,64})/item/([A-Za-z0-9]{1,64})\Z")
 _PRICE = re.compile(r"-?[0-9]{1,12}\Z")
+_VARIANT_PAIR = re.compile(r"([A-Za-z0-9]{1,64})=(-?[0-9]{1,12})\Z")
 _MATERIAL = re.compile(r"price (-?[0-9]{1,12}) -> (-?[0-9]{1,12})\Z")
 
 
+_DETAIL_WORD = re.compile(r"[a-z_]{1,40}\Z")
+
+
 def _line(path: str, code: str, detail: str | None) -> str:
-    found = refusal.parts(code) or {}
+    # 詳細が静的な語なら、その語の通し方を引く（`by_detail`・Shopify の read_budget など・監査 5.18.1 の 2）。
+    word = {"reason": detail} if isinstance(detail, str) and _DETAIL_WORD.fullmatch(detail) else {}
+    found = refusal.parts(code, **word) or {}
     text = f"{path}: {code}: {found.get('why') or code}" + (f"（{detail}）" if detail else "")
     fix = found.get("fix")
     if isinstance(fix, dict):
@@ -45,6 +55,38 @@ def _expected_price(front_matter: dict):
         return int(raw.strip())
     matched = _MATERIAL.fullmatch(str(front_matter.get("from_store_material") or "").strip())
     return int(matched.group(2)) if matched else None
+
+
+def _expected_variants(front_matter: dict) -> dict | None:
+    """頭の `from_store_variant_prices`（`id=円,…`）。無い・形が違えば None（行の値段で比べる）。"""
+    raw = front_matter.get("from_store_variant_prices")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    out = {}
+    for part in raw.strip().split(","):
+        matched = _VARIANT_PAIR.fullmatch(part.strip())
+        if not matched or matched.group(1) in out:
+            return None
+        out[matched.group(1)] = int(matched.group(2))
+    return out
+
+
+def _variant_check(path: str, store: str, item_id: str, front_matter: dict, expected: dict, now: dict):
+    """種類ごとに比べる。`(断る理由, 知らせ)`。"""
+    common = sorted(set(expected) & set(now))
+    if not common:
+        return _line(path, "store_item_changed", "variants_replaced"), None
+    for key in common:
+        if now[key] != expected[key]:
+            return _line(path, "store_item_changed", f"variant {key} price {expected[key]} -> {now[key]}"), None
+    added, removed = len(set(now) - set(expected)), len(set(expected) - set(now))
+    if not added and not removed:
+        return None, None
+    if removed and str(front_matter.get("from_store_change") or "").strip() == "price_down":
+        return _line(path, "store_item_changed", f"variants_changed added {added} removed {removed}"), None
+    return None, (f"{path}: 商品 {item_id} の種類が、下書きを作ったときから変わっています（増えた {added}・減った {removed}）。"
+                  "残っている種類の値段は同じなので、承認は止めません。本文が今の種類に合っているか、"
+                  f"thth {COMMAND} items {store} で確かめてから出してください")
 
 
 def check(path: str, front_matter: dict, *, transport=None) -> tuple[str | None, str | None]:
@@ -86,6 +128,9 @@ def check(path: str, front_matter: dict, *, transport=None) -> tuple[str | None,
         return _line(path, "store_item_changed", "unpublished"), None
     if not rows.buyable(row):
         return _line(path, "store_item_changed", "not_buyable"), None
+    expected_variants, now_variants = _expected_variants(front_matter), rows.variant_prices(row)
+    if expected_variants is not None and now_variants is not None:
+        return _variant_check(path, store, item_id, front_matter, expected_variants, now_variants)
     expected = _expected_price(front_matter)
     if expected is not None and row.get("price") != expected:
         return _line(path, "store_item_changed", f"price {expected} -> {row.get('price')}"), None
