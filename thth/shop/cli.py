@@ -52,12 +52,14 @@ PROMPT_STORES = "STORES のプライベートアプリのクレデンシャル�
 
 
 def _refuse(args, exc: StoreRefused) -> int:
-    found = refusal.parts(exc.code) or {}
+    # 詳細の語（`store_args_invalid` の `url` など）を `reason` に渡すと、目録の `by_detail` のその語の通し方が出る。
+    reason = {"reason": exc.detail} if exc.detail else {}
+    found = refusal.parts(exc.code, **reason) or {}
     line = f"{exc.code}: {found.get('why') or exc.code}"
     if exc.detail:
         line += f"（{exc.detail}）"
     payload = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}
-    return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload)
+    return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload, **reason)
 
 
 def _run(handler):
