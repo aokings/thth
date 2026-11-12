@@ -4,7 +4,9 @@ Shopify の Dev Dashboard のアプリは、client id と secret で約 24 時�
 毎回取ると長く生きる secret を毎回網に流すので、取った鍵を置いて使い回す（公式もそう勧める）。
 
 - 置き場: `~/.config/thth/store-<店>.access`（0600・**機械が書く**。人が入れた秘密の `.token` とは別のファイル）。
-  形は `{"schema": "thth.store_access/1", "access_token", "expires_at"（ISO）, "scope": [...], "obtained_at"}`。
+  形は `{"schema": "thth.store_access/1", "access_token", "expires_at"（ISO）, "obtained_at"}`。**鍵に許された権限の
+  名前は置かない**（privacy「一覧は残さない」・監査 5.17.0 危ない 1。権限の知らせは `currentAppInstallation` の応答から
+  その場で作る）。
 - 鎖: `store_state/<店>/access.lock`（flock・排他）。待つのは `LOCK_WAIT_SECONDS` まで、取れなければ
   `store_refresh_busy`。鎖の中でもう一度置き場を読む（待つ間に別の thth が取り直していれば、それを使う）。
 - 「取り方」（`mint`）は呼ぶ側が関数で渡す（網に出るのは `wire.shopify_token` だけ・ここは網の部品を持たない）。
@@ -34,7 +36,6 @@ LOCK_POLL_SECONDS = 0.1
 REFRESH_MARGIN_SECONDS = 300
 # 置き場に置く期限の上限（`expires_in` はいつも 86399 と公式にある・それより長くは信じない）。
 MAX_LIFETIME_SECONDS = 86400
-SCOPE_MAX = 300
 SLEEP = time.sleep
 CLOCK = time.monotonic
 
@@ -99,14 +100,8 @@ def locked(name: str, *, create: bool = True):
         os.close(fd)
 
 
-def _scopes(value) -> list:
-    if not isinstance(value, str):
-        return []
-    return [part for part in value.split(",") if part and len(part) <= 64 and part.replace("_", "").isalpha()][:SCOPE_MAX]
-
-
 def record(name: str, minted: dict, *, now: datetime.datetime | None = None) -> str:
-    """取った短い鍵を置き場に書く（atomic・0600）。`minted` は `{"access_token", "expires_in", "scope"}` の形。"""
+    """取った短い鍵を置き場に書く（atomic・0600）。`minted` は `{"access_token", "expires_in", …}` の形（`scope` は置かない）。"""
     token, seconds = minted.get("access_token") if isinstance(minted, dict) else None, None
     if isinstance(minted, dict):
         seconds = minted.get("expires_in")
@@ -116,10 +111,16 @@ def record(name: str, minted: dict, *, now: datetime.datetime | None = None) -> 
     redact.register_secret(token)
     now = now or _now()
     expires = now + datetime.timedelta(seconds=min(seconds, MAX_LIFETIME_SECONDS))
-    value = {"schema": SCHEMA, "access_token": token, "expires_at": jst.iso(expires),
-             "scope": _scopes(minted.get("scope")), "obtained_at": jst.iso(now)}
+    value = {"schema": SCHEMA, "access_token": token, "expires_at": jst.iso(expires), "obtained_at": jst.iso(now)}
     secrets_fs.atomic_write_json(path_for(name), value, mode=0o600)
     return token
+
+
+def _still_there(name: str) -> None:
+    """台帳がまだあるか（無ければ `store_missing`）。`thth shop remove` が鎖を持って消している間に待っていた読みが、
+    消し終わったあとで短い鍵を書き戻さないため（監査 5.17.0 直したほうがよい 1）。状態の置き場も作らない。"""
+    if not os.path.exists(ledger.path_for(name)):
+        raise StoreRefused("store_missing")
 
 
 def ensure(name: str, mint, *, now: datetime.datetime | None = None) -> str:
@@ -128,7 +129,9 @@ def ensure(name: str, mint, *, now: datetime.datetime | None = None) -> str:
     cached = read(name)
     if fresh(cached, now):
         return cached["access_token"]
+    _still_there(name)
     with locked(name):
+        _still_there(name)
         cached = read(name)
         if fresh(cached, now):
             return cached["access_token"]

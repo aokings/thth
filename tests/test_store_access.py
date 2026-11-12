@@ -33,6 +33,7 @@ def home(tmp_path, monkeypatch):
     home = tmp_path / "home"; home.mkdir()
     for key, value in [("THTH_ROOT", root), ("HOME", home), ("XDG_CONFIG_HOME", home)]:
         monkeypatch.setenv(key, str(value))
+    ledger.write_new(STORE, ledger.build(STORE, kind="shopify", project="nigamilab", shop="nigami-test"))
     return tmp_path
 
 
@@ -54,7 +55,8 @@ def test_置いた鍵は残りが長ければ網に出ずに使い回す(home):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert path == pathlib.Path(os.path.expanduser(ledger.default_access(STORE)))
     value = json.loads(path.read_text())
-    assert value["schema"] == access.SCHEMA and value["scope"] == ["read_products"]
+    # 権限の名前は置かない（privacy「一覧は残さない」・監査 5.17.0 危ない 1）。
+    assert set(value) == {"schema", "access_token", "expires_at", "obtained_at"} and value["schema"] == access.SCHEMA
 
 
 def test_切れる5分前を過ぎれば1回だけ取り直す(home):
@@ -132,3 +134,41 @@ def test_壊れた置き場は無いものとして取り直す(home):
         path.write_text(broken)
         mint = Mint()
         assert access.ensure(STORE, mint, now=NOW) == "short-1" and mint.calls == 1
+
+
+def test_台帳が無ければ取らずに止まり状態の置き場も作らない(home):
+    pathlib.Path(ledger.path_for(STORE)).unlink()
+    mint = Mint()
+    with pytest.raises(StoreRefused) as exc:
+        access.ensure(STORE, mint, now=NOW)
+    assert exc.value.code == "store_missing" and mint.calls == 0
+    assert not pathlib.Path(access.path_for(STORE)).exists()
+    assert not pathlib.Path(ledger.state_dir_for(STORE)).exists()
+
+
+def test_removeの間に鎖を待っていた読みは短い鍵を書き戻さない(home, monkeypatch):
+    """監査 5.17.0 直したほうがよい 1: remove が鎖を持って消し終えたあと、待っていた読みが鎖を取っても網に出ず書かない。"""
+    import threading
+    import time as _time
+    from thth.shop import remove
+    cfg = ledger.load(STORE)
+    pathlib.Path(cfg["token"]).parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_token(cfg, {"auth": "shopify_client", "client_id": "c", "client_secret": "s", "shop_id": "x",
+                             "obtained_at": "t", "expires_on": None, "no_expiry": True})
+    monkeypatch.setattr(access, "SLEEP", lambda seconds: _time.sleep(0.01))
+    mint, result = Mint(), {}
+    with access.locked(STORE):                       # remove が鎖を持っている間
+        found = remove.plan(STORE)
+        def reader():
+            try:
+                result["token"] = access.ensure(STORE, mint, now=NOW)
+            except StoreRefused as exc:
+                result["code"] = exc.code
+        thread = threading.Thread(target=reader)
+        thread.start()
+        _time.sleep(0.3)                             # 読みが鎖を待つまで
+        remove._execute(found)                       # remove の中身（鍵 → 短い鍵 → 写し → 台帳）
+    thread.join(10)
+    assert result == {"code": "store_missing"} and mint.calls == 0
+    leftovers = [p for p in pathlib.Path(home).rglob("*") if STORE in p.name]
+    assert leftovers == []

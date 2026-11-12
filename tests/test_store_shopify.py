@@ -209,7 +209,7 @@ def test_clientの鍵は店が見えたときだけ保存し短い鍵も別の�
     assert saved["no_expiry"] is True and saved["expires_on"] is None and saved["shop_id"] == DOMAIN
     cached = json.loads(pathlib.Path(access.path_for(STORE)).read_text())
     assert cached["schema"] == access.SCHEMA and cached["access_token"] == env["minted"][-1]
-    assert cached["scope"] == ["read_products"]
+    assert "scope" not in cached                       # 権限の名前は置かない（監査 5.17.0 危ない 1）
     for path in (cfg["token"], access.path_for(STORE)):
         assert stat.S_IMODE(pathlib.Path(path).stat().st_mode) == 0o600
     assert "鍵の期限の日はありません" in text and env["client_secret"] not in text
@@ -266,6 +266,14 @@ def test_余分なscopeは保存して前向きに知らせ記録には数だけ
     rows, _ = admin_log.read(account=STORE, event=ACTION_PREFIX + "token_set")
     assert rows[-1]["diff"]["scopes_extra"] == [None, 3]
     assert "read_orders" not in json.dumps(rows)
+    # 権限の名前の一覧は、鍵のファイル 2 つを含むどのファイルにも残さない（privacy・監査 5.17.0 危ない 1）。
+    assert run(capsys, "shop", "items", STORE)[0] == 0
+    files = [p for p in pathlib.Path(env["tmp"]).rglob("*") if p.is_file()]
+    assert pathlib.Path(access.path_for(STORE)) in files and pathlib.Path(ledger.load(STORE)["token"]) in files
+    for path in files:
+        raw = kept_bytes(path)
+        for name in ("read_orders", "write_products", "read_customers"):
+            assert name.encode() not in raw, f"{path} に {name}"
 
 
 def test_通貨とmyshopifyのドメインが違えば断る(capsys, env):
@@ -484,6 +492,8 @@ def test_removeは鍵と短い鍵と写しと台帳を消しShopifyの側の鍵�
     assert "Dev Dashboard" in out and "短い鍵" in out
     rc_, done, _ = jrun(capsys, "shop", "remove", STORE, "--by", "m", "--confirm", value["digest"])
     assert rc_ == 0 and done["deleted"] == ["token", "access", "state", "ledger"]
+    rows, _ = admin_log.read(account=STORE, event=ACTION_PREFIX + "removed")
+    assert rows[-1]["medium"] == "shopify"                 # 監査 5.17.0 直したほうがよい 4
     assert not pathlib.Path(access.path_for(STORE)).exists()
     assert not pathlib.Path(ledger.state_dir_for(STORE)).exists()
 
