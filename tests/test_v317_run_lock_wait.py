@@ -123,7 +123,20 @@ def test_RunWaitは段のあいだで1つの締め切りを分け合う():
 def test_待ちの持ち時間はserviceの締め切りに作業の余白を残す():
     # 11/12 nigamilab: 60 秒では同じ repo の threads の 70 秒の実行を待てなかった。
     assert core.RUN_LOCK_WAIT_SECONDS >= 120
-    # 待ちを使い切っても、投稿と採取の作業に 2 分は残す（service の timeout で途中で切られない）。
+    # 待ちを使い切っても、投稿と採取の作業に 2 分の目安を残す。作業そのものは時間で縛っていないので保証ではない
+    # （超えたら service が途中で切り、ロックは外れて次の実行で埋まる・監査 5.14.5 の直したほうがよい 1）。
     assert core.RUN_LOCK_WAIT_SECONDS + 120 <= core.RUN_SERVICE_TIMEOUT_SECONDS
     unit = (Path(__file__).resolve().parents[1] / "systemd" / "thth@.service").read_text(encoding="utf-8")
     assert f"TimeoutStartSec={core.RUN_SERVICE_TIMEOUT_SECONDS}" in unit
+
+
+def test_cmd_runの段はどれも通しの持ち時間の残りだけ待つ():
+    # 監査 5.14.5 の直したほうがよい 2: 上の試験は投稿と採取の 2 段しか見ない。反応とブックマークの段が
+    # 段ごとの満額（RUN_LOCK_WAIT_SECONDS）に戻ると、足して service の timeout を越える。
+    import inspect
+    import re
+    source = inspect.getsource(cli.cmd_run)
+    waits = re.findall(r"\bwait=([^,)\n]+)", source)
+    assert len(waits) >= 4, waits          # 投稿・反応・ブックマーク・採取
+    assert all(w.strip() == "run_wait.left(" for w in waits), waits
+    assert "RUN_LOCK_WAIT_SECONDS" not in source
