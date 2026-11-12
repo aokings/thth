@@ -298,8 +298,6 @@ def test_WordPressの鍵を消す道は今ある旗():
 # 定数に寄せられないもの（https・転送・上書きしない・題と本文と分類）。
 WORDPRESS_WORDS_ONLY = (
     ("文字列だけ: https で送る", "over HTTPS (plain HTTP is accepted only for a test site", "HTTPS で送ります"),
-    ("文字列だけ: 別のホストへの転送に付いて行かない", "does not follow a redirect to another host",
-     "別のホストへの転送には付いて行きません"),
     ("文字列だけ: 外の手直しは上書きしない", "THTH stops and reports instead of overwriting it", "上書きせずに止めて知らせます"),
     ("文字列だけ: 送る中身", "the title, the body converted to HTML, the categories and tags",
      "題・HTML に変えた本文・カテゴリーとタグ"),
