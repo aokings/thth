@@ -41,6 +41,7 @@ UnknownMedium = base.UnknownMedium
 # （`hatena_publish`）は媒体名で分岐しない（`thth/article_media.py` と対）。
 ARTICLE_ADAPTERS = {
     "hatenablog": "hatenablog",
+    "wordpress": "wordpress",
 }
 
 

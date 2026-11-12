@@ -646,6 +646,73 @@ def compute_hatena_entry_sha(**kwargs) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+# --- WordPress の承認の指紋（5.16.0・設計 ショップとWordPressの口 §4） -----------------------
+#
+# **はてなの `thth-hatena-entry-1` は変えない**（変えると動いている承認がすべて古くなる）。WordPress は別の版の語
+# `thth-wp-entry-1` で、出し先のサイトの入口（`site_url`）・公開の状態（`status`）・予約の日時を指紋に入れる——
+# 承認のあとに下書きを公開に替える・別のサイトへ向けることはできない。本文は**変換したあとの HTML** の sha256
+# （`thth/wp_html.py` の規則が変われば本文が変わり、承認は自然に古くなる）。画像は受けない（後の版）。
+
+WP_ENTRY_VERSION = "thth-wp-entry-1"
+WP_ENTRY_STATUSES = ("publish", "draft", "future", "keep")   # future は後の版（原稿の lint が断る）
+_WP_ENTRY_ORDER = ("version", "account", "site_url", "blog_id", "op", "entry_id", "base_readback_sha",
+                   "title", "categories", "body_sha256", "article", "form", "status", "publish_at")
+
+
+def compute_wp_entry_components(*, account: str, site_url: str, blog_id: str, op: str,
+                                entry_id: str | None, base_readback_sha: str | None,
+                                title: str, categories, body: str, article: str, form: str,
+                                status: str, publish_at: str | datetime.datetime) -> dict:
+    """WordPress の配信原稿（`thth-wp-entry-1`）の 14 項目を正規化した値。
+
+    `status` は作るときの公開の状態（`publish`・`draft`・`future`）。直すときは `keep`（状態を変えない）。
+    """
+    op = _plain(op, "op").strip()
+    if op not in HATENA_ENTRY_OPS:
+        raise ValueError("invalid_op")
+    form = _plain(form, "form").strip()
+    if form not in HATENA_ENTRY_FORMS:
+        raise ValueError("invalid_form")
+    entry = _plain(entry_id, "entry_id").strip()
+    base = _plain(base_readback_sha, "base_readback_sha").strip()
+    if op == "create" and (entry or base):
+        raise ValueError("entry_id_for_create")
+    if op != "create" and not entry:
+        raise ValueError("entry_id_required")
+    site = _plain(site_url, "site_url").strip().rstrip("/")
+    if not site:
+        raise ValueError("site_url_required")
+    blog = _plain(blog_id, "blog_id").strip().lower()
+    if not blog:
+        raise ValueError("blog_id_required")
+    status = _plain(status, "status").strip()
+    if status not in WP_ENTRY_STATUSES or (op == "create") == (status == "keep"):
+        raise ValueError("invalid_status")
+    return {
+        "version": WP_ENTRY_VERSION,
+        "account": _plain(account, "account").strip(),
+        "site_url": site,
+        "blog_id": blog,
+        "op": op,
+        "entry_id": entry,
+        "base_readback_sha": base,
+        "title": " ".join(_plain(title, "title").split()),
+        "categories": _SEG.join(_sorted_list(categories, "categories")),
+        "body_sha256": hatena_body_sha256(_plain(body, "body")),
+        "article": _plain(article, "article").strip(),
+        "form": form,
+        "status": status,
+        "publish_at": _normalize_publish_at(publish_at),
+    }
+
+
+def compute_wp_entry_sha(**kwargs) -> str:
+    """`compute_wp_entry_components()` の 14 項目をこの順で `\\x1f` 区切りにした sha256。"""
+    components = compute_wp_entry_components(**kwargs)
+    joined = _SEP.join(components[key] for key in _WP_ENTRY_ORDER)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
 def compute_hatena_bookmark_components(*, account: str, principal: str, op: str, url: str,
                                        delivery: str, comment: str, tags=None) -> dict:
     """はてなブックマーク（`thth-hatena-bookmark-1`）の 8 項目を正規化した値（設計 §7.2・S4 §6.2）。

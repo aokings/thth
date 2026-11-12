@@ -4011,7 +4011,8 @@ def cmd_run(args) -> int:
         # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
         # はてなの口座（media hatenablog）は採取の口が無いので黙って飛ばす（失敗として残さない・
         # 実機の確かめ 10/17 の 1。毎回「media='hatenablog' を知りません」と出ていた）。
-        if principals_mod_uses(account_cfg):
+        from . import article_media
+        if principals_mod_uses(account_cfg) and article_media.has(account_cfg, "reactions"):
             # 4.0 S6 §4.2: はてなの口座は反応（ブックマークの件数・中身・スター）を同じ刻みで採る。
             # 読むだけ・失敗で投稿の rc を悪くしない（SNS の採取と同じ）。跨いだ配信が無ければ何も言わない。
             from . import hatena_reactions

@@ -112,6 +112,14 @@ GOLDEN = {
             "bookmark_add_external": "df42d7898bcb25fe",
         },
     },
+    # 5.16.0: WordPress の記事（`thth-wp-entry-1`）。はてなの `thth-hatena-entry-1` とは別の版の語。
+    "wp_entry": {
+        1: {
+            "wp_create_draft": "52f20592168f736d",
+            "wp_create_publish": "2cea845f43f87d0d",
+            "wp_update": "e83efbfe1cf6b9ee",
+        },
+    },
 }
 
 # はてなの見本（本文・口座・URL は架空）。`approval.compute_hatena_*_sha()` にそのまま渡す。
@@ -137,6 +145,25 @@ HATENA_CASES = {
             "title": "見本の題", "categories": None, "body": "", "images": None,
             "article": "golden/2026-10-sample", "form": "summary",
             "publish_at": "2026-10-22T08:00:00+09:00"}},
+    ),
+    "wp_entry": (
+        {"name": "wp_create_draft", "args": {
+            "account": "golden-wordpress", "site_url": "https://golden.example/", "blog_id": "Golden.example",
+            "op": "create", "entry_id": None, "base_readback_sha": None, "title": "  見本の  題  ",
+            "categories": ["価格", "#コーヒー", " "], "body": "<h2>見出し</h2>\r\n<p>本文です。</p>  \n\n",
+            "article": "golden/2026-11-wp", "form": "full", "status": "draft",
+            "publish_at": "2026-11-20T08:00:00+09:00"}},
+        {"name": "wp_create_publish", "args": {
+            "account": "golden-wordpress", "site_url": "https://golden.example", "blog_id": "golden.example",
+            "op": "create", "entry_id": None, "base_readback_sha": None, "title": "  見本の  題  ",
+            "categories": ["価格", "#コーヒー", " "], "body": "<h2>見出し</h2>\r\n<p>本文です。</p>  \n\n",
+            "article": "golden/2026-11-wp", "form": "full", "status": "publish",
+            "publish_at": "2026-11-20T08:00:00+09:00"}},
+        {"name": "wp_update", "args": {
+            "account": "golden-wordpress", "site_url": "https://golden.example", "blog_id": "golden.example",
+            "op": "update", "entry_id": "42", "base_readback_sha": "e" * 64, "title": "見本の題（直し）",
+            "categories": [], "body": "<p>直した本文。</p>", "article": "golden/2026-11-wp", "form": "full",
+            "status": "keep", "publish_at": "2026-11-21T08:00:00+09:00"}},
     ),
     "hatena_bookmark": (
         {"name": "bookmark_add", "args": {
@@ -195,9 +222,11 @@ def drift() -> list:
 # ------------------------------------------------------------------ はてな（4.0 S1）
 
 _HATENA_VERSION_WORD = {"hatena_entry": "HATENA_ENTRY_VERSION",
-                        "hatena_bookmark": "HATENA_BOOKMARK_VERSION"}
+                        "hatena_bookmark": "HATENA_BOOKMARK_VERSION",
+                        "wp_entry": "WP_ENTRY_VERSION"}
 _HATENA_COMPUTE = {"hatena_entry": "compute_hatena_entry_sha",
-                   "hatena_bookmark": "compute_hatena_bookmark_sha"}
+                   "hatena_bookmark": "compute_hatena_bookmark_sha",
+                   "wp_entry": "compute_wp_entry_sha"}
 
 
 def hatena_version(kind: str) -> int:

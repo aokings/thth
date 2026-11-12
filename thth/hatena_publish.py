@@ -174,6 +174,11 @@ def _host_matches(url, blog_id) -> bool:
     return bool(host) and host == blog_id
 
 
+def _expected_host(m) -> str:
+    """公開された URL のホストの比べ先。WordPress は主体のサイトの入口のホスト（`site_url`）、はてなは blog_id。"""
+    return m.get("site_host") or m["blog_id"]
+
+
 def _sent_post_id(op, entry_id, seq) -> str:
     """`sent/` の鍵。create は entry_id。update・delete は別の鍵（はてなの記録は上書きしない）。"""
     if op == "create":
@@ -244,7 +249,8 @@ def _writeback(account_cfg, path, fields, expected_sha, delivery, account_name):
     writeback.set_front_matter_fields(path, fields)
     repo_dir = account_cfg["repo_dir"]
     rel = os.path.relpath(path, repo_dir)
-    message = f"thth: {account_name} {os.path.basename(path)} をはてなブログへ（{delivery}）"
+    from . import principals
+    message = f"thth: {account_name} {os.path.basename(path)} を{principals.media_label(account_cfg)}へ（{delivery}）"
     try:
         ok, err = writeback.commit_and_push(repo_dir, rel_path=rel, message=message, validate=unchanged)
     except writeback.PushValidationFailed:
@@ -302,7 +308,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
         adapter = make_adapter(account_cfg, principal_cfg,
                                None if adapter_factory is core._default_adapter_factory else adapter_factory)
     except Unsupported:
-        log("はてなブログの送信の口（adapter）がまだありません（S2）。出しません")
+        log(f"{principals.media_label(account_cfg)}の送信の口（adapter）がまだありません（S2）。出しません")
         run("post", "error", "unsupported_medium")
         return _result(core, exit_code=2, mode=mode, action="unsupported_medium",
                        message="unsupported_medium", file=path, error="unsupported_medium")
@@ -310,7 +316,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
         code = exc.code
         hint = (f"。thth principal auth {principal_cfg['principal']} --by <名前> で入れてください"
                 if code in ("token_missing", "token_invalid", "consumer_missing", "consumer_invalid") else "")
-        log(f"はてなブログの認証の材料が使えないので出しません（{code}）{hint}")
+        log(f"{principals.media_label(account_cfg)}の認証の材料が使えないので出しません（{code}）{hint}")
         run("post", "error", code)
         return _result(core, exit_code=2, mode=mode, action="refused", message=code, file=path, error=code)
 
@@ -340,7 +346,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             deliveries_mod.advance(account_name, delivery, state="conflict", at=jst.iso(), base=loaded,
                                    fields={"checked_at": jst.iso()},
                                    row={"op": op, "reason": "entry_missing", "approved_sha": sha})
-            log("はてなブログの側に記事がありません（404・外で消された）。更新しません")
+            log(f"{principals.media_label(account_cfg)}の側に記事がありません（404・外で消された）。更新しません")
             run("post", "error", "delivery_conflict")
             return _result(core, exit_code=1, mode=mode, action="conflict",
                            message="entry_missing", file=path, error="delivery_conflict")
@@ -361,7 +367,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
                                    row={"op": op, "reason": "readback_changed", "approved_sha": sha,
                                         "readback_sha": current_sha, "detail": detail})
             what = "・".join(hatena_entry.DETAIL_LABELS.get(d, d) for d in detail)
-            log(f"はてなブログの側で{what}が変わっています（承認した変更前の版と違う）。上書きしません。"
+            log(f"{principals.media_label(account_cfg)}の側で{what}が変わっています（承認した変更前の版と違う）。上書きしません。"
                 f"thth conflict {account_name} {delivery} show で見て、resolve で解いてください")
             run("post", "error", "delivery_conflict")
             return _result(core, exit_code=1, mode=mode, action="conflict",
@@ -434,8 +440,10 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     try:
         # 本文は画像の参照を置き換えたあと（S3 §5.2）。画像は 3c で上げ終えているので渡さない。
         if op == "create":
+            # 5.16.0: 公開以外の状態（WordPress の下書き）を承認したときだけ渡す（はてなの adapter の口は変えない）。
+            extra = {"send_as": m["send_as"]} if m.get("send_as", "publish") != "publish" else {}
             result = adapter.create_entry(title=m["title"], body=m["body_sent"], categories=m["categories"],
-                                          images=[])
+                                          images=[], **extra)
         elif op == "update":
             result = adapter.update_entry(entry_id=m["entry_id"], edit_uri=ledger.get("edit_uri"),
                                           title=m["title"], body=m["body_sent"], categories=m["categories"],
@@ -452,7 +460,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             deliveries_mod.advance(account_name, delivery, state="unknown", at=at, seq=outcome_seq,
                                    row={"op": op, "error": result.error or "ambiguous"})
             inflight_mod.update(state_dir, seq=outcome_seq + 1)
-            log(f"はてなブログへの送信の結果が分からないので inflight を残します: {path}")
+            log(f"{principals.media_label(account_cfg)}への送信の結果が分からないので inflight を残します: {path}")
             run("post", "error", result.error or "publish_ambiguous")
             return _result(core, exit_code=1, mode=mode, action="inflight",
                            message="publish_ambiguous", file=path, error="publish_ambiguous")
@@ -461,7 +469,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             deliveries_mod.advance(account_name, delivery, state="conflict", at=at, seq=outcome_seq,
                                    row={"op": op, "reason": "entry_missing", "error": result.error})
             inflight_mod.clear(state_dir)
-            log("はてなブログの側に記事がありません（404・外で消された）。台帳を conflict にして止めます")
+            log(f"{principals.media_label(account_cfg)}の側に記事がありません（404・外で消された）。台帳を conflict にして止めます")
             run("post", "error", "delivery_conflict")
             return _result(core, exit_code=1, mode=mode, action="conflict", message="entry_missing",
                            file=path, error="delivery_conflict")
@@ -471,7 +479,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
                                seq=outcome_seq,
                                row={"op": op, "error": result.error or "refused", "restored": True})
         inflight_mod.clear(state_dir)
-        log(f"はてなブログが断りました: {result.error}")
+        log(f"{principals.media_label(account_cfg)}が断りました: {result.error}")
         if result.error == "hatena_auth_rejected":
             log(f"認可が通りません。thth principal auth {principal_cfg['principal']} --force --by <名前> "
                 "でやり直してください（時計のずれでも 401 になります）")
@@ -513,7 +521,7 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
         return _result(core, exit_code=1, mode=mode, action="inflight", message="unusable_post_id",
                        file=path, error="unusable_post_id")
     url = result.published_url
-    elsewhere = op != "delete" and url is not None and not _host_matches(url, m["blog_id"])
+    elsewhere = op != "delete" and url is not None and not _host_matches(url, _expected_host(m))
     # S2 §5 の 3: 出たが、応答の記法が Markdown でない → conflict（syntax_mismatch）。出し直さない。
     wrong_syntax = (not elsewhere and op != "delete" and result.content_type is not None
                     and result.content_type != MARKDOWN_TYPE)
@@ -554,6 +562,8 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
             # 4.0 S5 §4.2: 何を出したか（題・カテゴリ）。次の更新の 1 段目と読み戻しの比べ先。
             fields["title"] = m["title"]
             fields["categories"] = list(m.get("categories") or [])
+        if op == "create" and m.get("send_as", "publish") != "publish":
+            fields["send_as"] = m["send_as"]   # 5.16.0: 下書きで出した（WordPress）
         row = {"op": op, "entry_id": entry_id, "published_url": url, "checked_rev": m.get("article_rev"),
                "approved_sha": sha, "reason": reason, "content_type": result.content_type if wrong_syntax else None,
                "readback_differs": True if differs else None,
@@ -561,7 +571,7 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
         deliveries_mod.advance(account_name, delivery, state=state, at=at, seq=outcome_seq,
                                fields=fields, row=row)
     if elsewhere:
-        log(f"公開された URL のホストが {m['blog_id']} と違います（{url}）。台帳を conflict にして止めます")
+        log(f"公開された URL のホストが {_expected_host(m)} と違います（{url}）。台帳を conflict にして止めます")
     if wrong_syntax:
         log(f"記事は出ましたが、別の記法（{result.content_type}）で解釈されました。台帳を conflict にして"
             "止めます。はてなの画面で確かめてください（出し直さない・消さない）")

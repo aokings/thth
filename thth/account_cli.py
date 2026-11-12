@@ -56,7 +56,7 @@ def _find_example_dir() -> str:
 
 EXAMPLE_DIR = _find_example_dir()
 
-MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog", "facebook", "instagram")
+MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog", "wordpress", "facebook", "instagram")
 
 # **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
 # `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
@@ -283,7 +283,7 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
         data["principal"] = principal
         data["blog_id"] = str(blog_id or "").strip().lower()
         data["token"] = raw_principal["token"]
-        data["handle"] = principal_cfg["hatena_id"]
+        data["handle"] = principal_cfg[principals.ARTICLE_KINDS[principal_cfg["kind"]]["id_field"]]
     data["production"] = False
     data["scheduled"] = False
     return data

@@ -15,6 +15,8 @@ from __future__ import annotations
 # 媒体名 → その出し先の能力。
 ARTICLE_MEDIA = {
     "hatenablog": frozenset({"reactions", "bookmarks"}),
+    # WordPress（自分で置く型・5.16.0）。反応の採取・ブックマークは無い。
+    "wordpress": frozenset(),
 }
 
 
