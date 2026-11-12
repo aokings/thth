@@ -156,8 +156,8 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> の「公開」が「はい」になってから作ると、お知らせを見た人がそのまま買えます。"),
     "store_item_changed": _entry(
-        "下書きを作ったあとに、その商品の値段・公開・在庫が変わっていました（1 行目の（）が変わった所）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
-        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price）を今に合わせて直すか、出さないなら下書きを閉じてください。",
+        "下書きを作ったあとに、その商品の値段・公開・在庫・種類が変わっていました（1 行目の（）が変わった所。variant は種類ごとの値段、variants_changed は値下げの下書きの種類が減ったこと）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
+        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price・from_store_variant_prices）を今に合わせて直すか、出さないなら下書きを閉じてください。",
         _ITEMS,
         "売り切れなら、再入荷のあとの thth shop draft --kind restock で作り直すと、見た人がそのまま買えるお知らせになります。"),
     "store_draft_exists": _entry(

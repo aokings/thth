@@ -8,7 +8,8 @@ OAuth も取り直しも作らない（公開アプリの話・設計 §0 の 1�
 - `GET https://api.stores.dev/retail/202211/items?limit=100&offset=…` → `{"items": [...]}`。欄の名前は公式の
   OpenAPI の定義（2026-11-12 に読んだ）による。1 件は `id`（**文字列**）・`name`・`status`（`shown` 公開・`hidden`
   非公開・`unlisted` 限定公開）・`price`（整数か null・種類の中でいちばん高い `sales_price`）・`image_urls`・
-  `preorder_sales`・`sales_period`・`variations[].quantity`（整数か null・null は在庫数が無制限）ほか。
+  `preorder_sales`・`sales_period`・`variations[].quantity`（整数か null・null は在庫数が無制限）・
+  `variations[].id`（文字列）・`variations[].sales_price`（整数か null）ほか。
   **更新の時刻・商品頁の URL は無い。** `description`・品番・バーコード・`category_ids` などは読み捨てる。
 - 注文・入金・販売チャネル・書く道は呼ばない。**クレデンシャルはそれらも通ると見る**【推測】（THTH は権限を選べない）ので、
   柵は `wire.ROUTES` の表（道 2 つ・引数は `limit` と `offset` だけ）。
@@ -16,6 +17,8 @@ OAuth も取り直しも作らない（公開アプリの話・設計 §0 の 1�
 行への直し方（`rows.ROW_FIELDS` は変えない・設計 §7.3）: id は文字列のまま・公開は `status == "shown"`（ほかは
 id と visible だけ）・在庫は種類のどれかが null なら None（数えない）、全部が整数なら合計・`sales_status` は
 `preorder`（予約販売）・`on_sale`・`before_sale`・`after_sale`・商品頁の URL と更新の時刻は None。
+種類ごとの値段（`variant_prices`・5.18.1）は `{variations[].id: sales_price}`。`price` は「いちばん高い値」なので、
+値段の上下はこちらで決める（`diff.py`・監査 5.18.0 の 5）。種類の名前（S・M など）・品番は持たない。
 
 **【未確認】の所は偽の応答で作った**（本物の店では 1 度も動かしていない・設計 §11）:
 
@@ -41,7 +44,7 @@ import time
 
 from .. import jst
 from . import wire
-from .rows import clean_text, https_url, is_int
+from .rows import VARIANT_ID, VARIANT_PRICES, clean_text, https_url, is_int
 from .wire import StoreRefused
 
 STORE_PATH = f"/retail/{wire.STORES_API_VERSION}/store"
@@ -115,6 +118,19 @@ def stock_of(variations) -> int | None:
     return total
 
 
+def prices_of(variations) -> dict:
+    """種類ごとの値段 `{id: sales_price}`（`stock_of` が形を確かめたあとに呼ぶ）。id の形が違う・重なる・値段が
+    整数か null でなければ `store_api_changed（item_variations）`。"""
+    out = {}
+    for variation in variations:
+        vid, price = variation.get("id"), variation.get("sales_price")
+        if (not isinstance(vid, str) or not VARIANT_ID.fullmatch(vid) or vid in out
+                or not (price is None or is_int(price))):
+            raise StoreRefused("store_api_changed", "item_variations")
+        out[vid] = price
+    return out
+
+
 def normalize(item, now: datetime.datetime) -> dict:
     """1 商品を許した欄だけに。要る欄が無い・型が違えば `store_api_changed`。知らない欄は無視する。"""
     if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not _ID.fullmatch(item["id"]):
@@ -132,9 +148,11 @@ def normalize(item, now: datetime.datetime) -> dict:
         images = []
     if not isinstance(images, list):
         raise StoreRefused("store_api_changed", "item_fields")
+    stock = stock_of(item.get("variations"))
     return {"id": item["id"], "name": clean_text(item["name"]), "price": price,
-            "stock": stock_of(item.get("variations")), "visible": True, "sales_status": sales_status(item, now),
-            "image_url": https_url(images[0]) if images else None, "item_url": None, "modified_at": None}
+            "stock": stock, "visible": True, "sales_status": sales_status(item, now),
+            "image_url": https_url(images[0]) if images else None, "item_url": None, "modified_at": None,
+            VARIANT_PRICES: prices_of(item["variations"])}
 
 
 class Client:

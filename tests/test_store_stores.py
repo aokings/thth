@@ -306,7 +306,7 @@ def test_商品は許した欄だけで公開でない商品はidだけ(capsys, 
     one = rows[item(1)["id"]]
     assert one == {"id": item(1)["id"], "name": "T シャツ 1", "price": 3000, "stock": None, "visible": True,
                    "sales_status": "on_sale", "image_url": "https://cdn.example.invalid/1.jpg", "item_url": None,
-                   "modified_at": None}
+                   "modified_at": None, "variant_prices": {"v10": 3000, "v11": 3000, "v12": 3000}}
     assert rows[item(2)["id"]]["stock"] == 6
     assert rows[item(3)["id"]] == {"id": item(3)["id"], "visible": False}
     assert rows[item(4)["id"]] == {"id": item(4)["id"], "visible": False}          # 限定公開は非公開の扱い
