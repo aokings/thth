@@ -96,7 +96,9 @@ ENTRIES = {
     "store_shop_mismatch": _entry(
         "新しい鍵の店（shop_id）が、前に置いた鍵の店と違います（Shopify は、鍵の店の myshopify のドメインが台帳のラベルと違うときも）。"
         "別の店の写しと混ざらないように保存しませんでした。",
-        "同じ店の鍵か確かめてください。別の店なら thth shop add で新しい名前の台帳を作るか、置き換えるなら --force を付けます。",
+        "1 行目の（）が myshopify_domain なら、鍵の店と台帳の shop のラベルが違うので --force では通りません。台帳のラベルが違うなら"
+        " thth shop remove <店> --by <名前> で外して thth shop add で正しいラベルの台帳を作り直し、鍵が違うならその店の鍵を渡してください。"
+        "それ以外は、同じ店の鍵か確かめてください。別の店なら thth shop add で新しい名前の台帳を作るか、置き換えるなら --force を付けます。",
         _TOKEN + " --force",
         "店ごとに台帳を分けておくと、下書きの出所（store/<店>/item/<id>）で取り違えを見分けられます。"),
     "store_api_changed": _entry(

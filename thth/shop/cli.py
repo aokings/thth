@@ -463,18 +463,23 @@ def _remove_lines(found) -> list:
     return lines
 
 
+def _kind_of(store: str) -> str:
+    """店の種類（台帳が読めなければ base・外すときの文と記録の媒体に使う）。"""
+    try:
+        return ledger.load(store)["kind"]
+    except StoreRefused:
+        return "base"
+
+
 def _revoke_note(store: str, *, done: bool) -> str:
     """店の側の鍵は THTH が消せないことの 1 行（店の種類ごと・台帳が読めなければ BASE の文）。"""
-    try:
-        kind = ledger.load(store)["kind"]
-    except StoreRefused:
-        kind = "base"
-    return kinds.get(kind)["revoke_done" if done else "revoke_plan"]
+    return kinds.get(_kind_of(store))["revoke_done" if done else "revoke_plan"]
 
 
 def cmd_remove(args) -> int:
     by = _by(args)
     found = remove_mod.plan(args.store)
+    kind = _kind_of(args.store)   # 台帳を消す前に読む（記録の媒体・監査 5.17.0 直したほうがよい 4）
     revoke_done = _revoke_note(args.store, done=True)
     if not found["targets"] and not found["kept"]:
         raise StoreRefused("store_missing")
@@ -495,7 +500,8 @@ def cmd_remove(args) -> int:
         raise StoreRefused("store_remove_unconfirmed", digest)
     _log_ready()
     done = remove_mod.execute(found)
-    _record("removed", args.store, by, {"deleted": [[], done], "kept": [[], [k["category"] for k in found["kept"]]]})
+    _record("removed", args.store, by, {"deleted": [[], done], "kept": [[], [k["category"] for k in found["kept"]]]},
+            kind)
     if args.json:
         _print({"ok": True, "deleted": done, **payload})
         return 0
