@@ -196,7 +196,9 @@ class _FakeHTTPS(urllib.request.BaseHandler):
 ])
 def test_3xxは同じホストでも追わない(monkeypatch, location):
     fake = _FakeHTTPS(302, location)
-    opener = wire.httpsafe.build_opener(redirect_handler=wire._NoRedirect())
+    # 本物の口の opener と同じリダイレクトの handler を使う（wire.OPENER の作りを替えたら、ここが赤になる）。
+    [redirect] = [h for h in wire.OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    opener = wire.httpsafe.build_opener(redirect_handler=type(redirect)())
     opener.add_handler(fake)
     monkeypatch.setattr(wire, "OPENER", opener)
     status, _raw = wire.default_transport("GET", "https://apiv2.thebase.com/api/items?limit=1&offset=0", {})
