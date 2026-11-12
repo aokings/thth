@@ -84,6 +84,9 @@ REASONS = frozenset((
     # 監査 5.15.0 の直し（11/12）。
     "store_token_expires_past", "store_draft_no_baseline", "store_not_open", "store_item_changed",
     "store_remove_unconfirmed", "store_remove_unsafe", "store_log_unavailable",
+    # Shopify（5.17.0・設計 Shopify と STORES §4.2・§4.3）。
+    "store_org_mismatch", "store_refresh_rejected", "store_refresh_busy", "store_shop_unknown",
+    "store_currency_unsupported",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./: -]{1,80}\Z")
 

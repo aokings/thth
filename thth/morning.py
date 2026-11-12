@@ -933,7 +933,7 @@ def _store_key_lines(projects, now) -> list:
             when = store_ledger.expiry(store_ledger.load_token(cfg), now.date())
         except StoreRefused:
             continue
-        if when["state"] == "ok":
+        if when["state"] in ("ok", "none"):   # none は期限の日の無い鍵（Shopify）
             continue
         head = {"soon": f"あと {when['days_left']} 日で切れます（{when['expires_on']}）",
                 "expired": f"期限を過ぎています（{when['expires_on']}）",

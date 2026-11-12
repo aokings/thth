@@ -22,6 +22,7 @@ from .wire import StoreRefused
 _DIGITS = re.compile(r"[0-9]{1,18}\Z")
 _ID_TEXT = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 BASE_FIELDS = ("store", "kind", "project", "token")
+SHOPIFY_FIELDS = BASE_FIELDS + ("shop",)
 
 
 def _int_id(value) -> int:
@@ -41,6 +42,16 @@ def _base_cap() -> int:
     return base.PAGE_LIMIT * base.MAX_PAGES
 
 
+def _shopify_client(cfg, token, transport):
+    from . import shopify
+    return shopify.Client(cfg, token, transport=transport)
+
+
+def _shopify_cap() -> int:
+    from . import shopify
+    return shopify.PAGE_FIRST * shopify.MAX_PAGES
+
+
 KINDS = {
     "base": {
         "label": "BASE",
@@ -53,6 +64,20 @@ KINDS = {
         "read_cap": _base_cap,
         "revoke_plan": "BASE の側の PAT は消えません。BASE Developers で店の持ち主が取り消してください",
         "revoke_done": "BASE の側の PAT は消えていません。BASE Developers で店の持ち主が取り消してください",
+    },
+    # 5.17.0（設計 Shopify と STORES §4）。鍵は 2 つの形（Dev Dashboard のアプリの client id と secret・既にある
+    # 管理画面のカスタムアプリの固定の鍵）。どちらも期限の日が無い（`no_expiry`）。
+    "shopify": {
+        "label": "Shopify",
+        "key_name": "Shopify の鍵",
+        "not_by": "この道具（THTH）は Shopify が提供するものではありません。",
+        "ledger_fields": SHOPIFY_FIELDS,
+        "auths": ("shopify_client", "shopify_token"),
+        "client": _shopify_client,
+        "parse_item_id": _int_id,
+        "read_cap": _shopify_cap,
+        "revoke_plan": "Shopify の側の鍵は消えません。Dev Dashboard でアプリを店から外すか、secret を作り直してください",
+        "revoke_done": "Shopify の側の鍵は消えていません。Dev Dashboard でアプリを店から外すか、secret を作り直してください",
     },
 }
 NAMES = tuple(KINDS)

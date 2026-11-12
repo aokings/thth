@@ -1,12 +1,14 @@
 """店を外す（`thth shop remove <店>` と `thth leave` の店の分・設計 §7・監査 5.15.0 直したほうがよい 1）。
 
-消すもの（この順）: 鍵のファイル → 状態 `store_state/<店>/`（写し）→ 台帳 `stores/<店>.json`。
+消すもの（この順）: 鍵のファイル → 短い鍵のファイル（Shopify・`~/.config/thth/store-<店>.access`）→
+状態 `store_state/<店>/`（写しと鎖）→ 台帳 `stores/<店>.json`。
 
 - 鍵は**既定の置き場**（`~/.config/thth/store-<店>.token`）にあるときだけ消す。台帳を手で書き替えて別のパスを
   指していたら、そのファイルは消さずに残し、その旨を返す（店の鍵でないファイルを消さない）。
 - symlink・普通のファイルでない物は消さずに断る（`store_remove_unsafe`）。
 - 無い物は数えない。何度打っても同じ結果（台帳が無くても、残った写しと鍵は消せる）。
-- 網には出ない（BASE の PAT の取り消しは BASE Developers で店の持ち主がする）。
+- 短い鍵も既定の置き場のものだけ消す（symlink は断る）。無い物は数えないので、BASE の店の digest は変わらない。
+- 網には出ない（BASE の PAT の取り消しは BASE Developers・Shopify の鍵は Dev Dashboard で店の持ち主がする）。
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from .. import accounts
 from . import ledger
 from .wire import StoreRefused
 
-CATEGORIES = ("token", "state", "ledger")
+CATEGORIES = ("token", "access", "state", "ledger")
 
 
 def _kind(path: str) -> str | None:
@@ -53,7 +55,9 @@ def plan(name: str) -> dict:
         if _kind(token) is not None:
             kept.append({"category": "token", "path": token, "why": "not_default_place"})
         token = default
-    for category, path, want in (("token", token, "file"), ("state", ledger.state_dir_for(name), "dir"),
+    access = accounts._expand(ledger.default_access(name))
+    for category, path, want in (("token", token, "file"), ("access", access, "file"),
+                                 ("state", ledger.state_dir_for(name), "dir"),
                                  ("ledger", ledger.path_for(name), "file")):
         found = _kind(path)
         if found is None:
@@ -72,7 +76,13 @@ def digest(found: dict) -> str:
 
 
 def execute(found: dict) -> list:
-    """`plan` の順に消す。消した分類の並びを返す。"""
+    """`plan` の順に消す。消した分類の並びを返す。短い鍵の鎖を持って消す（取り直しの途中で消さない・`access.py`）。"""
+    from . import access
+    with access.locked(found["store"], create=False):
+        return _execute(found)
+
+
+def _execute(found: dict) -> list:
     done = []
     for target in found["targets"]:
         path, category = target["path"], target["category"]

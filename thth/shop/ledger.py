@@ -14,7 +14,16 @@
 {"store": "kopicha-base", "kind": "base", "project": "kopicha", "token": "~/.config/thth/store-kopicha-base.token"}
 ```
 
-鍵のファイルの形: `{"access_token": …, "expires_on": "YYYY-MM-DD", "obtained_at": …, "shop_id": …}`。
+鍵のファイルの形（設計 Shopify と STORES §4.1）:
+
+- BASE: `{"access_token": …, "expires_on": "YYYY-MM-DD", "obtained_at": …, "shop_id": …}`（`auth` の欄が無い）。
+- Shopify の client: `{"auth": "shopify_client", "client_id", "client_secret", "shop_id", "obtained_at",
+  "expires_on": null, "no_expiry": true}`。取り直した約 24 時間の短い鍵は**別のファイル**
+  `~/.config/thth/store-<名前>.access`（0600・機械が書く・`access.py`）。
+- Shopify の固定の鍵: `{"auth": "shopify_token", "access_token", "shop_id", "obtained_at", "expires_on": null,
+  "no_expiry": true}`。
+
+Shopify の台帳は＋`shop`（myshopify のラベルだけ・`wire.SHOPIFY_LABEL`）。
 """
 from __future__ import annotations
 
@@ -24,7 +33,7 @@ import os
 
 from .. import accounts, jst, redact, secrets_fs
 from . import kinds as kinds_mod
-from .wire import StoreRefused
+from .wire import SHOPIFY_LABEL, StoreRefused
 
 STORES_DIR_ENV = "THTH_STORES_DIR"
 # 店の種類は `kinds.py` の表（足すときはそこと口のモジュールに）。
@@ -75,7 +84,8 @@ def validate(name: str, data) -> None:
     if (not isinstance(data, dict) or data.get("kind") not in KINDS or set(data) != set(fields_for(data["kind"]))
             or data["store"] != name
             or not isinstance(data["project"], str) or not accounts.name_is_safe(data["project"])
-            or not isinstance(data["token"], str) or not data["token"].strip()):
+            or not isinstance(data["token"], str) or not data["token"].strip()
+            or ("shop" in data and not (isinstance(data["shop"], str) and SHOPIFY_LABEL.fullmatch(data["shop"])))):
         raise StoreRefused("store_ledger_invalid")
 
 
@@ -97,6 +107,11 @@ def load(name: str) -> dict:
 def default_token(name: str) -> str:
     """鍵の既定の置き場（`~` のまま）。`thth shop remove` が消してよい鍵は、この置き場のものだけ。"""
     return f"~/.config/thth/store-{check_name(name)}.token"
+
+
+def default_access(name: str) -> str:
+    """Shopify の短い鍵の置き場（`~` のまま・機械が書く・`thth shop remove` が消す）。"""
+    return f"~/.config/thth/store-{check_name(name)}.access"
 
 
 def build(name: str, *, kind: str, project: str, **extra) -> dict:
@@ -127,9 +142,18 @@ def load_token(cfg: dict) -> dict:
             value = json.load(f)
     except (OSError, ValueError, TypeError):
         raise StoreRefused("store_token_missing") from None
-    if not isinstance(value, dict) or not isinstance(value.get("access_token"), str) or not value["access_token"]:
+    if not isinstance(value, dict):
         raise StoreRefused("store_token_missing")
-    redact.register_secret(value["access_token"])
+    if value.get("auth") == "shopify_client":
+        wanted = ("client_id", "client_secret")
+    elif value.get("auth") in (None, "shopify_token"):
+        wanted = ("access_token",)
+    else:
+        raise StoreRefused("store_token_missing")
+    if not all(isinstance(value.get(key), str) and value[key] for key in wanted):
+        raise StoreRefused("store_token_missing")
+    for key in wanted:
+        redact.register_secret(value[key])
     return value
 
 
@@ -146,7 +170,13 @@ def parse_day(value) -> datetime.date | None:
 
 
 def expiry(token: dict, today: datetime.date) -> dict:
-    """`{"expires_on", "days_left", "state"}`。state は ok・soon（14 日以内）・expired・unknown。"""
+    """`{"expires_on", "days_left", "state"}`。state は ok・soon（14 日以内）・expired・unknown・none。
+
+    none は期限の日の無い鍵（Shopify の client secret と固定の鍵・`no_expiry` が真）。morning にも命令の注意にも
+    何も出さない（BASE の unknown「期限を入れ忘れた」とは別）。
+    """
+    if token.get("no_expiry") is True:
+        return {"expires_on": None, "days_left": None, "state": "none"}
     day = parse_day(token.get("expires_on"))
     if day is None:
         return {"expires_on": None, "days_left": None, "state": "unknown"}
