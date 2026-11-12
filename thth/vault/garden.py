@@ -66,7 +66,8 @@ GUIDE_ATTR = ("data-thth-guide", "free")
 # 動く部品（script と form は monban の CSP で止まるが、止まった頁は壊れて見えるので出す前に断る）。
 ACTIVE_TAGS = frozenset(("script", "form", "iframe", "frame", "frameset", "object", "embed", "applet", "base",
                          "portal", "input", "button", "textarea", "select", "foreignobject", "noscript", "template"))
-_ACTIVE_RAW = re.compile(r"<\s*/?\s*(?:" + "|".join(sorted(ACTIVE_TAGS)) + r")\b", re.IGNORECASE)
+# 前置きつき（XML の `<h:iframe`・`<h:script`）も字面で見る（読み手が見落としても止める・監査 段 1 の 13 の気づき）。
+_ACTIVE_RAW = re.compile(r"<\s*/?\s*(?:[A-Za-z_][\w.-]*:)?(?:" + "|".join(sorted(ACTIVE_TAGS)) + r")\b", re.IGNORECASE)
 # URL を持つ属性（ここに無い属性の値は URL として読まない: SVG の xmlns・version などを外の資源と見なさない）。
 URL_ATTRS = frozenset(("src", "srcset", "imagesrcset", "href", "xlink:href", "poster", "data", "background",
                        "action", "formaction", "codebase", "manifest", "ping", "lowsrc", "dynsrc", "longdesc",
@@ -188,67 +189,205 @@ def _css_text(text: str) -> str:
     return _CSS_ESCAPE.sub(back, text)
 
 
-_CSS_ONE_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\(.)", re.DOTALL)
+_CSS_ONE_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\n]?|\\(.)", re.DOTALL)
 # 上の段（関数の中でない）の文字列を字として見せるだけの性質。ここの文字列は読みに行かない（監査 段 1 の 7）。
 CSS_TEXT_PROPS = frozenset(("content", "quotes"))
-_CSS_IDENT = re.compile(r"[\w-]")
+# CSS Syntax Level 3 §4（改行は呼ぶ側が \n 1 つに直し、NUL は U+FFFD にしてある）。ident の字は英数字・`-`・`_` と
+# U+0080 以上のすべての字（Python の \w に入らない ©・全角空白・U+00A0・絵文字も）。空白は \n・\t・空白だけ。
+_CSS_NAME_RUN = re.compile("[A-Za-z0-9_\u0080-\U0010ffff-]+")
+_CSS_WS_RUN = re.compile(r"[ \t\n]+")
+_CSS_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_CSS_STRING_RUN = {q: re.compile(r"[^\\\n" + q + "]+") for q in "\"'"}
+_CSS_URL_RUN = re.compile(r"[^)\\\"'( \t\n\x00-\x08\x0b\x0e-\x1f\x7f]+")
+_CSS_BAD_URL_REST = re.compile(r"(?:[^)\\]+|\\[^\n]|\\)*")
+_CSS_PUNCT = frozenset("()[]{},:;")
 
 
 def _css_escape(text: str, i: int):
+    """`\\` の崩しを 1 つ読む（i は `\\` の場所・呼ぶ側が `\\` + 改行でないことを確かめてある）。"""
     m = _CSS_ONE_ESCAPE.match(text, i)
     if m is None:
-        return "", i + 1
+        return "�", i + 1  # 終わりの `\`（CSS の決まり）
     if m.group(1):
         code = int(m.group(1), 16)
-        return ("\ufffd" if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF else chr(code)), m.end()
-    return ("" if m.group(2) == "\n" else m.group(2)), m.end()
+        return ("�" if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF else chr(code)), m.end()
+    return m.group(2), m.end()
+
+
+def _css_valid_escape(text: str, i: int) -> bool:
+    return text.startswith("\\", i) and not text.startswith("\\\n", i)
+
+
+def _css_name_start(text: str, i: int) -> bool:
+    """ここから ident が始まるか（CSS Syntax §4.3.9）。"""
+    ch = text[i:i + 1]
+    if ch == "-":
+        nxt = text[i + 1:i + 2]
+        return nxt == "-" or (nxt != "" and (nxt.isascii() is False or nxt.isalpha() or nxt == "_")) or \
+            _css_valid_escape(text, i + 1)
+    if ch == "\\":
+        return _css_valid_escape(text, i)
+    return ch != "" and (not ch.isascii() or ch.isalpha() or ch == "_")
+
+
+def _css_name(text: str, i: int):
+    """ident の字の並びを読む（崩しを戻す・§4.3.11）。"""
+    out, n = [], len(text)
+    while i < n:
+        m = _CSS_NAME_RUN.match(text, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+        elif _css_valid_escape(text, i):
+            got, i = _css_escape(text, i)
+            out.append(got)
+        else:
+            break
+    return "".join(out), i
 
 
 def _css_string(text: str, i: int):
-    quote, out, i = text[i], [], i + 1
-    while i < len(text):
+    """文字列を読む。閉じない文字列は行の終わりまで（改行は食べない）。文字列の中の `\\` + 改行は行継ぎ（何も無い）。"""
+    quote, out, i, n = text[i], [], i + 1, len(text)
+    run = _CSS_STRING_RUN[quote]
+    while i < n:
+        m = run.match(text, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
         ch = text[i]
         if ch == quote:
             return "".join(out), i + 1
         if ch == "\n":
-            return "".join(out), i  # 閉じない文字列は行の終わりまで（CSS の読み方）
-        if ch == "\\":
-            got, i = _css_escape(text, i)
-            out.append(got)
+            return "".join(out), i
+        if text.startswith("\\\n", i):
+            i += 2
             continue
-        out.append(ch)
-        i += 1
+        got, i = _css_escape(text, i)
+        out.append(got)
     return "".join(out), i
 
 
+def _css_url(text: str, i: int):
+    """`url(` の引用符なしの値（§4.3.6）。i は `(` の後ろ。返すのは (種類, 値, 次の場所)。"""
+    n = len(text)
+    m = _CSS_WS_RUN.match(text, i)
+    i, out = (m.end() if m else i), []
+    while i < n:
+        m = _CSS_URL_RUN.match(text, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
+        ch = text[i]
+        if ch == ")":
+            return "url", "".join(out), i + 1
+        if ch in " \t\n":
+            i = _CSS_WS_RUN.match(text, i).end()
+            if i >= n or text[i] == ")":
+                return "url", "".join(out), i + 1
+        elif ch == "\\" and _css_valid_escape(text, i):
+            got, i = _css_escape(text, i)
+            out.append(got)
+            continue
+        # 壊れた url（引用符・`(`・制御文字・空白のあとの字・行継ぎ）: `)` まで読み捨てる。ブラウザは宣言ごと捨てるが、
+        # 値は見る（安全な側）。
+        rest = _CSS_BAD_URL_REST.match(text, i)
+        out.append(rest.group())
+        i = rest.end()
+        return "bad-url", "".join(out), i + 1
+    return "url", "".join(out), i
+
+
+def _css_tokens(text: str):
+    """CSS を字句に切る（CSS Syntax Level 3 §4.3）。(種類, 値) を順に返す。種類は ws・str（閉じない文字列も）・url
+    （bad-url も）・ident・func（値は名前）・at・hash・num（数・dimension・percentage）・cdo・cdc・delim と、`()[]{},:;`
+    はその字。注は字句を作らない。`url(` かどうかは ident の後ろでだけ決める（`#url(`・`©url(`・`<!--url(`・文字列の外の
+    `\\` + 改行を、ブラウザと同じに読む・監査 段 1 の 12）。"""
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if ch in " \t\n":
+            i = _CSS_WS_RUN.match(text, i).end()
+            yield "ws", " "
+            continue
+        if ch in "\"'":
+            value, i = _css_string(text, i)
+            yield "str", value
+            continue
+        if ch in _CSS_PUNCT:
+            i += 1
+            yield ch, ch
+            continue
+        if ch == "#" and (_CSS_NAME_RUN.match(text, i + 1) or _css_valid_escape(text, i + 1)):
+            name, i = _css_name(text, i + 1)
+            yield "hash", name
+            continue
+        if ch == "@" and _css_name_start(text, i + 1):
+            name, i = _css_name(text, i + 1)
+            yield "at", name
+            continue
+        if ch == "<" and text.startswith("<!--", i):
+            i += 4
+            yield "cdo", "<!--"
+            continue
+        if ch in "+-.0123456789":
+            m = _CSS_NUMBER.match(text, i)
+            if m:
+                i = m.end()
+                if _css_name_start(text, i):
+                    unit, i = _css_name(text, i)
+                    yield "num", m.group() + unit
+                elif text.startswith("%", i):
+                    i += 1
+                    yield "num", m.group() + "%"
+                else:
+                    yield "num", m.group()
+                continue
+            if text.startswith("-->", i):
+                i += 3
+                yield "cdc", "-->"
+                continue
+        if _css_name_start(text, i):
+            name, i = _css_name(text, i)
+            if text.startswith("(", i):
+                i += 1
+                if name.lower() == "url":
+                    m = _CSS_WS_RUN.match(text, i)
+                    j = m.end() if m else i
+                    if j >= n or text[j] not in "\"'":
+                        _, value, i = _css_url(text, i)
+                        yield "url", value
+                        continue
+                yield "func", name
+                continue
+            yield "ident", name
+            continue
+        i += 1
+        yield "delim", ch
+
+
 def _css_values(text: str):
-    """CSS を字句の順に読み、URL になりうる値を (場所, 値) で返す。場所は `url`（url(…) の中）・`func`（ほかの関数の
-    中の文字列: image-set・src・var で渡す先など）・`top`（宣言の上の段の文字列と、@ の規則の前置きの文字列）・`free`
-    （content・quotes の上の段と、セレクタの中の文字列: 読みに行かない）・`import`（@import の規則・値は空）。注・文字列・
-    崩し（\\）を 1 回で読むので、文字列の中の `/*` に惑わされない。`( )` と `[ ]` の塊は入れ子を数え、塊の中の `;{}` で
-    規則が終わったと見ない（`@import "外" [{}];` を読み違えない・監査 段 1 の 9）。改行は呼ぶ側が `\n` 1 つに直す。"""
-    out, pending, stack, parens, ident, prop_buf = [], [], [], [], [], []
-    prop, paren_seen, at_rule, i, n = None, False, False, 0, len(text)
+    """CSS を字句（`_css_tokens`）の順に読み、URL になりうる値を (場所, 値) で返す。場所は `url`（url(…) の中）・`func`
+    （ほかの関数の中の文字列: image-set・src・var で渡す先など）・`top`（宣言の上の段の文字列と、@ の規則の前置きの
+    文字列）・`free`（content・quotes の上の段と、セレクタの中の文字列: 読みに行かない）・`import`（@import の規則・値は
+    空）。`( )` と `[ ]` の塊は入れ子を数え、塊の中の `;{}` で規則が終わったと見ない（`@import "外" [{}];` を読み違えない・
+    監査 段 1 の 9）。改行は呼ぶ側が `\\n` 1 つに直す。"""
+    out, pending, stack, parens, prop_buf = [], [], [], [], []
+    prop, paren_seen, at_rule = None, False, False
 
     def flush(prelude):
         where = "free" if (prelude and not at_rule) or (prop in CSS_TEXT_PROPS) else "top"
         out.extend((where, v) for v in pending)
         pending.clear()
 
-    while i < n:
-        ch = text[i]
-        if text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            i, ident = (n if end < 0 else end + 2), []
-            continue
-        if ch == "\\":
-            got, i = _css_escape(text, i)
-            ident.append(got)
-            prop_buf.append(got)
-            continue
-        if ch in "\"'":
-            value, i = _css_string(text, i)
-            ident = []
+    for kind, value in _css_tokens(text):
+        if kind == "str":
             if parens:
                 out.append(("url" if parens[-1] == "url" else "func", value))
             elif paren_seen:
@@ -256,68 +395,40 @@ def _css_values(text: str):
             else:
                 pending.append(value)  # セレクタの [title="…"] の中も、前置きか宣言かは塊の外で決まる
             continue
-        if ch == "@":
-            # @ の規則の名前（崩しも戻す）。@import はどこにあっても断る。前置きの文字列は読みに行かない物と見ない。
-            name, i = [], i + 1
-            while i < n and (text[i] == "\\" or _CSS_IDENT.match(text[i])):
-                if text[i] == "\\":
-                    got, i = _css_escape(text, i)
-                    name.append(got)
-                else:
-                    name.append(text[i])
-                    i += 1
-            name = "".join(name).lower()
+        if kind == "url":
+            paren_seen = True
+            out.append(("url", value.strip()))
+            continue
+        if kind == "at":
+            # @ の規則（崩しも戻した名前）。@import はどこにあっても断る。前置きの文字列は読みに行かない物と見ない。
+            name = value.lower()
             if name == "import":
                 out.append(("import", ""))
             if not stack:
                 at_rule = True
             prop_buf.append("@" + name)
-            ident = []
             continue
-        if ch == "(":
-            name, ident, paren_seen = "".join(ident).lower(), [], True
-            i += 1
-            if name == "url":
-                j = i
-                while j < n and text[j] in " \t\n":
-                    j += 1
-                if j >= n or text[j] not in "\"'":
-                    value = []
-                    while j < n and text[j] != ")":
-                        if text[j] == "\\":
-                            got, j = _css_escape(text, j)
-                            value.append(got)
-                        else:
-                            value.append(text[j])
-                            j += 1
-                    out.append(("url", "".join(value).strip()))
-                    i = j + 1
-                    continue
+        if kind in ("func", "("):
+            paren_seen = True
             stack.append("(")
-            parens.append(name)
+            parens.append(value.lower() if kind == "func" else "")
             continue
-        if ch == "[":
+        if kind == "[":
             stack.append("[")
-        elif ch == "]":
+        elif kind == "]":
             if stack and stack[-1] == "[":
                 stack.pop()
-        elif ch == ")":
+        elif kind == ")":
             if stack and stack[-1] == "(":  # [ ] の中の ) は塊を閉じない（CSS の読み方）
                 stack.pop()
                 parens.pop()
-        elif ch in ";{}" and not stack:
-            flush(ch == "{")
+        elif kind in (";", "{", "}") and not stack:
+            flush(kind == "{")
             prop, paren_seen, at_rule, prop_buf = None, False, False, []
-            i, ident = i + 1, []
             continue
-        elif ch == ":" and not stack and prop is None:
+        elif kind == ":" and not stack and prop is None:
             prop = "".join(prop_buf).strip().lower()
-        if _CSS_IDENT.match(ch):
-            ident.append(ch)
-        else:
-            ident = []
-        prop_buf.append(ch)
-        i += 1
+        prop_buf.append(("#" + value) if kind == "hash" else value)
     flush(False)
     return out
 
@@ -440,6 +551,19 @@ def _parser_text(text: str, kind: str):
         last = text.rfind("<![CDATA[")
         if re.search(r"<!\[(?!CDATA\[)", text) or (last >= 0 and text.find("]]>", last + 9) < 0):
             return text, "cdata"
+        # CDATA の中の `<`（`<?`・`<!--`・`<!`・`</` など）は、XML の読み手には字でも、印を外して読む html.parser には
+        # PI・注・宣言・終わりのタグの始まりになり、次の本物のタグを呑む（監査 段 1 の 13）。どの印から次の `]]>` までに
+        # `<` があっても断る（本物の CDATA は必ずどれかの区間に収まるので、注や属性の中の偽の印でも抜けない）。次の `]]>`
+        # と次の `<` の探しは前の答えを使い回して線形に。
+        end = lt = -2
+        for m in re.finditer(r"<!\[CDATA\[", text):
+            start = m.end()
+            if end != -1 and end < start:
+                end = text.find("]]>", start)
+            if lt != -1 and lt < start:
+                lt = text.find("<", start)
+            if lt != -1 and (end == -1 or lt < end):
+                return text, "cdata lt"
         # XML の CDATA の中身は字だが、ここでは印だけを外して中身もタグとして読む（読み手より多く見る側に倒す・
         # 版で CDATA の読み方が違う html.parser に印を見せない）。
         text = text.replace("<![CDATA[", " " * 9).replace("]]>", "   ")

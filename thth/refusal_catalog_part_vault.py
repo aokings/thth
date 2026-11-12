@@ -212,11 +212,12 @@ ENTRIES = {
         "頁の書き方に、配る側で効かないか、読み違えられる所があります（1 行目の（）: broken tag は閉じないタグか引用符の"
         "合わないタグ・style は inline の style か <style>（monban の CSP は style-src 'self' なので効きません）・entity は DTD の entity・"
         "comment は <!--> や <!---> や --!> や -- > の注（ブラウザと検査で注の終わりが割れる）・cdata は HTML の <![CDATA[ と "
-        "<![if …]> か閉じない CDATA・title は <title> の中のタグに見える字・old raw tag は xmp などの古いタグ・"
+        "<![if …]> か閉じない CDATA・cdata lt は XML と SVG の CDATA の中の <（検査の読み手が次のタグを見落とすため）・title は <title> の中のタグに見える字・old raw tag は xmp などの古いタグ・"
         "xml-stylesheet は XML と SVG の <?xml-stylesheet（XSLT で頁を組み直せるため））。",
         "タグを閉じて引用符をそろえ、見た目は style.css に移し、DTD の entity を外してから打ち直してください。注は "
         "<!-- 文 --> の形だけにし、字として見せる < は &lt; と書いてください。SVG は style を fill=\"#c00\" などの属性に"
-        "書き直すと通ります（Inkscape は「最適化した SVG」で保存、SVGO なら convertStyleToAttrs）。",
+        "書き直すと通ります（Inkscape は「最適化した SVG」で保存、SVGO なら convertStyleToAttrs）。CDATA の中の < は "
+        "CDATA を使わず &lt; と書いてください（RSS の本文の HTML も &lt;p&gt; のように escape すれば、読む側には同じに届きます）。",
         None,
         "見た目を style.css 1 枚にまとめると、頁を足しても同じ見た目にそろいます。"),
     "garden_guide_missing": _entry(

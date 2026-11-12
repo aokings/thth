@@ -599,10 +599,15 @@ def test_garden_check_SVGとXMLの注とxml_stylesheet(tmp_path, name, raw, deta
 
 def test_garden_check_XMLのCDATAは字として読む(tmp_path):
     feed = ('<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>t</title>'
-            '<item><title><![CDATA[抹茶 & ほうじ茶 <新しい>]]></title>'
-            '<description><![CDATA[<p>今週の <a href="https://kopicha.example.invalid/">新しい缶</a></p>]]></description>'
-            '</item></channel></rss>').encode("utf-8")
+            '<item><title><![CDATA[抹茶 & ほうじ茶 &lt;新しい&gt;]]></title>'
+            '<description>&lt;p&gt;今週の &lt;a href="https://kopicha.example.invalid/"&gt;新しい缶&lt;/a&gt;&lt;/p&gt;'
+            '</description></item></channel></rss>').encode("utf-8")
     assert "/feed.xml" in garden.check_dir(str(_site(tmp_path, extra={"feed.xml": feed})))["files"]
+    # CDATA の中の < は断る（監査 段 1 の 13）。RSS の本文の HTML は上のように escape すれば読み手に同じに届く。
+    cdata = feed.replace(b"&lt;p&gt;", b"<![CDATA[<p>]]>")
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"feed.xml": cdata})))
+    assert exc.value.code == "garden_markup_refused" and "cdata lt" in exc.value.detail
     for inner in (b"<script>x()</script>", b"<form>"):  # 字面の検査は CDATA の中でも止める（安全な側）
         bad = b'<?xml version="1.0"?><r><![CDATA[' + inner + b"]]></r>"
         with pytest.raises(wire.VaultRefused) as exc:
@@ -876,12 +881,107 @@ def test_garden_check_xlinkの前置きの普通の書き方は通る(tmp_path):
     assert "/a.svg" in garden.check_dir(str(_site(tmp_path, extra={"a.svg": svg.encode("utf-8")})))["files"]
 
 
+# 監査 段 1 の 12（と 9 の残り）: CSS の読み手が url( かどうかをブラウザと違う所で決め、後ろの文字列や注の始まりを
+# 取り違えていた（`#url(`・U+0080 以上の字に続く `url(`・`<!--url(`・文字列の外の `\` + 改行）。CSS Syntax Level 3 の
+# 字句（ident の字・escape・url( は ident のあとにだけ・CDO と CDC）どおりに切る。
+_IS = 'image-set("https://evil.example.invalid/x.png" 1x)'
+_HIDE = 'a{{x:{head}(x")/*")}} b{{background:' + _IS + '}} c{{content:"*/"}}'
+_BAD_URL = 'a{{b:{head}url(a ")}} c{{background:' + _IS + '}} d{{e:"}}'
+
+
+@pytest.mark.parametrize("css", [
+    _HIDE.format(head="#url"),
+    _HIDE.format(head="©url"),
+    _HIDE.format(head="　url"),
+    _HIDE.format(head=" url"),
+    _HIDE.format(head="\U0001f375url"),
+    _HIDE.format(head="ur\\\nl"),
+    _HIDE.format(head="url\\\n"),
+    _BAD_URL.format(head="x\\\n"),
+    _BAD_URL.format(head="<!--"),
+    _BAD_URL.format(head="x\\\r\n"),  # e2f36ce で通るようになった形
+    'a{x:x\\\nurl(a") ; --u:"https://evil.example.invalid/x.png"; background:image-set(var(--u) 1x) }',
+    '@charset #url(x")/*");@import "https://evil.example.invalid/x.css";a{content:"*/"}',  # 9 の残り
+    '@charset x\\\nurl(a ");@import "https://evil.example.invalid/x.css";a{b:"}',
+], ids=["hash", "copyright", "ideographic-space", "nbsp", "emoji", "ur-continue-l", "url-continue-paren",
+        "continue-bad-url", "cdo-bad-url", "crlf-continue-bad-url", "continue-var", "hash-import", "continue-import"])
+def test_garden_check_CSSのurlの切り方はブラウザと同じ(tmp_path, css):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))
+    assert exc.value.code == "garden_external_refused"
+
+
+@pytest.mark.parametrize("css", [
+    '.抹茶{color:#2a5}.ほうじ茶::before{content:"© 2026"}',
+    '<!-- body{background:url(images/a.webp)} -->',
+    '#top{background:url( "images/a.webp" )}#\\31 23{color:red}',
+    'p::before{content:"a\\\nb"}.x\\:y{color:red}',
+    'a{background:u\\72l(images/a.webp)}@media (min-width:40em){#a{margin:1.5em}}',
+], ids=["unicode-ident", "cdo-cdc", "hash-and-url", "string-continue", "escaped-url"])
+def test_garden_check_CSSの字句どおりの普通の書き方は通る(tmp_path, css):
+    assert "/style.css" in garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))["files"]
+
+
+def test_garden_check_CSSの字句の切り方():
+    names = [(kind, value) for kind, value in garden._css_tokens('#url( ©url( <!--url(a) x\\\nurl(b) u\\72l(c) 1url(')
+             if kind != "ws"]
+    assert names == [("hash", "url"), ("(", "("), ("func", "©url"), ("cdo", "<!--"), ("url", "a"),
+                     ("ident", "x"), ("delim", "\\"), ("url", "b"), ("url", "c"), ("num", "1url"), ("(", "(")]
+
+
+# 監査 段 1 の 13: XML・SVG の CDATA の中の字（`<?`・`<!--`・`<!`・`</`）で、読み手だけが PI・注・宣言を始め、次の
+# タグを見落としていた。CDATA の印から次の `]]>` までに `<` があれば断る（安全な側）。
+_S = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:z="http://www.w3.org/1999/xlink">'
+_X = '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:h="http://www.w3.org/1999/xhtml"><body>'
+_EVIL_IMG = '<image href="https://evil.example.invalid/x.png"/>'
+
+
+@pytest.mark.parametrize("name,raw", [
+    ("a.svg", _S + "<![CDATA[<?]]>" + _EVIL_IMG + "</svg>"),
+    ("b.svg", _S + "<![CDATA[<!--]]>" + _EVIL_IMG + "<![CDATA[-->]]></svg>"),
+    ("c.svg", _S + "<![CDATA[<!]]>" + _EVIL_IMG + "</svg>"),
+    ("d.svg", _S + "<![CDATA[</]]>" + _EVIL_IMG + "</svg>"),
+    ("e.svg", _S + '<![CDATA[<?]]><g onload="alert(1)"/></svg>'),
+    ("f.svg", _S + '<![CDATA[<?]]><a z:href="javascript:alert(1)"><text>x</text></a></svg>'),
+    ("g.svg", _S + '<![CDATA[<?]]><use href="https://evil.example.invalid/s.svg#a"/></svg>'),
+    ("h.xml", _X + '<![CDATA[<?]]><h:iframe src="https://evil.example.invalid/"/></body></html>'),
+    ("i.xml", _X + "<![CDATA[<?]]><h:script>alert(1)</h:script></body></html>"),
+    ("j.xml", _X + '<![CDATA[<?]]><h:base href="https://evil.example.invalid/"/></body></html>'),
+    ("k.xml", _X + '<![CDATA[<?]]><link rel="stylesheet" href="https://evil.example.invalid/x.css"/></body></html>'),
+    ("l.xml", _X + '<![CDATA[<?]]><img src="https://evil.example.invalid/x.png"/></body></html>'),
+    ("m.xml", _X + "<!-- <![CDATA[ -->" + '<img src="a.png"/>' + "<!-- ]]> --></body></html>"),  # 偽の印でも抜けない
+], ids=["pi", "comment", "decl", "endtag", "onload", "a-js", "use", "xhtml-iframe", "xhtml-script", "xhtml-base",
+        "xhtml-link", "xhtml-img", "fake-mark"])
+def test_garden_check_CDATAの中の山かっこは断る(tmp_path, name, raw):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={name: raw.encode("utf-8")})))
+    assert exc.value.code in ("garden_markup_refused", "garden_active_refused")
+    if exc.value.code == "garden_markup_refused":
+        assert "cdata lt" in exc.value.detail
+
+
+def test_garden_check_前置きつきの動く部品も字面で断る(tmp_path):
+    assert garden._ACTIVE_RAW.search("<![CDATA[<?]]><h:iframe src=a.html/>")  # 読み手が見落としても字面で止める
+    raw = _X + '<h:iframe src="a.html"/></body></html>'
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"a.xml": raw.encode("utf-8")})))
+    assert exc.value.code == "garden_active_refused"
+
+
+def test_garden_check_CDATAの中の山かっこの断りに直し方がある():
+    entry = rc.get("garden_markup_refused")
+    assert "cdata lt" in entry["why"] and "&lt;" in entry["fix"]["text"] and "RSS" in entry["fix"]["text"]
+
+
 # 速さ（監査 8b61eee の気づき）: 閉じない url( や注・CDATA・タグが多い物でも、検査が黙って固まらない。直す前は
 # 下の大きさで url( が 33 秒・注が 13 秒・CDATA が 9 秒・閉じない <a が 39 秒ほど掛かった（3.12・この端末）。
 @pytest.mark.parametrize("kind,text", [
     ("css", "a{b:url(" * 25000), ("css", "a{b:c}/*" * 25000), ("xml", "<r>" + "<![CDATA[" * 20000 + "]]></r>"),
     ("html", "<a " * 20000), ("html", '<p a="' * 20000), ("html", "<title" * 50000), ("html", "<!DOCTYPE" * 60000),
-], ids=["css-url", "css-comment", "xml-cdata", "html-open-tag", "html-open-attr", "html-title", "html-doctype"])
+    ("css", "#" * 10 ** 6), ("css", "\u00a9url(" * 200000), ("css", "\\\n" * 500000),
+    ("xml", "<r>" + "<![CDATA[a]]>" * 70000 + "</r>"),
+], ids=["css-url", "css-comment", "xml-cdata", "html-open-tag", "html-open-attr", "html-title", "html-doctype",
+        "css-hash", "css-nonascii-url", "css-continue", "xml-cdata-closed"])
 def test_garden_check_意地の悪い大きな字でも速い(kind, text):
     import time
     start = time.perf_counter()
