@@ -455,3 +455,33 @@ def test_記事の口座の退出の文はleaveの振る舞いと同じ(what, en
     page = PRIVACY.read_text(encoding="utf-8")
     assert en in _leave_section(page, "Stopping access and deleting data"), what
     assert ja in _leave_section(page, "停止とデータの削除"), what
+
+
+def test_5181_種類ごとの値段と下書きの上限はコードと同じ():
+    """5.18.1: 写しと下書きに種類ごとの値段が入った（160c664）。下書きの上限は draft.VARIANTS_IN_DRAFT_MAX。"""
+    from thth.shop import draft as shop_draft
+    page = PRIVACY.read_text(encoding="utf-8")
+    n = shop_draft.VARIANTS_IN_DRAFT_MAX
+    assert f"the price of each variant with its ID (at most {n} variants)" in page
+    assert f"種類ごとの値段とその ID（{n} 種類まで）" in page
+    assert "the price of each variant with the variant's ID" in page
+    assert "種類（バリエーション）ごとの値段とその種類の ID" in page
+
+
+def test_5181_Shopifyの送り直しの文は回数の上限があるときだけ():
+    """「数回だけ送り直す」は、shopify.py の小さくする回数・待つ回数に上限があることと結ぶ（4e4dd4d）。"""
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert 0 < shop_shopify.MAX_SHRINKS <= 3 and 0 < shop_shopify.THROTTLE_RETRIES <= 3
+    assert "sends the same fixed query again a few" in page
+    assert "同じ決まった問い合わせを、頁を小さくするか待ってから数回だけ送り直します" in page
+
+
+def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapterの口が合う():
+    """5.18.1（6760757）: WordPress の口は httpsafe.public_opener を使う。文があるのに口が外れたら赤。"""
+    from thth import httpsafe
+    page = PRIVACY.read_text(encoding="utf-8")
+    source = (ROOT / "thth" / "adapters" / "wordpress.py").read_text(encoding="utf-8")
+    assert callable(getattr(httpsafe, "public_opener", None))
+    assert re.search(r"httpsafe\.urlopen\([^\n]*via=httpsafe\.public_opener\(\)\)", source)
+    assert "connects only to an address" in _wp_section(page, "Blog articles on WordPress")
+    assert "引いた先が外の網のアドレスのときだけつなぎます" in _wp_section(page, "WordPress の記事")
