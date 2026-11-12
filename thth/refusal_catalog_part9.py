@@ -11,7 +11,7 @@ from __future__ import annotations
 _C = ("cli",)
 _SINCE = "5.15.0"
 # 5.17.0 で足す符丁（版はまだ 5.16.0 なので、目録の柵「今の版を越えない」に合わせて今の版を置く・版上げで直す）。
-_SINCE_SHOPIFY = "5.16.0"
+_SINCE_SHOPIFY = "5.17.0"
 _ADD = "thth shop add <店> --kind base --project <project> --by <名前>"
 _TOKEN = "thth shop token set <店> --expires <日付> --by <名前>"
 _WHOAMI = "thth shop whoami <店>"
