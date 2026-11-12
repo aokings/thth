@@ -162,12 +162,31 @@ ENTRIES = {
         "時間を置いて同じ命令を打ち直してください。続くなら、命令と時刻を添えて thth report file で開発のセッションへ知らせてください。",
         _ITEMS,
         "BASE Developers の変更履歴（https://apiv2.thebase.com/docs/changelog/）・Shopify の changelog（https://shopify.dev/changelog）・"
-        "STORES の API の頁（https://heyinc.github.io/retail-api-docs/）を見ると、何が変わったかの手がかりになります。" + _NOT_BASE),
+        "STORES の API の頁（https://heyinc.github.io/retail-api-docs/）を見ると、何が変わったかの手がかりになります。" + _NOT_BASE,
+        by_detail={
+            # Shopify の 1 回の点数の上限（5.18.1・`thth/shop/shopify.py` が添える語）。型の変わりでなく、点数の見込みの外れ。
+            "max_cost_exceeded": {
+                "fix": "Shopify の商品の問い合わせが 1 回の点数の上限（1000 点）を超え、1 頁を小さくして打ち直しても収まりませんでした。打ち直しても同じになるので、命令と時刻と --json の出力を添えて thth report file で開発のセッションへ知らせてください。",
+                "command": _ITEMS + " --json",
+                "better": "知らせが届けば、1 頁の件数と 1 商品で読む種類の数を Shopify の今の点数に合わせて直せます。それまでも thth shop whoami <店> で鍵と店の様子は確かめられます。"},
+        }),
     "store_unavailable": _entry(
-        "店（BASE・Shopify・STORES）に届かないか、一時的に応えませんでした（保守・5xx・混雑 429・Shopify の点数の上限 throttled・凍った店 shop_frozen）。再試行はしていません。",
+        "店（BASE・Shopify・STORES）に届かないか、一時的に応えませんでした（保守・5xx・混雑 429・Shopify の点数の上限 throttled・Shopify の中の誤り internal_error・凍った店 shop_frozen）。"
+        "Shopify の throttled は点数が戻るまで待って 2 回まで、商品を読むときの internal_error は頁を小さくして 2 回まで打ち直しました。ほかは再試行していません。",
         "少し時間を置いて打ち直してください。保守中なら、終わってから打ち直します。",
         _ITEMS,
-        "定期に読むなら間を広めに空けると、上限に当たりにくくなります。1 行目の（）が shop_frozen なら、Shopify の管理画面で店の契約を確かめてください。"),
+        "定期に読むなら間を広めに空けると、上限に当たりにくくなります。1 行目の（）が shop_frozen なら、Shopify の管理画面で店の契約を確かめてください。",
+        by_detail={
+            # Shopify の点数と中の誤り（5.18.1・`thth/shop/shopify.py` が添える語）。
+            "throttled": {
+                "fix": "Shopify の点数（同じアプリと店の 1 秒あたりの枠）が戻るまで、1 分ほど置いて打ち直してください。同じ店を読むほかの道具が動いていれば、終わってからにします。",
+                "command": _ITEMS,
+                "better": "定期に読むなら、ほかのアプリが店を読む時刻と重ならない時刻にすると、待たずに読めます（枠はアプリと店の組ごとで、プランが上がると大きくなります）。"},
+            "internal_error": {
+                "fix": "Shopify の中の誤りが続きました（商品を読むときは、頁を小さくして打ち直したあとです）。少し時間を置いて打ち直し、続くなら https://www.shopifystatus.com で Shopify の様子を確かめてください。",
+                "command": _ITEMS,
+                "better": "種類の多い商品が多い店でこれが続くなら、命令と時刻を添えて thth report file で開発のセッションへ知らせてください。1 頁の件数を店に合わせて直せます。"},
+        }),
     "store_request_rejected": _entry(
         "店がこの問い合わせを受け付けなかったか、THTH の柵（決まった送り先の決まった道に決まった中身だけ・リダイレクトは追わない）が"
         "打たずに止めました（1 行目の（）が redirect なら、店がリダイレクトを返しました）。",
@@ -175,7 +194,8 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> が通るかを先に見ると、鍵の問題か問い合わせの問題かを切り分けられます。" + _NOT_BASE),
     "store_read_incomplete": _entry(
-        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE と STORES は 100 件ずつ 5 頁、Shopify は 50 件ずつ 10 頁で、"
+        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE と STORES は 100 件ずつ 5 頁、Shopify は 25 件ずつ 20 頁"
+        "（点数が見込みより大きければ頁を小さくして頁の数を増やす）で、"
         "どれも 500 件まで。ちょうど 500 件の BASE と STORES の店もここに当たります）。"
         "読み切れないまま写しにすると、読めなかった商品を「消えた」と取り違えます。",
         "写しは進めていません。商品が上限より多い店は、開発のセッションへ thth report file で上限の相談をしてください。",

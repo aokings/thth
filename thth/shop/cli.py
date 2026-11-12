@@ -398,6 +398,23 @@ def _incomplete_note(read, cfg) -> str | None:
             "消えた・売り切れは言わず、写しも進めません")
 
 
+def _adjusted_note(read) -> str | None:
+    """点数の見込みが外れて読み方を変えたときの知らせ（Shopify・5.18.1）。読めた分はいつもどおり使える。"""
+    adjusted = read.get("adjusted")
+    if not adjusted:
+        return None
+    parts = []
+    if adjusted["shrinks"]:
+        parts.append(f"Shopify の点数が見込みより大きかったので、1 頁を {adjusted['shrinks'][0]['from']} 件から "
+                     f"{adjusted['page_first']} 件に減らして読みました")
+    if adjusted["throttled_retries"]:
+        parts.append(f"Shopify が混んでいたので {adjusted['throttled_retries']} 回待って打ち直しました")
+    cost = adjusted.get("requested_cost_max")
+    return ("・".join(parts) + "。読めた分はそのまま使えます"
+            + (f"（頼んだ点の最大 {cost}）" if cost else "")
+            + "。続くなら --json の read_adjusted を添えて thth report file で開発のセッションへ知らせると、頁の大きさを直せます")
+
+
 def _stock_text(stock) -> str:
     return "—（数えない）" if stock is None else str(stock)
 
@@ -406,7 +423,8 @@ def cmd_items(args) -> int:
     cfg, _token, when, client = _open(args)
     read = client.items()
     value = {"store": args.store, "complete": read["complete"], "pages": read["pages"], "items": read["items"],
-             "token": when, "note": _incomplete_note(read, cfg)}
+             "token": when, "note": _incomplete_note(read, cfg), "read_adjusted": read.get("adjusted"),
+             "read_note": _adjusted_note(read)}
     if args.json:
         _print(value)
         return 0
@@ -417,6 +435,8 @@ def cmd_items(args) -> int:
         price = "—" if row["price"] is None else f"{row['price']:,} 円"
         print(f"{row['id']}  {row['name']}  {price}  在庫 {_stock_text(row['stock'])}  {row['sales_status']}")
     print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
+    if value["read_note"]:
+        print(value["read_note"])
     _note(args, when, cfg["kind"])
     return 0
 
@@ -482,7 +502,8 @@ def cmd_diff(args) -> int:
     value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
              "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
              "accepted": accepted, "token": when, "note": _incomplete_note(read, cfg), "shop_switched": switched,
-             "variant_note": _variant_note(changes, accepted)}
+             "variant_note": _variant_note(changes, accepted), "read_adjusted": read.get("adjusted"),
+             "read_note": _adjusted_note(read)}
     if args.json:
         _print(value)
         return 0
@@ -491,6 +512,8 @@ def cmd_diff(args) -> int:
     if baseline:
         print(f"{args.store}: 基準を取りました（{len(read['items'])} 件）。違いはまだありません。次からの thth {COMMAND} diff が"
               "この写しと比べます")
+        if value["read_note"]:
+            print(value["read_note"])
         _note(args, when, cfg["kind"])
         return 0
     for change in changes:
@@ -501,6 +524,8 @@ def cmd_diff(args) -> int:
           + (f"・{value['note']}" if value["note"] else ""))
     if value["variant_note"]:
         print(value["variant_note"])
+    if value["read_note"]:
+        print(value["read_note"])
     _note(args, when, cfg["kind"])
     return 0
 

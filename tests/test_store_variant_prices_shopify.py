@@ -64,12 +64,8 @@ def test_Shopifyの商品の問い合わせは種類の値段を読み注文の�
     assert f"variants(first: {shopify.VARIANTS_FIRST})" in text and "legacyResourceId price" in text
     for word in ("mutation", "order", "customer", "cost", "inventoryitem"):
         assert word not in text.lower()
-    # 点数の見積り（Shopify の公式: 物は 1 点・scalar は 0 点・connection は first の数・1 回の上限 1000 点）。
-    # 商品 1 つ = 商品 1 + 値段の幅 2 + 画像 3 + 種類の connection（2 + 種類の数）。【推測】本物の店では未確認。
-    per_product = 1 + 2 + 3 + (2 + shopify.VARIANTS_FIRST)
-    assert 2 + shopify.PAGE_FIRST * per_product <= wire.SHOPIFY_QUERY_COST_MAX * 0.8
-    # 読める商品の数は前（50 件 × 10 頁）と同じ。
-    assert shopify.PAGE_FIRST * shopify.MAX_PAGES >= 500
+    # 点数は文から公式の決まりで数え直す（728 点・`tests/test_store_shopify_cost.py`）。読める商品の数は 500 のまま。
+    assert shopify.MAX_ITEMS >= 500
 
 
 @pytest.mark.parametrize("variants", [None, {"nodes": "x", "pageInfo": {"hasNextPage": False}},

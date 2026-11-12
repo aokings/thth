@@ -15,7 +15,9 @@
   `shopify_graphql` がここで組む）。外れたら打たずに `store_request_rejected（blocked_request）`。
 - **リダイレクトは同じホストでも追わない**（表に無い道へ運ばれうるので）。3xx は `(数, 本文)` で返り、口が
   `store_request_rejected（redirect）` に直す。
-- 再試行しない（Shopify の短い鍵の取り直しの 1 回だけが例外・`access.py`）。
+- 再試行しない。例外は Shopify だけで、短い鍵の取り直しの 1 回（`access.py`）と、点数の断りのあとに同じ文を
+  打ち直すとき（`THROTTLED` は待ってから・`MAX_COST_EXCEEDED` と `INTERNAL_SERVER_ERROR` は `first` を小さくして・
+  回数の上限は `shopify.py`）。打ち直しもこの柵を通る（文・変数の鍵・`first` の幅は同じ）。
 
 試験は `transport` を差し替える（本物の網に出ない）。`transport(method, url, headers, body=None) -> (status, body_bytes)`。
 GET のときは 3 つの引数で呼ぶ（BASE の今の偽の transport を直さずに済む）。4xx・5xx・3xx も (status, body) で返す。
@@ -57,7 +59,8 @@ SHOPIFY_GRAPHQL_PATH = f"/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
 # 商品 1 つで読む種類（variant）の数（5.18.1・種類ごとの値段で上下を決める・監査 5.18.0 の 5）。種類の値段は
 # `ProductVariant.price`（店の通貨の Money）と `legacyResourceId` だけを読む（在庫の品・品番・お客さんの欄は読まない）。
 # 点数（1 回 `SHOPIFY_QUERY_COST_MAX` まで・公式）は商品の頁の大きさ（shopify.PAGE_FIRST）と掛け算になるので、
-# 頁を 25 件にして見積りを上限の 8 割の内に置く（試験が縛る）。【推測】本物の店で点数を見たことはない。
+# 頁を 25 件にして見積り（728 点・数え方と出所は `shopify.py` の頭）を上限の 8 割の内に置く（試験が文から数え直して
+# 縛る）。【推測】本物の店で点数を見たことはない。外れたときは `shopify.py` が `first` を小さくして読み続ける。
 SHOPIFY_VARIANTS_FIRST = 20
 SHOPIFY_QUERY_COST_MAX = 1000
 # 問い合わせの文はこの 2 本だけ（呼ぶ側は名前で選ぶだけ・文を渡せない）。欄の名前は公式の `Shop`・`Product`・
