@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import jst
 
@@ -239,7 +240,7 @@ def _out_of_scope(project, allowed_names) -> bool:
     if allowed_names is None:
         return False
     from . import announce
-    return any(data.get("project") == project and data.get("media") != "hatenablog" and name not in allowed_names
+    return any(data.get("project") == project and not article_media.is_article_account(data) and name not in allowed_names
                for name, data in announce._raw_accounts())
 
 

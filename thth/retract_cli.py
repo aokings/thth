@@ -33,6 +33,7 @@ import json
 import os
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import approval as approval_mod
@@ -260,7 +261,7 @@ def _cmd_retract(args) -> int:
     except accounts_mod.AccountError as e:
         return _fail(args, 2, str(e))
     media = account_cfg.get("media")
-    if media == "hatenablog":
+    if article_media.is_article_media(media):
         # はてなブログの記事を消すのは配信原稿（op: delete）の承認と timer だけ（設計 4.0 S2 §9 の 7）。
         return _fail(args, 2, "unsupported_operation: はてなブログの記事は thth retract で消せません。"
                               "配信原稿を op: delete で書いて thth approve で承認し、timer が消します")

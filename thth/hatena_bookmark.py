@@ -299,7 +299,8 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
     （2 段目の読み直し——柵 2 は owner のロックの中で 1 回だけ打つ）。
     """
     from . import guard, principals
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "bookmarks"):
         raise BookmarkError("unsupported_operation")
     if op not in approval_mod.HATENA_BOOKMARK_OPS:
         raise BookmarkError("invalid_op")
@@ -640,7 +641,8 @@ def reconcile(account_name: str, cfg: dict, *, url=None, by=None, adapter_factor
     """
     from . import admin_log, principals, sent as sent_mod
     from .adapters.hatenabookmark import BookmarkHTTPError
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "bookmarks"):
         raise BookmarkError("unsupported_operation")
     principal_cfg = principals.check_account(cfg, account_name)
     want = None
@@ -794,7 +796,8 @@ def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, u
     （見せるためだけ・失敗しても断らない）。
     """
     from . import principals
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "bookmarks"):
         raise BookmarkError("unsupported_operation")
     if comment is None and tags is None:
         raise BookmarkError("invalid_request")

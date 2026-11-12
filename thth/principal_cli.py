@@ -43,8 +43,8 @@ def _find_example_dir() -> str:
     return EXAMPLE_DIR
 
 
-def example_path() -> str:
-    return os.path.join(_find_example_dir(), "principal-hatena.json")
+def example_path(kind: str = "hatena") -> str:
+    return os.path.join(_find_example_dir(), f"principal-{kind}.json")
 
 
 def _fail(reason, *, json_output=False) -> int:
@@ -54,31 +54,38 @@ def _fail(reason, *, json_output=False) -> int:
                         both=True, as_json=json_output, dump=lambda value: print(json.dumps(value, ensure_ascii=False)))
 
 
-def _parse_blog(value: str) -> dict:
+def _parse_blog(value: str, *, kind: str = "hatena") -> dict:
     """`<blog_id>=<lane>[,<lane>…]` を blogs[] の 1 行に。"""
     blog_id, sep, lanes = (value or "").partition("=")
     blog_id = blog_id.strip().lower()
     lanes = [lane.strip() for lane in lanes.split(",") if lane.strip()]
     if not sep or not principals.BLOG_ID_RE.fullmatch(blog_id) or not lanes:
         raise ValueError("blogs_invalid")
-    return {"blog_id": blog_id, "lanes": lanes, "syntax": "markdown"}
+    row = {"blog_id": blog_id, "lanes": lanes}
+    if kind == "hatena":
+        row["syntax"] = "markdown"   # はてなの記法の欄（WordPress には無い）
+    return row
 
 
-def build_ledger(name: str, *, hatena_id: str, blogs: list | None = None, owner: str | None = None) -> dict:
+def build_ledger(name: str, *, hatena_id: str | None = None, blogs: list | None = None, owner: str | None = None,
+                 kind: str = "hatena", wp_user: str | None = None) -> dict:
     """雛形 `accounts.example/principal-hatena.json` から 1 本ぶんを組み立てる。
 
     `owner`（4.0 S4 §4.1）は `--owner` で渡したときだけ書く。渡さなければ雛形の値も落とす
     （owner 無し＝主体の名が owner＝今までと同じ範囲）——雛形の名を黙って写さない。
     """
-    with open(example_path(), encoding="utf-8") as f:
+    with open(example_path(kind), encoding="utf-8") as f:
         data = json.load(f)
     data.pop("owner", None)
     if owner is not None:
         data["owner"] = owner
     data["principal"] = name
-    data["hatena_id"] = hatena_id
     data["token"] = f"~/.config/thth/{name}.token"
-    data["consumer"] = f"~/.config/thth/{name}.consumer"
+    if kind == "hatena":
+        data["hatena_id"] = hatena_id
+        data["consumer"] = f"~/.config/thth/{name}.consumer"
+    else:
+        data["wp_user"] = wp_user
     if blogs:
         data["blogs"] = blogs
         data["bookmark"] = {"lanes": []}
@@ -94,14 +101,26 @@ def cmd_add(args) -> int:
     if not accounts.name_is_safe(name):
         return _fail(f"invalid_principal_name: 主体の名前に使えない字が入っています: {name!r}"
                      "（英数字と `_`・`.`・`-` だけ）")
-    if not args.hatena_id or not principals.HATENA_ID_RE.fullmatch(args.hatena_id):
+    kind = getattr(args, "kind", None) or "hatena"
+    if kind == "hatena" and (not args.hatena_id or not principals.HATENA_ID_RE.fullmatch(args.hatena_id)):
         return _fail("hatena_id_invalid: --hatena-id が要ります（英数と `-`・`_` の 1〜32 字）")
+    wp_user = getattr(args, "wp_user", None)
+    if kind == "wordpress" and (not wp_user or not principals.WP_USER_RE.fullmatch(wp_user)):
+        return _fail("wp_user_invalid: --wp-user が要ります（WordPress のログイン名）")
+    if kind == "wordpress" and not args.blog:
+        return _fail("blogs_invalid: --blog <サイトのホスト名>=<lane> が要ります（WordPress の雛形にダミーのサイトは置きません）")
+    if (getattr(args, "site_url", None) and kind != "wordpress") or (kind == "hatena" and wp_user):
+        return _fail("principal_invalid: --site-url・--wp-user は --kind wordpress のときだけ使えます")
     try:
-        blogs = [_parse_blog(value) for value in (args.blog or [])]
+        blogs = [_parse_blog(value, kind=kind) for value in (args.blog or [])]
     except ValueError:
         return _fail("blogs_invalid: --blog は <blog_id>=<lane>[,<lane>…]（blog_id は小文字のホスト名）")
+    if getattr(args, "site_url", None):
+        for row in blogs:
+            row["site_url"] = args.site_url
     try:
-        data = build_ledger(name, hatena_id=args.hatena_id, blogs=blogs, owner=getattr(args, "owner", None))
+        data = build_ledger(name, hatena_id=args.hatena_id, blogs=blogs, owner=getattr(args, "owner", None),
+                            kind=kind, wp_user=wp_user)
         principals.validate(name, data)
     except FileNotFoundError as e:
         return _fail(f"雛形がありません: {e}")
@@ -120,7 +139,7 @@ def cmd_add(args) -> int:
     except OSError as e:
         return _fail(f"主体の台帳を書けませんでした: {path}（{e.strerror or e}）")
     try:
-        admin_log.append("principal_added", name, {"media": principals.MEDIA}, by=by,
+        admin_log.append("principal_added", name, {"media": principals.ARTICLE_KINDS[kind]["media"]}, by=by,
                          diff=admin_log.difference({}, data))
     except (OSError, ValueError, admin_log.AdminLogError):
         # 変更ログに残せない書き込みは残さない（`admin_log.guarded` と同じ規律）。
@@ -135,8 +154,10 @@ def cmd_add(args) -> int:
     print(f"書きました: {path}")
     for d in accounts.dummy_fields(data):
         print(f"**{d['field']} はダミーのままです**（{d['value']}）。{d['next']}")
-    print(f"次の一手: token と consumer を置く（ssh -t で thth principal auth {name} --by <名前>）→ "
-          f"thth account add <口座> --media hatenablog --project <lane> --principal {name} --blog <blog_id> --by <名前>")
+    media = principals.ARTICLE_KINDS[kind]["media"]
+    what = "token と consumer" if kind == "hatena" else "アプリケーションパスワード（標準入力か隠した入力）"
+    print(f"次の一手: {what}を置く（ssh -t で thth principal auth {name} --by <名前>）→ "
+          f"thth account add <口座> --media {media} --project <lane> --principal {name} --blog <blog_id> --by <名前>")
     return 0
 
 
@@ -682,8 +703,126 @@ def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, cons
     return 0 if probe_blogs(name, principals.load_principal(name), out=out) else 1
 
 
+WP_ADMIN_ADVICE = ("管理者の鍵です。出せますが、強すぎます。WordPress に「編集者」の利用者を作り、その利用者の"
+                   "アプリケーションパスワードに替えると、鍵が漏れたときの害が記事だけに収まります"
+                   "（thth principal auth {name} --force --by <名前> で入れ替え）")
+
+
+def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, prompts=None, read_stdin=None,
+                       isatty=None, out=print, err=None, adapter_factory=None) -> int:
+    """WordPress の主体の鍵（アプリケーションパスワード）を受け取る（5.16.0）。
+
+    **引数では受けない。** 端末なら隠した入力（`getpass`）、`--stdin` なら標準入力の 1 行目だけを読む。値は
+    画面・ログ・admin_log に出さない。書いたあと `users/me` を 1 回読み、鍵の利用者が主体の `wp_user` と同じか・
+    役割を確かめる（管理者の鍵なら断らずに勧める）。
+    """
+    from . import jst, redact
+    from .adapters import wordpress
+    from .lock import LockBusy
+    err = err or (lambda line: print(line, file=sys.stderr))
+    prompts = prompts or _getpass
+    isatty = isatty or sys.stdin.isatty
+    read_stdin = read_stdin or (lambda: sys.stdin.readline())
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        err(str(exc))
+        return 2
+    try:
+        p = principals.load_principal(name)
+    except principals.PrincipalError as e:
+        err(f"{e.code}: {e}")
+        return 2
+    subject = {"media": "wordpress"}
+    token_path = p["token"]
+    if forget:
+        try:
+            with principals.token_lock(name):
+                gone = principals.forget_token(name, consumer=False, locked=True)
+        except LockBusy:
+            err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
+            return 2
+        admin_log.append("principal_auth_forgotten", name, subject, by=by, diff={"token": [gone["token"], False]})
+        out(f"消しました: 鍵 {'あり→なし' if gone['token'] else '（もともと無い）'}。"
+            f"入れ直すのは thth principal auth {name} --by <名前>")
+        return 0
+    token_present = os.path.exists(token_path)
+    if token_present and not force:
+        err(f"token_present: 鍵が既にあります。入れ替えるなら --force、消すなら --forget"
+            f"（thth principal auth {name} --force --by <名前>）")
+        return 2
+    if use_stdin:
+        value = (read_stdin() or "").strip()
+    elif isatty():
+        value = (prompts(f"{p['wp_user']} のアプリケーションパスワード（表示されません）: ") or "").strip()
+    else:
+        err(NOT_A_TTY_WP)
+        return 2
+    if not wordpress.good_password(value):
+        err("token_invalid: アプリケーションパスワードの形ではありません（英数 24 字・4 字ごとの空白は可）。"
+            "何も書いていません。WordPress の「プロフィール」→「アプリケーションパスワード」で作った値を入れてください")
+        return 2
+    redact.register_secret(value)
+    data = {"schema": wordpress.TOKEN_SCHEMA, "wp_user": p["wp_user"], "application_password": value,
+            "obtained_at": jst.iso()}
+    try:
+        with principals.token_lock(name):
+            path = principals.write_token_locked(name, data)
+    except LockBusy:
+        err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
+        return 2
+    admin_log.append("principal_auth", name, subject, by=by, diff={"token": [token_present, True]})
+    out(f"鍵を書きました: {path}（0600・値は表示しません）")
+    return 0 if probe_wordpress(name, principals.load_principal(name), out=out, adapter_factory=adapter_factory) else 1
+
+
+def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> bool:
+    """各サイトの `users/me` を 1 回読む（鍵の確かめ）。読めなければ符丁と直し方を 1 行ずつ。"""
+    from . import refusal
+    from .adapters import wordpress
+    make = adapter_factory or wordpress.factory
+    ok = True
+    for blog in principal_cfg.get("blogs") or []:
+        cfg = {"blog_id": blog["blog_id"], "token": principal_cfg["token"], "media": "wordpress",
+               "principal": name}
+        try:
+            who = make(cfg, principal_cfg).whoami()
+        except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ）
+            who = {"ok": False, "error": getattr(exc, "code", "token_invalid"), "strong": None}
+        if who["ok"]:
+            out(f"{blog['blog_id']}: 読めました（鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}）")
+            if who["strong"]:
+                out(WP_ADMIN_ADVICE.format(name=name))
+        else:
+            ok = False
+            code = who["error"] or "wordpress_unreadable"
+            out(f"{blog['blog_id']}: 読めません（{code}）")
+            for line in refusal.tail(code):
+                out(f"  {line}")
+    return ok
+
+
+NOT_A_TTY_WP = ("not_a_tty: 端末ではありません。隠した入力で受けるので ssh -t で打つか、"
+                "--stdin を付けて標準入力から渡してください（鍵を引数には書かない）")
+
+
 def cmd_auth(args) -> int:
-    """`thth principal auth <主体> --by <名前> [--force|--forget|--forget-consumer] [--consumer]`。"""
+    """`thth principal auth <主体> --by <名前> [--force|--forget|--forget-consumer] [--consumer] [--stdin]`。
+
+    主体の種類で受け取り方が違う（はてなは OAuth 1.0a・WordPress はアプリケーションパスワード）。"""
+    try:
+        kind = principals.load_principal(args.name).get("kind")
+    except principals.PrincipalError:
+        kind = "hatena"   # 読めない断りは run_auth が出す
+    if kind == "wordpress":
+        if args.consumer or args.forget_consumer:
+            print("principal_invalid: --consumer・--forget-consumer ははてなの主体だけです", file=sys.stderr)
+            return 2
+        return run_auth_wordpress(args.name, by=args.by, force=args.force, forget=args.forget,
+                                  use_stdin=getattr(args, "stdin", False))
+    if getattr(args, "stdin", False):
+        print("principal_invalid: --stdin は WordPress の主体だけです（はてなは端末の対話で受けます）", file=sys.stderr)
+        return 2
     return run_auth(args.name, by=args.by, force=args.force, forget=args.forget,
                     forget_consumer=args.forget_consumer, consumer=args.consumer)
 
@@ -695,7 +834,13 @@ def register(sub) -> None:
     verbs = p.add_subparsers(dest="principal_verb", required=True)
     p_add = verbs.add_parser("add", help="雛形から主体の台帳を 1 本書く")
     p_add.add_argument("name")
-    p_add.add_argument("--hatena-id", dest="hatena_id", required=True)
+    p_add.add_argument("--kind", choices=principals.KINDS, default="hatena",
+                       help="主体の種類（hatena・wordpress）。既定は hatena")
+    p_add.add_argument("--hatena-id", dest="hatena_id", default=None, help="hatena のとき: はてな ID（必須）")
+    p_add.add_argument("--wp-user", dest="wp_user", default=None,
+                       help="wordpress のとき: WordPress のログイン名（必須・鍵を作った利用者）")
+    p_add.add_argument("--site-url", dest="site_url", default=None,
+                       help="wordpress のとき（任意）: サイトの入口。既定は https://<blog_id>。手元の試しの localhost だけ http")
     p_add.add_argument("--blog", action="append",
                        help="<blog_id>=<lane>[,<lane>…]（何度でも）。省くと雛形のダミー（demo.hatenablog.com）")
     p_add.add_argument("--owner", default=None,
@@ -729,4 +874,6 @@ def register(sub) -> None:
     mode.add_argument("--forget-consumer", dest="forget_consumer", action="store_true",
                       help="token と consumer を消す")
     p_auth.add_argument("--consumer", action="store_true", help="consumer key／secret を入れ直す（token は触らない）")
+    p_auth.add_argument("--stdin", action="store_true",
+                        help="WordPress の主体だけ: アプリケーションパスワードを標準入力の 1 行目から読む（引数では受けない）")
     p_auth.set_defaults(func=cmd_auth)

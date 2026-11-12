@@ -49,13 +49,23 @@ LINT_CODES = ("article_required", "article_source_missing", "invalid_article_sou
               # （`_ledger_for` の `delivery_state_<状態>`。`delivery_unknown`＝台帳に無い、に丸めない）。
               *("delivery_state_" + s for s in deliveries_mod.STATES),
               # 4.0 S5 §4.4: 本文・題・カテゴリ・画像のどれも変わっていない更新。
-              "update_no_change")
+              "update_no_change",
+              # 5.16.0: 出し先ごとの断り（WordPress）。公開の状態・その出し先で受けない操作・本文の記法・画像。
+              "send_as_invalid", "send_as_unsupported", "send_as_create_only", "op_unsupported_for_media",
+              "wp_markup_unsupported", "wp_link_scheme_unsupported", "wp_image_unsupported")
 # S2・S3 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
 # 丸めずにこの符丁のまま返す（人が直す先が違う）。
 S3_IMAGE_REFUSALS = ("image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
 S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE_REFUSALS + ("update_no_change",)
 # 4.0 S5 §5.4: 衝突のままでも削除を承認できる理由（外で手直しされた・別の記法で出た）。
 DELETABLE_CONFLICTS = ("readback_changed", "syntax_mismatch")
+# 5.16.0: 出し先ごとに受ける操作（無ければすべて）。WordPress の消す（ごみ箱へ）は後の版。
+OPS_BY_KIND = {"wordpress": ("create", "update")}
+SEND_AS = ("publish", "draft", "future")
+SEND_AS_LABELS = {"publish": "公開", "draft": "下書き", "future": "予約", "keep": "今の公開の状態のまま"}
+# 承認の 1 段目の表示: 送る状態の言い方（はてなは今までの文のまま）と、送る先のサイトを見せる種類。
+SEND_NOTES = {"hatena": "draft=no"}
+SHOW_SITE = frozenset({"wordpress"})
 _MESSAGES = refusal_catalog.fix_view("hatena_entry._MESSAGES")
 
 
@@ -73,8 +83,9 @@ def is_hatena(account_cfg) -> bool:
     return principals.uses_principal(account_cfg)
 
 
-def message(code: str) -> str:
-    return f"{code}: {_MESSAGES.get(code, code)}"
+def message(code: str, detail: str | None = None) -> str:
+    extra = f"（{detail}）" if detail else ""
+    return f"{code}: {_MESSAGES.get(code, code)}{extra}"
 
 
 # ------------------------------------------------------------------ 欄を読む
@@ -143,6 +154,75 @@ def article_rev(path: str, data: bytes) -> tuple:
     return "content", hashlib.sha256(data).hexdigest()
 
 
+# ------------------------------------------------------------------ 出し先ごとの形（5.16.0）
+
+def send_as_of(fm) -> str:
+    return _text(fm, "send_as") or "publish"
+
+
+def target(fm, account_cfg, op, images, body) -> dict:
+    """出し先（口座の媒体）ごとの形: 受ける操作・公開の状態（`send_as`）・画像・送る本文（WordPress は HTML）。
+
+    戻り値は `{"kind", "send_as", "body", "site_url", "site_host"}`。外れれば `EntryError`（何も書かない）。
+    出し先の違いは主体の種類の表（`principals.ARTICLE_KINDS`）から引く——ここで媒体名では分けない。
+    """
+    from . import principals, wp_html
+    kind = principals.kind_for_media((account_cfg or {}).get("media")) or "hatena"
+    spec = principals.ARTICLE_KINDS[kind]
+    if op not in OPS_BY_KIND.get(kind, OPS):
+        raise EntryError("op_unsupported_for_media", spec["label"])
+    send_as = send_as_of(fm)
+    if send_as not in SEND_AS:
+        raise EntryError("send_as_invalid")
+    if "send_as" in fm and op != "create":
+        raise EntryError("send_as_create_only")
+    if send_as not in spec["send_as"]:
+        raise EntryError("send_as_unsupported", spec["label"])
+    if images and not spec["images"]:
+        raise EntryError("wp_image_unsupported", images[0]["path"])
+    if op != "delete" and kind in BODY_RENDER:
+        try:
+            body = BODY_RENDER[kind](body)
+        except wp_html.WpMarkupError as exc:
+            raise EntryError(exc.code, exc.detail) from None
+    out = {"kind": kind, "send_as": send_as, "body": body, "site_url": None, "site_host": None}
+    blog_id = str((account_cfg or {}).get("blog_id") or "").strip().lower()
+    try:
+        principal_cfg = principals.load_principal((account_cfg or {}).get("principal"))
+    except (accounts_mod.AccountError, TypeError, ValueError):
+        principal_cfg = None   # 主体の突き合わせは別の段が断る
+    if principal_cfg is not None:
+        out["site_url"] = principals.site_url(principal_cfg, blog_id)
+        out["site_host"] = principals.site_host(principal_cfg, blog_id)
+    return out
+
+
+def _wordpress_sha(kwargs, t) -> str:
+    if not t["site_url"]:
+        raise EntryError("delivery_unknown")
+    return approval_mod.compute_wp_entry_sha(
+        account=kwargs["account"], site_url=t["site_url"], blog_id=kwargs["blog_id"], op=kwargs["op"],
+        entry_id=kwargs["entry_id"], base_readback_sha=kwargs["base_readback_sha"], title=kwargs["title"],
+        categories=kwargs["categories"], body=kwargs["body"], article=kwargs["article"], form=kwargs["form"],
+        status=t["send_as"] if kwargs["op"] == "create" else "keep", publish_at=kwargs["publish_at"])
+
+
+# 主体の種類 → 承認の指紋（はてなは `thth-hatena-entry-1` のまま・WordPress は `thth-wp-entry-1`）。
+FINGERPRINTS = {
+    "hatena": lambda kwargs, t: approval_mod.compute_hatena_entry_sha(**kwargs),
+    "wordpress": _wordpress_sha,
+}
+
+
+def _wp_render(body):
+    from . import wp_html
+    return wp_html.render(body)
+
+
+# 主体の種類 → 送る本文の形（無ければ Markdown のまま）。変換したあとの本文が指紋に入る。
+BODY_RENDER = {"wordpress": _wp_render}
+
+
 # ------------------------------------------------------------------ lint
 
 def lint_errors(fm, account_cfg) -> list:
@@ -185,6 +265,15 @@ def lint_errors(fm, account_cfg) -> list:
                             committed_commit(path, data)
                         except EntryError as exc:
                             out.append(message(exc.code))
+                        try:
+                            target(fm, account_cfg, op, _images, _body)
+                        except EntryError as exc:
+                            out.append(message(exc.code, exc.detail))
+    if op == "delete" or (op in OPS and "send_as" in fm and op != "create"):
+        try:
+            target(fm, account_cfg, op, [], "")
+        except EntryError as exc:
+            out.append(message(exc.code, exc.detail))
     delivery = _text(fm, "delivery")
     if op in ("update", "delete") and not delivery:
         out.append(message("delivery_required"))
@@ -408,6 +497,8 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
         data, body, images = _render(account_cfg, source, path, title=title)
         rev_kind, rev = article_rev(path, data)
         commit = committed_commit(path, data)
+    t = target(fm, account_cfg, op, images, body)
+    body = t["body"]
     entry_id = ledger.get("entry_id") if (ledger and op != "create") else None
     base = (ledger.get("readback_sha") or "") if (ledger and op != "create") else ""
     if op != "create" and not entry_id:
@@ -418,7 +509,7 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
                   images=[{"path": r["path"], "source_sha256": r["source_sha256"]} for r in images],
                   article=article, form=form, publish_at=fm.get("publish_at"))
     try:
-        sha = approval_mod.compute_hatena_entry_sha(**kwargs)
+        sha = FINGERPRINTS[t["kind"]](kwargs, t)
     except ValueError as exc:
         raise EntryError(str(exc)) from None
     if op == "update" and given is None and ledger is not None and _unchanged(account_name, ledger, body, title,
@@ -432,7 +523,8 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
             "article_commit": commit,
             "entry_id": entry_id, "base_readback_sha": base, "blog_id": blog_id,
             "principal": account_cfg.get("principal"), "project": account_cfg.get("project"),
-            "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha}
+            "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha,
+            "send_as": t["send_as"], "site_url": t["site_url"], "site_host": t["site_host"], "kind": t["kind"]}
 
 
 # ------------------------------------------------------------------ 何を出したか（4.0 S5）
@@ -788,7 +880,12 @@ def image_status_text(principal, sha256) -> str:
 def display_lines(m: dict, *, path: str, digest: str) -> list:
     """承認の 1 段目の表示（設計 §6.3）。本文は全文（update は差分・delete は題と URL）。"""
     head = (f"配信原稿  {m['account']} → {m['blog_id']}（主体 {m['principal']}・レーン {m['project']}）")
-    when = f"{m['publish_at']}（timer が draft=no で送る）"
+    kind = m.get("kind", "hatena")
+    # 直す・消すは公開の状態を変えない（指紋も `keep`）。
+    send_as = m.get("send_as") if m["op"] == "create" else "keep"
+    state = SEND_NOTES.get(kind) or SEND_AS_LABELS.get(send_as, "公開")
+    where = f"・{m['site_url']}" if kind in SHOW_SITE and m.get("site_url") else ""
+    when = f"{m['publish_at']}（timer が {state} で送る{where}）"
     lines = [head, f"操作: {OP_LABELS[m['op']]}   公開: {when}"]
     ledger = m.get("ledger") or {}
     if m["op"] != "delete":

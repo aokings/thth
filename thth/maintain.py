@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import jst
@@ -200,7 +201,7 @@ def inspect(account_name: str, *, now) -> dict:
     except accounts_mod.AccountError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
 
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         return _inspect_hatena(row, account_cfg)
 
     if account_cfg.get('media') == 'x':
@@ -313,7 +314,7 @@ def _inspect_hatena(row: dict, account_cfg: dict) -> dict:
     """
     import os
     from . import principals
-    from .adapters import hatena_common
+    from .adapters import hatena_common, wordpress
     name = account_cfg.get("principal")
     try:
         principal_cfg = principals.load_principal(name)
@@ -326,12 +327,15 @@ def _inspect_hatena(row: dict, account_cfg: dict) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             token = json.load(f)
-        hatena_common.check_token(token, principal_cfg.get("hatena_id"))
+        kind = principal_cfg.get("kind")
+        check, note = {"hatena": (hatena_common.check_token, "はてなの OAuth・主体の token"),
+                       "wordpress": (wordpress.check_token, "WordPress のアプリケーションパスワード・主体の token")}[kind]
+        check(token, principal_cfg.get(principals.ARTICLE_KINDS[kind]["id_field"]))
     except Exception:  # noqa: BLE001 — 読めない・壊れている・形が違う（値は文に入れない）
         return _finish(row, UNREADABLE, detail="token_invalid（主体の token の形が違います）")
     row["obtained_at"] = token.get("obtained_at") if isinstance(token.get("obtained_at"), str) else None
     row["no_expiry"] = True
-    return _finish(row, OK, detail="期限を持たないトークンです（はてなの OAuth・主体の token）")
+    return _finish(row, OK, detail=f"期限を持たないトークンです（{note}）")
 
 
 def inspect_adaccount(name: str, *, now) -> dict:

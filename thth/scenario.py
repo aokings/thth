@@ -24,6 +24,7 @@ import os
 import posixpath
 import re
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import jst
 
@@ -399,7 +400,7 @@ def _read_item(path, account_names, accounts):
     if account not in account_names or account not in accounts:
         return None
     medium = accounts[account].get("media")
-    if medium == "hatenablog":
+    if article_media.is_article_media(medium):
         head = _plain(fm.get("title"))
     elif head is None and not bundle_mod.is_bundle_text(text):
         section = queuefile.extract_section(qf.body, medium or "") or ""
@@ -431,7 +432,7 @@ def manuscript_head(path, medium) -> str | None:
             line = first.strip().split("\n", 1)[0] if first else ""
         else:
             qf = queuefile.parse_text(text, path)
-            if medium == "hatenablog":
+            if article_media.is_article_media(medium):
                 line = _plain(qf.front_matter.get("title")) or ""
             else:
                 line = (queuefile.extract_section(qf.body, medium or "") or "").strip().split("\n", 1)[0]

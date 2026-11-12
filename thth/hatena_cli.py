@@ -23,7 +23,8 @@ def cmd_collect(args) -> int:
     except accounts_mod.AccountError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "reactions"):
         print("はてなの口座ではありません（反応の採取ははてなブログの口座だけ）: not_hatena", file=sys.stderr)
         return 2
     if args.delivery is not None and not deliveries.is_delivery_id(args.delivery):

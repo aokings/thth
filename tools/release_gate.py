@@ -65,6 +65,9 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     "oauth": ("thth/oauth.py", "thth/ads/auth.py"),
     # 店を読む口（11/12・設計 ショップとWordPressの口 §6）: 新しい読む口・鍵の受け取り・queue に下書きを書く口。
     "store_read": ("thth/shop/*",),
+    # WordPress に記事を出す口（5.16.0）: 鍵（アプリケーションパスワード）を送る adapter と、承認の指紋に入る
+    # 本文の変換（規則が変われば承認が古くなる・生の HTML を通さない柵）。
+    "wordpress_write": ("thth/adapters/wordpress.py", "thth/wp_html.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

@@ -36,6 +36,21 @@ REGISTRY = {
 
 UnknownMedium = base.UnknownMedium
 
+# **記事の出し先**（主体を通す口座・配信の台帳の道）: 媒体名 → adapter のモジュール（`thth.adapters.<名>`）。
+# 各モジュールは `factory(account_cfg, principal_cfg)` を持つ。**足すのはここに 1 行だけ**——配信の道
+# （`hatena_publish`）は媒体名で分岐しない（`thth/article_media.py` と対）。
+ARTICLE_ADAPTERS = {
+    "hatenablog": "hatenablog",
+    "wordpress": "wordpress",
+}
+
+
+def article_module(media):
+    """記事の出し先の adapter のモジュール。知らなければ None（呼び手が `unsupported_medium` で断る）。"""
+    import importlib
+    name = ARTICLE_ADAPTERS.get(media) if isinstance(media, str) else None
+    return importlib.import_module(f"{__name__}.{name}") if name else None
+
 
 def known_media() -> list:
     """知っている媒体の名前（断り文にそのまま出す）。"""
@@ -85,6 +100,6 @@ def make_adapter(account_cfg: dict, token: dict | None):
     return cls.from_account(account_cfg or {}, token or {})
 
 
-__all__ = ["REGISTRY", "UnknownMedium", "adapter_class", "base",
+__all__ = ["ARTICLE_ADAPTERS", "REGISTRY", "UnknownMedium", "adapter_class", "article_module", "base",
            "capabilities_for", "count_text_for", "known_media", "make_adapter",
            "BlueskyAdapter", "FacebookAdapter", "InstagramAdapter", "MastodonAdapter", "ThreadsAdapter", "XAdapter"]

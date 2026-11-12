@@ -130,6 +130,7 @@ import os
 import re
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import jst
 
@@ -266,7 +267,7 @@ def _stock_events(name, cfg, now, sent_rows):
     使っていない口座・はてなは対象にしない）。在庫は承認済みで時刻が未来の予約（待ちの行は除く）で、
     最後の時刻が `STOCK_FLOOR_HOURS` 時間より先まで届いていれば足りている。
     """
-    if cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(cfg):
         return []
     since = now - datetime.timedelta(days=STOCK_ACTIVE_DAYS)
     recent = [row for row in sent_rows if row["kind"] == "published"
@@ -300,7 +301,7 @@ def _not_after_events(name, cfg, now):
     <原稿>|<期限>")[:24]`——期限を延ばして承認し直せば別の id（延ばした期限も過ぎたらもう 1 度出る）。
     連投（`thth: 2`）は `thth schedule` に載らないのでここにも出ない。
     """
-    if cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(cfg):
         return []
     from . import report as report_mod
     out = []
@@ -334,7 +335,7 @@ def _thin_events(name, cfg, now):
     見る。数えるのは根の投稿だけ（返信は公開・予約とも数えない）。予約は承認済みで時刻が未来のもの
     （待ちの行は除く・`_stock_events` と同じ拾い方）。
     """
-    if cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(cfg):
         return []
     from . import sent as sent_mod
     now = jst.to_jst(now)
@@ -691,7 +692,7 @@ def _state_events(name, cfg, now=None):
         out.append(_event("inflight_open", name, at, at,
                           row.get("delivery") or row.get("post_id") or file_name,
                           f"公開の結果待ち（{file_name or '原稿名なし'}）", ongoing=True))
-    if cfg.get("media") == "hatenablog" and cfg.get("principal"):
+    if article_media.is_article_account(cfg) and cfg.get("principal"):
         from . import principals
         try:
             row = principals.stopped(cfg["principal"])
@@ -897,7 +898,7 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                 cannot_say.add("inbox_unreadable")
         except Exception:  # noqa: BLE001
             cannot_say.add("inbox_unreadable")
-        if cfg.get("media") == "hatenablog":
+        if article_media.is_article_account(cfg):
             try:
                 rows, broken = _delivery_events(name)
                 events += rows

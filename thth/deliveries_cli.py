@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import deliveries as deliveries_mod
 from . import jst
@@ -184,7 +185,7 @@ def announcements(project, delivery_ids, *, allowed_names=None):
     if not delivery_ids:
         return rows, broken
     for name, data in announce._raw_accounts():
-        if data.get("project") != project or data.get("media") == "hatenablog":
+        if data.get("project") != project or article_media.is_article_account(data):
             continue
         if allowed_names is not None and name not in allowed_names:
             continue

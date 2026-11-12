@@ -566,8 +566,8 @@ def _summary(account, request, cfg):
 
 def _bookmark_batch_status(account, request, cfg):
     """4.1（設計 S4 §20.9）: 手元の `thth bookmark batch-status --json` と同じ形。"""
-    from . import bookmark_batch, principals
-    if not principals.uses_principal(cfg):
+    from . import article_media, bookmark_batch, principals
+    if not article_media.has(cfg, 'bookmarks'):
         error('unsupported_operation')
     try:
         return bookmark_batch.status(account, batch=request.get('batch'))

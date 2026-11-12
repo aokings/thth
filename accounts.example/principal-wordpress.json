@@ -1,0 +1,15 @@
+{
+  "principal": "demo-wordpress",
+  "kind": "wordpress",
+  "wp_user": "demo-editor",
+  "owner": "demo",
+  "token": "~/.config/thth/demo-wordpress.token",
+  "auth": "app_password",
+  "blogs": [
+    {"blog_id": "blog.example.com", "lanes": ["demo"]}
+  ],
+  "daily_max_posts": 6,
+  "daily_max_retracts": 3,
+  "burst": {"count": 3, "minutes": 30},
+  "user_agent_contact": "https://thth.me/"
+}

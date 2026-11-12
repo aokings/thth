@@ -583,7 +583,8 @@ def load_account(name: str) -> dict:
             f"（口座の行は {'・'.join(limits_config.ACCOUNT_ROWS)}）・値は日の行が 0 以上の整数・窓の行が "
             f"{{\"count\": 1〜, \"minutes\": 1〜1440}}・write.floor を上げるなら reason）") from None
     # はてなの口座の相対リンクの基準（設計 4.0 S2 §4.2）。任意・https だけ。
-    if "link_base" in data and data.get("media") == "hatenablog" and not valid_link_base(data["link_base"]):
+    from . import article_media
+    if "link_base" in data and article_media.is_article_account(data) and not valid_link_base(data["link_base"]):
         raise AccountError(f"{name}: 台帳の link_base が受け取れません（invalid_link_base・https の URL・"
                            f"query と # は付けない）")
     out = AccountConfig(data)
@@ -593,7 +594,7 @@ def load_account(name: str) -> dict:
     # **はてなの口座は主体の台帳と突き合わせる**（設計 4.0 S1 §3.3 の 1〜5）。外れれば
     # `AccountError`（`principals.PrincipalError`・符丁つき）。ほかの媒体は `principal` を
     # 書いてあっても読まない（SNS の口座の読みは 1 バイトも変えない・T-1c）。
-    if out.get("media") == "hatenablog":
+    if article_media.is_article_account(out):
         from . import principals
         principal_cfg = principals.check_account(out, name)
         # S2 が送れるのは Markdown のブログだけ（設計 4.0 S2 §5 の 1）。欄が無ければ markdown。

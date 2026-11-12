@@ -42,7 +42,9 @@ MUTABLE_FIELDS = ("article_source", "form", "queue_file", "entry_id", "edit_uri"
                   # 4.0 S5 §4.2: 最後に承認・公開した題とカテゴリ（何を出したかの記録・指紋の材料ではない）。
                   "title", "categories",
                   # 4.0 S5 §5.6（実装で決めたこと）: はてなが前に返した題とカテゴリ（外での手直しの比べ先）。
-                  "readback_title", "readback_categories")
+                  "readback_title", "readback_categories",
+                  # 5.16.0: 作るときに頼んだ公開の状態（WordPress の下書き。公開なら書かない）。
+                  "send_as")
 # history の行の固定の鍵（ほかの鍵は値があるときだけ足す）。
 _ROW_FIXED = ("seq", "state", "at")
 MAX_BYTES = 1048576

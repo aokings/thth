@@ -12,6 +12,7 @@ tester の認可画面に降りてくるのは 5 つだけだった（設計 §2
 """
 from __future__ import annotations
 
+from . import article_media
 from . import leave_gate
 
 import json
@@ -135,8 +136,8 @@ def _diagnose(account_name: str) -> dict:
     account_cfg = accounts_mod.load_account(account_name)
     token = accounts_mod.load_token(account_cfg)
 
-    if account_cfg.get('media') == 'hatenablog':
-        return _diagnose_hatenablog(account_name, account_cfg)
+    if article_media.is_article_account(account_cfg):
+        return _diagnose_article(account_name, account_cfg)
 
     if account_cfg.get('media') == 'x':
         observation = read_observation(account_name) or {}
@@ -192,6 +193,41 @@ def _diagnose(account_name: str) -> dict:
             "auth_via": token.get("auth_via") if token.get("auth_via") in ("relay","paste","token_set") else None,
             "auth_observed_at": (read_observation(account_name) or {}).get("auth_observed_at"),
             "probes": results, **required_scope_info}
+
+
+def _diagnose_article(account_name: str, account_cfg: dict) -> dict:
+    """記事の口座の診断（主体の種類の表から引く。はてなは `_diagnose_hatenablog`・WordPress は `_diagnose_wordpress`）。"""
+    from . import principals as principals_mod
+    kind = principals_mod.kind_for_media(account_cfg.get("media")) or "hatena"
+    return _ARTICLE_DIAGNOSE[kind](account_name, account_cfg)
+
+
+def _diagnose_wordpress(account_name: str, account_cfg: dict) -> dict:
+    """WordPress の口座（5.16.0）: adapter が作れるか（鍵の有無と形）と、`users/me` の GET 1 回（鍵の利用者・役割）。
+    書き込みは呼ばない。管理者の鍵なら断らずに、編集者の利用者を作ってその鍵にするよう勧める。"""
+    from . import hatena_publish, principals as principals_mod
+    from .adapters import wordpress
+    principal_cfg = principals_mod.load_principal(account_cfg["principal"])
+    name = principal_cfg["principal"]
+    try:
+        adapter = wordpress.factory(account_cfg, principal_cfg)
+    except hatena_publish.AdapterUnavailable as exc:
+        return {"account": account_name, "probes": [],
+                "error": f"WordPress の鍵が使えません（{exc.code}）。thth principal auth {name} --by <名前> を先に"}
+    who = adapter.whoami()
+    if who["ok"]:
+        detail = f"鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}"
+        if who["strong"]:
+            detail += ("。管理者の鍵です（出せますが、強すぎます）。WordPress に「編集者」の利用者を作り、"
+                       "その利用者のアプリケーションパスワードに替えると、漏れたときの害が小さくなります")
+    else:
+        detail = f"読めません（{who['error']}）"
+    probe = {"key": "wp_users_me", "label": f"REST の users/me（{account_cfg.get('blog_id')}）",
+             "permission": "edit_posts", "ok": bool(who["ok"]), "detail": detail, "http_status": None,
+             "entries": None, "syntax": None}
+    return {"account": account_name, "handle": account_cfg.get("handle"),
+            "username": principal_cfg["wp_user"], "user_id": "", "scopes_recorded": None,
+            "auth_via": "app_password", "auth_observed_at": None, "probes": [probe], "error": None}
 
 
 def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
@@ -630,7 +666,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     # 無い」（2）でもなく、**診断はできたが×がある**ので、probe が落ちたときと
     # 同じ 1。台帳の値は人が直すもので、道具は測るだけ（設計 §4.2）。
     dummies = accounts_mod.dummy_fields(account_cfg)
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         # はてなの口座（設計 4.0 S1 §3.3）は主体の台帳の雛形の値も名指しする（`principal.<欄>`）。
         # 主体の台帳は `load_account` が読めたので、ここで読めないことは無い。
         from . import principals as principals_mod
@@ -744,3 +780,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     if topics_shelf:
         return 2
     return 1 if (failed or dummies) else 0
+
+
+# 主体の種類 → 記事の口座の診断（出し先を足すときはここに 1 行）。
+_ARTICLE_DIAGNOSE = {"hatena": _diagnose_hatenablog, "wordpress": _diagnose_wordpress}

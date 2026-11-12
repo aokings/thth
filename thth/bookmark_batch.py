@@ -390,7 +390,8 @@ def _forecast(items, budget, *, now) -> dict:
 def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
     """1 段目の材料（何も書かない・JSON に書ける形）。まとめ全体の断りは `BatchError`。"""
     from . import guard, hatena_bookmark, principals
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "bookmarks"):
         raise BatchError("unsupported_operation")
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     entries = parse_text(text)
@@ -934,7 +935,8 @@ def _check_integrity(batch) -> bool:
 def run_due(account_name: str, cfg: dict, *, log=print, now=None, wait=0, adapter_factory=None) -> dict | None:
     """timer の 1 回分（`thth run` の末尾）。待ちが無ければ None（ロックも取らない）。"""
     from . import core, lock as lock_mod, principals
-    if not principals.uses_principal(cfg):
+    from . import article_media
+    if not article_media.has(cfg, "bookmarks"):
         return None
     if not has_pending(account_name):
         # 待ちが無ければ付けない。終わったまとめの片づけだけ（消すものがあるときだけロックを取る・中-3）。

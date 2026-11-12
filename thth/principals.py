@@ -31,10 +31,25 @@ from . import accounts, jst, server_files
 
 MEDIA = "hatenablog"
 PRINCIPALS_DIR_ENV = "THTH_PRINCIPALS_DIR"
-KINDS = ("hatena",)
-AUTHS = ("oauth", "wsse")
-REQUIRED_FIELDS = ("principal", "kind", "hatena_id", "token", "blogs")
 HATENA_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+# WordPress のログイン名。WordPress は英数と ` _.-@` を許す。前後の空白と先頭の `@` は不可（口座の handle は
+# 先頭の `@` を落として比べる）。
+WP_USER_RE = re.compile(r"[A-Za-z0-9_.-](?:[A-Za-z0-9_.@ -]{0,58}[A-Za-z0-9_.@-])?")
+# **主体の種類の表**（5.16.0・設計 ショップとWordPressの口 §4）。主体の `kind` → 口座の `media`・名乗りの欄
+# （口座の `handle` に写す値）・その形・認証の形・作るときに受ける公開の状態（原稿の `send_as`）・画像。
+# 出し先を足すのは、ここに 1 行・`article_media.ARTICLE_MEDIA` に 1 行・`adapters.ARTICLE_ADAPTERS` に 1 行。
+ARTICLE_KINDS = {
+    "hatena": {"media": "hatenablog", "id_field": "hatena_id", "id_re": HATENA_ID_RE, "label": "はてなブログ",
+               "id_code": "hatena_id_invalid", "id_rule": "英数と `-`・`_` の 1〜32 字",
+               "auths": ("oauth", "wsse"), "send_as": ("publish",), "images": True},
+    "wordpress": {"media": "wordpress", "id_field": "wp_user", "id_re": WP_USER_RE, "label": "WordPress",
+                  "id_code": "wp_user_invalid",
+                  "id_rule": "WordPress のログイン名（英数と `_`・`.`・`@`・`-`・空白の 1〜60 字・先頭に `@` は付けない）",
+                  "auths": ("app_password",), "send_as": ("publish", "draft"), "images": False},
+}
+KINDS = tuple(ARTICLE_KINDS)
+AUTHS = ("oauth", "wsse", "app_password")
+REQUIRED_FIELDS = ("principal", "kind", "token", "blogs")
 # ブログの id はブログのドメイン（小文字のホスト名）。独自ドメインならそれ。
 BLOG_ID_RE = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
                         r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
@@ -211,13 +226,23 @@ def validate(name: str, data) -> None:
                              f"{name}: 主体の台帳の principal がファイル名と違います")
     if data["kind"] not in KINDS:
         raise PrincipalError("principal_kind_unknown", f"{name}: 主体の kind は {'・'.join(KINDS)} だけです")
-    if not isinstance(data["hatena_id"], str) or not HATENA_ID_RE.fullmatch(data["hatena_id"]):
-        raise PrincipalError("hatena_id_invalid", f"{name}: hatena_id は英数と `-`・`_` の 1〜32 字です")
+    spec = ARTICLE_KINDS[data["kind"]]
+    id_field = spec["id_field"]
+    if id_field not in data:
+        raise PrincipalError("principal_field_missing", f"{name}: 主体の台帳に項目が足りません: {[id_field]}")
+    if not isinstance(data[id_field], str) or not spec["id_re"].fullmatch(data[id_field]):
+        raise PrincipalError(spec["id_code"], f"{name}: {id_field} は{spec['id_rule']}です")
+    for row in data.get("blogs") if isinstance(data.get("blogs"), list) else []:
+        if isinstance(row, dict) and "site_url" in row and (
+                data["kind"] != "wordpress" or not valid_site_url(row["site_url"], row.get("blog_id"))):
+            raise PrincipalError("site_url_invalid",
+                                 f"{name}: blogs の site_url は WordPress の主体だけの欄で、https://<blog_id> の形です"
+                                 "（手元の試しの localhost・127.0.0.1 だけ http とポートを許します）")
     for key in ("token", "consumer"):
         if key in data and (not isinstance(data[key], str) or not data[key].strip()):
             raise PrincipalError("principal_invalid", f"{name}: {key} はファイルのパスです")
-    if data.get("auth", "oauth") not in AUTHS:
-        raise PrincipalError("principal_invalid", f"{name}: auth は {'・'.join(AUTHS)} のどれかです")
+    if data.get("auth", spec["auths"][0]) not in spec["auths"]:
+        raise PrincipalError("principal_invalid", f"{name}: auth は {'・'.join(spec['auths'])} のどれかです")
     _check_blogs(name, data["blogs"])
     bookmark = data.get("bookmark", {"lanes": []})
     if (not isinstance(bookmark, dict) or set(bookmark) - {"lanes"}
@@ -288,6 +313,70 @@ def limits(principal_cfg: dict) -> dict:
     return out
 
 
+def kind_spec(kind) -> dict | None:
+    """主体の `kind` の表の 1 行（知らなければ None）。"""
+    return ARTICLE_KINDS.get(kind) if isinstance(kind, str) else None
+
+
+def kind_for_media(media) -> str | None:
+    for kind, spec in ARTICLE_KINDS.items():
+        if spec["media"] == media:
+            return kind
+    return None
+
+
+def spec_for_account(account_cfg) -> dict:
+    """口座の `media` から主体の種類の表の 1 行（媒体の欄の無い古い台帳ははてな）。"""
+    return ARTICLE_KINDS[kind_for_media((account_cfg or {}).get("media")) or "hatena"]
+
+
+def media_label(account_cfg) -> str:
+    """断りやログに出す出し先の名（はてなブログ・WordPress）。"""
+    return spec_for_account(account_cfg)["label"]
+
+
+def site_url(principal_cfg: dict, blog_id) -> str:
+    """出し先のサイトの入口（ブログの行の `site_url`・無ければ `https://<blog_id>`）。末尾の `/` は落とす。"""
+    row = blog_entry(principal_cfg, blog_id) or {}
+    value = row.get("site_url")
+    if isinstance(value, str) and value:
+        return value.rstrip("/")
+    return f"https://{str(blog_id or '').strip().lower()}"
+
+
+def site_host(principal_cfg: dict, blog_id) -> str:
+    """公開された URL のホストの比べ先（`site_url` のホスト。無ければ blog_id）。"""
+    import urllib.parse
+    try:
+        return (urllib.parse.urlsplit(site_url(principal_cfg, blog_id)).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+_LOOPBACK = ("localhost", "127.0.0.1", "::1")
+
+
+def valid_site_url(value, blog_id) -> bool:
+    """ブログの行の `site_url`（WordPress だけ）: `https://<blog_id>[/パス]`。手元の試し（localhost・
+    127.0.0.1・::1）だけは `http://` とポートを許す。平文で送れるのは、さらに `httpsafe` の柵
+    （`THTH_TEST_ALLOW_HTTP=1` かつ loopback）を通るときだけ（ここで柵は緩めない）。query・# は付けない。"""
+    import urllib.parse
+    if (not isinstance(value, str) or not value or len(value) > 2048
+            or any(ord(c) <= 32 or ord(c) == 127 for c in value)):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        parsed.port
+    except ValueError:
+        return False
+    if parsed.query or parsed.fragment or parsed.username is not None or parsed.password is not None:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host in _LOOPBACK:
+        return parsed.scheme in ("http", "https")
+    return parsed.scheme == "https" and host == str(blog_id or "") and parsed.port is None
+
+
 def blog_entry(principal_cfg: dict, blog_id) -> dict | None:
     key = str(blog_id or "").strip().lower()
     for row in (principal_cfg or {}).get("blogs") or []:
@@ -297,8 +386,9 @@ def blog_entry(principal_cfg: dict, blog_id) -> dict | None:
 
 
 def uses_principal(account_cfg) -> bool:
-    """主体を通す口座か（`media: hatenablog` のときだけ。SNS の口座の `principal` は読まない）。"""
-    return isinstance(account_cfg, dict) and account_cfg.get("media") == MEDIA
+    """主体を通す口座か（記事の口座＝`article_media.is_article_account`。SNS の口座の `principal` は読まない）。"""
+    from . import article_media
+    return article_media.is_article_account(account_cfg)
 
 
 def _same_path(a, b) -> bool:
@@ -328,8 +418,10 @@ def check_account(account_cfg: dict, name: str, principal_cfg: dict | None = Non
             if e.code == "principal_missing":
                 raise PrincipalError("principal_missing", f"{name}: 主体 {principal} の台帳がありません") from e
             raise
-    if principal_cfg.get("kind") != "hatena":
-        raise PrincipalError("principal_missing", f"{name}: 主体 {principal} ははてなの主体ではありません")
+    want = kind_for_media(account_cfg.get("media")) or "hatena"
+    if principal_cfg.get("kind") != want:
+        raise PrincipalError("principal_missing",
+                             f"{name}: 主体 {principal} は{ARTICLE_KINDS[want]['label']}の主体ではありません")
     # 2. blog_id が主体の blogs[] にある
     blog = blog_entry(principal_cfg, blog_id)
     if blog is None:
@@ -342,10 +434,11 @@ def check_account(account_cfg: dict, name: str, principal_cfg: dict | None = Non
     if not _same_path(account_cfg.get("token"), principal_cfg.get("token")):
         raise PrincipalError("principal_token_mismatch",
                              f"{name}: 台帳の token が主体 {principal} の token と同じパスではありません")
-    # 5. handle が主体の hatena_id と同じ（見せるときの名乗りを 1 つに）
-    if str(account_cfg.get("handle") or "").strip().lstrip("@") != principal_cfg.get("hatena_id"):
+    # 5. handle が主体の名乗り（hatena_id・wp_user）と同じ（見せるときの名乗りを 1 つに）
+    id_field = ARTICLE_KINDS[want]["id_field"]
+    if str(account_cfg.get("handle") or "").strip().lstrip("@") != principal_cfg.get(id_field):
         raise PrincipalError("principal_handle_mismatch",
-                             f"{name}: 台帳の handle が主体 {principal} の hatena_id と違います")
+                             f"{name}: 台帳の handle が主体 {principal} の {id_field} と違います")
     return principal_cfg
 
 
