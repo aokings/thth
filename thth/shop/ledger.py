@@ -23,13 +23,21 @@
 - Shopify の固定の鍵: `{"auth": "shopify_token", "access_token", "shop_id", "obtained_at", "expires_on": null,
   "no_expiry": true}`。
 
-Shopify の台帳は＋`shop`（myshopify のラベルだけ・`wire.SHOPIFY_LABEL`）。
+- STORES のクレデンシャル（5.18.0）: `{"auth": "bearer", "access_token", "shop_id", "obtained_at",
+  "expires_on"（`--expires` を付けたときの日・無ければ null）, "no_expiry"（`--expires` が無ければ真）}`。
+
+鍵のファイルの `auth` は店の種類の `kinds.KINDS[<種類>]["auths"]` のどれかでないと読まない（BASE の店に STORES の
+鍵のファイルを置いた、などの取り違えを `store_token_missing` で止める）。
+
+Shopify の台帳は＋`shop`（myshopify のラベルだけ・`wire.SHOPIFY_LABEL`）。STORES の台帳は＋`public_url`
+（店の頁の URL・応答に無いので持ち主が入れる・`check_public_url`。**THTH はこの URL に何も送らない**）。
 """
 from __future__ import annotations
 
 import datetime
 import json
 import os
+import urllib.parse
 
 from .. import accounts, jst, redact, secrets_fs
 from . import kinds as kinds_mod
@@ -75,6 +83,30 @@ def list_names() -> list:
     return [e[:-5] for e in entries if e.endswith(".json") and accounts.name_is_safe(e[:-5])]
 
 
+PUBLIC_URL_MAX = 2048
+
+
+def check_public_url(value) -> str | None:
+    """STORES の店の頁の URL（持ち主が入れる値）。https だけ・userinfo と query と fragment なし・2048 字まで。
+
+    合えばそのまま返し、合わなければ None。THTH はこの URL に何も送らない（下書きの本文に載せるだけ）ので、
+    ホストは問わない。
+    """
+    from .rows import https_url
+    if not isinstance(value, str) or len(value) > PUBLIC_URL_MAX or https_url(value) is None:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value)
+        parts.port  # noqa: B018 — 形の壊れた port はここで ValueError
+    except ValueError:
+        return None
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return None
+    if parts.query or parts.fragment or "?" in value or "#" in value:
+        return None
+    return value
+
+
 def fields_for(kind) -> tuple:
     found = kinds_mod.KINDS.get(kind) if isinstance(kind, str) else None
     return found["ledger_fields"] if found else ()
@@ -85,7 +117,8 @@ def validate(name: str, data) -> None:
             or data["store"] != name
             or not isinstance(data["project"], str) or not accounts.name_is_safe(data["project"])
             or not isinstance(data["token"], str) or not data["token"].strip()
-            or ("shop" in data and not (isinstance(data["shop"], str) and SHOPIFY_LABEL.fullmatch(data["shop"])))):
+            or ("shop" in data and not (isinstance(data["shop"], str) and SHOPIFY_LABEL.fullmatch(data["shop"])))
+            or ("public_url" in data and check_public_url(data["public_url"]) is None)):
         raise StoreRefused("store_ledger_invalid")
 
 
@@ -144,9 +177,13 @@ def load_token(cfg: dict) -> dict:
         raise StoreRefused("store_token_missing") from None
     if not isinstance(value, dict):
         raise StoreRefused("store_token_missing")
+    found = kinds_mod.KINDS.get(cfg.get("kind"))
+    if found is not None and value.get("auth") not in found["auths"]:
+        # 店の種類と鍵の形が合わない（取り違え）。
+        raise StoreRefused("store_token_missing")
     if value.get("auth") == "shopify_client":
         wanted = ("client_id", "client_secret")
-    elif value.get("auth") in (None, "shopify_token"):
+    elif value.get("auth") in (None, "shopify_token", "bearer"):
         wanted = ("access_token",)
     else:
         raise StoreRefused("store_token_missing")
@@ -172,7 +209,8 @@ def parse_day(value) -> datetime.date | None:
 def expiry(token: dict, today: datetime.date) -> dict:
     """`{"expires_on", "days_left", "state"}`。state は ok・soon（14 日以内）・expired・unknown・none。
 
-    none は期限の日の無い鍵（Shopify の client secret と固定の鍵・`no_expiry` が真）。morning にも命令の注意にも
+    none は期限の日の無い鍵（Shopify の client secret と固定の鍵・`--expires` を付けなかった STORES の
+    クレデンシャル・`no_expiry` が真）。morning にも命令の注意にも
     何も出さない（BASE の unknown「期限を入れ忘れた」とは別）。
     """
     if token.get("no_expiry") is True:

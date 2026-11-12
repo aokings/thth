@@ -2,10 +2,13 @@
 
 **網に出るのはここの `default_transport` の 1 か所**。柵は「**決まった道に、決まった中身だけ**」:
 
-- 送り先のホストは表（`ROUTES`）のものだけ。BASE は定数 `BASE_HOST`、Shopify は「店の myshopify のラベル＋
-  定数の `SHOPIFY_SUFFIX`」（台帳に持つのはラベルだけ・ホストや URL は受けない）。
-- (メソッド, 道) と問い合わせの引数の名前は表にあるものだけ。BASE は GET だけ。Shopify は POST だけ
+- 送り先のホストは表（`ROUTES`）のものだけ。BASE は定数 `BASE_HOST`、STORES は定数 `STORES_HOST`、Shopify は
+  「店の myshopify のラベル＋定数の `SHOPIFY_SUFFIX`」（台帳に持つのはラベルだけ・ホストや URL は受けない）。
+- (メソッド, 道) と問い合わせの引数の名前は表にあるものだけ。BASE と STORES は GET だけ。Shopify は POST だけ
   （鍵を取る口と Admin GraphQL。GraphQL の決まりで POST だが、店は変えない）。
+- STORES（5.18.0）のクレデンシャルは権限を選べず、注文も入金も書く道も通る鍵【公式: 登録の項目に権限が無い】。
+  だから注文を読まない柵は**この表だけ**: 道は `/retail/202211/store` と `/retail/202211/items` の 2 つ、引数は
+  `limit` と `offset` だけ（`ids`・`keyword`・`status` も使わない）。
 - POST の本文も見る: 鍵を取る口は決まった 3 つの欄の form、GraphQL は `QUERIES` の文のどれかと**1 字も違わず**、
   `variables` は許した鍵だけ。呼ぶ側は URL・問い合わせの文・ヘッダを渡せない（`get`・`shopify_token`・
   `shopify_graphql` がここで組む）。外れたら打たずに `store_request_rejected（blocked_request）`。
@@ -19,7 +22,8 @@ GET のときは 3 つの引数で呼ぶ（BASE の今の偽の transport を直
 
 **秘密を出さない**: 断りの文は符丁と静的な語（形を検査したもの・HTTP の数）だけ。応答の本文・鍵は断りに入れない。
 鍵（`Authorization`・`X-Shopify-Access-Token`・client secret）を載せるのはここの 3 つの口だけで、行く先は表の
-ホストだけ。応答に入っている URL（商品頁・画像）には何も送らない。
+ホストだけ。応答に入っている URL（商品頁・画像）と、台帳の `public_url`（STORES の店の頁・持ち主が入れた値）には
+何も送らない。
 """
 from __future__ import annotations
 
@@ -36,6 +40,12 @@ BASE_HOST = "apiv2.thebase.com"
 BASE_ORIGIN = "https://" + BASE_HOST
 # 呼んでよい道（注文 `/api/orders` などは入れない・設計 §2）。
 BASE_PATHS = frozenset(("/api/user", "/api/items"))
+
+# STORES（5.18.0・設計 Shopify と STORES §7）: 版 202211 の 2 つの道だけ。注文 `/retail/202211/orders`・入金・
+# 販売チャネル・商品 1 件の道・書く道は入れない（クレデンシャルはそれらも通る鍵なので、柵はこの表）。
+STORES_HOST = "api.stores.dev"
+STORES_API_VERSION = "202211"
+STORES_PATHS = frozenset((f"/retail/{STORES_API_VERSION}/store", f"/retail/{STORES_API_VERSION}/items"))
 
 # Shopify（5.17.0）: ホストは「ラベル＋定数の後ろ」。ラベルは myshopify の形だけ（点・斜線・@・大文字を含まない）。
 SHOPIFY_SUFFIX = ".myshopify.com"
@@ -66,6 +76,8 @@ _POST = "POST"
 ROUTES = {
     "base": {"host": BASE_HOST, "paths": frozenset(("GET", p) for p in BASE_PATHS),
              "params": frozenset(("limit", "offset"))},
+    "stores": {"host": STORES_HOST, "paths": frozenset(("GET", p) for p in STORES_PATHS),
+               "params": frozenset(("limit", "offset"))},
     "shopify": {"suffix": SHOPIFY_SUFFIX,
                 "paths": frozenset(((_POST, SHOPIFY_TOKEN_PATH), (_POST, SHOPIFY_GRAPHQL_PATH))),
                 "params": frozenset()},
@@ -121,6 +133,8 @@ def _kind_for(netloc: str) -> str | None:
     """ホスト（port・userinfo の無い netloc そのまま・大文字は直さない）から店の種類。"""
     if netloc == BASE_HOST:
         return "base"
+    if netloc == STORES_HOST:
+        return "stores"
     if netloc.endswith(SHOPIFY_SUFFIX) and SHOPIFY_LABEL.fullmatch(netloc[:-len(SHOPIFY_SUFFIX)]):
         return "shopify"
     return None
@@ -187,7 +201,7 @@ def check_request(method: str, url: str, body: bytes | None = None) -> None:
 
 
 def check_url(method: str, url: str) -> None:
-    """本文の無い問い合わせの柵（BASE の GET・今の試験と偽の transport が使う名前）。"""
+    """本文の無い問い合わせの柵（BASE と STORES の GET・今の試験と偽の transport が使う名前）。"""
     check_request(method, url, None)
 
 
@@ -225,10 +239,14 @@ def default_transport(method: str, url: str, headers: dict, body: bytes | None =
 
 # ------------------------------------------------------------------ 呼ぶ側に見せる 3 つの口（URL と本文はここで組む）
 
+# GET で読む店（`Authorization: Bearer`）。Shopify は POST の 2 つの口だけ。
+GET_KINDS = frozenset(("base", "stores"))
+
+
 def get(kind: str, path: str, params: dict | None, token: str, *, transport=None):
-    """BASE の GET（`Authorization: Bearer`）。`(status, body)`。"""
+    """BASE と STORES の GET（`Authorization: Bearer`・STORES はクレデンシャルをそのまま載せる）。`(status, body)`。"""
     route = ROUTES.get(kind)
-    if kind != "base" or route is None:
+    if kind not in GET_KINDS or route is None:
         raise _blocked()
     url = "https://" + route["host"] + path + ("?" + urllib.parse.urlencode(params) if params else "")
     check_request("GET", url)

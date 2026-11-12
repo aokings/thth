@@ -1,13 +1,13 @@
 """店に寄らない行の部品（設計 `docs/設計_ShopifyとSTORESの口_2026-11-12.md` §3・§6）。
 
-どの店の口（`base.py`・`shopify.py`）も、応答を許した欄だけの行（`ROW_FIELDS`）に直してから渡す。写し・違い・
+どの店の口（`base.py`・`shopify.py`・`stores.py`）も、応答を許した欄だけの行（`ROW_FIELDS`）に直してから渡す。写し・違い・
 下書き・読み直しはこの行だけを見る（店ごとの差は「応答を行に直す所」に閉じる）。
 
 店ごとに違う 3 つの受け口:
 
 - 商品の id: 整数の店（BASE・Shopify）と文字列の店（STORES・5.18.0）がある。写しの鍵は `str(id)`。
 - 在庫: 整数か、**None（数えない）**。None は「在庫を数えない商品」で、買える側に数える（`in_stock`）。
-- 商品頁の URL（`item_url`）: 取れる店（Shopify）と取れない店（BASE）がある。
+- 商品頁の URL（`item_url`）: 取れる店（Shopify）と取れない店（BASE・STORES）がある。
 """
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ URL_MAX = 2048
 _CONTROL = re.compile(r"[\x00-\x1f\x7f  ]")
 # 写しと出力に持つ欄（公開の商品）。非公開の商品は `id` と `visible` だけ。
 ROW_FIELDS = ("id", "name", "price", "stock", "visible", "sales_status", "image_url", "item_url", "modified_at")
-# 「売っている」の語（店の間で語がぶつからないので 1 つの集合・BASE は item_now_on_sale・Shopify は active）。
+# 「売っている」の語（店の間で語がぶつからないので 1 つの集合・BASE は item_now_on_sale・Shopify は active・
+# STORES は on_sale。STORES の preorder（予約販売）・before_sale・after_sale は入れない）。
 ON_SALE = frozenset(("item_now_on_sale", "active", "on_sale"))
 
 

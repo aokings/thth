@@ -23,6 +23,8 @@ _DIGITS = re.compile(r"[0-9]{1,18}\Z")
 _ID_TEXT = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 BASE_FIELDS = ("store", "kind", "project", "token")
 SHOPIFY_FIELDS = BASE_FIELDS + ("shop",)
+# STORES は＋`public_url`（店の頁の URL・応答に無いので持ち主が入れる・THTH はここに何も送らない）。
+STORES_FIELDS = BASE_FIELDS + ("public_url",)
 
 
 def _int_id(value) -> int:
@@ -30,6 +32,14 @@ def _int_id(value) -> int:
     if not _DIGITS.fullmatch(text):
         raise StoreRefused("store_args_invalid", "item")
     return int(text)
+
+
+def _text_id(value) -> str:
+    """STORES の商品の id（英数字の文字列のまま）。"""
+    text = str(value)
+    if not _ID_TEXT.fullmatch(text):
+        raise StoreRefused("store_args_invalid", "item")
+    return text
 
 
 def _base_client(cfg, token, transport):
@@ -50,6 +60,16 @@ def _shopify_client(cfg, token, transport):
 def _shopify_cap() -> int:
     from . import shopify
     return shopify.PAGE_FIRST * shopify.MAX_PAGES
+
+
+def _stores_client(cfg, token, transport):
+    from . import stores
+    return stores.Client(cfg, token["access_token"], transport=transport)
+
+
+def _stores_cap() -> int:
+    from . import stores
+    return stores.PAGE_LIMIT * stores.MAX_PAGES
 
 
 KINDS = {
@@ -78,6 +98,20 @@ KINDS = {
         "read_cap": _shopify_cap,
         "revoke_plan": "Shopify の側の鍵は消えません。Dev Dashboard でアプリを店から外すか、secret を作り直してください",
         "revoke_done": "Shopify の側の鍵は消えていません。Dev Dashboard でアプリを店から外すか、secret を作り直してください",
+    },
+    # 5.18.0（設計 Shopify と STORES §7）。鍵はプライベートアプリのクレデンシャル（固定の文字列・`auth` は bearer）。
+    # 期限は公式に書かれていない【未確認】ので `--expires` は任意。取り消し方も公式に無い【未確認】ので、STORES に頼む文。
+    "stores": {
+        "label": "STORES",
+        "key_name": "STORES のクレデンシャル",
+        "not_by": "この道具（THTH）は STORES が提供するものではありません。",
+        "ledger_fields": STORES_FIELDS,
+        "auths": ("bearer",),
+        "client": _stores_client,
+        "parse_item_id": _text_id,
+        "read_cap": _stores_cap,
+        "revoke_plan": "STORES の側のクレデンシャルは消えません。取り消しは STORES に頼んでください",
+        "revoke_done": "STORES の側のクレデンシャルは消えていません。取り消しは STORES に頼んでください",
     },
 }
 NAMES = tuple(KINDS)

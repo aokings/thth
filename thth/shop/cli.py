@@ -1,12 +1,15 @@
-"""`thth shop …` の店を読む動詞（BASE v2 と Shopify・Instagram の商品タグの動詞は `thth/meta_shop.py`）。
+"""`thth shop …` の店を読む動詞（BASE v2・Shopify・STORES。Instagram の商品タグの動詞は `thth/meta_shop.py`）。
 
     thth shop add <店> --kind base --project <project> --by <名前>     台帳を 1 本書く（0600）
     thth shop add <店> --kind shopify --project <project> --shop <ラベル> --by <名前>
+    thth shop add <店> --kind stores --project <project> --url <店の頁の URL> --by <名前>
     thth shop token set <店> --expires YYYY-MM-DD --by <名前> [--stdin]
                                        BASE の PAT を標準入力か隠した入力で受け、店が見えたときだけ保存する
     thth shop token set <店> [--auth client|token] --by <名前> [--stdin]
                                        Shopify: client id と secret の 2 行か、固定の鍵の 1 行。店が見え、
                                        read_products があるときだけ保存する（ほかの権限があれば知らせる）
+    thth shop token set <店> [--expires YYYY-MM-DD] --by <名前> [--stdin]
+                                       STORES: プライベートアプリのクレデンシャルの 1 行。店が見えたときだけ保存する
     thth shop whoami <店> [--json]    鍵の確かめ・店の名前と URL・鍵の期限
     thth shop items <店> [--json]     商品の一覧（許した欄だけ・非公開の商品は id だけ）
     thth shop diff <店> [--accept] [--json]
@@ -19,9 +22,11 @@
 記録（`admin_log`）の動きの名前は `ACTION_PREFIX`（shopread_）で始める: add・token set・remove・draft。
 名前・店・時刻・欄の前後だけで、鍵は入れない。
 
-**注文と買い手の情報は読まない。店には書かない（BASE は GET だけ・Shopify は決まった 2 つの問い合わせと鍵を取る口だけ）。
-鍵は引数で受けない・出力しない。** 手元の MCP と thth.me の鍵の道には出さない（鍵は手元の thth に置く形だけ）。
-この道具は BASE と Shopify が提供するものではありません。
+**注文と買い手の情報は読まない。店には書かない（BASE と STORES は GET だけ・Shopify は決まった 2 つの問い合わせと
+鍵を取る口だけ）。鍵は引数で受けない・出力しない。** 手元の MCP と thth.me の鍵の道には出さない（鍵は手元の thth に
+置く形だけ）。STORES のクレデンシャルは注文も読める鍵だが、THTH が呼ぶのは店と商品の一覧の 2 つの道だけ（柵は
+`wire.ROUTES`）。台帳の `public_url`（STORES の店の頁）には何も送らない。
+この道具は BASE・Shopify・STORES が提供するものではありません。
 """
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ TRANSPORT = None
 # 鍵の読み手の差し込み口（試験用）。None なら標準入力か getpass。
 READ_SECRET = None
 PROMPT = "BASE の個人用アクセストークン（PAT）を貼り付けてください（表示されません）: "
+PROMPT_STORES = "STORES のプライベートアプリのクレデンシャルを貼り付けてください（表示されません）: "
 
 
 def _refuse(args, exc: StoreRefused) -> int:
@@ -105,9 +111,12 @@ def _open(args):
     return cfg, token, when, kinds.client(cfg, token, TRANSPORT)
 
 
-def _expiry_note(when) -> str | None:
-    # state が none（期限の日の無い鍵・Shopify）と ok は何も言わない。
+def _expiry_note(when, kind: str = "base") -> str | None:
+    # state が none（期限の日の無い鍵・Shopify と --expires の無い STORES）と ok は何も言わない。
     if when["state"] == "soon":
+        if kind == "stores":
+            return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日・token set で入れた日）です。"
+                    f"STORES から新しいクレデンシャルを受け取り、thth {COMMAND} token set で差し替えてください")
         return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日）です。BASE Developers で新しい PAT を"
                 f"発行し、thth {COMMAND} token set で差し替えてください（期限はあとから変えられません）")
     if when["state"] == "unknown":
@@ -115,8 +124,8 @@ def _expiry_note(when) -> str | None:
     return None
 
 
-def _note(args, when) -> None:
-    note = _expiry_note(when)
+def _note(args, when, kind: str = "base") -> None:
+    note = _expiry_note(when, kind)
     if note and not getattr(args, "json", False):
         print(note, file=sys.stderr)
 
@@ -134,15 +143,26 @@ def cmd_add(args) -> int:
         extra["shop"] = shop_label(args.shop)
     elif args.shop is not None:
         raise StoreRefused("store_args_invalid", "shop")
+    if args.kind == "stores":
+        extra["public_url"] = public_url(args.url)
+    elif args.url is not None:
+        raise StoreRefused("store_args_invalid", "url")
     _log_ready()
     path = ledger.write_new(args.store, ledger.build(args.store, kind=args.kind, project=args.project, **extra))
     _record("added", args.store, by, {"kind": [None, args.kind], "project": [None, args.project],
-                                      **({"shop": [None, extra["shop"]]} if extra else {})}, args.kind)
+                                      **{key: [None, value] for key, value in extra.items()}}, args.kind)
     print(f"台帳を書きました: {path}（0600）")
     if args.kind == "shopify":
         print(f"次に、店の持ち主が Dev Dashboard でアプリを作り、アプリの版で scope は read_products だけを選んで店に入れ、"
               f"Settings の Client ID と Client secret を thth {COMMAND} token set {args.store} --auth client --by <名前> で"
               "渡してください（既にある管理画面のカスタムアプリの固定の鍵なら --auth token）。")
+    elif args.kind == "stores":
+        print(f"次に、店の持ち主が STORES の開発パートナーの登録でプライベートアプリを申し込み（スタンダードプランが要ります）、"
+              f"発行されたクレデンシャルを thth {COMMAND} token set {args.store} --by <名前> で渡してください"
+              "（期限の日を知っていれば --expires <日>）。")
+        print("  クレデンシャルは権限を選べず、注文も読める鍵です。THTH が呼ぶのは api.stores.dev の店と商品の一覧の"
+              " 2 つの道だけ（GET）で、注文・入金・店舗の道は呼ばず、店には書きません。")
+        print(f"  店の頁の URL（{extra['public_url']}）は下書きに載せるだけで、THTH はそこに何も送りません。")
     else:
         print(f"次に、店の持ち主が BASE Developers で読むだけの権限（items.read・user.read）の PAT を発行し、"
               f"thth {COMMAND} token set {args.store} --expires <期限の日> --by <名前> で渡してください。")
@@ -158,6 +178,15 @@ def shop_label(value) -> str:
     if not wire.SHOPIFY_LABEL.fullmatch(text):
         raise StoreRefused("store_args_invalid", "shop")
     return text
+
+
+def public_url(value) -> str:
+    """`--url` を STORES の店の頁の URL に（https だけ・userinfo と query と fragment なし・2048 字まで）。"""
+    text = value.strip() if isinstance(value, str) else ""
+    found = ledger.check_public_url(text)
+    if found is None:
+        raise StoreRefused("store_args_invalid", "url")
+    return found
 
 
 def _read_secret(args, prompt=PROMPT) -> str:
@@ -185,6 +214,8 @@ def cmd_token_set(args) -> int:
         return _token_set_shopify(args, cfg, by)
     if args.auth is not None:
         raise StoreRefused("store_args_invalid", "auth")
+    if cfg["kind"] == "stores":
+        return _token_set_stores(args, cfg, by)
     day = ledger.parse_day(args.expires)
     if day is None:
         raise StoreRefused("store_args_invalid", "expires")
@@ -222,6 +253,48 @@ def _drop_other_shop(store: str, shop_id) -> bool:
     except StoreRefused:
         snapshot = None  # 壊れた写しは diff が断る（ここでは鍵を置き換えたことだけを確かにする）
     return bool(snapshot and snapshot.get("shop_id") != shop_id and ledger.drop_snapshot(store))
+
+
+def _token_set_stores(args, cfg, by) -> int:
+    """STORES のクレデンシャル（1 行）。`GET /retail/202211/store` が通ったときだけ保存する。
+
+    期限は公式に書かれていない【未確認】ので `--expires` は任意。付ければ BASE と同じく 14 日前から知らせ、
+    無ければ期限の日の無い鍵（`no_expiry`）として持つ。
+    """
+    day = None
+    if args.expires is not None:
+        day = ledger.parse_day(args.expires)
+        if day is None:
+            raise StoreRefused("store_args_invalid", "expires")
+        if day < _today():
+            raise StoreRefused("store_token_expires_past", day.isoformat())
+    _log_ready()
+    value = _secret_line(args, PROMPT_STORES)
+    token = {"auth": "bearer", "access_token": value}
+    shop = kinds.client(cfg, token, TRANSPORT).user()
+    try:
+        before = ledger.load_token(cfg)
+    except StoreRefused:
+        before = None
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+        raise StoreRefused("store_shop_mismatch")
+    expires_on = day.isoformat() if day else None
+    ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
+                             "expires_on": expires_on, "no_expiry": day is None})
+    dropped = _drop_other_shop(args.store, shop["shop_id"])
+    _record("token_set", args.store, by,
+            {"shop_id": [before.get("shop_id") if before else None, shop["shop_id"]],
+             "expires_on": [before.get("expires_on") if before else None, expires_on],
+             "replaced": [None, before is not None], "snapshot_dropped": [None, dropped]}, cfg["kind"])
+    print(f"保存しました: {cfg['token']}（600）・店 {shop['shop_name'] or '（名前なし）'}（{shop['shop_id']}）・"
+          + (f"鍵の期限 {expires_on}" if expires_on else "鍵の期限の日はありません（--expires を付けていないので）"))
+    if dropped:
+        print(f"店が替わったので、前の店の写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します")
+    if day:
+        note = _expiry_note(ledger.expiry({"expires_on": expires_on}, _today()), "stores")
+        if note:
+            print(note, file=sys.stderr)
+    return 0
 
 
 PROMPT_CLIENT_ID = "Shopify の Dev Dashboard の Client ID を貼り付けてください（表示されません）: "
@@ -299,7 +372,8 @@ def cmd_whoami(args) -> int:
         _print(value)
         return 0
     print(f"{args.store}: {shop['shop_name'] or '（名前なし）'}  {shop['shop_url']}"
-          f"（公開 {'はい' if shop['able_to_business'] else 'いいえ' if shop['able_to_business'] is False else '不明'}）")
+          + ("（台帳に入れた値）" if cfg["kind"] == "stores" else "")
+          + f"（公開 {'はい' if shop['able_to_business'] else 'いいえ' if shop['able_to_business'] is False else '不明'}）")
     if when["state"] == "none":
         print("  鍵の期限: なし（期限の日の無い鍵）")
     else:
@@ -309,7 +383,7 @@ def cmd_whoami(args) -> int:
     if note:
         print(f"  {note}")
     print(f"  {not_by}")
-    _note(args, when)
+    _note(args, when, cfg["kind"])
     return 0
 
 
@@ -339,7 +413,7 @@ def cmd_items(args) -> int:
         price = "—" if row["price"] is None else f"{row['price']:,} 円"
         print(f"{row['id']}  {row['name']}  {price}  在庫 {_stock_text(row['stock'])}  {row['sales_status']}")
     print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
-    _note(args, when)
+    _note(args, when, cfg["kind"])
     return 0
 
 
@@ -381,7 +455,7 @@ def cmd_diff(args) -> int:
     if baseline:
         print(f"{args.store}: 基準を取りました（{len(read['items'])} 件）。違いはまだありません。次からの thth {COMMAND} diff が"
               "この写しと比べます")
-        _note(args, when)
+        _note(args, when, cfg["kind"])
         return 0
     for change in changes:
         extra = f"（{change['before']} → {change['after']} 円）" if "before" in change else ""
@@ -389,7 +463,7 @@ def cmd_diff(args) -> int:
     print(f"違い {len(changes)} 件（{value['since']} の写しと比べて）"
           + ("・写しを今の読みに進めました" if accepted else f"・写しは進めていません（--accept で進めます）")
           + (f"・{value['note']}" if value["note"] else ""))
-    _note(args, when)
+    _note(args, when, cfg["kind"])
     return 0
 
 
@@ -448,7 +522,7 @@ def cmd_draft(args) -> int:
         print(f"下書きを書きました: {row['path']}（{row['kind']}・商品 {row['id']}）")
     for line in notes:
         print(f"  {line}")
-    _note(args, when)
+    _note(args, when, cfg["kind"])
     return 0
 
 
@@ -524,19 +598,22 @@ def _item_id(value: str) -> str:
     return value
 
 
-PARENT_HELP = "店（店を読む: BASE・Shopify）と Instagram の商品タグ"
+PARENT_HELP = "店（店を読む: BASE・Shopify・STORES）と Instagram の商品タグ"
 PARENT_DESCRIPTION = """店を読む（BASE など）: 第 1 引数は店の名前（thth shop add で書いた台帳の名前）
     thth shop add <店> --kind base --project <project> --by <名前>
     thth shop add <店> --kind shopify --project <project> --shop <ラベル> --by <名前>
                                                                           ラベルは <ここ>.myshopify.com の <ここ>
+    thth shop add <店> --kind stores --project <project> --url <店の頁の URL> --by <名前>
+                                                                          URL は下書きに載せるだけ（何も送らない）
     thth shop token set <店> --expires YYYY-MM-DD --by <名前> [--stdin]   BASE の PAT（鍵は標準入力か隠した入力で・引数では受けない）
     thth shop token set <店> [--auth client|token] --by <名前> [--stdin]  Shopify: client id と secret の 2 行か固定の鍵の 1 行
+    thth shop token set <店> [--expires YYYY-MM-DD] --by <名前> [--stdin] STORES: クレデンシャルの 1 行（期限の日は任意）
     thth shop whoami|items <店> [--json]                                  読むだけ・注文は読まない
     thth shop diff <店> [--accept] [--json]                               写しとの違い（読むだけ・--accept で写しを進める）
     thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
                                                                           queue の下書き（承認されていない形・1 本か上限 3 本）
     thth shop remove <店> --by <名前> [--confirm D]                       店を外す（二段確認・鍵・写し・台帳を消す）
-  この道具は BASE と Shopify が提供するものではありません。
+  この道具は BASE・Shopify・STORES が提供するものではありません。
 
 Instagram の商品タグ: 第 1 引数は Instagram の口座
     thth shop eligibility|catalogs <IG> [--json]                          読む
@@ -563,16 +640,18 @@ def register(verbs) -> None:
     p_add.add_argument("--project", required=True)
     p_add.add_argument("--shop", default=None, metavar="ラベル",
                        help="Shopify の店の myshopify のラベル（admin.shopify.com/store/<ここ> か <ここ>.myshopify.com）")
+    p_add.add_argument("--url", default=None, metavar="URL",
+                       help="STORES の店の頁の URL（https・応答に無いので持ち主が入れる・下書きに載せるだけで何も送らない）")
     p_add.add_argument("--by", required=True)
     p_add.set_defaults(func=_run(cmd_add))
 
-    p_token = verbs.add_parser("token", help="店を読む: 鍵（BASE の PAT・Shopify のアプリの鍵）の受け取り")
+    p_token = verbs.add_parser("token", help="店を読む: 鍵（BASE の PAT・Shopify のアプリの鍵・STORES のクレデンシャル）の受け取り")
     token_verbs = p_token.add_subparsers(dest="store_token_verb", required=True)
     p_set = token_verbs.add_parser("set", help="鍵を標準入力か隠した入力で受け、店が見えたときだけ保存する（引数では受けない）")
     p_set.add_argument("store", metavar="店")
     p_set.add_argument("--expires", default=None, metavar="YYYY-MM-DD",
                        help="BASE: Developers で発行したときに決めた期限の日（あとから変えられない・BASE では要る）。"
-                            "Shopify の鍵には期限の日が無いので付けない")
+                            "Shopify の鍵には期限の日が無いので付けない。STORES は知っていれば付ける（任意）")
     p_set.add_argument("--auth", default=None, choices=("client", "token"),
                        help="Shopify: client は Dev Dashboard の Client ID と secret の 2 行（既定）、token は既にある"
                             "カスタムアプリの固定の鍵の 1 行")

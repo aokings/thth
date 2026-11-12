@@ -3,7 +3,8 @@
 柵「決まった道に、決まった中身だけ」:
   1. 網の部品を使うのは wire.py だけ（`tests/test_store_base_audit.py` の今の試験・新しいファイルも自動で見る）。
   2. wire.py の Request は GET と POST の 2 か所・urlopen は 1 か所（同じく `test_store_base_audit.py`）。
-  3. BASE のホストへの GET 以外は全部断る。表に無い道は GET でも断る。STORES のホストは 5.18.0 まで表に無い。
+  3. BASE と STORES のホストへの GET 以外は全部断る。表に無い道（STORES の注文・入金・商品 1 件など）は GET でも断る。
+     STORES の引数は limit と offset だけ。
   4. Shopify: GET は全部断る。QUERIES に無い文（1 字足した・mutation を含む）・知らない variables の鍵は断る。
   5. QUERIES の文は `query ` で始まり、mutation・subscription・order・customer・draftOrder の語を含まない。
   6. 店のラベル: 点・斜線・@・大文字・空・61 字・ラベルなし・port つきは断る。
@@ -47,7 +48,7 @@ def _refused(method, url, body=None):
     assert exc.value.code == "store_request_rejected" and exc.value.detail == "blocked_request"
 
 
-# ------------------------------------------------------------------ 3: BASE（と、まだ表に無い STORES）
+# ------------------------------------------------------------------ 3: BASE と STORES
 
 def test_BASEはGETで表の道だけ():
     wire.check_request("GET", "https://apiv2.thebase.com/api/items?limit=100&offset=0")
@@ -61,11 +62,57 @@ def test_BASEはGETで表の道だけ():
     _refused("GET", "https://apiv2.thebase.com/api/items", b"")                    # GET に本文
 
 
-def test_STORESのホストは5_18_0まで表に無い():
-    for path in ("/retail/202211/store", "/retail/202211/items", "/retail/202211/orders",
-                 "/retail/202211/remittances", "/retail/202211/sales_channels", "/retail/202211/items/x"):
+# STORES（5.18.0）: クレデンシャルは権限を選べず注文も通る鍵なので、注文を読まない柵はこの表だけ。
+STORES_DENIED_PATHS = (
+    "/retail/202211/orders", "/retail/202211/orders/x", "/retail/202211/remittances",
+    "/retail/202211/sales_channels", "/retail/202211/categories", "/retail/202211/items/x",
+    "/retail/202211/items/x/variations", "/retail/202211/coupons", "/retail/202211/stock_adjustments",
+    "/retail/202211/store/", "/retail/202211/items/", "/retail/202304/items", "/retail/items", "/api/items",
+)
+
+
+def test_STORESはGETで表の2つの道だけ():
+    wire.check_request("GET", "https://api.stores.dev/retail/202211/store")
+    wire.check_request("GET", "https://api.stores.dev/retail/202211/items?limit=100&offset=0")
+    assert wire.ROUTES["stores"]["paths"] == {("GET", "/retail/202211/store"), ("GET", "/retail/202211/items")}
+    assert {m for m, _p in wire.ROUTES["stores"]["paths"]} == {"GET"}
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        _refused(method, "https://api.stores.dev/retail/202211/items", b"{}")
+        _refused(method, "https://api.stores.dev/retail/202211/store")
+    for path in STORES_DENIED_PATHS:
         _refused("GET", "https://api.stores.dev" + path)
-    assert set(wire.ROUTES) == {"base", "shopify"}
+    assert not any("order" in p for _m, p in wire.ROUTES["stores"]["paths"])
+    # 引数は limit と offset だけ（ids・keyword・status・in_stock も使わない）。
+    for query in ("ids=a", "keyword=x", "status=shown", "in_stock=true", "only_preorder_sales=true",
+                  "limit=1&ids=a"):
+        _refused("GET", "https://api.stores.dev/retail/202211/items?" + query)
+    _refused("GET", "https://api.stores.dev/retail/202211/items", b"")                # GET に本文
+    for url in ("http://api.stores.dev/retail/202211/items", "https://api.stores.dev:443/retail/202211/items",
+                "https://x@api.stores.dev/retail/202211/items", "https://API.STORES.DEV/retail/202211/items",
+                "https://api.stores.dev.evil.example/retail/202211/items", "https://stores.dev/retail/202211/items",
+                "https://evil.api.stores.dev/retail/202211/items", "https://api.stores.jp/retail/202211/items",
+                "https://api.stores.dev/retail/202211/items#x"):
+        _refused("GET", url)
+
+
+def test_STORESの口はURLを自分で組みBearerを載せる():
+    seen = []
+
+    def transport(method, url, headers, body=None):
+        wire.check_request(method, url, body)
+        seen.append((method, url, dict(headers), body))
+        return 200, b"{}"
+
+    wire.get("stores", "/retail/202211/items", {"limit": 100, "offset": 200}, "cred_x", transport=transport)
+    [(method, url, headers, body)] = seen
+    assert (method, body) == ("GET", None)
+    assert url == "https://api.stores.dev/retail/202211/items?limit=100&offset=200"
+    assert headers["Authorization"] == "Bearer cred_x"
+    for path in ("/retail/202211/orders", "/retail/202211/items/x"):
+        with pytest.raises(StoreRefused):
+            wire.get("stores", path, None, "x", transport=lambda *a: pytest.fail("網に出た"))
+    with pytest.raises(StoreRefused):
+        wire.get("stores", "/retail/202211/items", {"ids": "a"}, "x", transport=lambda *a: pytest.fail("網に出た"))
 
 
 # ------------------------------------------------------------------ 4・5: Shopify
@@ -213,6 +260,28 @@ def test_3xxはBASEの口でredirectの断りになる(monkeypatch):
     with pytest.raises(StoreRefused) as caught:
         client.user()
     assert caught.value.detail == "redirect"
+
+
+@pytest.mark.parametrize("location", [
+    "https://api.stores.dev/retail/202211/orders",             # 同じホストの注文の道
+    "/retail/202211/items?limit=100&offset=0",                 # 同じホストの同じ道でも
+    "https://evil.example/retail/202211/items",
+])
+def test_STORESの3xxも同じホストでも追わず口でredirectの断りになる(monkeypatch, location):
+    from thth.shop import stores
+    fake = _FakeHTTPS(302, location)
+    [redirect] = [h for h in wire.OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    opener = wire.httpsafe.build_opener(redirect_handler=type(redirect)())
+    opener.add_handler(fake)
+    monkeypatch.setattr(wire, "OPENER", opener)
+    url = "https://api.stores.dev/retail/202211/items?limit=100&offset=0"
+    status, _raw = wire.default_transport("GET", url, {})
+    assert status == 302 and fake.seen == [url]
+    client = stores.Client({"public_url": "https://x.example.invalid"}, "cred", transport=None)
+    with pytest.raises(StoreRefused) as caught:
+        client.items()
+    assert caught.value.code == "store_request_rejected" and caught.value.detail == "redirect"
+    assert fake.seen == [url, url]                             # 2 回目の命令でも、追った先は打っていない
 
 
 # ------------------------------------------------------------------ 共通の網の守り（監査 5.17.0 直したほうがよい 2）

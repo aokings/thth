@@ -3,7 +3,8 @@
 符丁は `thth/shop/wire.py` の `REASONS`。BASE の断り（Problem Details の `type`・HTTP の数）は
 `thth/shop/base.py` の `refusal_for` がここの符丁に写し、`type` を詳細として 1 行目の（）に添える。
 Shopify の断り（HTTP の数・GraphQL の `extensions.code` を検査した語）は `thth/shop/shopify.py` が写す。
-文は店の種類で決め打ちせず、BASE と Shopify のどちらでも読めるように書く（設計 Shopify と STORES §8）。
+STORES の断り（HTTP の数だけ・5.18.0）は `thth/shop/stores.py` が写す（新しい符丁は無い）。
+文は店の種類で決め打ちせず、BASE・Shopify・STORES のどれでも読めるように書く（設計 Shopify と STORES §8）。
 since は版上げのときに直す（Shopify の分は `_SINCE_SHOPIFY`・5.17.0 の版上げで 5.17.0 にする）。
 """
 from __future__ import annotations
@@ -22,7 +23,10 @@ _PAT = "BASE Developers（https://developers.thebase.com/）で、読むだけ�
 _SHOPIFY_TOKEN = "thth shop token set <店> --auth client --by <名前>"
 _SHOPIFY_KEY = ("Shopify なら、Dev Dashboard のアプリの版で scope を read_products だけにして店に入れ、Settings の Client ID と"
                 " Client secret を " + _SHOPIFY_TOKEN + " で渡してください")
-_NOT_BASE = "この道具は BASE や Shopify が提供するものではないので、店の窓口でなく THTH の開発のセッションへ thth report file で知らせると早く届きます。"
+_STORES_TOKEN = "thth shop token set <店> --by <名前>"
+_STORES_KEY = ("STORES なら、開発パートナーの登録でプライベートアプリとして発行されたクレデンシャルを " + _STORES_TOKEN
+               + " で渡してください（期限の日を知っていれば --expires <日>）")
+_NOT_BASE = "この道具は BASE・Shopify・STORES が提供するものではないので、店の窓口でなく THTH の開発のセッションへ thth report file で知らせると早く届きます。"
 
 
 def _entry(why, fix, command, better, kind="refusal", since=_SINCE):
@@ -34,7 +38,8 @@ ENTRIES = {
     "store_args_invalid": _entry(
         "thth shop に渡した値が決まりに合っていません（店の名前は英数字と _・.・-、期限は YYYY-MM-DD、--by は誰が頼んだか、"
         "draft は --item か --kind のどちらか 1 つ、Shopify の --shop は myshopify のラベル、Shopify の鍵に --expires は付けず、"
-        "BASE の鍵に --auth は付けない）。",
+        "BASE と STORES の鍵に --auth は付けない、STORES の --url は店の頁の https の URL で、ユーザー名・? の問い合わせ・# の"
+        "ない形）。",
         "1 行目の（）が指す引数を直して打ち直してください。",
         _ADD,
         "店の名前は <project>-base の形にそろえると、どの project の店か名前だけで分かります。"),
@@ -50,15 +55,17 @@ ENTRIES = {
         "台帳を書いたら、続けて thth shop token set で鍵を渡すと、すぐ thth shop whoami で確かめられます。"),
     "store_ledger_invalid": _entry(
         "店の台帳か写し（store_state/<店>/snapshot.json）が読めないか、知らない欄・足りない欄があります。送り先を台帳で変える欄は受けません。",
-        "台帳は店の種類ごとに決まった欄だけ（BASE は store・kind・project・token、Shopify はそれに shop を足した 5 つ）にしてください。"
+        "台帳は店の種類ごとに決まった欄だけ（BASE は store・kind・project・token、Shopify はそれに shop を、STORES はそれに"
+        " public_url（店の頁の https の URL）を足した 5 つ）にしてください。"
         "台帳か写しが壊れたときは、thth shop remove <店> --by <名前> で"
         "外し（二段確認・鍵と写しと台帳を消します）、thth shop add から作り直します。",
         _REMOVE,
         "台帳は手で直さず thth shop add で作り直すと、欄の取り違えが起きません。"),
     "store_token_missing": _entry(
-        "この店の鍵（BASE は PAT・Shopify は Dev Dashboard のアプリの client id と secret か、既にある固定の鍵）がまだ置かれて"
-        "いないか、鍵のファイルが読めません。",
-        "BASE なら" + _PAT + "、thth shop token set <店> --expires <期限の日> --by <名前> で渡してください。" + _SHOPIFY_KEY + "。",
+        "この店の鍵（BASE は PAT・Shopify は Dev Dashboard のアプリの client id と secret か、既にある固定の鍵・STORES は"
+        "クレデンシャル）がまだ置かれていないか、鍵のファイルが読めないか、店の種類と鍵の形が合いません。",
+        "BASE なら" + _PAT + "、thth shop token set <店> --expires <期限の日> --by <名前> で渡してください。" + _SHOPIFY_KEY + "。"
+        + _STORES_KEY + "。",
         _TOKEN,
         "PAT の期限は発行のときに決まり、あとで変えられないので、期限の日を控えて --expires に入れると 14 日前から知らせます。"),
     "store_token_input_unsafe": _entry(
@@ -68,7 +75,7 @@ ENTRIES = {
         "鍵は引数では受けません。履歴に残らない標準入力か隠した入力で渡すのが安全です。"),
     "store_token_empty": _entry(
         "受け取った鍵が空か、空白や改行を含む形でした。",
-        "表示された鍵（BASE の PAT・Shopify の Client ID と Client secret はそれぞれ 1 行）をそのまま貼り付けて、もう一度 thth shop token set を打ってください。",
+        "表示された鍵（BASE の PAT・Shopify の Client ID と Client secret はそれぞれ 1 行・STORES のクレデンシャル）をそのまま貼り付けて、もう一度 thth shop token set を打ってください。",
         _TOKEN,
         "パスワードの道具から貼ると、前後の空白や改行が混ざりにくくなります。"),
     "store_token_expires_past": _entry(
@@ -77,14 +84,18 @@ ENTRIES = {
         _TOKEN,
         "期限の日は発行の画面に出ます。控えておくと、THTH が 14 日前から知らせるので、切れる前に差し替えられます。"),
     "store_token_expired": _entry(
-        "置いてある鍵（BASE の PAT）の期限を過ぎています。BASE の PAT は期限を発行のあとに延ばせません。",
-        _PAT + "、新しい期限の日と一緒に thth shop token set で差し替えてください。",
+        "置いてある鍵（BASE の PAT か、--expires を付けて置いた STORES のクレデンシャル）の期限を過ぎています。"
+        "BASE の PAT は期限を発行のあとに延ばせません。",
+        "BASE なら" + _PAT + "、新しい期限の日と一緒に thth shop token set で差し替えてください。STORES なら、"
+        "STORES から新しいクレデンシャルを受け取って " + _STORES_TOKEN + " で差し替えてください。",
         _TOKEN,
         "期限は長めにして控えておくと、THTH が 14 日前から thth morning で知らせるので、切れる前に差し替えられます。"),
     "store_token_rejected": _entry(
-        "店が鍵を受け付けませんでした（401）。BASE なら期限切れか取り消された PAT、Shopify なら取り消された固定の鍵か、取り直した鍵でも"
-        "通らなかった（アプリが店から外された）ときです。鍵は保存していません（token set のとき）。",
-        "BASE なら" + _PAT + "、thth shop token set で差し替えてください。" + _SHOPIFY_KEY + "。",
+        "店が鍵を受け付けませんでした（1 行目の（）が HTTP の数）。BASE なら期限切れか取り消された PAT、Shopify なら取り消された固定の鍵か、"
+        "取り直した鍵でも通らなかった（アプリが店から外された）とき、STORES（401 か 403）ならクレデンシャルが違う・取り消された・"
+        "スタンダードプランでなくなった、のどれかです。鍵は保存していません（token set のとき）。",
+        "BASE なら" + _PAT + "、thth shop token set で差し替えてください。" + _SHOPIFY_KEY + "。STORES なら、店の契約が"
+        "スタンダードプランかを確かめ、クレデンシャルを " + _STORES_TOKEN + " で渡し直してください。",
         _TOKEN,
         "差し替えたら thth shop whoami <店> で店の名前が出るかを確かめると、次の読みで止まりません。" + _NOT_BASE),
     "store_scope_missing": _entry(
@@ -102,13 +113,14 @@ ENTRIES = {
         _TOKEN + " --force",
         "店ごとに台帳を分けておくと、下書きの出所（store/<店>/item/<id>）で取り違えを見分けられます。"),
     "store_api_changed": _entry(
-        "店の応答に、要る欄が無いか、型が変わっていました（BASE の v2 は β で予告なく変わることがあります。Shopify は API の版 2026-10 を読みます）。写しは進めていません。",
+        "店の応答に、要る欄が無いか、型が変わっていました（BASE の v2 は β で予告なく変わることがあります。Shopify は API の版 2026-10、"
+        "STORES は版 202211 を読みます）。写しは進めていません。",
         "時間を置いて同じ命令を打ち直してください。続くなら、命令と時刻を添えて thth report file で開発のセッションへ知らせてください。",
         _ITEMS,
-        "BASE Developers の変更履歴（https://apiv2.thebase.com/docs/changelog/）か Shopify の changelog（https://shopify.dev/changelog）"
-        "を見ると、何が変わったかの手がかりになります。" + _NOT_BASE),
+        "BASE Developers の変更履歴（https://apiv2.thebase.com/docs/changelog/）・Shopify の changelog（https://shopify.dev/changelog）・"
+        "STORES の API の頁（https://heyinc.github.io/retail-api-docs/）を見ると、何が変わったかの手がかりになります。" + _NOT_BASE),
     "store_unavailable": _entry(
-        "店（BASE・Shopify）に届かないか、一時的に応えませんでした（保守・5xx・混雑・Shopify の点数の上限 throttled・凍った店 shop_frozen）。再試行はしていません。",
+        "店（BASE・Shopify・STORES）に届かないか、一時的に応えませんでした（保守・5xx・混雑 429・Shopify の点数の上限 throttled・凍った店 shop_frozen）。再試行はしていません。",
         "少し時間を置いて打ち直してください。保守中なら、終わってから打ち直します。",
         _ITEMS,
         "定期に読むなら間を広めに空けると、上限に当たりにくくなります。1 行目の（）が shop_frozen なら、Shopify の管理画面で店の契約を確かめてください。"),
@@ -119,15 +131,15 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> が通るかを先に見ると、鍵の問題か問い合わせの問題かを切り分けられます。" + _NOT_BASE),
     "store_read_incomplete": _entry(
-        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE は 100 件ずつ 5 頁、Shopify は 50 件ずつ 10 頁で、どちらも 500 件まで。"
-        "ちょうど 500 件の BASE の店もここに当たります）。"
+        "商品の全部を 1 回の読みで読み切れませんでした（1 回に読むのは BASE と STORES は 100 件ずつ 5 頁、Shopify は 50 件ずつ 10 頁で、"
+        "どれも 500 件まで。ちょうど 500 件の BASE と STORES の店もここに当たります）。"
         "読み切れないまま写しにすると、読めなかった商品を「消えた」と取り違えます。",
         "写しは進めていません。商品が上限より多い店は、開発のセッションへ thth report file で上限の相談をしてください。",
         _ITEMS,
         "thth shop items <店> で今読める分の一覧は見られます。違いを見るだけなら thth shop diff <店>（--accept なし）は通ります。"),
     "store_draft_nothing": _entry(
         "選んだ商品・種類に、下書きにできる違いがありません（公開で買える商品の新着・再入荷・値下げだけを下書きにします。"
-        "在庫 0・販売前・販売終了・名前が空の商品は作りません）。",
+        "在庫 0・販売前・販売終了・予約販売・名前が空の商品は作りません）。",
         "thth shop diff <店> で今の違いを確かめてから、--item か --kind を選び直してください。",
         _DIFF,
         "売り切れ・値上げの下書きは作りません。新着や再入荷のときに作ると、見た人がそのまま買えるお知らせになります。"),
@@ -160,8 +172,8 @@ ENTRIES = {
         "作った下書きが queue の lint を通りませんでした（1 行目の（）が lint の符丁）。queue には置いていません。",
         "口座の媒体の文字数や決まりを thth lint で確かめ、続くなら thth report file で開発のセッションへ知らせてください。",
         _DIFF,
-        "1 行目の（）が文字数なら、BASE の管理画面で商品名を短くしてください。hashtags の符丁なら、商品名の # がハッシュタグと"
-        "読まれています（ハッシュタグを使わない口座）。BASE で商品名から # を外すと、どの媒体の下書きにも収まります。"),
+        "1 行目の（）が文字数なら、店の管理画面で商品名を短くしてください。hashtags の符丁なら、商品名の # がハッシュタグと"
+        "読まれています（ハッシュタグを使わない口座）。店の管理画面で商品名から # を外すと、どの媒体の下書きにも収まります。"),
     "store_remove_unconfirmed": _entry(
         "--confirm の digest が、今消す物の一覧と合いません（1 行目の（）が今の digest）。表示したあとに台帳・写し・鍵のどれかが変わりました。何も消していません。",
         "--confirm を付けずに thth shop remove <店> --by <名前> を打ち直し、消す物の一覧を見てから、出た digest で二段目を打ってください。",
