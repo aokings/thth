@@ -582,8 +582,8 @@ def build_privacy() -> str:
         "and reuses it until shortly before it expires. Of the shop, THTH keeps only its myshopify domain, name and "
         "URL. THTH reads the names of the permissions the key has been granted and tells the owner when there are "
         "more than <code>read_products</code>; it does not keep that list, and the record keeps only how many extra "
-        "permissions there were. The item page and image URLs Shopify returns are only written into drafts; THTH "
-        "sends nothing to them. The key on Shopify itself is revoked in the Dev Dashboard, by removing the app from "
+        "permissions there were. THTH sends nothing to the item page and image URLs that Shopify returns; "
+        "drafts carry the item page's URL but not image URLs. The key on Shopify itself is revoked in the Dev Dashboard, by removing the app from "
         "the shop or creating a new secret. THTH is not provided by Shopify.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
@@ -1052,7 +1052,8 @@ def build_privacy() -> str:
         "使えます）は同じ置き場の別のファイル（<code>~/.config/thth/</code>・600）に置き、切れる少し前まで使い回します。"
         "ショップについて残すのは myshopify のドメイン・名前・URL だけです。鍵に許された権限の名前の一覧を読み、"
         "<code>read_products</code> のほかがあれば持ち主に知らせます。一覧は残さず、記録に残すのは余分の数だけです。"
-        "Shopify が返す商品の頁と画像の URL は下書きに書くだけで、THTH はそこに何も送りません。Shopify の側の鍵は、"
+        "Shopify が返す商品の頁と画像の URL に、THTH は何も送りません。下書きに入るのは商品の頁の URL で、画像の URL は入れません。"
+        "Shopify の側の鍵は、"
         "Dev Dashboard でアプリをショップから外すか secret を作り直して取り消します。THTH は Shopify が提供するもの"
         "ではありません。</p>")
 

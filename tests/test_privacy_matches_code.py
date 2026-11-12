@@ -51,6 +51,17 @@ def hours_en(ms: int) -> str:
 
 
 # （何の数か, コードの値から作った privacy の文の断片）。
+
+def _draft_has_no_image() -> bool:
+    """店の下書きに画像の URL が入らないこと（画像の URL のある商品で本文を作って確かめる）。"""
+    from thth.shop import draft as shop_draft
+    row = {"id": 1, "name": "x", "price": 1, "stock": 1, "visible": True, "sales_status": "active",
+           "image_url": "https://img.example.invalid/marker-image.jpg", "item_url": "https://x.example.invalid/p/1",
+           "modified_at": "t"}
+    text = shop_draft.text_for("s", "a", "threads", {"id": 1, "kind": "new", "draft_kind": "new"}, row,
+                               shop_url="https://x.example.invalid", read_at="t", publish_at="t")
+    return "marker-image" not in text and "from_store_image: none" in text
+
 def facts() -> list[tuple[str, str]]:
     return [
         ("relay の認可コード（relay-object.js CODE_MS）",
@@ -146,6 +157,11 @@ def facts() -> list[tuple[str, str]]:
          f"with the read scope <code>{shop_shopify.REQUIRED_SCOPE}</code>"),
         ("Shopify の短い鍵の長さ（shop/access.MAX_LIFETIME_SECONDS）",
          "valid for about 24 hours" if shop_access.MAX_LIFETIME_SECONDS == 24 * 3600 else "短い鍵の長さが privacy と違う"),
+        # 監査 5.17.0 直したほうがよい 3: 画像の URL は下書きに入れない（draft の頭が from_store_image: none）。
+        ("下書きに画像の URL を入れない（shop/draft.text_for）",
+         "drafts carry the item page's URL but not image URLs" if _draft_has_no_image() else "下書きに画像の URL がある"),
+        ("下書きに画像の URL を入れない・日本語",
+         "下書きに入るのは商品の頁の URL で、画像の URL は入れません" if _draft_has_no_image() else "下書きに画像の URL がある"),
         ("店のリダイレクトを追わない（shop/wire.OPENER）",
          "THTH does not follow redirects from the shop"
          if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
@@ -336,3 +352,10 @@ def test_WordPressの節の文字列だけの柵(what, en, ja):
     page = PRIVACY.read_text(encoding="utf-8")
     assert en in _wp_section(page, "Blog articles on WordPress"), what
     assert ja in _wp_section(page, "WordPress の記事"), what
+
+
+def test_店の画像のURLを下書きに書くとは言わない():
+    """監査 5.17.0 直したほうがよい 3: 前の文「下書きに書くだけ」は画像の URL について事実と違った。"""
+    page = PRIVACY.read_text(encoding="utf-8")
+    for old in ("are only written into drafts", "下書きに書くだけ"):
+        assert old not in page
