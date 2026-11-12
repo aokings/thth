@@ -14,17 +14,18 @@ REASONS = frozenset((
     "sync_args_invalid", "sync_tool_missing", "sync_not_repo", "sync_register_unclean", "sync_in_progress",
     "sync_branch_mismatch", "sync_remote_missing", "sync_url_invalid", "sync_conflict", "sync_retry_exhausted",
     "sync_tampered", "sync_busy", "sync_box_too_large", "sync_vault_full", "sync_not_joined", "sync_login_required",
-    "sync_unavailable", "sync_vault_missing", "sync_vault_exists", "sync_join_failed", "sync_init_needs_terminal",
+    "sync_unavailable", "sync_vault_missing", "sync_join_failed", "sync_remote_redirected", "sync_init_needs_terminal",
     "sync_failed",
     # 庭（thth garden）
     "garden_args_invalid", "garden_tool_missing", "garden_snapshot_missing", "garden_out_not_empty", "garden_dir_missing", "garden_empty",
     "garden_kind_refused", "garden_size_refused", "garden_text_refused", "garden_active_refused",
-    "garden_external_refused", "garden_guide_missing", "garden_publish_unconfirmed", "garden_not_ready",
+    "garden_external_refused", "garden_markup_refused", "garden_guide_missing", "garden_publish_unconfirmed", "garden_not_ready",
     "garden_busy", "garden_full", "garden_login_required", "garden_unavailable", "garden_failed",
 ))
 
-# 詳細に入れてよい形（静的な語・検査した相対の道・数）。
-_DETAIL = re.compile(r"[A-Za-z0-9_./:~ -]{1,96}\Z")
+# 詳細に入れてよい形（静的な語・検査した相対の道・数）。道は日本語の名前もそのまま出す（どのファイルかが分かるように・
+# 監査 段 1 の 5）。制御文字・引用符・<>・\ は入らない（`garden._safe_name` が ? に替える）。
+_DETAIL = re.compile(r"[\w./:~ ?#()-]{1,96}\Z")
 # monban の符丁の形（monban の errors.safe_code と同じ向き: 英小文字と _）。
 MONBAN_CODE = re.compile(r"[a-z][a-z0-9_]{2,47}\Z")
 _MONBAN_LINE = re.compile(r"(?:^|\n)\s*(?:remote: )?monban(?:-vault)?: ([a-z][a-z0-9_]{2,47})\b")
@@ -69,7 +70,7 @@ def monban_json(text: str) -> dict:
     for key in ("files", "bytes", "seq", "boxes"):
         if isinstance(value.get(key), int) and not isinstance(value.get(key), bool) and value[key] >= 0:
             out[key] = value[key]
-    for key in ("joined", "stopped"):
+    for key in ("joined", "stopped", "owner_stopped", "operator_stopped"):
         if isinstance(value.get(key), bool):
             out[key] = value[key]
     if isinstance(value.get("status"), str) and MONBAN_CODE.fullmatch(value["status"]):

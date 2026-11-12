@@ -40,10 +40,13 @@ def env() -> dict:
     out["GIT_EDITOR"] = "true"
     out["GIT_MERGE_AUTOEDIT"] = "no"
     out["LC_ALL"] = "C"  # git の印（fetch first など）を英語の形で読む
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        out.pop(name, None)  # --repo と違う repo を触らない（監査 段 1 の気づき）
     return out
 
 
-def run(argv: list, *, cwd: str | None = None, passthrough: bool = False, stdin_passthrough: bool = False):
+def run(argv: list, *, cwd: str | None = None, passthrough: bool = False, stdin_passthrough: bool = False,
+        family: str = "sync"):
     """`(rc, stdout, stderr)`。passthrough なら出力を取らない（stdout・stderr は空の文字列）。
 
     stdin_passthrough は標準入力だけを端末へ繋ぐ（出力は取る）。どちらでもなければ標準入力は空。
@@ -56,8 +59,8 @@ def run(argv: list, *, cwd: str | None = None, passthrough: bool = False, stdin_
                               stdin=None if stdin_passthrough else subprocess.DEVNULL,
                               capture_output=True, text=True, errors="replace")
     except FileNotFoundError:
-        raise VaultRefused("sync_tool_missing", os.path.basename(str(argv[0]))) from None
+        raise VaultRefused(f"{family}_tool_missing", os.path.basename(str(argv[0]))) from None
     except subprocess.TimeoutExpired:
-        raise VaultRefused("sync_unavailable", "timeout") from None
+        raise VaultRefused(f"{family}_unavailable", "timeout") from None
     return done.returncode, done.stdout or "", done.stderr or ""
 

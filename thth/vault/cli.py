@@ -71,7 +71,10 @@ REMOTE_WORDS = {"added": "git remote add monban を足しました", "kept": "re
 
 def cmd_init(args) -> int:
     done = sync.init(args.url, repo=args.repo, passphrase_stdin=args.passphrase_stdin)
-    print("金庫を作りました。戻しの文字列は上に 1 度だけ出ました（THTH は保存していません）。パスワード管理に置いてください。")
+    if done["recovery_shown"]:
+        print("金庫を作りました。戻しの文字列は上に 1 度だけ出ました（THTH は読んでも保存してもいません）。パスワード管理に置いてください。")
+    else:
+        print("金庫を作りました。鍵は渡した合言葉で包みました（THTH は読んでも保存してもいません）。合言葉はパスワード管理に。")
     if REMOTE_WORDS.get(done["remote"]):
         print(REMOTE_WORDS[done["remote"]])
     print("次: thth sync（台帳を commit してから）")
@@ -166,8 +169,7 @@ def cmd_garden_simple(args) -> int:
     if args.garden_command == "stop":
         print(f"止めました: 庭 {done['url']}（次の要求から配られません）")
     else:
-        stopped = "止まっています" if done.get("stopped") else "配っています"
-        print(f"庭 {done['url']}: {stopped}・{done.get('files')} ファイル・{done.get('bytes')} バイト")
+        print(f"庭 {done['url']}: {garden.state_words(done)}・{done.get('files')} ファイル・{done.get('bytes')} バイト")
     return 0
 
 

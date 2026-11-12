@@ -1,8 +1,9 @@
 """金庫と庭の口（`thth sync`・`thth garden`・段 1・仮）の試験。
 
 **本物の monban には繋がない。** monban の道具（`monban-vault`・`git-remote-monban`）は、`PATH` の先頭に置いた偽の実行
-ファイルに差し替える。git は本物を使い、金庫の代わりに手元の bare repo を `url.<道>.insteadOf` で `monban://…` に見せる
-（git-remote-monban を通らない道）。monban の断りの形（`monban: <符丁> — …`）は偽の git-remote-monban が出す。
+ファイルに差し替える。git は本物を使い、偽の git-remote-monban が遠隔の口の `connect` で手元の bare repo に繋ぐ
+（insteadOf には頼らない: insteadOf で先を替えると thth sync は断る）。monban の断りの形（`monban: <符丁> — …`）も
+偽の git-remote-monban が出す。
 
 柵（わざと壊して赤を見たもの・報告に記録）:
 
@@ -45,7 +46,27 @@ log = os.environ.get("FAKE_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({"tool": "git-remote-monban", "argv": sys.argv[1:]}) + "\n")
-mode = os.environ.get("FAKE_MONBAN_MODE", "remote_unavailable")
+mode = os.environ.get("FAKE_MONBAN_MODE", "ok")
+if mode == "ok":
+    # 動く偽の金庫: git の遠隔の口の `connect` で、手元の bare repo の upload-pack・receive-pack に繋ぐ（暗号はしない）。
+    def line():
+        out = b""
+        while True:
+            ch = os.read(0, 1)
+            if not ch or ch == b"\n":
+                return out.decode()
+            out += ch
+    while True:
+        got = line()
+        if got == "capabilities":
+            os.write(1, b"connect\n\n")
+        elif got.startswith("connect "):
+            os.write(1, b"\n")
+            service = got.split(" ", 1)[1]
+            git = os.environ["FAKE_REAL_GIT"]
+            os.execv(git, [git, service.replace("git-", "", 1), os.environ["FAKE_BARE"]])
+        else:
+            sys.exit(0)
 if mode == "leak":
     print("monban: invalid_key — " + os.environ["FAKE_BEARER"] + " recovery " + os.environ["FAKE_RECOVERY"], file=sys.stderr)
 else:
@@ -65,7 +86,8 @@ recovery, bearer = os.environ["FAKE_RECOVERY"], os.environ["FAKE_BEARER"]
 cmd = args[0]
 if cmd == "init":
     print("made / 作りました: " + args[1])
-    print("戻しの文字列（1 度だけ表示）:\n" + recovery)
+    if "--passphrase-stdin" not in args:
+        print("戻しの文字列（1 度だけ表示）:\n" + recovery)
     sys.exit(0)
 if cmd == "join":
     line = sys.stdin.readline().rstrip("\n") if "--stdin" in args else ""
@@ -89,7 +111,9 @@ if cmd == "garden":
     if verb == "publish":
         print(json.dumps({"head": "b" * 64, "files": 3, "bytes": 999, "token": bearer}))
         sys.exit(0)
-    print(json.dumps({"head": "b" * 64, "stopped": verb == "stop", "files": 3, "bytes": 999}))
+    stops = os.environ.get("FAKE_GARDEN_STOPS", "")
+    print(json.dumps({"head": "b" * 64, "files": 3, "bytes": 999, "owner_stopped": "owner" in stops or verb == "stop",
+                      "operator_stopped": "operator" in stops}))
     sys.exit(0)
 sys.exit(3)
 '''
@@ -127,7 +151,8 @@ def env(tmp_path, monkeypatch):
     gitconfig = tmp_path / "gitconfig"
     gitconfig.write_text(
         "[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n"
-        f"[url \"{bare}\"]\n\tinsteadOf = {URL}\n[commit]\n\tgpgsign = false\n", encoding="utf-8")
+        "[commit]\n\tgpgsign = false\n", encoding="utf-8")
+    monkeypatch.setenv("FAKE_BARE", str(bare))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.path.dirname(REAL_GIT)}{os.pathsep}/usr/bin:/bin")
@@ -338,6 +363,29 @@ def test_sync_init_端末では出力を取らずに流し_remoteを足す(env, 
     assert [c["argv"] for c in _calls(env)] == [["init", URL]]
 
 
+def test_sync_init_合言葉の道では戻しの文字列が出たと言わない(env, capfd, monkeypatch):
+    a = _repo(env, "a")
+    _git(a, "remote", "remove", "monban")
+    code, out, err = _main(["sync", "init", URL, "--repo", str(a), "--passphrase-stdin"], capfd)
+    assert code == 0 and "戻しの文字列" not in out + err and "合言葉" in out
+
+
+@pytest.mark.parametrize("setting,word", [
+    (("url.{bare}.insteadOf", URL), "fetch"),
+    (("url.{bare}.pushInsteadOf", URL), "push"),
+    (("remote.monban.pushurl", "{bare}"), "push"),
+])
+def test_柵_実際の先がmonbanでなければpullもpushもしない(env, capfd, setting, word):
+    a = _repo(env, "a")
+    key, value = (part.format(bare=env["bare"]) for part in setting)
+    _git(a, "config", key, value)
+    code, got, _ = _json(["sync", "--repo", str(a)], capfd)
+    assert code == 2 and got["code"] == "sync_remote_redirected" and got["detail"] == word
+    assert got["why"] and got["fix"] and got["better"]
+    assert _calls(env) == []
+    assert _git(env["bare"], "rev-parse", "--verify", "--quiet", "main", check=False).returncode != 0
+
+
 def _thth(env, argv, stdin=""):
     run_env = dict(os.environ)
     run_env["PYTHONPATH"] = str(ROOT)
@@ -448,8 +496,20 @@ def _site(tmp_path, body="<p>本文</p>", name="index.html", raw=None, extra=Non
     ('<img src="//cdn.example.invalid/a.png">', "garden_external_refused"),
     ('<img srcset="a.png 1x, https://cdn.example.invalid/b.png 2x">', "garden_external_refused"),
     ('<link rel="stylesheet" href="https://fonts.example.invalid/a.css">', "garden_external_refused"),
-    ('<p style="background:url(https://t.example.invalid/p.gif)">x</p>', "garden_external_refused"),
-    ("<style>@import url(a.css);</style>", "garden_external_refused"),
+    ('<p style="background:url(https://t.example.invalid/p.gif)">x</p>', "garden_markup_refused"),
+    ("<style>@import url(a.css);</style>", "garden_markup_refused"),
+    ('<p style="color:red">x</p>', "garden_markup_refused"),
+    # 監査 段 1 の 4: 正規表現の柵の抜け道
+    ('<script a=b"c>alert(1)', "garden_active_refused"),
+    ('<a href="java&#9;script:alert(1)">押す</a>', "garden_active_refused"),
+    ('<a href="&#1;javascript:alert(1)">押す</a>', "garden_active_refused"),
+    ('<a href="JaVaScRiPt&colon;alert(1)">押す</a>', "garden_active_refused"),
+    ('<img src="/\\evil.example.invalid/x.png">', "garden_external_refused"),
+    ('<img src=" \x01//evil.example.invalid/x.png">', "garden_external_refused"),
+    ('<img src="a.png" alt="閉じない>', "garden_markup_refused"),
+    ('<p>x</p><img src="a.png"', "garden_markup_refused"),
+    ('<a href="a.html" ping="https://t.example.invalid/">x</a>', "garden_external_refused"),
+    ('<aside hidden data-thth-guide="free">隠した枠</aside>', "garden_guide_missing"),
     ('<meta http-equiv="refresh" content="0;url=https://evil.example.invalid/">', "garden_text_refused"),
     ("<p>二つめ</p>" + garden.GUIDE, "garden_guide_missing"),
 ])
@@ -457,6 +517,38 @@ def test_garden_check_THTHの柵(tmp_path, body, code):
     with pytest.raises(wire.VaultRefused) as exc:
         garden.check_dir(str(_site(tmp_path, body)))
     assert exc.value.code == code
+
+
+def test_garden_check_終わりで閉じないタグ(tmp_path):
+    raw = GOOD.format(body="<p>x</p>").encode("utf-8") + b'<img src="a.png'
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, raw=raw)))
+    assert exc.value.code == "garden_markup_refused" and "broken tag" in exc.value.detail
+
+
+def test_garden_check_普通のSVGのxmlnsは外の資源でない(tmp_path):
+    svg = (b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1 1">'
+           b'<use xlink:href="#a"/><rect width="1" height="1"/></svg>')
+    site = _site(tmp_path, extra={"logo.svg": svg})
+    assert "/logo.svg" in garden.check_dir(str(site))["files"]
+
+
+@pytest.mark.parametrize("css", [b"body{background:url(\\68ttps://t.example.invalid/p.gif)}",
+                                 b"body{background:url(/* x */https://t.example.invalid/p.gif)}",
+                                 b"@font-face{src:url('//f.example.invalid/a.woff2')}",
+                                 b"@import 'a.css';"], ids=["escape", "comment", "font", "import"])
+def test_garden_check_CSSの外の資源(tmp_path, css):
+    site = _site(tmp_path, extra={"style.css": css})
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(site))
+    assert exc.value.code == "garden_external_refused"
+
+
+def test_garden_check_日本語の名前でもどれかを言う(tmp_path):
+    site = _site(tmp_path, extra={"抹茶の缶.js": b"x"})
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(site))
+    assert exc.value.code == "garden_kind_refused" and "抹茶の缶.js" in exc.value.detail
 
 
 def test_garden_check_リンクは外へ向けてよい(tmp_path):
@@ -550,8 +642,30 @@ def test_garden_publish_monbanの断り_文を写さない(env, capfd, monkeypat
 
 def test_garden_stop_は確認なしですぐ(env, capfd):
     code, got, _ = _json(["garden", "stop", GARDEN], capfd)
-    assert code == 0 and got["stopped"] is True
+    assert code == 0 and got["owner_stopped"] is True
     assert [c["argv"] for c in _calls(env)] == [["garden", "stop", GARDEN, "--json"]]
+
+
+@pytest.mark.parametrize("stops,words,serving", [("", "配っています", True), ("owner", "自分で止めました", False),
+                                                ("operator", "運営者が止めました", False)])
+def test_garden_status_止めを2つとも読む(env, capfd, monkeypatch, stops, words, serving):
+    monkeypatch.setenv("FAKE_GARDEN_STOPS", stops)
+    code, out, _ = _main(["garden", "status", GARDEN], capfd)
+    assert code == 0 and words in out
+    code, got, _ = _json(["garden", "status", GARDEN], capfd)
+    assert got["serving"] is serving and got["owner_stopped"] is ("owner" in stops)
+    assert got["operator_stopped"] is ("operator" in stops)
+
+
+def test_garden_build_出す先のsymlinkは上書きしない(env, capfd):
+    _snapshot(env)
+    out_dir = env["tmp"] / "site"
+    out_dir.mkdir()
+    target = env["tmp"] / "大事.html"
+    target.write_text("消さないで", encoding="utf-8")
+    (out_dir / "index.html").symlink_to(target)
+    assert _json(["garden", "build", "kopicha-base", "--out", str(out_dir)], capfd)[1]["code"] == "garden_out_not_empty"
+    assert target.read_text(encoding="utf-8") == "消さないで"
 
 
 def test_garden_道具が無ければ入れ方を言う(env, capfd):

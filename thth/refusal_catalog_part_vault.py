@@ -79,7 +79,7 @@ ENTRIES = {
         "金庫の箱が書き換わったか、前に見た版より古い版を見せられました（monban の確かめが止めました）。自動では直しません。",
         "何も書き換えずに止め、monban の運営者（ハウスの持ち主）に、1 行目の（）と時刻を知らせてください。",
         None,
-        "手元の台帳の repo はそのまま正しいので、知らせを待つ間も手元で書き続けてかまいません（あとで合わせます）。"),
+        "THTH は手元の台帳の repo を書き換えていないので、知らせを待つ間も手元で書き続けられます（あとで合わせます）。"),
     "sync_busy": _entry(
         "金庫に置きかけの箱が多いか、置く回数の上限に当たりました（1 行目の（）が monban の符丁）。置いた物は消えていません。",
         "数分待ってから thth sync を打ち直してください。",
@@ -115,11 +115,13 @@ ENTRIES = {
         "1 台目なら thth sync init <金庫> で作ってください（名前の綴りも確かめてください）。",
         "thth sync init <金庫>",
         "金庫の名前を ledger にそろえると、端末ごとの綴り違いが起きません。"),
-    "sync_vault_exists": _entry(
-        "その名前の金庫は既にあります。作り直すと、前の鍵で開けられる人がいなくなるので作りませんでした。",
-        "この端末を足すなら thth sync join <金庫> を打ってください。",
-        "thth sync join <金庫>",
-        "1 台目で作った戻しの文字列を使えば、何台でも同じ金庫に足せます。"),
+    "sync_remote_redirected": _entry(
+        "remote monban の字面は monban:// でも、git の設定（url.….insteadOf・pushInsteadOf・remote.monban.pushurl）で、"
+        "実際に取り込む先か送る先（1 行目の（））が monban でない所に替わっています。そのまま送ると、台帳が暗号なしで別の所へ出ます。",
+        "git config --get-regexp 'url\\..*insteadof|remote\\.monban\\.pushurl' で替えている設定を見て外してから、"
+        "thth sync を打ち直してください。",
+        _SYNC,
+        "別の置き場（GitHub など）にも置きたいときは、monban と別の名前の remote にすると、金庫の道と混ざりません。"),
     "sync_join_failed": _entry(
         "戻しの文字列（か合言葉）で金庫を開けませんでした（1 行目の（）が monban の符丁）。",
         "金庫を作ったときの戻しの文字列を 1 行で、もう一度 thth sync join <金庫> に入れてください。",
@@ -197,9 +199,15 @@ ENTRIES = {
         "使う画像や CSS をフォルダの中に置き、相対の道（images/a.webp など）で指してから打ち直してください。",
         None,
         "リンク（<a href>）は外へ向けてかまわないので、店や SNS へはリンクで案内できます。"),
+    "garden_markup_refused": _entry(
+        "頁の書き方に、配る側で効かないか、読み違えられる所があります（1 行目の（）: broken tag は閉じないタグか引用符の"
+        "合わないタグ・style は inline の style か <style>（monban の CSP は style-src 'self' なので効きません）・entity は DTD の entity）。",
+        "タグを閉じて引用符をそろえ、見た目は style.css に移し、DTD の entity を外してから打ち直してください。",
+        None,
+        "見た目を style.css 1 枚にまとめると、頁を足しても同じ見た目にそろいます。"),
     "garden_guide_missing": _entry(
         "HTML に「THTH の案内」の枠（data-thth-guide=\"free\" の印）がちょうど 1 つありません（1 行目の（）がその頁）。"
-        "無料版の庭は各頁に案内の枠を 1 つ置く決まりです（原則_庭の来訪者と広告 の 7）。",
+        "無料版の庭は各頁に案内の枠を 1 つ置く決まりです（原則_庭の来訪者と広告 の 7）。この検査はうっかり落とすのを見つけるためのものです。",
         "thth garden build で作り直すか、build が作る枠をその頁に 1 つ入れてから打ち直してください。",
         "thth garden build <店> --out <フォルダ>",
         "枠は build の見本と同じ場所に置くと、承認する姿と出る姿が同じになります。"),

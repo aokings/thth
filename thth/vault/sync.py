@@ -46,7 +46,6 @@ MONBAN_TO_SYNC = {
     "key_expired": "sync_login_required",
     "remote_unavailable": "sync_unavailable",
     "vault_missing": "sync_vault_missing",
-    "vault_exists": "sync_vault_exists",
     "passphrase_mismatch": "sync_join_failed",
     "secret_required": "sync_join_failed",
     "vault_dependency_missing": "sync_tool_missing",
@@ -110,11 +109,19 @@ def check(repo: str, branch: str) -> dict:
 
 
 def remote_url(repo: str, remote: str = REMOTE) -> str:
-    # `git remote get-url` は insteadOf を展開するので、台帳に書いた URL そのものを読む。
+    # 台帳に書いた URL の字面と、git が実際に使う先（insteadOf・pushInsteadOf・pushurl を展開した後）の両方が
+    # monban:// の形であること（平文で別の所へ push しない・監査 段 1 の 1）。
     rc, out, _ = _git(repo, "config", "--get", f"remote.{remote}.url")
     if rc != 0 or not out.strip():
         raise VaultRefused("sync_remote_missing", remote)
-    return check_url(out.strip())
+    url = check_url(out.strip())
+    for args, word in ((("remote", "get-url", "--all", remote), "fetch"),
+                       (("remote", "get-url", "--push", "--all", remote), "push")):
+        rc, out, _ = _git(repo, *args)
+        targets = [line.strip() for line in out.splitlines() if line.strip()]
+        if rc != 0 or not targets or any(not URL.fullmatch(t) for t in targets):
+            raise VaultRefused("sync_remote_redirected", word)
+    return url
 
 
 def refusal_for(text: str, *, step: str) -> VaultRefused:
@@ -148,7 +155,7 @@ def run(repo: str, *, branch: str = DEFAULT_BRANCH, remote: str = REMOTE, attemp
     tools.need(tools.GIT_REMOTE)
     found = check(repo, branch)
     top = found["repo"]
-    remote_url(top, remote)
+    remote_url(top, remote)  # 実際の先が monban でなければ、pull も push もしない
     pulled = 0
     for attempt in range(1, attempts + 1):
         before = _git(top, "rev-parse", "HEAD")[1].strip()
@@ -203,7 +210,7 @@ def init(url: str, *, repo: str | None, passphrase_stdin: bool = False) -> dict:
     rc, _, _ = tools.run(argv, passthrough=True)
     if rc != 0:
         raise VaultRefused("sync_failed", "init")
-    return {"ok": True, "url": url, "remote": _ensure_remote(repo, url)}
+    return {"ok": True, "url": url, "remote": _ensure_remote(repo, url), "recovery_shown": not passphrase_stdin}
 
 
 def join(url: str, *, repo: str | None, stdin: bool = False) -> dict:

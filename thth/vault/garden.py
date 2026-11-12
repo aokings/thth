@@ -17,9 +17,12 @@
 - monban の Edge の制限（edge/src/vault.js の写し）: 種類・名前・2000 個・1 個 25 MB・全部で 100 MB・HTML/SVG/XML は
   1 枚 1 MB・UTF-8 だけ（BOM の FE FF・FF FE と NUL を断る）・`http-equiv` を含めない。monban の道具が黙って飛ばす
   点で始まる名前と symlink は、THTH は飛ばさずに断る（出したつもりの物が出ないのを防ぐ）。
-- THTH の柵: タグの中の script・form・iframe など・`on…=` の差し込み・`javascript:`、外の資源（`<a>` のリンクを除く、
-  `http:`・`https:`・`//` で始まる属性の値・CSS の外の `url(…)` と `@import`）、案内の枠が 1 つでない HTML。
-  script と form は monban の CSP でも止まるが、止まった頁は壊れて見えるので、出す前に前向きに断る。
+- THTH の柵（タグと属性は標準の html.parser で読む・文字参照を戻し、URL はブラウザの読み方に寄せてタブと改行を捨て
+  バックスラッシュを `/` と読む）: script・form・iframe など・`on…=` の差し込み・`javascript:`、外の資源（`<a>` のリンクを除く、
+  URL を持つ属性の外の先・CSS の外の `url(…)` と `@import`）、閉じないタグ・DTD の entity・inline の style と `<style>`
+  （monban の CSP は `style-src 'self'` なので効かない）、案内の枠が 1 つでない HTML。script と form も monban の CSP で
+  止まるが、止まった頁は壊れて見えるので、出す前に前向きに断る。案内の枠の検査はうっかりを見つけるためのもので、
+  原則の 7 を守る壁ではない（持ち主は monban-vault を直に呼べる・有料版が来たら Edge の側へ）。
 
 二段確認（構想 §6・monban §14.2）: `publish` の一段目は「新しく出る・変わる・消える」ファイルの一覧と digest を見せる
 だけで何も置かない。二段目（`--confirm <digest>`）で monban-vault garden publish を呼ぶ。止める（`stop`）は確認なし。
@@ -32,6 +35,7 @@ import html
 import json
 import os
 import re
+from html.parser import HTMLParser
 
 from .. import accounts, secrets_fs
 from . import tools, wire
@@ -54,20 +58,134 @@ GARDEN_RESERVED = frozenset(("www", "login", "owner", "monban", "admin", "api", 
 # ------------------------------------------------------------------ THTH の柵
 
 GUIDE_MARK = 'data-thth-guide="free"'
-_TAG = re.compile(r"<\s*([A-Za-z][A-Za-z0-9:_-]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*)>", re.DOTALL)
-_ATTR = re.compile(r"([A-Za-z_:][A-Za-z0-9_:.-]*)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s\"'>]+)")
+GUIDE_ATTR = ("data-thth-guide", "free")
+# 動く部品（script と form は monban の CSP で止まるが、止まった頁は壊れて見えるので出す前に断る）。
 ACTIVE_TAGS = frozenset(("script", "form", "iframe", "frame", "frameset", "object", "embed", "applet", "base",
-                         "portal", "input", "button", "textarea", "select", "foreignobject"))
-_EXTERNAL = re.compile(r"\s*(?:https?:|//|\\\\)", re.IGNORECASE)
-_CSS_EXTERNAL = re.compile(r"url\(\s*['\"]?\s*(?:https?:|//)|@import", re.IGNORECASE)
-_STYLE_BLOCK = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.IGNORECASE | re.DOTALL)
-# リンク（読みに行かない・押した人だけが行く）は外へ向けてよい。
-LINK_TAGS = frozenset(("a",))
+                         "portal", "input", "button", "textarea", "select", "foreignobject", "noscript", "template"))
+_ACTIVE_RAW = re.compile(r"<\s*/?\s*(?:" + "|".join(sorted(ACTIVE_TAGS)) + r")\b", re.IGNORECASE)
+# URL を持つ属性（ここに無い属性の値は URL として読まない: SVG の xmlns・version などを外の資源と見なさない）。
+URL_ATTRS = frozenset(("src", "srcset", "imagesrcset", "href", "xlink:href", "poster", "data", "background",
+                       "action", "formaction", "codebase", "manifest", "ping", "lowsrc", "dynsrc", "longdesc",
+                       "archive", "icon", "cite", "itemtype"))
+# リンク（読みに行かない・押した人だけが行く）は外へ向けてよい。`ping` は押すと外へ送るので外さない。
+LINK_TAGS = frozenset(("a", "area"))
 LINK_ATTRS = frozenset(("href", "xlink:href"))
+_SCHEME = re.compile(r"([a-z][a-z0-9+.-]*):")
+_ACTIVE_SCHEMES = frozenset(("javascript", "vbscript", "livescript"))
+_CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})\s?|\\(.)", re.DOTALL)
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE | re.DOTALL)
+_CSS_STRING = re.compile(r"(['\"])(.*?)\1", re.DOTALL)
+_ENTITY = re.compile(r"<!ENTITY|<!DOCTYPE[^>]*\[", re.IGNORECASE)
+
+
+def _safe_name(path: str) -> str:
+    """断りの詳細に入れる道（字の形を落とさない: 日本語の名前もそのまま・制御文字と記号は ? に）。"""
+    out = "".join(ch if (ch.isalnum() or ch in "._~-/ ") else "?" for ch in path)
+    return out[:72] or "?"
 
 
 def _detail(path: str, what: str) -> str:
-    return f"{path[:72]}: {what}"
+    return f"{_safe_name(path)}: {what}"
+
+
+def url_kind(value: str) -> str:
+    """属性の値の URL を、ブラウザの読み方に寄せて分ける: `active`（javascript: など）・`external`（外の先）・
+    `data`（data: の画像）・`local`（同じ庭の中）。文字参照は呼ぶ側（html.parser）が戻す。"""
+    text = "".join(ch for ch in value if ch not in "\t\n\r")  # ブラウザは URL の中のタブと改行を捨てる
+    text = text.strip("".join(chr(c) for c in range(0x21)) + "\x7f").replace("\\", "/")  # 先頭の制御文字と空白・\ は /
+    lower = text.lower()
+    if lower.startswith("//"):
+        return "external"
+    m = _SCHEME.match(lower)
+    if m:
+        scheme = m.group(1)
+        if scheme in _ACTIVE_SCHEMES:
+            return "active"
+        if scheme == "data":
+            return "data" if lower.startswith("data:image/") and not lower.startswith("data:image/svg") else "active"
+        return "external"  # http・https・mailto ほか、名前の付いた先はどれも庭の外
+    return "local"
+
+
+def _css_text(text: str) -> str:
+    """CSS の注を外し、`\68` などの崩しを戻す（外の url を崩して隠す道を塞ぐ）。"""
+    text = _CSS_COMMENT.sub(" ", text)
+
+    def back(m):
+        if m.group(1):
+            try:
+                return chr(int(m.group(1), 16))
+            except (ValueError, OverflowError):
+                return "?"
+        return m.group(2)
+    return _CSS_ESCAPE.sub(back, text)
+
+
+def css_problem(text: str):
+    """CSS の外の資源（url(…)・@import・文字列の外の URL）。断る理由の語か None。"""
+    text = _css_text(text)
+    if re.search(r"@import", text, re.IGNORECASE):
+        return "@import"
+    for _, value in _CSS_URL.findall(text):
+        if url_kind(value) in ("external", "active"):
+            return "url"
+    for _, value in _CSS_STRING.findall(text):
+        if url_kind(value) in ("external", "active") and ("/" in value or ":" in value):
+            return "url"
+    return None
+
+
+class _Reader(HTMLParser):
+    """タグと属性を標準の html.parser で読む（正規表現の柵の抜け道を塞ぐ・監査 段 1 の 4）。"""
+
+    def __init__(self):
+        # 本文の文字参照は戻さない（&lt; を < と読んで壊れたタグと取り違えない）。属性の値は html.parser がいつも戻す。
+        super().__init__(convert_charrefs=False)
+        self.problem = None
+        self.guides = 0
+
+    def _set(self, code, what):
+        if self.problem is None:
+            self.problem = (code, what)
+
+    def handle_starttag(self, tag, attrs):
+        self._tag(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        self._tag(tag, attrs)
+
+    def _tag(self, tag, attrs):
+        tag = tag.lower().split(":")[-1]
+        if "<" in (self.get_starttag_text() or "")[1:]:
+            return self._set("garden_markup_refused", "broken tag")  # 引用符の合わない属性が次のタグを呑んだ
+        if tag in ACTIVE_TAGS:
+            return self._set("garden_active_refused", tag)
+        if tag == "style":
+            return self._set("garden_markup_refused", "style")
+        names = {name.lower() for name, _ in attrs}
+        for name, value in attrs:
+            name = name.lower()
+            value = value or ""
+            if name.startswith("on"):
+                return self._set("garden_active_refused", "on-event")
+            if name == "style":
+                return self._set("garden_markup_refused", "style")
+            if name not in URL_ATTRS:
+                continue
+            parts = [p.strip().split(" ")[0] for p in value.split(",")] if name.endswith("srcset") else [value]
+            for part in parts:
+                kind = url_kind(part)
+                if kind == "active":
+                    return self._set("garden_active_refused", "javascript")
+                if kind == "external" and not (tag in LINK_TAGS and name in LINK_ATTRS):
+                    return self._set("garden_external_refused", f"{tag} {name}"[:24])
+        if (GUIDE_ATTR in [(n.lower(), v) for n, v in attrs]) and tag == "aside" and "hidden" not in names:
+            self.guides += 1
+
+    def handle_data(self, data):
+        if re.search(r"<[A-Za-z/!?]", data):
+            self._set("garden_markup_refused", "broken tag")
 
 
 def _text_problem(path: str, data: bytes, kind: str):
@@ -82,28 +200,22 @@ def _text_problem(path: str, data: bytes, kind: str):
         return "garden_text_refused", _detail(path, "utf-8")
     if re.search(r"http-equiv", text, re.IGNORECASE):
         return "garden_text_refused", _detail(path, "http-equiv")
-    for m in _TAG.finditer(text):
-        tag = m.group(1).lower().split(":")[-1]
-        if tag in ACTIVE_TAGS:
-            return "garden_active_refused", _detail(path, tag)
-        for name, raw in _ATTR.findall(m.group(2)):
-            name = name.lower()
-            value = html.unescape(raw.strip("\"'"))
-            if name.startswith("on"):
-                return "garden_active_refused", _detail(path, "on-event")
-            if re.match(r"\s*(?:javascript|vbscript|data:text/html)", value, re.IGNORECASE):
-                return "garden_active_refused", _detail(path, "javascript")
-            if name == "style" and _CSS_EXTERNAL.search(value):
-                return "garden_external_refused", _detail(path, "style")
-            if _EXTERNAL.match(value) and not (tag in LINK_TAGS and name in LINK_ATTRS):
-                return "garden_external_refused", _detail(path, f"{tag} {name}"[:20])
-            if name in ("srcset", "imagesrcset") and re.search(r"(?:https?:)?//", value, re.IGNORECASE):
-                return "garden_external_refused", _detail(path, f"{tag} {name}"[:20])
-    for block in _STYLE_BLOCK.findall(text):
-        if _CSS_EXTERNAL.search(block):
-            return "garden_external_refused", _detail(path, "style")
-    if kind == "html" and text.count(GUIDE_MARK) != 1:
-        return "garden_guide_missing", path[:80]
+    if _ENTITY.search(text):
+        return "garden_markup_refused", _detail(path, "entity")
+    if _ACTIVE_RAW.search(text):  # 読み手が見落としても字面で止める（本文の < は build が escape する）
+        return "garden_active_refused", _detail(path, "script or form")
+    reader = _Reader()
+    reader.feed(text)
+    if reader.problem is None and reader.rawdata.strip():
+        reader.problem = ("garden_markup_refused", "broken tag")  # 閉じないタグ・引用符の合わないタグ
+    reader.close()
+    if reader.problem:
+        return reader.problem[0], _detail(path, reader.problem[1])
+    # 案内の枠: うっかり落とすのを見つける検査（`<aside data-thth-guide="free">` が 1 つ・hidden なし）。持ち主は
+    # monban-vault を直に呼べるので、原則の 7 を守る壁にはならない。有料版が来たら、守る場所を Edge の側（配るときに
+    # 差し込む・権限で分ける）へ移す（監査 段 1 の 3・朝に覆せる）。
+    if kind == "html" and (reader.guides != 1 or text.count(GUIDE_MARK) != 1):
+        return "garden_guide_missing", _safe_name(path)
     return None
 
 
@@ -112,8 +224,9 @@ def _css_problem(path: str, data: bytes):
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return "garden_text_refused", _detail(path, "utf-8")
-    if _CSS_EXTERNAL.search(text):
-        return "garden_external_refused", _detail(path, "css")
+    why = css_problem(text)
+    if why:
+        return "garden_external_refused", _detail(path, f"css {why}")
     return None
 
 
@@ -231,7 +344,7 @@ def plan(directory: str, url: str) -> dict:
 def publish(found: dict) -> dict:
     """二段目: monban-vault garden publish を呼ぶ（`found` は直前に作り直した `plan`）。"""
     exe = tools.need(tools.MONBAN_VAULT, "garden")
-    rc, out, err = tools.run([exe, "garden", "publish", found["url"], found["directory"], "--json"])
+    rc, out, err = tools.run([exe, "garden", "publish", found["url"], found["directory"], "--json"], family="garden")
     if rc != 0:
         raise _monban_refusal(rc, out, err, "publish")
     got = wire.monban_json(out)
@@ -246,11 +359,25 @@ def simple(url: str, verb: str) -> dict:
     """`stop`（確認なし・すぐ）と `status`（読むだけ）。"""
     url = check_url(url)
     exe = tools.need(tools.MONBAN_VAULT, "garden")
-    rc, out, err = tools.run([exe, "garden", verb, url, "--json"])
+    rc, out, err = tools.run([exe, "garden", verb, url, "--json"], family="garden")
     if rc != 0:
         raise _monban_refusal(rc, out, err, verb)
     got = wire.monban_json(out)
-    return {"url": url, **{k: v for k, v in got.items() if k != "error"}}
+    done = {"url": url, **{k: v for k, v in got.items() if k != "error"}}
+    if verb == "status":
+        # Edge は止めを 2 つ持つ（持ち主の止め・運営者の止め・edge/src/vault.js）。どちらかが立てば配っていない。
+        done["owner_stopped"] = bool(got.get("owner_stopped"))
+        done["operator_stopped"] = bool(got.get("operator_stopped"))
+        done["serving"] = not (done["owner_stopped"] or done["operator_stopped"] or got.get("stopped"))
+    return done
+
+
+def state_words(done: dict) -> str:
+    if done.get("operator_stopped"):
+        return "止まっています（運営者が止めました・戻すのは運営者）"
+    if done.get("owner_stopped") or done.get("stopped"):
+        return "止まっています（自分で止めました・monban-vault garden resume で戻せます）"
+    return "配っています"
 
 
 # ------------------------------------------------------------------ 店の写しから頁を作る
@@ -323,7 +450,8 @@ def build(store: str, out: str, *, title: str | None = None, shop_url: str | Non
     rows = [row for row in snapshot["items"].values() if isinstance(row, dict) and base.buyable(row)]
     rows.sort(key=lambda row: (str(row.get("name") or ""), str(row.get("id"))))
     if os.path.lexists(out) and (not os.path.isdir(out) or os.path.islink(out)
-                                 or set(os.listdir(out)) - set(OUTPUT_FILES)):
+                                 or set(os.listdir(out)) - set(OUTPUT_FILES)
+                                 or any(os.path.islink(os.path.join(out, n)) for n in OUTPUT_FILES)):
         raise VaultRefused("garden_out_not_empty")
     os.makedirs(out, mode=0o755, exist_ok=True)
     read_at = snapshot.get("read_at") if isinstance(snapshot.get("read_at"), str) else None
