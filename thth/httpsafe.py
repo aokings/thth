@@ -118,7 +118,11 @@ def opener() -> urllib.request.OpenerDirector:
     return _opener
 
 
-def urlopen(req, *, timeout: float):
-    """Same-origin redirects, explicit HTTP(S), and account stop lease."""
+def urlopen(req, *, timeout: float, via=None):
+    """Same-origin redirects, explicit HTTP(S), and account stop lease.
+
+    `via` は `build_opener` で作った別の opener（店を読む口の「リダイレクトを追わない」opener・
+    `thth/shop/wire.py`）。無ければ今の同じホストだけ追う opener。
+    """
     from . import leave_gate
-    return leave_gate.urlopen(opener().open, req, timeout=timeout)
+    return leave_gate.urlopen((via or opener()).open, req, timeout=timeout)

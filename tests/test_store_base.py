@@ -112,11 +112,13 @@ def _string_constants(path):
     return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
 
 
-def test_柵_店のまとまりはGET以外の動詞を字面に持たない():
-    """POST・PUT・PATCH・DELETE を字面に書いたら赤（ストアのまとまりは読むだけ）。"""
-    found = [(path.name, value) for path in sorted(SHOP_DIR.glob("*.py")) for value in _string_constants(path)
-             if value.strip().upper() in ("POST", "PUT", "PATCH", "DELETE")]
-    assert found == []
+def test_柵_GET以外の動詞はwire_pyのPOSTだけ():
+    """PUT・PATCH・DELETE を字面に書いたら赤。POST は網の口（wire.py）の中だけ（Shopify の 2 つの道の表と Request の
+    1 か所・GraphQL の決まりで POST だが店は変えない）。5.17.0 で「GET 以外を持たない」から書き替えた
+    （設計 Shopify と STORES §0 の 2・§5。BASE への POST は `tests/test_store_wire.py` が断るのを見る）。"""
+    found = [(path.name, value.strip().upper()) for path in sorted(SHOP_DIR.glob("*.py"))
+             for value in _string_constants(path) if value.strip().upper() in ("POST", "PUT", "PATCH", "DELETE")]
+    assert found == [("wire.py", "POST")] * 2
 
 
 def test_柵_網の口はGETと定数のホストと許した道だけを通す():

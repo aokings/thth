@@ -258,20 +258,29 @@ def test_柵_網の部品を使うのはwire_pyだけ():
     assert "urlopen" in _net_uses(SHOP_DIR / "wire.py")
 
 
-def test_柵_wire_pyのRequestはGETだけでdataを渡さない():
+def test_柵_wire_pyのRequestはGETとPOSTの2か所でurlopenは1か所():
+    """5.17.0 で「Request は GET だけ」から書き替えた（設計 Shopify と STORES §5 の柵 2・書き替えるのはこの 1 本だけ）。
+
+    Request は 2 か所: 1 つは method="GET" の定数で data なし、もう 1 つは method="POST" の定数（本文は打つ直前に
+    `check_request` が表と照らす）。urlopen に当たる呼び出しは 1 か所で、渡すのは組んだ Request と timeout と
+    リダイレクトを追わない opener だけ。
+    """
     tree = ast.parse((SHOP_DIR / "wire.py").read_text(encoding="utf-8"))
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
              and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) in ("Request", "urlopen")]
     requests_ = [c for c in calls if (getattr(c.func, "attr", None) or getattr(c.func, "id", None)) == "Request"]
     opens = [c for c in calls if (getattr(c.func, "attr", None) or getattr(c.func, "id", None)) == "urlopen"]
-    assert len(requests_) == 1 and len(opens) == 1
-    [request] = requests_
-    keywords = {k.arg: k.value for k in request.keywords}
-    assert "data" not in keywords and len(request.args) == 1
-    assert isinstance(keywords.get("method"), ast.Constant) and keywords["method"].value == "GET"
-    # urlopen に渡すのは組んだ Request だけ（data を足さない）。
+    assert len(requests_) == 2 and len(opens) == 1
+    methods = {}
+    for request in requests_:
+        keywords = {k.arg: k.value for k in request.keywords}
+        assert len(request.args) == 1
+        assert isinstance(keywords.get("method"), ast.Constant), "method は定数で書く"
+        methods[keywords["method"].value] = keywords
+    assert set(methods) == {"GET", "POST"}
+    assert "data" not in methods["GET"] and "data" in methods["POST"]
     [opened] = opens
-    assert len(opened.args) == 1 and {k.arg for k in opened.keywords} <= {"timeout"}
+    assert len(opened.args) == 1 and {k.arg for k in opened.keywords} <= {"timeout", "via"}
 
 
 def test_網の途中で切れても前向きな断り(monkeypatch):

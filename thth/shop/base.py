@@ -20,13 +20,13 @@ from __future__ import annotations
 import json
 import re
 import time
-import urllib.parse
 
 # 店に寄らない行の部品は `rows.py`（3 つの店で共通）。今の試験と呼ぶ側が使う名前はここにも残す。
 from .rows import NAME_MAX, ROW_FIELDS, URL_MAX, _CONTROL, buyable, clean_text, snapshot_row  # noqa: F401
 from .rows import https_url as _https_url
 from .rows import is_int as _int
-from .wire import BASE_ORIGIN, StoreRefused, default_transport
+from . import wire
+from .wire import BASE_ORIGIN, StoreRefused, default_transport  # noqa: F401
 
 PAGE_LIMIT = 100
 MAX_PAGES = 5
@@ -43,6 +43,9 @@ def refusal_for(status: int, raw: bytes) -> StoreRefused:
         payload = None
     kind = payload.get("type") if isinstance(payload, dict) else None
     detail = kind if isinstance(kind, str) and _TYPE.fullmatch(kind) else f"HTTP {status}"
+    if 300 <= status < 400:
+        # リダイレクトは同じホストでも追わない（設計 Shopify と STORES §5・3 つの店とも）。
+        return StoreRefused("store_request_rejected", "redirect")
     if status == 401:
         return StoreRefused("store_token_rejected", detail)
     if status == 403:
@@ -61,10 +64,9 @@ class Client:
         self.calls = 0
 
     def _get(self, path: str, params: dict | None = None):
-        url = BASE_ORIGIN + path + ("?" + urllib.parse.urlencode(params) if params else "")
-        headers = {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
+        # URL とヘッダは網の口（`wire.get`）が組む（呼ぶ側は道と引数を名前で渡すだけ）。
         self.calls += 1
-        status, raw = self.transport("GET", url, headers)
+        status, raw = wire.get("base", path, params, self._token, transport=self.transport)
         if status != 200:
             raise refusal_for(status, raw)
         try:
