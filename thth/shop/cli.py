@@ -618,9 +618,14 @@ def cmd_remove(args) -> int:
         _print({"ok": True, "deleted": done, **payload})
         return 0
     words = {"token": "鍵", "access": "短い鍵", "state": "写し", "ledger": "台帳"}
+    shown = set()
     for target in found["targets"]:
         if target["category"] in done:
             print(f"消しました: {words[target['category']]} {target['path']}")
+            shown.add(target["category"])
+    for category in done:
+        if category not in shown:                  # 一段目のあと鎖の中で見つけて消した機械の物（remove.execute）
+            print(f"消しました: {words.get(category, category)}（一段目のあと、取り直しの途中に書かれた物）")
     for line in _remove_lines({"targets": [], "kept": found["kept"]}):
         print(line)
     print(revoke_done)
