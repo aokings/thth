@@ -6,12 +6,16 @@
 - `shop { id name myshopifyDomain url currencyCode }`・`currentAppInstallation { accessScopes { handle } }`。
   取り出すのは myshopify のドメイン・名前・URL・通貨・鍵に許された scope の名前の並びだけ。
 - `products(first, after, sortKey: ID)` の `nodes`: `legacyResourceId`・`title`・`status`・`onlineStoreUrl`・
-  `totalInventory`・`tracksInventory`・`updatedAt`・`priceRangeV2.minVariantPrice`・`featuredMedia.preview.image.url`。
+  `totalInventory`・`tracksInventory`・`updatedAt`・`priceRangeV2.minVariantPrice`・`featuredMedia.preview.image.url`・
+  `variants(first: 20).nodes` の `legacyResourceId`・`price`（5.18.1）と `variants.pageInfo.hasNextPage`。
   `pageInfo.hasNextPage`・`endCursor`。注文・お客さんの欄は問い合わせに無い。
 
 行への直し方（`rows.ROW_FIELDS` は変えない）: id は `int(legacyResourceId)`・公開は `status == ACTIVE` かつ
 `onlineStoreUrl` が https（偽なら id と visible だけ）・値段は種類の中で**いちばん安い**値段（円の店だけ・整数の円）・
-在庫は `tracksInventory` が偽なら None（数えない）・`sales_status` は `active`・商品頁の URL は `onlineStoreUrl`。
+在庫は `tracksInventory` が偽なら None（数えない）・`sales_status` は `active`・商品頁の URL は `onlineStoreUrl`・
+種類ごとの値段（`variant_prices`・5.18.1）は `{str(legacyResourceId): 円}`。種類が 20 を超えて読み切れない商品は
+None（比べられない・上下を言わない・`diff.py`）。値段の上下はこちらで決める（`price` はいちばん安い値なので、
+いちばん安い種類が無くなっただけでも上がって見える・監査 5.18.0 の 5）。
 
 **【未確認】の所は偽の応答で作った**（本物の店では 1 度も動かしていない・設計 §11）: 詰まったときの形
 （200 で `errors[].extensions.code` が `THROTTLED`）・scope が足りないときの形（`ACCESS_DENIED`）・鍵が違うときの
@@ -27,11 +31,14 @@ import time
 
 from .. import redact
 from . import access, wire
-from .rows import clean_text, https_url
+from .rows import VARIANT_ID, VARIANT_PRICES, clean_text, https_url
 from .wire import StoreRefused
 
-PAGE_FIRST = 50
-MAX_PAGES = 10
+# 頁は 25 件（種類を 20 まで読むので点数が掛け算になる・`wire.SHOPIFY_VARIANTS_FIRST`）。頁の数を倍にして、
+# 1 回で読める商品の数（500）は 5.17.0 と同じ。
+PAGE_FIRST = 25
+MAX_PAGES = 20
+VARIANTS_FIRST = wire.SHOPIFY_VARIANTS_FIRST
 MIN_INTERVAL_SECONDS = 0.5
 UNKNOWN_COST_WAIT_SECONDS = 1.0
 MAX_THROTTLE_WAIT_SECONDS = 5.0
@@ -94,6 +101,9 @@ def errors_refusal(errors) -> StoreRefused:
         return StoreRefused("store_unavailable", "throttled")
     if code == "ACCESS_DENIED":
         return StoreRefused("store_scope_missing", "ACCESS_DENIED")
+    if code == "MAX_COST_EXCEEDED":
+        # 点数の見積り（`wire.SHOPIFY_VARIANTS_FIRST`・`PAGE_FIRST`）が外れたとき。詳細で分かるようにする（5.18.1）。
+        return StoreRefused("store_api_changed", "max_cost_exceeded")
     return StoreRefused("store_api_changed", "graphql_errors")
 
 
@@ -132,6 +142,31 @@ def yen(money) -> int:
     return int(amount)
 
 
+def _amount_yen(text) -> int:
+    """種類の値段（`ProductVariant.price`・店の通貨の Money の文字列）→ 円の整数。店の通貨は `user()` と
+    `minVariantPrice.currencyCode` で円と確かめてある。小数があれば `store_currency_unsupported（fraction）`。"""
+    if not isinstance(text, str) or not 0 < len(text) <= 40:
+        raise StoreRefused("store_api_changed", "item_variants")
+    return yen({"amount": text, "currencyCode": CURRENCY})
+
+
+def variant_prices(node: dict) -> dict | None:
+    """`{str(legacyResourceId): 円}`。読み切れない（`hasNextPage`）なら None。形が違えば `store_api_changed`。"""
+    variants = node.get("variants")
+    nodes = variants.get("nodes") if isinstance(variants, dict) else None
+    info = variants.get("pageInfo") if isinstance(variants, dict) else None
+    if not isinstance(nodes, list) or not nodes or not isinstance(info, dict) or not isinstance(info.get("hasNextPage"), bool):
+        raise StoreRefused("store_api_changed", "item_variants")
+    out = {}
+    for variant in nodes:
+        legacy = variant.get("legacyResourceId") if isinstance(variant, dict) else None
+        legacy = str(legacy) if isinstance(legacy, (str, int)) and not isinstance(legacy, bool) else ""
+        if not _DIGITS.fullmatch(legacy) or not VARIANT_ID.fullmatch(legacy) or legacy in out:
+            raise StoreRefused("store_api_changed", "item_variants")
+        out[legacy] = _amount_yen(variant.get("price"))
+    return None if info["hasNextPage"] else out
+
+
 def normalize(node) -> dict:
     """1 商品を許した欄だけに。要る欄が無い・型が違えば `store_api_changed`。知らない欄は無視する。"""
     if not isinstance(node, dict):
@@ -158,7 +193,7 @@ def normalize(node) -> dict:
         image = https_url(media["preview"]["image"].get("url"))
     return {"id": item_id, "name": clean_text(node["title"]), "price": yen(price_range.get("minVariantPrice")),
             "stock": total if tracks else None, "visible": True, "sales_status": "active", "image_url": image,
-            "item_url": url, "modified_at": clean_text(node["updatedAt"], 40)}
+            "item_url": url, "modified_at": clean_text(node["updatedAt"], 40), VARIANT_PRICES: variant_prices(node)}
 
 
 class Client:

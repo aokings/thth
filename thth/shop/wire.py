@@ -54,6 +54,12 @@ SHOPIFY_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,58}[a-z0-9])?\Z")
 SHOPIFY_API_VERSION = "2026-10"
 SHOPIFY_TOKEN_PATH = "/admin/oauth/access_token"
 SHOPIFY_GRAPHQL_PATH = f"/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
+# 商品 1 つで読む種類（variant）の数（5.18.1・種類ごとの値段で上下を決める・監査 5.18.0 の 5）。種類の値段は
+# `ProductVariant.price`（店の通貨の Money）と `legacyResourceId` だけを読む（在庫の品・品番・お客さんの欄は読まない）。
+# 点数（1 回 `SHOPIFY_QUERY_COST_MAX` まで・公式）は商品の頁の大きさ（shopify.PAGE_FIRST）と掛け算になるので、
+# 頁を 25 件にして見積りを上限の 8 割の内に置く（試験が縛る）。【推測】本物の店で点数を見たことはない。
+SHOPIFY_VARIANTS_FIRST = 20
+SHOPIFY_QUERY_COST_MAX = 1000
 # 問い合わせの文はこの 2 本だけ（呼ぶ側は名前で選ぶだけ・文を渡せない）。欄の名前は公式の `Shop`・`Product`・
 # `products`・`currentAppInstallation` の頁（2026-11-12 に読んだ・版 2026-10）による。
 QUERIES = {
@@ -63,7 +69,9 @@ QUERIES = {
                 "products(first: $first, after: $after, sortKey: ID) { "
                 "nodes { id legacyResourceId title status onlineStoreUrl totalInventory tracksInventory updatedAt "
                 "priceRangeV2 { minVariantPrice { amount currencyCode } } "
-                "featuredMedia { preview { image { url } } } } "
+                "featuredMedia { preview { image { url } } } "
+                f"variants(first: {SHOPIFY_VARIANTS_FIRST}) {{ nodes {{ legacyResourceId price }} "
+                "pageInfo { hasNextPage } } } "
                 "pageInfo { hasNextPage endCursor } } }",
 }
 # 問い合わせごとに許した variables の鍵。

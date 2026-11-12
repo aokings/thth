@@ -8,6 +8,12 @@
 - 商品の id: 整数の店（BASE・Shopify）と文字列の店（STORES・5.18.0）がある。写しの鍵は `str(id)`。
 - 在庫: 整数か、**None（数えない）**。None は「在庫を数えない商品」で、買える側に数える（`in_stock`）。
 - 商品頁の URL（`item_url`）: 取れる店（Shopify）と取れない店（BASE・STORES）がある。
+
+種類ごとの値段（`VARIANT_PRICES`・5.18.1・監査 5.18.0 の 5）: 行の `price` は店の決めた代表の値（STORES は種類の中で
+いちばん高い値・Shopify はいちばん安い値）なので、種類が増えた・減っただけでも動く。値段の上下は同じ種類の値段で
+決めるため、種類のある店（STORES・Shopify）の公開の行は `{種類の id（文字列）: 値段（整数か None）}` を持つ。
+種類を読み切れない商品（Shopify の `hasNextPage`）は None（比べられない）。BASE は商品 1 つに値段 1 つなので、
+行にこの鍵が無い（`ROW_FIELDS` も BASE の写しも変えない）。
 """
 from __future__ import annotations
 
@@ -22,6 +28,9 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f\u2028\u2029]")
 ROW_FIELDS = ("id", "name", "price", "stock", "visible", "sales_status", "image_url", "item_url", "modified_at")
 # 「売っている」の語（店の間で語がぶつからないので 1 つの集合・BASE は item_now_on_sale・Shopify は active・
 # STORES は on_sale。STORES の preorder（予約販売）・before_sale・after_sale は入れない）。
+# 種類のある店の公開の行だけが持つ欄（BASE の行には無い・写しにも鍵があるときだけ写す）。
+VARIANT_PRICES = "variant_prices"
+VARIANT_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 ON_SALE = frozenset(("item_now_on_sale", "active", "on_sale"))
 
 
@@ -48,7 +57,24 @@ def is_int(value) -> bool:
 def snapshot_row(row: dict) -> dict:
     if not row.get("visible"):
         return {"id": row["id"], "visible": False}
-    return {key: row.get(key) for key in ROW_FIELDS}
+    out = {key: row.get(key) for key in ROW_FIELDS}
+    if VARIANT_PRICES in row:
+        out[VARIANT_PRICES] = row[VARIANT_PRICES]
+    return out
+
+
+def variant_prices(row: dict) -> dict | None:
+    """行（写しの行も）の種類ごとの値段。形が合わない・読み切れていない（None）・鍵が無いときは None（比べない）。
+
+    写しは手元のファイルなので、読むたびに形を確かめる（id は英数字・値段は整数か None）。
+    """
+    value = row.get(VARIANT_PRICES)
+    if not isinstance(value, dict) or not value:
+        return None
+    for key, price in value.items():
+        if not isinstance(key, str) or not VARIANT_ID.fullmatch(key) or not (price is None or is_int(price)):
+            return None
+    return value
 
 
 def in_stock(row: dict) -> bool:

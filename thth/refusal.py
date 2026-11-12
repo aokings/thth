@@ -85,7 +85,8 @@ def parts(code, **values) -> dict | None:
     """符丁の 3 つ（`why`・`fix`・`better`）。fix には打てる命令を（）で添える（`refusal_catalog.lines` と同じ形）。
 
     目録に無い・退いた符丁は None。値は `refusal_catalog.render` の穴の検査を通ったものだけ入る。
-    `reason` は安全装置の静的な詳細（`refusal_catalog.GUARD_DETAIL_WORDS` の語だけ・ほかは見ない）。
+    `reason` は静的な詳細の語: 安全装置の詳細（`refusal_catalog.GUARD_DETAIL_WORDS`・なぜも引く）か、項の `by_detail` に
+    鍵のある語（通すにはともっと良くだけを引く・店の引数の誤りなど）。ほかの語は見ない。
     `door` は口（`cli`＝手元の CLI・`remote`＝遠くの道の CLI・`mcp`）。目録の `fix_by_door` にその口の文があれば
     それを出す（その口で打てる道）。環境の `THTH_REFUSAL_DOOR=mcp`（MCP が CLI を呼ぶとき）は口の指定より先に効く。
     """
@@ -107,7 +108,10 @@ def parts(code, **values) -> dict | None:
         if special:
             rendered["why"] = special
     # 安全装置の詳細ごとの fix・better（返信の日の上限は投稿の枠と逆）と、口ごとの通す道（その口で打てる形）。
-    detail = (entry.get("by_detail") or {}).get(reason) if reason in refusal_catalog.GUARD_DETAIL_WORDS else None
+    # 詳細ごとの文は、安全装置の語か、その項の `by_detail` に鍵のある語（静的な語・店の引数の誤り `store_args_invalid` など）だけ。
+    by_detail = entry.get("by_detail") or {}
+    detail = by_detail.get(reason) if isinstance(reason, str) and (
+        reason in refusal_catalog.GUARD_DETAIL_WORDS or reason in by_detail) else None
     chosen = {"text": entry["fix"]["text"], "command": entry["fix"]["command"],
               "better": entry["better"], "fix_by_door": entry.get("fix_by_door") or {}}
     if detail:

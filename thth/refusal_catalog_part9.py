@@ -29,20 +29,62 @@ _STORES_KEY = ("STORES なら、開発パートナーの登録でプライベー
 _NOT_BASE = "この道具は BASE・Shopify・STORES が提供するものではないので、店の窓口でなく THTH の開発のセッションへ thth report file で知らせると早く届きます。"
 
 
-def _entry(why, fix, command, better, kind="refusal", since=_SINCE):
-    return {"kind": kind, "why": why, "fix": fix, "command": command, "better": better, "doors": _C,
-            "since": since}
+def _entry(why, fix, command, better, kind="refusal", since=_SINCE, by_detail=None):
+    entry = {"kind": kind, "why": why, "fix": fix, "command": command, "better": better, "doors": _C,
+             "since": since}
+    if by_detail:
+        entry["by_detail"] = by_detail
+    return entry
 
 
 ENTRIES = {
     "store_args_invalid": _entry(
         "thth shop に渡した値が決まりに合っていません（店の名前は英数字と _・.・-、期限は YYYY-MM-DD、--by は誰が頼んだか、"
         "draft は --item か --kind のどちらか 1 つ、Shopify の --shop は myshopify のラベル、Shopify の鍵に --expires は付けず、"
-        "BASE と STORES の鍵に --auth は付けない、STORES の --url は店の頁の https の URL で、ユーザー名・? の問い合わせ・# の"
-        "ない形）。",
+        "BASE と STORES の鍵に --auth は付けない、STORES の --url は店の頁の https の URL を ASCII の字だけで、ユーザー名・? の"
+        "問い合わせ・# のない形）。",
         "1 行目の（）が指す引数を直して打ち直してください。",
-        _ADD,
-        "店の名前は <project>-base の形にそろえると、どの project の店か名前だけで分かります。"),
+        "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+        "店の名前は <project>-base・<project>-shopify・<project>-stores のように project と店の種類をつなげると、どの店か名前だけで分かります。",
+        by_detail={
+            # 1 行目の（）の語ごとの通し方（`thth/shop/` が添える語・`tests/test_store_args_refusal.py` が縛る）。
+            "store_name": {
+                "fix": "店の名前を英数字と _・.・- だけで付け直して打ち直してください（空白・斜線・日本語は使えません）。",
+                "command": "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+                "better": "店の名前は <project>-base・<project>-shopify・<project>-stores のように project と店の種類をつなげると、どの店か名前だけで分かります。"},
+            "project": {
+                "fix": "--project に thth の project の名前（英数字と _・.・-）を入れて打ち直してください。",
+                "command": "thth shop add <店> --kind <base|shopify|stores> --project <project> --by <名前>",
+                "better": "口座の台帳と同じ project の名前にそろえると、下書きをどの project の queue に置くかで迷いません。"},
+            "by": {
+                "fix": "--by に、頼んだ人の名前を入れて打ち直してください（変更の記録に残ります）。",
+                "command": "thth shop token set <店> --by <名前>",
+                "better": "いつも同じ名前で --by を付けると、記録をあとで読んだとき誰が足した・差し替えたかがすぐ分かります。"},
+            "shop": {
+                "fix": "--shop は Shopify の店だけに付けます。Shopify なら myshopify のラベル（admin.shopify.com/store/<ここ> か <ここ>.myshopify.com の <ここ>・英小文字と数字と -）を入れ、BASE・STORES なら --shop を外して打ち直してください。",
+                "command": "thth shop add <店> --kind shopify --project <project> --shop <ラベル> --by <名前>",
+                "better": "独自ドメインでなく管理画面の番地にあるラベルを写すと、THTH が送る先が店の myshopify のホストに決まります。"},
+            "url": {
+                "fix": "--url は STORES の店だけに付けます。STORES なら、店の頁の https の URL を ASCII の字だけで入れてください。日本語のドメインは punycode（xn--…）、日本語の道は % で包んだ形にします。ブラウザの番地の欄から写すと、その形になります。ユーザー名・? の問い合わせ・# は外します。BASE・Shopify なら --url を外して打ち直してください。",
+                "command": "thth shop add <店> --kind stores --project <project> --url <店の頁の URL> --by <名前>",
+                "better": "お客さんが開く店の頁（トップの頁）の URL にすると、下書きを見た人がそのまま店に着きます。"},
+            "auth": {
+                "fix": "--auth は Shopify の鍵だけに付けます（Dev Dashboard の Client ID と secret なら client、既にあるカスタムアプリの固定の鍵なら token）。BASE と STORES の鍵は --auth を外して打ち直してください。",
+                "command": "thth shop token set <店> --auth client --by <名前>",
+                "better": "Shopify は client にすると、短い鍵を THTH が取り直すので、固定の鍵を手で差し替える手間がありません。"},
+            "expires": {
+                "fix": "--expires は店の種類で付け方が違います。BASE は PAT を発行したときに決めた期限の日を YYYY-MM-DD で付け、STORES は知っていれば付け（任意）、Shopify の鍵には付けないで打ち直してください。",
+                "command": "thth shop token set <店> --expires <日付> --by <名前>",
+                "better": "期限の日を入れておくと、thth morning が 14 日前から知らせるので、鍵が切れて読めなくなる前に差し替えられます。"},
+            "item": {
+                "fix": "--item に商品の id を入れて打ち直してください（BASE と Shopify は数字、STORES は英数字）。id は thth shop items <店> の行の頭にあります。",
+                "command": "thth shop items <店>",
+                "better": "thth shop diff <店> の違いの行の id を写すと、下書きにできる違いのある商品をそのまま選べます。"},
+            "item_or_kind": {
+                "fix": "thth shop draft には --item <id> か --kind new|restock|price_down のどちらか 1 つだけを付けて打ち直してください。",
+                "command": "thth shop draft <店> --to <口座> --kind new",
+                "better": "まず --kind で種類ごとに作り（3 本まで）、残りを --item で 1 つずつ選ぶと、出しすぎずに済みます。"},
+        }),
     "store_name_taken": _entry(
         "その名前の店の台帳が既にあります。上書きすると前の鍵の置き場と写しを取り違えるので、書きませんでした。",
         "別の名前で thth shop add を打ち直すか、今の台帳のまま thth shop whoami <店> で中身を確かめてください。",
@@ -144,7 +186,7 @@ ENTRIES = {
         "在庫 0・販売前・販売終了・予約販売・名前が空の商品は作りません）。",
         "thth shop diff <店> で今の違いを確かめてから、--item か --kind を選び直してください。",
         _DIFF,
-        "売り切れ・値上げの下書きは作りません。新着や再入荷のときに作ると、見た人がそのまま買えるお知らせになります。"),
+        "売り切れ・値上げの下書きは作りません。販売前や予約販売の商品は、販売が始まると diff に sale_started が出て、--kind new で新着と同じように作れます。新着・再入荷・販売の開始のときに作ると、見た人がそのまま買えるお知らせになります。"),
     "store_draft_no_baseline": _entry(
         "比べる写しがまだ無いので、違いが分かりません（初めての店か、別の店の鍵に替えて写しを捨てたあと）。",
         "先に thth shop diff <店> で基準を取ってください。そのあとに増えた・戻った・下がった商品から下書きを作れます。",
@@ -156,8 +198,8 @@ ENTRIES = {
         _WHOAMI,
         "thth shop whoami <店> の「公開」が「はい」になってから作ると、お知らせを見た人がそのまま買えます。"),
     "store_item_changed": _entry(
-        "下書きを作ったあとに、その商品の値段・公開・在庫が変わっていました（1 行目の（）が変わった所）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
-        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price）を今に合わせて直すか、出さないなら下書きを閉じてください。",
+        "下書きを作ったあとに、その商品の値段・公開・在庫・種類が変わっていました（1 行目の（）が変わった所。variant は種類ごとの値段、variants_changed は値下げの下書きの種類が減ったこと）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
+        "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price・from_store_variant_prices）を今に合わせて直すか、出さないなら下書きを閉じてください。",
         _ITEMS,
         "売り切れなら、再入荷のあとの thth shop draft --kind restock で作り直すと、見た人がそのまま買えるお知らせになります。"),
     "store_draft_exists": _entry(
