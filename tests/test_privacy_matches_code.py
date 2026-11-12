@@ -402,3 +402,56 @@ def test_STORESの鍵の中身を言い切らずTHTHの事実だけを書く():
         assert old not in page, old
     assert "THTH cannot choose what the credential is allowed to do" in page
     assert "クレデンシャルに何が許されているかを THTH は選べません" in page
+
+
+# ------------------------------------------------------------------ 記事の口座の退出（5.18.1）
+
+def _leave_section(page: str, heading: str) -> str:
+    found = re.search(rf"<h2[^>]*>{re.escape(heading)}</h2>(.*?)<h2", page, re.S)
+    assert found, f"privacy に「{heading}」の節が無い"
+    return found.group(1)
+
+
+def _article_leave_facts():
+    """privacy の退出の節の記事の口座の文を、`thth/leave.py` の振る舞いから組む（違えば赤になる文を返す）。"""
+    from thth import article_media, leave
+
+    media = sorted(article_media.ARTICLE_MEDIA)
+    named = media == ["hatenablog", "wordpress"]
+    keeps = all(leave._principal_owns_token({"media": m}) for m in media)
+    def remote(m):
+        try:
+            return leave.revoke({"media": m}, {}, [], lambda: None)
+        except ValueError as exc:
+            return str(exc)
+
+    manual = all(remote(m) == "unconfirmed_manual" for m in media)
+    wp_place = "プロフィール" in leave.MANUAL_REVOKE["wordpress"]
+    hatena_place = "連携アプリ" in leave.MANUAL_REVOKE["hatenablog"]
+    return [
+        ("記事の媒体は WordPress とはてなブログ（article_media.ARTICLE_MEDIA）",
+         "For a WordPress or Hatena Blog account" if named else "記事の媒体が増えた・減った",
+         "WordPress とはてなブログの口座では" if named else "記事の媒体が増えた・減った"),
+        ("主体の鍵は口座の leave で残す（leave._principal_owns_token）",
+         "so <code>thth account leave</code> keeps that file" if keeps else "口座の leave が主体の鍵を数える",
+         "<code>thth account leave</code> はそのファイルを残します" if keeps else "口座の leave が主体の鍵を数える"),
+        ("遠隔の取り消しは本人の手（leave.revoke が unconfirmed_manual）",
+         "Revoking it is done by the person" if manual else "THTH が遠隔で取り消す",
+         "取り消しは本人が行います" if manual else "THTH が遠隔で取り消す"),
+        ("WordPress の取り消しの場所（leave.MANUAL_REVOKE と同じ）",
+         "under the user's profile (Application Passwords)" if wp_place else "完了の案内と場所が違う",
+         "利用者のプロフィール（アプリケーションパスワード）" if wp_place else "完了の案内と場所が違う"),
+        ("はてなの取り消しの場所（leave.MANUAL_REVOKE と同じ）",
+         "removing THTH from the applications linked" if hatena_place else "完了の案内と場所が違う",
+         "アカウントの設定の連携アプリから THTH を外します" if hatena_place else "完了の案内と場所が違う"),
+        ("主体の鍵を消す命令（--forget）",
+         "<code>thth principal auth &lt;name&gt; --forget</code> deletes it on the computer where it runs",
+         "<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを消せます"),
+    ]
+
+
+@pytest.mark.parametrize("what,en,ja", _article_leave_facts(), ids=[f[0] for f in _article_leave_facts()])
+def test_記事の口座の退出の文はleaveの振る舞いと同じ(what, en, ja):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert en in _leave_section(page, "Stopping access and deleting data"), what
+    assert ja in _leave_section(page, "停止とデータの削除"), what
