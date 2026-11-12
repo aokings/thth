@@ -201,6 +201,28 @@ def test_断りの文はコードの検査と合う():
     assert "IP" in site["why"] and site["fix"] and site["better"]
 
 
+def test_柵_断りの通し方は実際の原因だけを言いプロキシを確かめさせない(prod, monkeypatch):
+    """監査 5.18.1 直したほうがよい 4: この口は環境のプロキシを使わず、プロキシは断りの原因でもない。"""
+    entry = refusal_catalog.get("wordpress_endpoint_rejected")
+    text = entry["why"] + entry["fix"]["text"] + entry["better"]
+    assert "PROXY" not in text.upper() and "プロキシ" not in text
+    # 実際の原因: 名前の答え（A・AAAA）に内向きの IP が 1 つでも混ざる・社内の DNS が内向きを返すサイトには出せない
+    assert "A・AAAA" in entry["fix"]["text"] and "1 つでも" in entry["why"]
+    assert "社内の DNS" in entry["fix"]["text"]
+    # 振る舞いと合う: 環境のプロキシが立っていても、内向きなら断り・外ならプロキシを使わず確かめた IP へ
+    for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(key, "http://proxy.invalid:3128")
+    net = Net(monkeypatch, [["10.0.0.5"], [PUBLIC_V4]])
+    assert adapter().whoami()["error"] == "wordpress_endpoint_rejected"
+    assert adapter().whoami()["error"] == "wordpress_transport_failed"
+    assert [c[0] for c in net.connected] == [PUBLIC_V4]
+    # 名前が引けないのは別の符丁（この断りの原因ではない）
+    def gaierror(*a, **k):
+        raise socket.gaierror("no name")
+    monkeypatch.setattr(httpsafe, "_getaddrinfo", gaierror)
+    assert adapter().whoami()["error"] == "wordpress_transport_failed"
+
+
 # ------------------------------------------------------------------ 内向きの表（監査 5.18.1 直したほうがよい 3）
 # Python の `ipaddress.is_global` の表は版で変わる（2024 年の直しで足された範囲がある）。IANA の特別な用途の表
 # （IPv4・IPv6 Special-Purpose Address Registry）のうち外の網でない範囲を `httpsafe` が自前でも持ち、版によらず
