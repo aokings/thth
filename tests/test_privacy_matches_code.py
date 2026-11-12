@@ -18,6 +18,8 @@ from thth import map_store, map_world, meta_public, meta_write, meter, permissio
 from thth.meta import calls as meta_calls
 from thth.shop import ledger as shop_ledger
 from thth.shop import wire as shop_wire
+from thth.shop import access as shop_access
+from thth.shop import shopify as shop_shopify
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -126,6 +128,30 @@ def facts() -> list[tuple[str, str]]:
         ("鍵の期限の知らせ・日本語", f"{shop_ledger.EXPIRY_NOTICE_DAYS} 日前から知らせられます"),
         ("店の注文を読まない", "THTH does not read orders or anything about the shop's customers"),
         ("店の注文を読まない・日本語", "注文やショップのお客さんの情報は読まず"),
+        # Shopify（5.17.0・設計 Shopify と STORES §9）。
+        ("Shopify の送り先（shop/wire.SHOPIFY_SUFFIX）",
+         f"shop at <code>&lt;shop&gt;{shop_wire.SHOPIFY_SUFFIX}</code>, of two kinds"),
+        ("Shopify の送り先・日本語", f"<code>&lt;shop&gt;{shop_wire.SHOPIFY_SUFFIX}</code> だけで、"),
+        ("Shopify の問い合わせの数（shop/wire.QUERIES）",
+         f"and {len(shop_wire.QUERIES)} fixed queries that read the shop's name and the products"),
+        ("Shopify の問い合わせの数・日本語", f"ショップの名前と商品を読む決まった {len(shop_wire.QUERIES)} つの問い合わせ"),
+        ("Shopify の道は POST だけ（shop/wire.ROUTES）",
+         "They are POST requests" if {m for m, _p in shop_wire.ROUTES["shopify"]["paths"]} == {"POST"}
+         else "Shopify の道に POST でないものがある"),
+        ("Shopify の短い鍵の置き場（shop/ledger.default_access）",
+         f"in a separate file in the same place (<code>{shop_ledger.default_access('x').rsplit('/', 1)[0]}/</code>, mode 600)"),
+        ("Shopify の短い鍵の置き場・日本語",
+         f"同じ置き場の別のファイル（<code>{shop_ledger.default_access('x').rsplit('/', 1)[0]}/</code>・600）"),
+        ("Shopify の求める scope（shop/shopify.REQUIRED_SCOPE）",
+         f"with the read scope <code>{shop_shopify.REQUIRED_SCOPE}</code>"),
+        ("Shopify の短い鍵の長さ（shop/access.MAX_LIFETIME_SECONDS）",
+         "valid for about 24 hours" if shop_access.MAX_LIFETIME_SECONDS == 24 * 3600 else "短い鍵の長さが privacy と違う"),
+        ("店のリダイレクトを追わない（shop/wire.OPENER）",
+         "THTH does not follow redirects from the shop"
+         if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
+        ("店のリダイレクトを追わない・日本語",
+         "ショップからのリダイレクトは追いません"
+         if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
