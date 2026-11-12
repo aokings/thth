@@ -16,7 +16,8 @@ import urllib.parse
 
 NAME_MAX = 200
 URL_MAX = 2048
-_CONTROL = re.compile(r"[\x00-\x1f\x7f  ]")
+# 行を分ける字 U+2028・U+2029 は字そのものを貼らずエスケープで書く（5.17.0 の寄せで空白に化けていた・監査 5.18.0 の 1）。
+_CONTROL = re.compile(r"[\x00-\x1f\x7f\u2028\u2029]")
 # 写しと出力に持つ欄（公開の商品）。非公開の商品は `id` と `visible` だけ。
 ROW_FIELDS = ("id", "name", "price", "stock", "visible", "sales_status", "image_url", "item_url", "modified_at")
 # 「売っている」の語（店の間で語がぶつからないので 1 つの集合・BASE は item_now_on_sale・Shopify は active・
@@ -36,7 +37,8 @@ def https_url(value) -> str | None:
     if not isinstance(value, str) or len(value) > URL_MAX or _CONTROL.search(value) or " " in value:
         return None
     parts = urllib.parse.urlsplit(value)
-    return value if parts.scheme == "https" and parts.hostname and not parts.username else None
+    # userinfo は形を問わず断る（`https://:p@host` は username が空の文字列になるので `@` で見る・監査 5.18.0 の 2）。
+    return value if parts.scheme == "https" and parts.hostname and "@" not in parts.netloc else None
 
 
 def is_int(value) -> bool:

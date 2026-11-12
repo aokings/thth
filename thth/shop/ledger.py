@@ -37,6 +37,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import urllib.parse
 
 from .. import accounts, jst, redact, secrets_fs
@@ -84,16 +85,21 @@ def list_names() -> list:
 
 
 PUBLIC_URL_MAX = 2048
+# 店の頁の URL は ASCII の見える字だけ（下書きの本文にそのまま載るので、全角の空白・幅の無い空白・向きを変える印・
+# 行を分ける字を断る。日本語のドメインは punycode で入れてもらう・監査 5.18.0 の 1）。
+_PUBLIC_URL_CHARS = re.compile(r"[!-~]+\Z")
 
 
 def check_public_url(value) -> str | None:
-    """STORES の店の頁の URL（持ち主が入れる値）。https だけ・userinfo と query と fragment なし・2048 字まで。
+    """STORES の店の頁の URL（持ち主が入れる値）。https だけ・ASCII の見える字だけ・userinfo と query と fragment なし・
+    2048 字まで。
 
     合えばそのまま返し、合わなければ None。THTH はこの URL に何も送らない（下書きの本文に載せるだけ）ので、
     ホストは問わない。
     """
     from .rows import https_url
-    if not isinstance(value, str) or len(value) > PUBLIC_URL_MAX or https_url(value) is None:
+    if (not isinstance(value, str) or len(value) > PUBLIC_URL_MAX or not _PUBLIC_URL_CHARS.match(value)
+            or https_url(value) is None):
         return None
     try:
         parts = urllib.parse.urlsplit(value)

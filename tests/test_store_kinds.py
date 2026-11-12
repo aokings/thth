@@ -96,3 +96,27 @@ def test_命令のitemは英数字を受け_出所の形も英数字():
             store_cli._item_id(bad)
     assert recheck._ORIGIN.fullmatch("store/s-stores/item/616950cd768f7263b4dab1a1")
     assert not recheck._ORIGIN.fullmatch("store/s/item/a-b")
+
+
+# ------------------------------------------------------------------ URL と名前の字（監査 5.18.0 直したほうがよい 1・2）
+# 字そのものを貼らず chr() で作る（貼った字は道具の間で空白に化けうる・5.17.0 の寄せで起きた）。
+
+@pytest.mark.parametrize("code", [0x2028, 0x2029, 0x00, 0x0A, 0x1F, 0x7F])
+def test_https_urlは行を分ける字と制御文字を断る(code):
+    # 空白を含めない（空白は別の検査で断るので、この字の検査を見たことにならない）。
+    assert rows.https_url("https://shop.example.invalid/x" + chr(code) + "status:approved") is None
+    assert rows.clean_text("豆" + chr(code) + "名") == "豆 名"
+
+
+def test_https_urlはuserinfoを形を問わず断る():
+    for url in ("https://u:p@h.example.invalid/x", "https://u@h.example.invalid/x", "https://:p@h.example.invalid/x",
+                "https://@h.example.invalid/x"):
+        assert rows.https_url(url) is None, url
+    assert rows.https_url("https://h.example.invalid/x") == "https://h.example.invalid/x"
+
+
+@pytest.mark.parametrize("code", [0x2028, 0x2029, 0x3000, 0x00A0, 0x200B, 0x202E, 0x0085, 0xFEFF, 0x3042])
+def test_店の頁のURLはASCIIの見える字だけ(code):
+    assert ledger.check_public_url("https://nigami.example.invalid/" + chr(code) + "x") is None
+    assert ledger.check_public_url("https://nigami.example.invalid/x") == "https://nigami.example.invalid/x"
+    assert ledger.check_public_url("https://xn--r8jz45g.jp/") == "https://xn--r8jz45g.jp/"
