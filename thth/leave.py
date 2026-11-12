@@ -134,6 +134,7 @@ def _identity(path, *, private=False):
     return _file(path,private=private)[1]
 
 
+
 def _token(cfg):
     if not cfg.get('token'):return {},None
     raw,identity=_file(_path(cfg['token']),private=True)
@@ -208,17 +209,20 @@ def _principal_owns_token(cfg):
 
 class PrincipalCredentialsInside(ValueError):
     """主体の鍵（はてなは consumer も）が、口座の leave で消す所の中にある（監査 5.18.1 直したほうがよい 1）。"""
-    def __init__(self,principal,where):
+    def __init__(self,principal,where,account=None):
         super().__init__('owned_tree_contains_principal_credentials')
-        self.principal=principal;self.where=where
+        self.principal=principal;self.where=where;self.account=account
 
 
 def _principal_credentials(cfg):
-    """記事の口座が使う主体の鍵のパス（`[(欄, Path)]`）。口座の台帳の `token`（主体の鍵の写し）と、主体の台帳の
-    `token`・`consumer`。値は読まない（パスとファイルの同一性だけ）。主体の台帳が無ければ口座の写しだけを見る。"""
+    """記事の口座が使う主体の鍵のパス（`[(欄, 書かれたパスの字)]`）。今の主体の台帳の `token`・`consumer` と、口座の
+    台帳の `token`（主体の鍵の写し）。値は読まない。主体の台帳が無ければ口座の写しだけを見る。
+
+    続きの leave では `cfg` は止まったときの退出の記録の写しで、口座の `token` はそのときのパスのまま（記録の形は
+    変えない・`cfg_sha256` で縛る）。照らすのは今の主体の台帳と、**そこに今ある物**だけ（監査 5.18.1 の確かめの 7:
+    断りのとおりに鍵を移すと、写しのパスにはもう何も無い。無い物は消えようがないので数えない）。"""
     from . import principals
     rows=[]
-    if cfg.get('token'):rows.append(('token',cfg['token']))
     name=cfg.get('principal')
     if isinstance(name,str) and accounts.name_is_safe(name):
         try:p=principals.load_principal(name)
@@ -228,40 +232,99 @@ def _principal_credentials(cfg):
         else:
             for key in ('token','consumer'):
                 if isinstance(p.get(key),str) and os.path.isabs(p[key]):rows.append((key,p[key]))
+    if isinstance(cfg.get('token'),str) and os.path.isabs(cfg['token']):rows.append(('token',cfg['token']))
     out=[]
-    for key,value in rows:
-        try:path=_path(value)
-        except (ValueError,OSError):continue
-        if (key,path) not in out:out.append((key,path))
+    for row in rows:
+        if row not in out:out.append(row)
     return out
 
 
-def _guard_principal_credentials(cfg,targets,trees):
+def _tree_ids(path):
+    """木の中の物の (dev, ino) の集まり（中身は読まない・symlink は追わずその物として数える）。無ければ空。"""
+    ids=set()
+    def visit(fd,depth):
+        if len(ids)>100000 or depth>64:raise ValueError('owned_tree_too_large')
+        for name in os.listdir(fd):
+            info=os.stat(name,dir_fd=fd,follow_symlinks=False);ids.add((info.st_dev,info.st_ino))
+            if stat.S_ISDIR(info.st_mode):
+                child=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+                try:visit(child,depth+1)
+                finally:os.close(child)
+    try:fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY)
+    except (FileNotFoundError,NotADirectoryError):return ids
+    try:
+        info=os.fstat(fd);ids.add((info.st_dev,info.st_ino));visit(fd,0)
+    finally:os.close(fd)
+    return ids
+
+
+def _stat_ids(value):
+    """書かれたパスにある物の同一性（中身は読まない）: そのパスの道の途中の置き場と葉（symlink はその物）と、葉が
+    symlink なら追った先。何も無ければ None。"""
+    path=Path(value)
+    try:leaf=os.stat(path,follow_symlinks=False)
+    except (FileNotFoundError,NotADirectoryError):return None
+    ids={(leaf.st_dev,leaf.st_ino)}
+    try:
+        target=os.stat(path)
+        ids.add((target.st_dev,target.st_ino))
+    except (FileNotFoundError,NotADirectoryError):pass
+    for parent in path.parents:
+        try:info=os.stat(parent)
+        except (FileNotFoundError,NotADirectoryError):continue
+        ids.add((info.st_dev,info.st_ino))
+    return ids
+
+
+def _guard_principal_credentials(cfg,trees):
     """主体の鍵が消す木（state・管理する repo）の中か、消す env と同じファイルなら、何も消さずに止める。
 
     `thth principal add` が書く既定の置き場（`~/.config/thth/<主体>.token`）では起きない。主体の台帳を手で
-    書き換えて鍵を口座の置き場に置いた形を、消してから「残しました」と言わないように、消す前に見る。"""
+    書き換えて鍵を口座の置き場に置いた形を、消してから「残しました」と言わないように、消す前に見る。
+
+    比べるのはパスの字でなくファイルの同一性（dev/ino・監査 5.18.1 の確かめの 8）: 葉が木の中を指す symlink、
+    親の置き場が symlink、字の大小だけ違うパス（大小を分けない置き場）も、同じ物なら止める。中身は読まない（9）。
+    口座の env は、消す前に（`inventory` が env を開くより前に）ここで stat だけで比べる。"""
     principal=cfg.get('principal') if isinstance(cfg.get('principal'),str) and accounts.name_is_safe(cfg.get('principal') or '') else None
-    envs=[target for target in targets if target['category']=='env']
-    for key,path in _principal_credentials(cfg):
-        where=None
-        for tree in trees:
-            if path.is_relative_to(tree) or path.is_relative_to(tree.resolve()):where='state' if tree==trees[0] else 'managed_repo'
-        if where is None:
-            identity=None
-            for target in envs:
-                if Path(target['path'])==path:where='env';break
-                if identity is None:
-                    try:identity=_identity(path,private=True) or {}
-                    except (ValueError,OSError):identity={}
-                own=target.get('identity') or {}
-                if identity and own and (identity['dev'],identity['ino'])==(own['dev'],own['ino']):where='env';break
-        if where:raise PrincipalCredentialsInside(principal,where)
+    candidates=[]
+    for key,value in _principal_credentials(cfg):
+        ids=_stat_ids(value)
+        if ids:candidates.append(ids)
+    if not candidates:return
+    where=None
+    env=cfg.get('env')
+    if isinstance(env,str) and os.path.isabs(env):
+        try:
+            leaf=os.stat(env,follow_symlinks=False);own={(leaf.st_dev,leaf.st_ino)}
+            with contextlib.suppress(FileNotFoundError,NotADirectoryError):
+                target=os.stat(env);own.add((target.st_dev,target.st_ino))
+        except (FileNotFoundError,NotADirectoryError):own=set()
+        if any(_stat_leaf(value)&own for _,value in _principal_credentials(cfg)):where='env'
+    if where is None:
+        for index,tree in enumerate(trees):
+            members=_tree_ids(tree)
+            if any(ids&members for ids in candidates):where='state' if index==0 else 'managed_repo';break
+    account=cfg.get('account') if accounts.name_is_safe(cfg.get('account') or '') else None
+    if where:raise PrincipalCredentialsInside(principal,where,account)
+
+
+def _stat_leaf(value):
+    """書かれたパスの葉と、symlink なら追った先の (dev, ino)（道の途中の置き場は含めない）。無ければ空。"""
+    out=set()
+    with contextlib.suppress(FileNotFoundError,NotADirectoryError):
+        leaf=os.stat(value,follow_symlinks=False);out.add((leaf.st_dev,leaf.st_ino))
+        target=os.stat(value);out.add((target.st_dev,target.st_ino))
+    return out
 
 
 def inventory(account,cfg):
     root=Path(accounts.thth_root()).resolve();registry=_registry();targets=[];preserved=[]
     principal_token=_principal_owns_token(cfg)
+    clone,origin=managed_repo.locations(account)
+    state=Path(accounts.state_dir_for(account)).absolute()
+    trees=[state]+([clone] if cfg.get('repo_dir')==str(clone) else [])
+    # 主体の鍵が消す所にあれば、口座の物（env・木）を開く前に止める（開くとその鍵を読むことになる・監査 5.18.1 の確かめの 9）。
+    if principal_token:_guard_principal_credentials(cfg,trees)
     # 主体の鍵は読まない（口座の退出に要らない秘密を開けない）。
     token,token_identity=({},None) if principal_token else _token(cfg)
     if type(token) is not dict:raise ValueError('credential_unreadable')
@@ -285,7 +348,13 @@ def inventory(account,cfg):
             if name==account:continue
             for key in ('token','env'):
                 if not other.get(key):continue
-                other_path=_path(other[key]);other_id=_identity(other_path,private=True)
+                other_path=_path(other[key])
+                if key=='token' and _principal_owns_token(other):
+                    # ほかの記事の口座の token は主体の鍵——同一性（dev/ino）だけを見て、中身は読まない（確かめの 9）。
+                    other_ids=_stat_leaf(other_path)
+                    if path==other_path or (identity['dev'],identity['ino']) in other_ids:shared=True
+                    continue
+                other_id=_identity(other_path,private=True)
                 if path==other_path or other_id and (identity['dev'],identity['ino'])==(other_id['dev'],other_id['ino']):shared=True
             if category=='token' and other.get('media')==cfg.get('media'):
                 with gate.recovery(name):other_token,_=_token(other)
@@ -311,7 +380,6 @@ def inventory(account,cfg):
         if value_shared:token_shared=True
         if not _credential_owned(path,account):raise ValueError('credential_ownership_unproved')
         targets.append({'category':category,'path':str(path),'identity':identity})
-    clone,origin=managed_repo.locations(account)
     if cfg.get('repo_dir')==str(clone):
         if clone.exists():
             managed_repo.validate(clone)
@@ -319,17 +387,14 @@ def inventory(account,cfg):
                 if name!=account and other.get('repo_dir') and Path(other['repo_dir']).resolve()==clone:raise ValueError('managed_repo_shared')
             targets.append({'category':'managed_repo','path':str(clone),'tree':_tree(clone)})
     elif cfg.get('repo_dir'):preserved.append('external_repo')
-    state=Path(accounts.state_dir_for(account)).absolute()
     for name,other in registry.items():
         if name==account:continue
         for key in ('token','env','repo_dir'):
             value=other.get(key)
             if value and (_path(value).is_relative_to(state) or cfg.get('repo_dir')==str(clone) and _path(value).is_relative_to(clone)):
                 raise ValueError('owned_tree_shared')
-    trees=[state]+([clone] if cfg.get('repo_dir')==str(clone) else [])
     if any(path.is_relative_to(tree) or tree.is_relative_to(path) for path in _shared_globals() for tree in trees):
         raise ValueError('owned_tree_contains_global_credentials')
-    if principal_token:_guard_principal_credentials(cfg,targets,trees)
     targets.append({'category':'state','path':str(state),'tree':_tree(state)})
     ledger=Path(accounts.accounts_dir()).absolute()/(account+'.json')
     if ledger.parent!=root/'accounts':raise ValueError('external_ledger_ownership_unproved')
@@ -701,11 +766,14 @@ def _incomplete_detail(exc):
         place={'state':'この口座の state の置き場の中','managed_repo':'この口座の管理する repo の中',
                'env':'この口座の env と同じファイル'}.get(exc.where,'この口座の leave で消す所')
         name=exc.principal or '<主体>'
+        ledger=f'accounts/{exc.account}.json' if exc.account else 'accounts/<口座>.json'
         return (f'owned_tree_contains_principal_credentials {who} の鍵（はてなは consumer も）が{place}（{exc.where}）にあり、'
                 'leave が口座の物と一緒に消してしまうので、何も消さずに止めました（口座は止めたままです）。'
                 f'通すには、鍵のファイルを ~/.config/thth/{name}.token（consumer は ~/.config/thth/{name}.consumer）へ移し、'
-                f'主体の台帳 principals/{name}.json の token（consumer）をそのパスに直して、thth principal show {name} で'
-                '「ある」を確かめてから、同じ leave をもう一度打ってください（続きから進みます）。'
+                f'主体の台帳 principals/{name}.json の token（consumer）をそのパスに直し、token を移したなら口座の台帳 '
+                f'{ledger} の token も同じパスに直して（口座の token は主体の鍵の写しで、違うと principal_token_mismatch で止まります）、'
+                f'thth principal show {name} で「ある」を確かめてから、同じ leave をもう一度打ってください（続きから進みます。'
+                '止まったときの記録に残る前のパスは、そこにもう何も無ければ数えません）。'
                 'もっと良くするには、主体の鍵は thth principal add が書く既定の置き場に置くと、口座の出入りで鍵が巻き込まれません')
     if str(exc)=='unsafe_owned_directory' and isinstance(where,str):
         return f'unsafe_owned_directory {where}（group/other が書けます。chmod -R go-w {where} で直してから）'

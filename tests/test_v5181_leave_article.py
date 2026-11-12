@@ -351,3 +351,122 @@ def test_SNSの共有の接続で終わった退出の打ち直しは今まで�
     assert leave.read("alpha")["remote"] == "unconfirmed_shared"
     rc, out, _ = _leave_cli("alpha", capsys)
     assert rc == 0 and "remote_unconfirmed: 他 account と共有の接続です" in out and "principal_token_kept" not in out
+
+
+# --- 監査 5.18.1 の確かめ 7・8・9: 断りのとおりに直せば通る・実体で比べる・主体の鍵を読まない ---
+
+@pytest.mark.parametrize("kind,principal,key", [
+    ("wordpress", "alpha", "token"), ("wordpress", "alpha-wp", "token"),
+    ("hatenablog", "alpha-hatena", "token"), ("hatenablog", "alpha-hatena", "consumer"),
+])
+def test_柵_断りのとおりに直して同じleaveを打つと最後まで進み鍵は残る(env, worker, capsys, kind, principal, key):
+    """7: 断りの「通すには」のとおりに鍵を既定の置き場へ移し、台帳を直して同じ leave を打つと rc 0 で終わる。
+
+    止まったときの退出の記録（`cfg` の写し）は state の中のパスのまま。柵はそこにファイルがあるときだけ数える。"""
+    token, blog = _principal(env, kind, principal, ["alpha"])
+    _article_account(env, "alpha", kind, principal, blog)
+    inside = env["root"] / "state" / "alpha" / f"principal.{key}"
+    _move_principal_file(env, principal, key, inside)
+    rc, out, err = _leave_cli("alpha", capsys)
+    assert rc == 2 and "owned_tree_contains_principal_credentials" in err
+    # 断りの言う直し方: 鍵を ~/.config/thth/<主体>.<token|consumer> へ移し、主体の台帳を直す。token は口座の台帳も。
+    assert f"~/.config/thth/{principal}.token" in err and f"principals/{principal}.json" in err
+    assert "accounts/alpha.json" in err
+    home = _config_dir() / f"{principal}.{key}"
+    home.write_bytes(inside.read_bytes())
+    home.chmod(0o600)
+    inside.unlink()
+    before = home.read_bytes()
+    pp = env["root"] / "principals" / f"{principal}.json"
+    p = json.loads(pp.read_text())
+    p[key] = str(home)
+    pp.write_text(json.dumps(p, ensure_ascii=False))
+    if key == "token":
+        ap = env["root"] / "accounts" / "alpha.json"
+        c = json.loads(ap.read_text())
+        c["token"] = str(home)
+        ap.write_text(json.dumps(c, ensure_ascii=False))
+    assert leave.read("alpha")["cfg"].get("token") in (str(inside), str(token))   # 記録の写しは変えない
+    rc, out, err = _leave_cli("alpha", capsys)
+    assert rc == 0, err
+    row = leave.read("alpha")
+    assert row["phase"] == "completed" and "principal_token" in row["preserved"]
+    assert home.read_bytes() == before
+    assert not (env["root"] / "accounts" / "alpha.json").exists()
+    assert SECRET_VALUE not in out + err
+
+
+def test_柵_主体の鍵がstateの中を指すsymlinkならleaveは消さずに止まる(env, worker, capsys):
+    """8: 葉が symlink（~/.config/thth/<主体>.token → state/<口座>/real.token）。字で比べると抜けて実体が消えた。"""
+    token, blog = _principal(env, "wordpress", "alpha-wp", ["alpha"])
+    _article_account(env, "alpha", "wordpress", "alpha-wp", blog)
+    real = env["root"] / "state" / "alpha" / "real.token"
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_bytes(token.read_bytes())
+    real.chmod(0o600)
+    token.unlink()
+    os.symlink(real, token)
+    _assert_stopped_before_delete(env, capsys, real, "alpha-wp", "state")
+    assert os.path.islink(token)
+
+
+def test_柵_はてなのconsumerがstateの中を指すsymlinkでも止まる(env, worker, capsys):
+    token, blog = _principal(env, "hatenablog", "alpha-hatena", ["alpha"])
+    _article_account(env, "alpha", "hatenablog", "alpha-hatena", blog)
+    consumer = pathlib.Path(json.loads((env["root"] / "principals" / "alpha-hatena.json").read_text())["consumer"])
+    real = env["root"] / "state" / "alpha" / "deep" / "consumer.json"
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text(json.dumps({"consumer_key": SECRET_VALUE, "consumer_secret": SECRET_VALUE}))
+    real.chmod(0o600)
+    if consumer.exists():
+        consumer.unlink()
+    os.symlink(real, consumer)
+    _assert_stopped_before_delete(env, capsys, real, "alpha-hatena", "state")
+
+
+def test_柵_字の大小だけ違うパスでもstateの中なら止まる(env, worker, capsys):
+    """8: 字の大小を分けない置き場（macOS の既定）で `…/STATE/<口座>/…` と書いた形。分ける置き場では別の所なので飛ばす。"""
+    root = env["root"]
+    upper = root / "STATE"
+    (root / "state" / "alpha").mkdir(parents=True, exist_ok=True)
+    if not upper.exists():
+        pytest.skip("この置き場は字の大小を分ける（本番の Linux と同じ）")
+    token, blog = _principal(env, "wordpress", "alpha-wp", ["alpha"])
+    _article_account(env, "alpha", "wordpress", "alpha-wp", blog)
+    _move_principal_file(env, "alpha-wp", "token", upper / "alpha" / "principal.token")
+    _assert_stopped_before_delete(env, capsys, root / "state" / "alpha" / "principal.token", "alpha-wp", "state")
+
+
+@pytest.mark.parametrize("kind,others", [("wordpress", []), ("hatenablog", []), ("wordpress", ["beta"])],
+                         ids=["WordPress", "はてな", "同じ主体のほかの口座"])
+def test_柵_記事の口座のleaveは主体の鍵のファイルを読まない(env, worker, capsys, monkeypatch, kind, others):
+    """9: 柵は場所と同一性（stat）だけで判定し、主体の鍵（はてなは consumer も）を開かない。"""
+    principal = "alpha-p"
+    token, blog = _principal(env, kind, principal, ["alpha"] + others)
+    if kind == "hatenablog":
+        consumer = pathlib.Path(json.loads((env["root"] / "principals" / f"{principal}.json").read_text())["consumer"])
+        consumer.write_text(json.dumps({"consumer_key": SECRET_VALUE, "consumer_secret": SECRET_VALUE}))
+        consumer.chmod(0o600)
+    for name in ["alpha"] + others:
+        _article_account(env, name, kind, principal, blog)
+    secret_names = {f"{principal}.token", f"{principal}.consumer"}
+    opened = []
+    real_open, real_file = os.open, leave._file
+
+    def spy_open(path, flags, *args, **kwargs):
+        if pathlib.Path(os.fsdecode(path)).name in secret_names:
+            opened.append(("os.open", os.fsdecode(path)))
+        return real_open(path, flags, *args, **kwargs)
+
+    def spy_file(path, *, private=False):
+        if pathlib.Path(path).name in secret_names:
+            opened.append(("leave._file", str(path)))
+        return real_file(path, private=private)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    monkeypatch.setattr(leave, "_file", spy_file)
+    rc, out, err = _leave_cli("alpha", capsys)
+    monkeypatch.undo()
+    assert rc == 0, err
+    assert opened == []
+    assert token.exists()
