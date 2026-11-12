@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import sys
 
 from . import article_media
@@ -928,10 +929,18 @@ def _store_key_lines(projects, now) -> list:
     for name in store_ledger.list_names():
         try:
             cfg = store_ledger.load(name)
-            if cfg["project"] not in projects:
-                continue
+        except StoreRefused:
+            continue
+        if cfg["project"] not in projects:
+            continue
+        try:
             when = store_ledger.expiry(store_ledger.load_token(cfg), now.date())
         except StoreRefused:
+            if os.path.lexists(cfg["token"]):
+                # 5.18.2（5.18.0 監査 の 13）: 鍵のファイルはあるのに、この店の種類の鍵の形でない（BASE の店に
+                # STORES の鍵を置いた・読めないファイル）。黙って飛ばさず、飛ばしたことと通し方を言う。
+                # ファイルが無い店（まだ鍵を置いていない）は今までどおり何も言わない。鍵の値は読まない・出さない。
+                lines.append(_store_key_unusable_line(name, cfg, COMMAND, store_kinds))
             continue
         if when["state"] in ("ok", "none"):   # none は期限の日の無い鍵（Shopify）
             continue
@@ -941,6 +950,19 @@ def _store_key_lines(projects, now) -> list:
         key_name = store_kinds.get(cfg["kind"])["key_name"]
         lines.append(f"店 {name} の鍵（{key_name}）: {head}（thth {COMMAND} token set {name} --expires <日付> --by <名前>）")
     return lines
+
+
+# 店の種類ごとに、`token set` に要る旗（BASE の PAT は期限の日が要る）。
+_STORE_TOKEN_SET_ARGS = {"base": " --expires <期限の日>"}
+
+
+def _store_key_unusable_line(name, cfg, command, store_kinds) -> str:
+    spec = store_kinds.get(cfg["kind"])
+    args = _STORE_TOKEN_SET_ARGS.get(cfg["kind"], "")
+    return (f"店 {name} の鍵（{spec['key_name']}）: 鍵のファイルはありますが、{spec['label']} の鍵の形ではないので"
+            "（ほかの種類の店の鍵か、読めないファイル）、期限を見ずに飛ばしました。"
+            f"thth {command} token set {name}{args} --by <名前> で{spec['key_name']}を置き直すと通ります"
+            "（置き直すとその場で店が見えるかを確かめ、以後は期限もここで知らせます）")
 
 
 def _guard_store_keys(configs, now) -> list:
