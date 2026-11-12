@@ -70,6 +70,7 @@ EXCLUDED_PATHS = {
 _PLACEHOLDER_MARKERS = ("<", ">", "*", "{", "}", "...", "…")
 
 _LINK_RE = re.compile(r"\]\(([^)]+)\)")
+_URL_RE = re.compile(r"(?:https?://|mailto:)\S+")
 _BARE_DOCS_RE = re.compile(r"(?<![\w/])docs/[^\s\"'()「」\]]+\.md")
 
 
@@ -117,7 +118,8 @@ def _collect_references(path: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
         refs.append((target, resolved))
 
     # 2. 地の文の "docs/....md" 表記: repo ルートからの相対という約束。
-    for m in _BARE_DOCS_RE.finditer(text):
+    # 外の URL の中（例 github.com/…-docs/blob/master/x.md）は repo のパスではないので先に外す。
+    for m in _BARE_DOCS_RE.finditer(_URL_RE.sub(" ", text)):
         target = m.group(0)
         if _looks_like_placeholder(target):
             continue
