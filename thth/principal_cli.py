@@ -793,6 +793,14 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
             out(f"{blog['blog_id']}: 読めました（鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}）")
             if who["strong"]:
                 out(WP_ADMIN_ADVICE.format(name=name))
+        elif who["error"] == "wordpress_home_host_mismatch":
+            # 鍵は通った。記事の URL のホストが入口と違う（5.18.2・5.16.0 監査 の 7）。出す前に知らせる。
+            ok = False
+            out(f"{blog['blog_id']}: 鍵は通りました（鍵の利用者 {who['user']}）が、記事の URL のホストが "
+                f"{who['home_host']} で、入口の {principals.site_host(principal_cfg, blog['blog_id'])} と違います"
+                f"（wordpress_home_host_mismatch・鍵は置いたまま）")
+            for line in refusal.tail("wordpress_home_host_mismatch"):
+                out(f"  {line}")
         else:
             ok = False
             code = who["error"] or "wordpress_unreadable"

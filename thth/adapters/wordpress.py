@@ -71,6 +71,8 @@ WP_REFUSALS = frozenset((
     "wordpress_redirect_blocked", "wordpress_token_missing", "wordpress_token_invalid", "wordpress_auth_unsupported",
     "wordpress_response_invalid", "wordpress_response_too_large", "wordpress_endpoint_rejected",
     "wordpress_rate_limited",
+    # 記事の URL のホスト（home）が入口のホストと違う（5.18.2・5.16.0 監査 の 7）。
+    "wordpress_home_host_mismatch",
     # `wordpress_http_<番号>` は目録の 1 つの項目に寄せる（`refusal_catalog.get` が引く）。
     "wordpress_http_status",
     # 台帳の記事の ID と編集の URL の検査（はてなの口も同じ符丁）。
@@ -490,28 +492,59 @@ class WordPressAdapter:
                                 "edited": row.get("modified_gmt"), "content": _raw(row.get("content"))})
         return {"entries": entries}
 
+    @property
+    def site_host(self) -> str:
+        return (urllib.parse.urlsplit(self.site).hostname or "").lower()
+
     def whoami(self) -> dict:
         """鍵で自分を 1 回読む（`/wp/v2/users/me?context=edit`）。例外は上げない。鍵の値は出さない。
 
-        `{"ok", "user", "roles", "strong", "error"}`。`strong` は管理者の鍵（断らずに、編集者の利用者を作って
-        その鍵にするよう勧める）。
+        `{"ok", "user", "roles", "strong", "error", "home_host"}`。`strong` は管理者の鍵（断らずに、編集者の利用者を
+        作ってその鍵にするよう勧める）。
+
+        5.18.2（5.16.0 監査 の 7）: 応答の `link`（その利用者の著者の頁。WordPress はサイトアドレス＝home の上に
+        組む）のホストが入口（`site_url`）のホストと違えば `wordpress_home_host_mismatch`。記事の URL も home の
+        上に組まれるので、そのままでは 1 本めが出たあと `_record_outcome` が conflict で止まる。出す前に知らせる
+        ためで、出したあとの柵は緩めない。`link` が無い・読めないときは比べない（分からないことを言わない）。
+        道は増やさない（同じ users/me の応答の 1 欄）。ホストは残さない（比べて、違うときに画面で言うだけ）。
         """
+        empty = {"user": None, "roles": None, "strong": None, "home_host": None}
         try:
             data = self._get(f"{self._route('users/me')}?context=edit")
         except WordPressError as exc:
-            return {"ok": False, "user": None, "roles": None, "strong": None, "error": str(exc)}
+            return {"ok": False, **empty, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "user": None, "roles": None, "strong": None,
-                    "error": redact_mod.redact(exc.__class__.__name__)}
+            return {"ok": False, **empty, "error": redact_mod.redact(exc.__class__.__name__)}
         name = data.get("username") if isinstance(data, dict) else None
         roles = [r for r in (data.get("roles") or []) if isinstance(r, str)] if isinstance(data, dict) else []
         if name != self.wp_user:
-            return {"ok": False, "user": None, "roles": roles, "strong": None, "error": "wp_user_mismatch"}
-        return {"ok": True, "user": name, "roles": roles, "strong": any(r in STRONG_ROLES for r in roles),
-                "error": None}
+            return {"ok": False, **empty, "roles": roles, "error": "wp_user_mismatch"}
+        strong = any(r in STRONG_ROLES for r in roles)
+        home = _link_host(data.get("link"))
+        if home and home != self.site_host:
+            return {"ok": False, "user": name, "roles": roles, "strong": strong, "home_host": home,
+                    "error": "wordpress_home_host_mismatch"}
+        return {"ok": True, "user": name, "roles": roles, "strong": strong, "home_host": None, "error": None}
 
     def probe(self) -> dict:
         """doctor の形（`{"ok", "status", "entries", "syntax", "error"}`）で `whoami` を返す。"""
         who = self.whoami()
         return {"ok": who["ok"], "status": 200 if who["ok"] else None, "entries": None, "syntax": None,
-                "error": who["error"], "roles": who["roles"], "strong": who["strong"]}
+                "error": who["error"], "roles": who["roles"], "strong": who["strong"], "home_host": who.get("home_host")}
+
+
+_HOST_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-:")
+
+
+def _link_host(value) -> str | None:
+    """応答の `link` のホスト（http か https の URL のときだけ・小文字）。読めなければ None（比べない）。"""
+    if not isinstance(value, str) or len(value) > 2048:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not host or len(host) > 253 or set(host) - _HOST_CHARS:
+        return None   # 画面に出すので、ホストの字（英小文字・数字・. - :）だけ
+    return host

@@ -36,6 +36,15 @@ ENTRIES = {
         "主体の wp_user の利用者でアプリケーションパスワードを作り直し、入れ替えてください。",
         _AUTH,
         "利用者ごとに主体を分けておくと、どの鍵で出したかが台帳から辿れます。"),
+    # 5.18.2（5.16.0 監査 の 7）。since は版上げのときに直す（今の版を越えない柵）。
+    "wordpress_home_host_mismatch": dict(_entry(
+        "WordPress が記事の URL に使うホスト（設定の「サイトアドレス (URL)」）が、THTH が要求を送る入口のホストと"
+        "違います。このまま出すと、記事は出ても THTH の台帳は「別の所に出た」と見て止まります（conflict）。",
+        "主体のブログの行の site_url（無ければ blog_id）を、記事の URL のホストにそろえてください（REST の入口は"
+        "サイトアドレスの上にあります）。そろえたら鍵を置き直すか thth doctor <口座> で確かめます。",
+        "thth principal show <主体>",
+        "WordPress の「一般設定」の WordPress アドレスとサイトアドレスを同じホストにしておくと、入口と記事の URL が"
+        "いつも合い、どちらのホストで読んでも同じサイトだと確かめやすくなります。"), since="5.18.0"),
     "site_url_invalid": _entry(
         "主体のブログの行の site_url が、https://<blog_id> の形（手元の試しの localhost だけ http）になっていません。",
         "site_url を https://<blog_id> の形に直すか、欄を消してください（無ければ https://<blog_id> を使います）。",
