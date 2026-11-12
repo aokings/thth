@@ -474,10 +474,16 @@ def test_httpは手元の試しだけ_柵は緩めない(lane, monkeypatch):
 
 # ------------------------------------------------------------------ 本文の部分集合
 
+def test_本文の見出しは題のh1と重ならないよう1段下げる():
+    assert wp_html.render("# 一") == "<h2>一</h2>"
+    assert wp_html.render("##### 五") == "<h6>五</h6>"
+    assert wp_html.render("###### 六") == "<h6>六</h6>"
+    assert "<h1>" not in wp_html.render("# a\n\n## b\n\n### c")
+
 def test_本文は狭い部分集合だけをHTMLにする():
     out = wp_html.render("## 見出し\n\n本文 **太字** と *斜め* & <\n次\n\n- a\n- b\n\n1. c\n\n"
                          "[x](https://e.example)\n\n```py\nx = '<a>'\n```\n`c<b>`")
-    assert out == ("<h2>見出し</h2>\n<p>本文 <strong>太字</strong> と <em>斜め</em> &amp; &lt;<br />\n次</p>\n"
+    assert out == ("<h3>見出し</h3>\n<p>本文 <strong>太字</strong> と <em>斜め</em> &amp; &lt;<br />\n次</p>\n"
                    "<ul><li>a</li><li>b</li></ul>\n<ol><li>c</li></ol>\n"
                    "<p><a href=\"https://e.example\">x</a></p>\n"
                    "<pre><code class=\"language-py\">x = '&lt;a&gt;'</code></pre>\n<p><code>c&lt;b&gt;</code></p>")

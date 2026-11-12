@@ -4,7 +4,8 @@ WordPress の REST（`/wp-json/wp/v2/posts`）の `content` は HTML を受け�
 標準ライブラリだけで、**狭い部分集合**だけを HTML にする:
 
 - 段落（空行で区切る。段落の中の改行は `<br />`）
-- 見出し（`#`〜`######`）
+- 見出し（`#`〜`######`）。WordPress は記事の題を `h1` で出すので、本文の見出しは 1 段下げる（`#` は `h2`・
+  `#####` と `######` は `h6`）。題と本文の `h1` が 2 つ並ぶと、読み上げと検索で記事の頭が分からなくなる
 - 強調（`**太字**`・`*斜体*`）
 - リンク（`[文字](https://…)`。`http`・`https`・`mailto`・相対・`#` だけ）
 - 箇条書き（`-`・`*`・`+`）と番号付き（`1.`）。入れ子は作らない
@@ -135,7 +136,7 @@ def render(body: str) -> str:
         heading = _HEADING_RE.match(line)
         if heading:
             flush()
-            level = len(heading.group(1))
+            level = min(len(heading.group(1)) + 1, 6)   # 題が h1 なので 1 段下げる
             out.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
             i += 1
             continue
