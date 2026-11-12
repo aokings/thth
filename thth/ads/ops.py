@@ -14,8 +14,9 @@
 | `watch`（成績を読んで、指定に達したら `stop`） | 通す | 読みは待つ・止めは待たない | 止めるのは `stop` と同じ（承認なし）・`--until` で必ず終わる（既定 6 時間・上限 48 時間） |
 | `resume`（**THTH の止めの印を外す**・masaru 11/02 の例外） | — | 待つ | 2 段の digest（印と口座の木を読み直す）＋ hub の番号が**必須**（`require_gate` に関わらず）・理由 `owner` の印だけ・最後の stop が確かめられていること。**広告は ACTIVE にしない** |
 
-**上げる口は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
-上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` ＋余白（10%・`lifetime_budget_max` まで）へ下げるだけ。
+**上限を上げる口は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
+上げる命令は CLI にも MCP にも無い（D-1 の 3）。広告セットの通しの予算と期間は `extend` が 2 段で延ばす・増やす
+（1 操作の上限・月の上限の内側だけ。`_tree_money`・`budget.check`）。`spend_cap` は `stop` が `amount_spent` ＋余白（10%・`lifetime_budget_max` まで）へ下げるだけ。
 **例外は 1 つ**: 止めの印を外す `resume`（masaru 11/02「はいお願いします」）。2 段＋hub の番号で、外すのは印だけ
 （広告・`spend_cap`・上限・旗には触らない）。MCP には出さない（activate と同じく CLI で人が押す）。
 

@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しも同じ日。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -366,7 +366,8 @@ def build_privacy() -> str:
         "can advertise and the creator marketplace, and, for the owner's shop, product tags (described below).</li>")
     add("  <li>Ad accounts: the ad account's ID, name, currency, spend cap and amount spent; the status and insight "
         "numbers of its campaigns, ad sets and ads; on request, a boost of a Page post (created paused), lowering a "
-        "budget, the business's Audience Network numbers, its shop settings, its product catalogs and the Page's lead "
+        "budget, extending an ad set's end date or lifetime budget within the owner's limits after a two-step "
+        "confirmation, the business's Audience Network numbers, its shop settings, its product catalogs and the Page's lead "
         "forms (described under Ads, catalogs and leads).</li>")
     add("  <li>WhatsApp: the business account's ID, its phone numbers (IDs, display names and quality ratings) and "
         "message templates (names, statuses and languages); on request, a new message template, a message sent from "
@@ -512,7 +513,8 @@ def build_privacy() -> str:
         "what THTH read (the account's name, currency, spend cap and amount spent, and the status and insight "
         "numbers of campaigns, ad sets and ads), one record per operation THTH carried out (the operation, the IDs "
         "and the result), the monthly budget estimate, and Marketing API call counts (<code>meta_calls.json</code>: "
-        "per-day counts for the last 16 days of calls and errors, no content). Everything THTH creates "
+        "per-day counts for the last 16 days of calls and errors, and the time and success of each of the last 500 "
+        "calls, no content). Everything THTH creates "
         "(<code>thth ads boost</code>, from a post the owner's Page published, with the budget the owner gave) is "
         "paused; delivery starts only after the owner's two-step confirmation, and THTH raises a budget "
         "only after the owner's two-step confirmation. THTH's budget estimate is not an invoice; "
@@ -716,7 +718,7 @@ def build_privacy() -> str:
         "for Threads and for Instagram comments and story insights, thth.me keeps only ids, times, the post type and numbers, "
         "not the text or the other person's name.</li>")
     add("  <li>Instagram hashtags searched (the hashtag and the first time only): 7 days.</li>")
-    add("  <li>Marketing API call counts (numbers only): per-day counts for the last 16 days.</li>")
+    add("  <li>Marketing API call counts (numbers only): per-day counts for the last 16 days, and the time and success of each of the last 500 calls.</li>")
     add("  <li>The ad account ledger, daily snapshots and operation records: until the operator removes the ad "
         "account.</li>")
     add("  <li>Direct messages, leads, streaming destinations, call-to-action buttons and other accounts' public "
@@ -802,7 +804,7 @@ def build_privacy() -> str:
         "（タグ付けを承認するクリエイター、タグ付けされた投稿の提携広告への利用）、広告に使える提携コンテンツと"
         "クリエイターマーケットプレイス・ショップの商品タグ（下に書きます）。</li>")
     add("  <li>Meta の広告: 広告アカウントの ID・名前・通貨・spend_cap・消費額、キャンペーン・広告セット・広告の状態と"
-        "成績の数、求めたときのページの投稿の宣伝（止めた状態で作る）・予算を下げる・ビジネスの Audience Network の数・"
+        "成績の数、求めたときのページの投稿の宣伝（止めた状態で作る）・予算を下げる・持ち主の二段確認のあと上限の内側で広告セットの終了日や通しの予算を延ばす・ビジネスの Audience Network の数・"
         "ショップの設定・商品カタログとページのリードのフォーム（下の「広告・カタログ・リード」）。</li>")
     add("  <li>WhatsApp: ビジネスアカウントの ID、電話番号（ID・表示名・品質）とメッセージテンプレート（名前・状態・言語）、"
         "求めたときの新しいテンプレートの作成、承認済みのテンプレートからのメッセージの送信、会話のあとに起きた出来事"
@@ -918,7 +920,7 @@ def build_privacy() -> str:
         "置き場（<code>adaccount_state/&lt;名前&gt;/</code>）を持ちます。状態の置き場にあるのは、THTH が読んだものの"
         "日次の写し（アカウントの名前・通貨・spend_cap・消費額、キャンペーン・広告セット・広告の状態と成績の数）、"
         "THTH が行った操作ごとの記録（操作・ID・結果）、月の消費の見積もり、Marketing API の呼び出しの数"
-        "（<code>meta_calls.json</code>: 呼び出しと誤りの日ごとの数を直近 16 日分。中身は持ちません）です。THTH が"
+        "（<code>meta_calls.json</code>: 呼び出しと誤りの日ごとの数を直近 16 日分と、直近 500 回の呼び出しそれぞれの時刻と成否。中身は持ちません）です。THTH が"
         "作るもの（<code>thth ads boost</code>・本人のページの投稿から・持ち主が渡した予算で）はすべて PAUSED で、"
         "配信が始まるのは持ち主の二段確認のあとだけです。予算を上げるのも持ち主の二段確認のあとだけです。THTH の見積もりは請求書ではなく、"
         "請求は Meta の側で行われます。<code>thth ads catalog</code> はビジネスの商品カタログと商品を、"
@@ -1090,7 +1092,7 @@ def build_privacy() -> str:
         "コメントや言及と、接続した Instagram への言及は、本文と送り手の名前を含むことがあります。Threads と、Instagram のコメントとストーリーの数値は、"
         "id・時刻・投稿の種類・数だけを置き、本文や相手の名前は置きません。</li>")
     add("  <li>Instagram で調べたハッシュタグ（タグと最初の時刻だけ）: 7 日。</li>")
-    add("  <li>Marketing API の呼び出しの数（数だけ）: 日ごとの数を直近 16 日。</li>")
+    add("  <li>Marketing API の呼び出しの数（数だけ）: 日ごとの数を直近 16 日と、直近 500 回それぞれの時刻と成否。</li>")
     add("  <li>広告の台帳・日次の写し・操作の記録: 運営者が広告アカウントを外すまで。</li>")
     add("  <li>ダイレクトメッセージ・リード・配信の宛先・行動ボタン・他の口座の公開の数: 保存しません。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
