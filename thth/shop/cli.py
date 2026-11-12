@@ -448,6 +448,8 @@ _PRICE_WORDS = {
 def _change_hint(change: dict) -> str:
     if change["kind"] == "price_changed":
         return "・" + _PRICE_WORDS.get(change.get("why"), _PRICE_WORDS["mixed"])
+    if change["kind"] == "sale_started":
+        return f"（販売が始まりました。thth {COMMAND} draft <店> --kind new で新着と同じように下書きを作れます）"
     if change["kind"] == "variants_changed":
         return (f"（種類が {change.get('added', 0)} 増え {change.get('removed', 0)} 減りました。値段の上下ではないので、"
                 "下書きは作りません）")

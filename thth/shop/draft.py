@@ -1,7 +1,7 @@
 """店の違いから queue の下書きを作る（**承認されていない形**・設計 §2「出すのは承認のあとだけ」）。
 
 - まとめて作らない: 1 回に 1 商品（`--item`）か、種類を選んで上限 `MAX_DRAFTS` 本。
-- 作るのは「公開で買える」商品の `new`（と `published`）・`restock`・`price_down` だけ。売り切れ・値上げ・
+- 作るのは「公開で買える」商品の `new`（と `published`・販売が始まった `sale_started`）・`restock`・`price_down` だけ。売り切れ・値上げ・
   非公開・消えた商品の下書きは作らない。
 - 本文は素の 1〜2 行（商品名・「新しく入りました」などの一言・URL）。文は利用者の LLM が書く前提。
   値下げの「前 → 今」の数は本文に書かず、頭（front-matter）に材料として置くだけ。
@@ -40,6 +40,8 @@ MAX_DRAFTS = 3
 VARIANTS_IN_DRAFT_MAX = 50
 DRAFT_NAME_MAX = 80
 PHRASES = {"new": "新しく入りました", "restock": "再入荷しました", "price_down": "お値下げしました"}
+# 違いの種類で一言を変えるもの（下書きの選び方は `new` のまま・5.18.1）。
+CHANGE_PHRASES = {"sale_started": "販売を始めました"}
 
 
 def queue_dir(cfg) -> Path:
@@ -113,7 +115,7 @@ def text_for(store: str, account: str, media: str, change: dict, row: dict, *, s
         lines.append(f"from_store_variant_prices: {variant_line(row)}")
     if material(change):
         lines.append(f"from_store_material: {material(change)}")
-    lines += ["---", "", f"## {media}", "", f"{name} {PHRASES[kind]}", row_url(row) or shop_url, ""]
+    lines += ["---", "", f"## {media}", "", f"{name} {CHANGE_PHRASES.get(change['kind'], PHRASES[kind])}", row_url(row) or shop_url, ""]
     return "\n".join(lines)
 
 
