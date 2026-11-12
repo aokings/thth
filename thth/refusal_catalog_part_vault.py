@@ -182,11 +182,17 @@ ENTRIES = {
         None,
         "画像を 1 枚 200 KB ほどに縮めると、見る人の待ち時間も短くなります。"),
     "garden_text_refused": _entry(
-        "HTML・SVG・XML・CSS が UTF-8 でないか、http-equiv を含んでいます（1 行目の（））。http-equiv の refresh は"
-        "CSP でも止まらず、偽の頁へ飛ばせるので、庭では置けません。",
-        "UTF-8（BOM なし）で保存し直し、http-equiv の meta を外してから打ち直してください。",
+        "HTML・SVG・XML・CSS が UTF-8 でないか、HTML・SVG・XML が http-equiv・制御文字・UTF-8 以外の文字コードの宣言を"
+        "含んでいます（1 行目の（）: utf-8 は UTF-8 でない字か BOM・NUL、http-equiv は meta の http-equiv、control は"
+        "タブ・改行・CR 以外の制御文字（ESC など）、encoding は UTF-8 以外の encoding= か charset= の宣言）。http-equiv の"
+        "refresh は CSP でも止まらず、偽の頁へ飛ばせます。制御文字と別の文字コードの宣言があると、検査とブラウザとで"
+        "別の名前に見えうる（ISO-2022-JP の ESC など）ので、monban の配る側と同じく置けません。",
+        "UTF-8（BOM なし）で保存し直し、http-equiv の meta と制御文字を外し、宣言は <meta charset=\"utf-8\"> か"
+        " <?xml version=\"1.0\" encoding=\"utf-8\"?> にしてから打ち直してください。本文で charset=… や encoding=… の字を"
+        "見せたいときは、= を &#61; と書けば通ります（見た目は同じ）。",
         None,
-        "文字コードは <meta charset=\"utf-8\"> の 1 つに任せると、どの端末でも崩れません。"),
+        "文字コードは UTF-8 の宣言 1 つに任せると、どの端末でも崩れません。エディタの「UTF-8 で保存」と、制御文字を"
+        "見せる設定を使うと、混ざった字に先に気づけます。"),
     "garden_active_refused": _entry(
         "頁に、動く部品（script・form・iframe・入力欄・on…= の差し込み・javascript: のリンク）があります（1 行目の（））。"
         "段 1 の庭は静的な頁だけで、偽の sign-in の頁や入力を盗む頁を作れなくしてあります。script or form は字面で"

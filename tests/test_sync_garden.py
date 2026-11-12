@@ -505,7 +505,7 @@ def _site(tmp_path, body="<p>本文</p>", name="index.html", raw=None, extra=Non
     ('<a href="&#1;javascript:alert(1)">押す</a>', "garden_active_refused"),
     ('<a href="JaVaScRiPt&colon;alert(1)">押す</a>', "garden_active_refused"),
     ('<img src="/\\evil.example.invalid/x.png">', "garden_external_refused"),
-    ('<img src=" \x01//evil.example.invalid/x.png">', "garden_external_refused"),
+    ('<img src=" &#1;//evil.example.invalid/x.png">', "garden_external_refused"),  # 生の制御文字は先に断る（10）
     ('<img src="a.png" alt="閉じない>', "garden_markup_refused"),
     ('<p>x</p><img src="a.png"', "garden_markup_refused"),
     ('<a href="a.html" ping="https://t.example.invalid/">x</a>', "garden_external_refused"),
@@ -748,6 +748,148 @@ def test_garden_check_の制限はmonbanのEdgeと同じ数():
     assert "HTML_MAX = 1024 * 1024" in text and "GARDEN_MAX = 100 * 1024 ** 2" in text and "FILES_MAX = 2000" in text
     for kind in garden.TYPES:
         assert f"{kind}:" in text, kind
+
+
+# 監査 段 1 の 8: CSS の改行は \n・\r\n・\r・\f の 4 つ。\n しか知らない読み手は、閉じない文字列の終わりと \ + CRLF の
+# 行継ぎで文字列の内と外をブラウザと逆に読み、後ろの image-set や @import を「読みに行かない文字列」と見ていた。
+_EVIL_SET = 'background:image-set("https://evil.example.invalid/x.png" 1x)}'
+
+
+@pytest.mark.parametrize("css", [
+    'a{content:"x\r;' + _EVIL_SET,
+    'a{content:"x\f;' + _EVIL_SET,
+    'a{quotes:"x\r;' + _EVIL_SET,
+    'a[title="x\r]{} b{' + _EVIL_SET,
+    'a{content:"a\\\r\n";' + _EVIL_SET,  # \ + CRLF の行継ぎ（8b61eee で開いた形）
+    '@charset "/*\r;@import "https://evil.example.invalid/x.css";a{content:"*/"}',
+], ids=["cr", "ff", "quotes-cr", "selector-cr", "crlf-continue", "charset-cr-import"])
+def test_garden_check_CSSの改行の4つ(tmp_path, css):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))
+    assert exc.value.code == "garden_external_refused"
+
+
+def test_garden_check_CRLFの普通のCSSは通る(tmp_path):
+    css = ('body{color:#222}\r\np.note::before{content:"Note: \\\r\n続き"}\r\n'
+           'a[href^="https://"]::after{content:" (out)"}\r\n/* 注 */\r\n\fq{quotes:"「" "」"}\r\n')
+    assert "/style.css" in garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))["files"]
+
+
+# 監査 段 1 の 9: @import の前置きの [ ] の塊を数えず、{ をセレクタの始まりと読んでいた。字面の @import の検査は
+# "/*"…"*/" の文字列で隠せた。
+@pytest.mark.parametrize("css", [
+    '@charset "/*";@import "https://evil.example.invalid/x.css" [{}];a{content:"*/"}',
+    '@import "https://evil.example.invalid/x.css" [{}];',
+    '@charset "/*";@im\\70ort "https://evil.example.invalid/x.css" [{}];a{content:"*/"}',
+    '@charset "/*";@import "a.css" [{}];a{content:"*/"}',  # 同じ庭の CSS でも @import は断る（前からの決まり）
+    '@font-feature-values "https://evil.example.invalid/x" {}',  # @ の前置きの文字列は読みに行かない物と見ない
+    # [ ] の中の { } で宣言が終わったと読まない（var で image-set に渡せるカスタムプロパティの文字列のまま）
+    ':root{--u:"https://evil.example.invalid/x.png" [{}]}p{background:image-set(var(--u) 1x)}',
+], ids=["hidden-bracket", "bracket", "hidden-escaped", "hidden-local", "at-prelude-string", "custom-prop-bracket"])
+def test_garden_check_CSSのimportを字句で見る(tmp_path, css):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))
+    assert exc.value.code == "garden_external_refused"
+
+
+@pytest.mark.parametrize("css", ['a[title="{"]{color:red}', 'a[href^="https://"]{color:red}',
+                                 '@media (min-width:40em){a[href$=".pdf"]::after{content:" (PDF)"}}',
+                                 '@supports (content:"x"){p{color:red}}', '@charset "utf-8";body{color:#222}'],
+                         ids=["brace-in-attr", "attr", "media-attr", "supports", "charset"])
+def test_garden_check_CSSの角括弧とat規則の普通の書き方は通る(tmp_path, css):
+    assert "/style.css" in garden.check_dir(str(_site(tmp_path, extra={"style.css": css.encode("utf-8")})))["files"]
+
+
+# 監査 段 1 の 10（THTH の側）: monban の Edge（1e85405）と同じ 2 つを、html・svg・xml で出す前に断る。
+_SVG_NS = 'xmlns="http://www.w3.org/2000/svg"'
+
+
+@pytest.mark.parametrize("name,raw,detail", [
+    ("j.svg", f'<?xml version="1.0" encoding="ISO-2022-JP"?><svg {_SVG_NS} on\x1b(Bload="x"/>', "control"),
+    ("k.svg", f'<?xml version="1.0" encoding="ISO-2022-JP"?><svg {_SVG_NS}/>', "encoding"),
+    ("m.html", '<meta charset="shift_jis"><p>x</p>', "encoding"),
+    ("x.xml", "<?xml version='1.0' encoding='EUC-JP'?><r/>", "encoding"),
+    ("u.xml", '<?xml version="1.0" encoding="utf-16"?><r/>', "encoding"),
+    ("v.svg", f'<?xml version="1.0" encoding="UTF-8x"?><svg {_SVG_NS}/>', "encoding"),
+    ("b.svg", f"<svg {_SVG_NS}><text>a\x01b</text></svg>", "control"),
+    ("c.xml", "<r>a\x0bb</r>", "control"),
+    ("d.html", "<p>a\x0cb</p>", "control"),
+    ("e.html", "<p>a\x1fb</p>", "control"),
+    ("f.html", "<p>a\x7fb</p>", "control"),
+], ids=["iso2022-esc", "iso2022", "html-sjis", "xml-eucjp", "xml-utf16", "utf8x", "svg-01", "xml-0b", "html-0c",
+        "html-1f", "html-7f"])
+def test_garden_check_制御文字とUTF8以外の宣言はmonbanと同じに断る(tmp_path, name, raw, detail):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={name: raw.encode("utf-8")})))
+    assert exc.value.code == "garden_text_refused" and detail in exc.value.detail
+
+
+def test_garden_check_UTF8の宣言とタブ改行CRは通る(tmp_path):
+    page = GOOD.format(body="<p>a\tb\r\nc</p>").replace('<meta charset="utf-8">',
+                                                         '<meta charset="utf-8"><meta charset=UTF-8>')
+    extra = {"a.svg": f'<?xml version="1.0" encoding="UTF-8"?><svg {_SVG_NS}/>'.encode("utf-8"),
+             "b.xml": b"<?xml version='1.0' encoding='utf-8'?><x/>",
+             "c.xml": b'<?xml version="1.0" encoding="utf8" standalone="no"?>\r\n<x>\t</x>'}
+    found = garden.check_dir(str(_site(tmp_path, raw=page.encode("utf-8"), extra=extra)))
+    assert sorted(found["files"]) == ["/a.svg", "/b.xml", "/c.xml", "/index.html"]
+
+
+def test_garden_check_制御文字と宣言の型はmonbanのEdgeと同じ():
+    edge = Path("/Volumes/NexDev/Developer/monban/edge/src/vault.js")
+    if not edge.exists():
+        pytest.skip("monban の checkout が無い（CI）")
+    text = edge.read_text(encoding="utf-8")
+    assert "/" + garden.CONTROL_JS + "/.test(text)" in text
+    assert "/" + garden.DECLARED_JS + "/i.test(text)" in text
+
+
+def test_garden_check_制御文字と宣言の断りに直し方がある():
+    entry = rc.get("garden_text_refused")
+    for word in ("制御文字", "encoding", "charset", "UTF-8"):
+        assert word in entry["why"], word
+    assert "&#61;" in entry["fix"]["text"] and "utf-8" in entry["fix"]["text"]
+
+
+# 監査 段 1 の 11: SVG・XML は xlink の前置きの名前を替えられる（xmlns:z="…xlink" と z:href）。前置きに依らず見る。
+_XLINK_Z = 'xmlns:z="http://www.w3.org/1999/xlink"'
+
+
+@pytest.mark.parametrize("name,raw,code", [
+    ("a.svg", f'<svg {_SVG_NS} {_XLINK_Z}><image z:href="https://evil.example.invalid/x.png"/></svg>',
+     "garden_external_refused"),
+    ("b.svg", f'<svg {_SVG_NS} {_XLINK_Z}><a z:href="javascript:alert(1)"><text>x</text></a></svg>',
+     "garden_active_refused"),
+    ("c.svg", f'<svg {_SVG_NS} {_XLINK_Z}><use z:href="//evil.example.invalid/s.svg#a"/></svg>',
+     "garden_external_refused"),
+    ("d.xml", f'<r {_XLINK_Z}><x z:href="https://evil.example.invalid/x.png"/></r>', "garden_external_refused"),
+], ids=["svg-image", "svg-a-js", "svg-use", "xml"])
+def test_garden_check_xlinkの前置きを替えても見る(tmp_path, name, raw, code):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={name: raw.encode("utf-8")})))
+    assert exc.value.code == code
+
+
+def test_garden_check_xlinkの前置きの普通の書き方は通る(tmp_path):
+    svg = (f'<svg {_SVG_NS} {_XLINK_Z} xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 1 1">'
+           '<defs><path id="a" d="M0 0h1"/></defs><use z:href="#a"/><a z:href="https://kopicha.example.invalid/">'
+           '<text inkscape:label="店へ">店へ</text></a></svg>')
+    assert "/a.svg" in garden.check_dir(str(_site(tmp_path, extra={"a.svg": svg.encode("utf-8")})))["files"]
+
+
+# 速さ（監査 8b61eee の気づき）: 閉じない url( や注・CDATA・タグが多い物でも、検査が黙って固まらない。直す前は
+# 下の大きさで url( が 33 秒・注が 13 秒・CDATA が 9 秒・閉じない <a が 39 秒ほど掛かった（3.12・この端末）。
+@pytest.mark.parametrize("kind,text", [
+    ("css", "a{b:url(" * 25000), ("css", "a{b:c}/*" * 25000), ("xml", "<r>" + "<![CDATA[" * 20000 + "]]></r>"),
+    ("html", "<a " * 20000), ("html", '<p a="' * 20000), ("html", "<title" * 50000), ("html", "<!DOCTYPE" * 60000),
+], ids=["css-url", "css-comment", "xml-cdata", "html-open-tag", "html-open-attr", "html-title", "html-doctype"])
+def test_garden_check_意地の悪い大きな字でも速い(kind, text):
+    import time
+    start = time.perf_counter()
+    if kind == "css":
+        garden.css_problem(text)
+    else:
+        garden._text_problem("p." + kind, text.encode("utf-8"), kind)
+    assert time.perf_counter() - start < 5
 
 
 # ------------------------------------------------------------------ 庭: 置く（二段確認）
