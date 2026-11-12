@@ -140,6 +140,7 @@ def test_台帳は店の頁のURLを持ち注文を読まないことを案内�
 
 
 @pytest.mark.parametrize("url", ["http://nigami.stores.jp", "https://u:p@nigami.stores.jp", "https://u@nigami.stores.jp",
+                                 "https://:p@nigami.stores.jp", "https://@nigami.stores.jp",
                                  "https://nigami.stores.jp/?a=1", "https://nigami.stores.jp/#x",
                                  "https://nigami.stores.jp/?", "nigami.stores.jp", "", "https://",
                                  "https://nigami.stores.jp/a b", "https://nigami.stores.jp/\x00",
