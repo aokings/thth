@@ -541,7 +541,7 @@ def build_privacy() -> str:
 
     add("<h2>Online shops (read-only)</h2>")
     # 共通の段 → 店ごとの段（設計 Shopify と STORES §9・出していない店のことは書かない）。
-    add("<p><code>thth shop</code> can read the owner's own online shop on BASE or Shopify so that THTH can draft a "
+    add("<p><code>thth shop</code> can read the owner's own online shop on BASE, Shopify or STORES so that THTH can draft a "
         "post when an item is new, back in stock or reduced in price. It runs only on the owner's own computer: the "
         "owner makes a key for the shop (described below for each shop) and gives it to THTH, which keeps it in a "
         "file only the owner can read (<code>~/.config/thth/</code>, mode 600); THTH has no path that sends it to "
@@ -558,7 +558,8 @@ def build_privacy() -> str:
         "that holds the shop's token, THTH reads the item once more and refuses if the price, visibility or "
         "availability has changed; on a computer without the token it does not read again, says so, and lets the "
         "approval through. THTH does not read the item again at posting time. On the owner's computer THTH keeps "
-        "the shop's ledger (its name, kind, project, for Shopify the shop's myshopify name, and where the token is) "
+        "the shop's ledger (its name, kind, project, for Shopify the shop's myshopify name, for STORES the shop page's "
+        "URL that the owner entered, and where the token is) "
         "and a record of who added the shop, "
         "set the token, drafted and removed it, without the token. <code>thth shop remove</code> deletes the "
         "shop's ledger, snapshot and tokens on the computer where it runs. When the project's last account leaves, "
@@ -585,6 +586,15 @@ def build_privacy() -> str:
         "permissions there were. THTH sends nothing to the item page and image URLs that Shopify returns; "
         "drafts carry the item page's URL but not image URLs. The key on Shopify itself is revoked in the Dev Dashboard, by removing the app from "
         "the shop or creating a new secret. THTH is not provided by Shopify.</p>")
+    add("<p><strong>STORES.</strong> The owner applies to STORES for a private app and gives THTH the credential "
+        "that STORES issues for the shop. THTH sends only GET requests to <code>api.stores.dev</code>, to two "
+        "paths: the shop (of which THTH keeps only the shop's ID and name) and the item list. The credential's "
+        "permissions cannot be narrowed and it can also read orders, but THTH calls only those two paths, so it "
+        "does not read orders or payouts. The STORES API does not return the shop's URL, so the owner enters the shop "
+        "page's URL when adding the shop; THTH writes it into drafts and sends nothing to it. If the owner gives "
+        "the credential's expiry date, THTH keeps it, and <code>thth morning</code> on that computer can warn "
+        "14 days ahead. THTH cannot revoke the credential on STORES itself; the owner arranges that with STORES. "
+        "THTH is not provided by STORES.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
     add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
@@ -1017,7 +1027,7 @@ def build_privacy() -> str:
 
     add("<h2>ネットショップ（読むだけ）</h2>")
     add("<p><code>thth shop</code> は、商品が新しく入った・再入荷した・値下げしたときに投稿の下書きを作れるよう、"
-        "持ち主本人の BASE か Shopify のネットショップを読みます。動くのは持ち主自身のコンピューターの中だけです。持ち主が"
+        "持ち主本人の BASE・Shopify・STORES のネットショップを読みます。動くのは持ち主自身のコンピューターの中だけです。持ち主が"
         "ショップの鍵（作り方はショップごとに下に書きます）を作って THTH に"
         "渡し、THTH はそれを本人だけが読めるファイル（<code>~/.config/thth/</code>・600）に置きます。THTH には、"
         "それを運営者のサーバーや thth.me に送る道がありません。"
@@ -1031,7 +1041,8 @@ def build_privacy() -> str:
         "読んだ時刻が入り、ほかの下書きと同じく repo を通って投稿する機械に届きます。ショップのトークンを置いた"
         "コンピューターで承認を確定するとき、THTH は商品をもう一度読み、値段・公開・買えるかが変わっていれば断ります。"
         "トークンの無いコンピューターでは読み直さず、その旨を知らせて通します。投稿する時刻には読み直しません。持ち主の"
-        "コンピューターには、ショップの台帳（名前・種類・プロジェクト・Shopify なら myshopify の名前・トークンの置き場）と、"
+        "コンピューターには、ショップの台帳（名前・種類・プロジェクト・Shopify なら myshopify の名前・STORES なら持ち主が入れた"
+        "ショップの頁の URL・トークンの置き場）と、"
         "誰がショップを足し・トークンを置き・"
         "下書きを作り・外したかの記録を、トークンを入れずに残します。<code>thth shop remove</code> は、打った"
         "コンピューターのショップの台帳・写し・トークンを消します。<code>thth leave</code> は、プロジェクトの最後の口座が"
@@ -1056,6 +1067,14 @@ def build_privacy() -> str:
         "Shopify の側の鍵は、"
         "Dev Dashboard でアプリをショップから外すか secret を作り直して取り消します。THTH は Shopify が提供するもの"
         "ではありません。</p>")
+    add("<p><strong>STORES</strong>: 持ち主が STORES にプライベートアプリを申し込み、STORES がそのショップに発行する"
+        "クレデンシャルを THTH に渡します。THTH が送るのは <code>api.stores.dev</code> への GET だけで、道は 2 つです。"
+        "ショップ（THTH が残すのはショップの ID と名前だけです）と商品の一覧です。クレデンシャルは権限を絞れず、注文も"
+        "読める鍵ですが、THTH が呼ぶのはこの 2 つの道だけなので、注文や入金は読みません。STORES の API はショップの URL を"
+        "返さないので、持ち主がショップを足すときにショップの頁の URL を入れます。THTH はそれを下書きに書き、そこには何も"
+        "送りません。持ち主がクレデンシャルの期限の日を渡せば残し、その"
+        "コンピューターの <code>thth morning</code> が 14 日前から知らせられます。STORES の側のクレデンシャルは THTH には"
+        "取り消せないので、取り消しは持ち主が STORES と進めます。THTH は STORES が提供するものではありません。</p>")
 
     add("<h2>WordPress の記事</h2>")
     add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"

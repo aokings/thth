@@ -20,6 +20,7 @@ from thth.shop import ledger as shop_ledger
 from thth.shop import wire as shop_wire
 from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
+from thth.shop import kinds as shop_kinds
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -61,6 +62,16 @@ def _draft_has_no_image() -> bool:
     text = shop_draft.text_for("s", "a", "threads", {"id": 1, "kind": "new", "draft_kind": "new"}, row,
                                shop_url="https://x.example.invalid", read_at="t", publish_at="t")
     return "marker-image" not in text and "from_store_image: none" in text
+
+def _stores_user_keeps_id_and_name() -> bool:
+    """STORES の店の応答から残すのが id と名前だけ（URL は台帳の値）であること。"""
+    from thth.shop import stores as shop_stores
+    payload = b'{"id": "abc", "name": "n", "mail": "marker@example.invalid", "url": "https://marker.example.invalid"}'
+    shop = shop_stores.Client({"public_url": "https://ledger.example.invalid"}, "c",
+                              transport=lambda m, u, h: (200, payload)).user()
+    return (shop == {"shop_id": "abc", "shop_name": "n", "shop_url": "https://ledger.example.invalid",
+                     "able_to_business": None})
+
 
 def facts() -> list[tuple[str, str]]:
     return [
@@ -157,6 +168,29 @@ def facts() -> list[tuple[str, str]]:
          f"with the read scope <code>{shop_shopify.REQUIRED_SCOPE}</code>"),
         ("Shopify の短い鍵の長さ（shop/access.MAX_LIFETIME_SECONDS）",
          "valid for about 24 hours" if shop_access.MAX_LIFETIME_SECONDS == 24 * 3600 else "短い鍵の長さが privacy と違う"),
+        # STORES（5.18.0・設計 Shopify と STORES §9）。注文を読まない柵は道の表だけ（クレデンシャルは注文も読める鍵）。
+        ("STORES の送り先（shop/wire.STORES_HOST）",
+         f"THTH sends only GET requests to <code>{shop_wire.STORES_HOST}</code>, to "
+         + ("two" if len(shop_wire.STORES_PATHS) == 2 else "道の数が privacy と違う") + " paths"),
+        ("STORES の送り先・日本語",
+         f"<code>{shop_wire.STORES_HOST}</code> への GET だけで、道は {len(shop_wire.STORES_PATHS)} つです"),
+        ("STORES の道は GET だけ（shop/wire.ROUTES）",
+         f"only GET requests to <code>{shop_wire.STORES_HOST}</code>"
+         if {m for m, _p in shop_wire.ROUTES["stores"]["paths"]} == {"GET"} else "STORES の道に GET でないものがある"),
+        ("STORES の注文と入金を読まない（STORES_PATHS に無い）",
+         "so it does not read orders or payouts"
+         if not any(w in p for p in shop_wire.STORES_PATHS for w in ("order", "remittance")) else "注文か入金の道がある"),
+        ("STORES の注文と入金を読まない・日本語",
+         "注文や入金は読みません"
+         if not any(w in p for p in shop_wire.STORES_PATHS for w in ("order", "remittance")) else "注文か入金の道がある"),
+        ("STORES の店の URL は持ち主が入れる（kinds の台帳の欄）",
+         "the owner enters the shop page's URL when adding the shop"
+         if "public_url" in shop_kinds.KINDS["stores"]["ledger_fields"] else "店の URL を台帳に持たない"),
+        ("STORES の期限の知らせ（shop/ledger.EXPIRY_NOTICE_DAYS）",
+         f"the credential's expiry date, THTH keeps it, and <code>thth morning</code> on that computer can warn "
+         f"{shop_ledger.EXPIRY_NOTICE_DAYS} days ahead"),
+        ("STORES の残す欄（店の id と名前だけ）",
+         "of which THTH keeps only the shop's ID and name" if _stores_user_keeps_id_and_name() else "店の欄が増えた"),
         # 監査 5.17.0 直したほうがよい 3: 画像の URL は下書きに入れない（draft の頭が from_store_image: none）。
         ("下書きに画像の URL を入れない（shop/draft.text_for）",
          "drafts carry the item page's URL but not image URLs" if _draft_has_no_image() else "下書きに画像の URL がある"),
