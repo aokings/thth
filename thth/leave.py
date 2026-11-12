@@ -606,7 +606,8 @@ def command(args):
         if args.json:print(json.dumps(result,ensure_ascii=False))
         else:
             print('local_complete: '+args.name)
-            if result['remote']=='unconfirmed_shared':print('remote_unconfirmed: 他 account と共有の接続です。解除すると他 account に影響するため、運用者が解除対象を切り分けてください')
+            if result['remote']=='unconfirmed_shared':
+                for line in _shared_guide(args.name):print(line)
             if result['remote']=='unconfirmed_manual':
                 for line in _manual_guide(args.name,result):print(line)
             timers=result.get('timers') or {}
@@ -653,6 +654,16 @@ def _manual_guide(account,result):
     lines=['remote_unconfirmed: '+line]
     if 'principal_token' in (result.get('preserved') or []):lines.append(_principal_token_line(principal,media))
     return lines
+
+
+def _shared_guide(account):
+    """`unconfirmed_shared` の完了の案内。記事の口座（5.18.0 までに、同じ主体の口座がほかにあって「共有の接続」で
+    終わった退出）は、鍵の持ち主が主体なので、媒体ごとの 1 行と主体の鍵の行に言い直す（記録は変えない・監査 5.18.1 の 5）。"""
+    entry=_removed_entry(account);media=entry.get('medium')
+    if media in article_media.ARTICLE_MEDIA:
+        principal=((entry.get('diff') or {}).get('principal') or [None,None])[-1]
+        return ['remote_unconfirmed: '+MANUAL_REVOKE[media],_principal_token_line(principal,media)]
+    return ['remote_unconfirmed: 他 account と共有の接続です。解除すると他 account に影響するため、運用者が解除対象を切り分けてください']
 
 
 def _principal_token_line(principal,media):

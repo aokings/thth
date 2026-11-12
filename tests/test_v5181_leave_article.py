@@ -313,3 +313,41 @@ def test_柵_はてなのconsumerが口座のenvと同じファイルならleave
     own_env = _config_dir() / "alpha.env"
     _move_principal_file(env, "alpha", "consumer", own_env)
     _assert_stopped_before_delete(env, capsys, own_env, "alpha", "env")
+
+
+# --- 監査 5.18.1 直したほうがよい 5: 5.18.0 までに unconfirmed_shared で終わった記事の口座の打ち直し ---
+
+@pytest.mark.parametrize("kind", ["wordpress", "hatenablog"])
+def test_5180までに共有の接続で終わった記事の口座は打ち直すと主体の鍵の行を出す(env, worker, capsys, monkeypatch, kind):
+    principal = "shared-" + kind
+    token, blog = _principal(env, kind, principal, ["alpha", "beta"])
+    _article_account(env, "alpha", kind, principal, blog)
+    _article_account(env, "beta", kind, principal, blog)
+    # 5.18.0 の数え方: 主体の鍵を口座の物に数え、同じ鍵のファイルを beta も使うので「共有の接続」で終わる。
+    real = leave._principal_owns_token
+    monkeypatch.setattr(leave, "_principal_owns_token", lambda cfg: False)
+    leave.run("alpha", by="operator")
+    monkeypatch.setattr(leave, "_principal_owns_token", real)
+    done = leave.read("alpha")
+    assert done["phase"] == "completed" and done["remote"] == "unconfirmed_shared"
+    rc, out, err = _leave_cli("alpha", capsys)
+    assert rc == 0, err
+    assert "共有の接続" not in out
+    remote = [line for line in out.splitlines() if line.startswith("remote_unconfirmed: ")]
+    assert remote == ["remote_unconfirmed: " + leave.MANUAL_REVOKE[kind]]
+    kept = [line for line in out.splitlines() if line.startswith("principal_token_kept: ")]
+    assert len(kept) == 1 and "主体の鍵は残しました" in kept[0] and "--forget" in kept[0]
+    assert token.exists() and SECRET_VALUE not in out + err
+    # 記録の形は崩さない（打ち直しは読むだけ）
+    assert leave.read("alpha") == done
+
+
+def test_SNSの共有の接続で終わった退出の打ち直しは今までの1行のまま(env, worker, capsys):
+    root = env["root"]
+    a = json.loads((root / "accounts" / "alpha.json").read_text())
+    b = json.loads((root / "accounts" / "beta.json").read_text())
+    (root / "accounts" / "beta.json").write_text(json.dumps(dict(b, token=a["token"])))   # 同じ鍵のファイル
+    leave.run("alpha", by="operator")
+    assert leave.read("alpha")["remote"] == "unconfirmed_shared"
+    rc, out, _ = _leave_cli("alpha", capsys)
+    assert rc == 0 and "remote_unconfirmed: 他 account と共有の接続です" in out and "principal_token_kept" not in out
