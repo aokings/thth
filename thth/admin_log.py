@@ -78,6 +78,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'bookmark_batch_resumed',
                    # 上限と連投の柵 段 4（§9.2）: 人が媒体の観測を足した（媒体と kind の語だけ）。通知は送らない。
                    'media_observed',
+                   # 店を読む口（`thth shop`・設計 ショップ §4.1・監査 5.15.0 の 8）。subject は店の名前。名前・時刻・
+                   # 欄の前後だけで鍵は入れない。頭は `thth/shop/__init__.py` の `ACTION_PREFIX`（shopread_）。通知は送らない。
+                   'shopread_added', 'shopread_token_set', 'shopread_removed', 'shopread_drafted',
                    # Meta 計画 段 6: ページに Webhook を購読させた（欄の名前の前後だけ）。通知は送らない。
                    'webhook_subscribed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
@@ -289,7 +292,9 @@ def transaction(*, rollback=None):
                                       'credential_rotated', 'credential_revoked', 'settings_set',
                                       'schedule_cancelled', 'guard_stopped', 'guard_resumed',
                                       'publish_held', 'publish_resumed',
-                                      'bookmark_batch_approved', 'bookmark_batch_resumed', 'media_observed'):
+                                      'bookmark_batch_approved', 'bookmark_batch_resumed', 'media_observed',
+                                      'shopread_added', 'shopread_token_set', 'shopread_removed',
+                                      'shopread_drafted'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

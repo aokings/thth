@@ -86,8 +86,13 @@ def load(name: str) -> dict:
     return out
 
 
+def default_token(name: str) -> str:
+    """鍵の既定の置き場（`~` のまま）。`thth shop remove` が消してよい鍵は、この置き場のものだけ。"""
+    return f"~/.config/thth/store-{check_name(name)}.token"
+
+
 def build(name: str, *, kind: str, project: str) -> dict:
-    return {"store": name, "kind": kind, "project": project, "token": f"~/.config/thth/store-{name}.token"}
+    return {"store": name, "kind": kind, "project": project, "token": default_token(name)}
 
 
 def write_new(name: str, data: dict) -> str:
@@ -169,6 +174,15 @@ def write_snapshot(name: str, *, shop_id, items: list, read_at: str) -> str:
     path = snapshot_path(name)
     secrets_fs.atomic_write_json(path, value, mode=0o600)
     return path
+
+
+def drop_snapshot(name: str) -> bool:
+    """写しを捨てる（別の店の鍵に替えたとき・次の `diff` が基準を取り直す）。捨てたら真。"""
+    try:
+        os.unlink(snapshot_path(name))
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def now_iso() -> str:

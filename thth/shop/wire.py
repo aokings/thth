@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import http.client
 import re
 import urllib.error
 import urllib.parse
@@ -34,6 +35,9 @@ REASONS = frozenset((
     "store_api_changed", "store_unavailable", "store_request_rejected",
     "store_read_incomplete", "store_draft_nothing", "store_draft_exists", "store_draft_account",
     "store_draft_rejected",
+    # 監査 5.15.0 の直し（11/12）。
+    "store_token_expires_past", "store_draft_no_baseline", "store_not_open", "store_item_changed",
+    "store_remove_unconfirmed", "store_remove_unsafe", "store_log_unavailable",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./: -]{1,80}\Z")
 
@@ -75,5 +79,6 @@ def default_transport(method: str, url: str, headers: dict):
         finally:
             exc.close()
         return exc.code, raw
-    except (urllib.error.URLError, OSError, ValueError):
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
+        # `http.client.IncompleteRead`（応答の途中で切れた）も `HTTPException` の仲間（監査 5.15.0 気づき 6）。
         raise StoreRefused("store_unavailable") from None

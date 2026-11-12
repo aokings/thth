@@ -366,6 +366,9 @@ def run(account,*,by,plaza_open='delete'):
             # 他の account が残るならこの媒体の集計の行を消す。**止める前に消す**——地図の置き場が
             # 壊れていれば何も止めずに断る（下の変更ログの事前検査と同じ筋）。何度呼んでも同じ結果。
             _purge_map(account,by)
+            # 店を読む口（設計 ショップ §7）: その project の最後の account なら、店の台帳・写し・鍵も消す。
+            # 地図と同じく止める前に消す。何度呼んでも同じ結果。
+            _purge_stores(account,by)
             result=_run_locked(account,by=by)
             # 削除の段のあとに unit を止める（3.5.1 件 1）。止められなくても退出は完了のまま
             # ——台帳も秘密も消えていて、残った timer は空回りするだけ。記録に残して命令を渡す。
@@ -408,6 +411,19 @@ def _purge_map(account,by):
     if not project:return None
     try:return map_world.purge_for_leave(account,project,cfg.get('media'),by=by)
     except map_store.MapError:raise ValueError('map_cleanup_incomplete') from None
+
+
+def _purge_stores(account,by):
+    from .shop import remove as store_remove
+    from .shop.wire import StoreRefused
+    row=read(account)
+    if row and row['phase']=='completed':return []
+    if row:cfg=row['cfg']
+    else:
+        try:cfg=accounts.load_account(account)
+        except accounts.AccountError:return []
+    try:return store_remove.purge_for_leave(account,cfg.get('project'),by=by)
+    except (StoreRefused,OSError,admin_log.AdminLogError):raise ValueError('store_cleanup_incomplete') from None
 
 
 def _run_locked(account,*,by):

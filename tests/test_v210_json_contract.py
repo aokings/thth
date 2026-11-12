@@ -140,6 +140,8 @@ COMMANDS += ['gads accounts', 'gads keywords', 'gads report']
 COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
 # 店を読む口（`thth/shop/`・BASE v2・読むだけ・add と token set は --json を持たない）。
 COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
+# 監査 5.15.0 の 1: 店を外す（二段確認・--json は 1 つの値）。
+COMMANDS += ['shop remove']
 
 
 def test_json_table_covers_every_parser():

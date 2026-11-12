@@ -12,6 +12,12 @@
   `from_store_image: none` と書く。
 - 書く前に今の lint（`thth/lint.py`）に通す。同じ名前のファイルがあれば上書きしない。commit・push はしない
   （レーンの LLM と人がする）。
+- **同じ違いから 2 本目を作らない**（監査 5.15.0 直したほうがよい 3）: 頭に比べた写しの時刻
+  （`from_store_since`）を置き、queue に同じ出所・同じ違い・同じ写しの下書きがあれば `store_draft_exists`。
+  写しを進めたあと（`diff --accept`）の同じ商品の違いは、別の違いとして作れる。
+- 承認のときに読み直すための材料として、下書きを作ったときの値段（`from_store_price`）を頭に置く
+  （本文には書かない・`recheck.py`）。
+- 商品名の頭の `#` は落とす（`## …` だと本文の 1 行目が節の見出しと読まれる）。名前が空になる商品は作らない。
 """
 from __future__ import annotations
 
@@ -51,7 +57,7 @@ def choose(changes: list, rows: list, *, item=None, kind=None) -> list:
     for change in changes:
         draft_kind = DRAFT_KINDS.get(change["kind"])
         row = by_id.get(change["id"])
-        if draft_kind is None or row is None or not base.buyable(row):
+        if draft_kind is None or row is None or not base.buyable(row) or not display_name(row):
             continue
         if item is not None and change["id"] != item:
             continue
@@ -61,15 +67,34 @@ def choose(changes: list, rows: list, *, item=None, kind=None) -> list:
     return picked[:1] if item is not None else picked[:MAX_DRAFTS]
 
 
+def display_name(row: dict) -> str:
+    """本文に載せる商品名（改行・制御文字・`---` を落とし、頭の `#` も落とす）。空なら作らない。"""
+    return base.clean_text(row.get("name"), DRAFT_NAME_MAX).lstrip("#＃ ").strip()
+
+
+def origin(store: str, row_id) -> str:
+    return f"store/{store}/item/{row_id}"
+
+
+def material(change: dict) -> str | None:
+    if change.get("draft_kind") == "price_down":
+        return f"price {change.get('before')} -> {change.get('after')}"
+    return None
+
+
 def text_for(store: str, account: str, media: str, change: dict, row: dict, *, shop_url: str, read_at: str,
-             publish_at: str) -> str:
+             publish_at: str, since=None) -> str:
     kind = change["draft_kind"]
-    name = base.clean_text(row.get("name"), DRAFT_NAME_MAX)
+    name = display_name(row)
     lines = ["---", "thth: 1", f"account: {account}", "status: draft", f"publish_at: {publish_at}",
-             f"from_store: store/{store}/item/{row['id']}", f"from_store_read_at: {read_at}",
+             f"from_store: {origin(store, row['id'])}", f"from_store_read_at: {read_at}",
              f"from_store_change: {change['kind']}", "from_store_url: shop", "from_store_image: none"]
-    if kind == "price_down":
-        lines.append(f"from_store_material: price {change.get('before')} -> {change.get('after')}")
+    if isinstance(since, str) and since:
+        lines.append(f"from_store_since: {base.clean_text(since, 40)}")
+    if isinstance(row.get("price"), int) and not isinstance(row.get("price"), bool):
+        lines.append(f"from_store_price: {row['price']}")
+    if material(change):
+        lines.append(f"from_store_material: {material(change)}")
     lines += ["---", "", f"## {media}", "", f"{name} {PHRASES[kind]}", shop_url, ""]
     return "\n".join(lines)
 
@@ -82,6 +107,42 @@ def publish_at(now) -> str:
     """仮の時刻（翌日の 12:00 JST）。承認の前に人と LLM が直す。"""
     day = jst.to_jst(now).date() + datetime.timedelta(days=1)
     return jst.iso(datetime.datetime.combine(day, datetime.time(12, 0), tzinfo=jst.JST))
+
+
+def _head(text: str) -> dict:
+    """頭（front-matter）の `from_store*` の行だけを素朴に読む（queue の全部を解析しない）。"""
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out = {}
+    for line in lines[1:200]:
+        if line.strip() == "---":
+            break
+        key, sep, value = line.partition(":")
+        if sep and key.startswith("from_store"):
+            out[key.strip()] = value.strip()
+    return out
+
+
+def same_change_exists(queue: Path, store: str, row_id, change: dict, since) -> str | None:
+    """同じ出所・同じ違い・同じ写しから作った下書きが queue にあれば、そのファイルの名前。"""
+    want = {"from_store": origin(store, row_id), "from_store_change": change["kind"],
+            "from_store_since": base.clean_text(since, 40) if isinstance(since, str) else ""}
+    wanted_material = material(change)
+    marker = "from_store: " + want["from_store"]
+    for path in sorted(queue.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if marker not in text:
+            continue
+        head = _head(text)
+        if (head.get("from_store") == want["from_store"] and head.get("from_store_change") == want["from_store_change"]
+                and head.get("from_store_since", "") == want["from_store_since"]
+                and head.get("from_store_material") == wanted_material):
+            return path.name
+    return None
 
 
 def write(queue: Path, name: str, text: str) -> str:

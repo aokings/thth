@@ -9,7 +9,10 @@
 - `base.py`: BASE v2 の `GET /api/user`（店の名前と URL だけ取り出す）と `GET /api/items`（許した欄だけ）。
 - `diff.py`: 写しとの違い（読むだけ・写しを進めるのは `--accept` の一手）。
 - `draft.py`: 違いから queue の下書き（承認されていない形・1 回に 1 商品か上限 3 本）。
+- `recheck.py`: `thth approve` の確定の段で店の下書きの商品を 1 回読み直す（値段・公開・在庫切れ）。
+- `remove.py`: 店を外す（`thth shop remove`・`thth leave` の店の分）。鍵 → 写し → 台帳の順に消す。
 - `cli.py`: 命令。
+- 網に出るのは `wire.py` だけ（ほかのファイルは網の部品を import しない・柵 `tests/test_store_base_audit.py`）。
 
 決まり（設計 §2）: 注文と買い手の情報を読まない・店に書かない・鍵を出力やファイルに出さない・引数で鍵を取らない。
 この道具は BASE が提供するものではない（BASE の API 利用規約の条件・`NOT_BY_BASE`）。

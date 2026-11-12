@@ -922,6 +922,25 @@ def _record_approvals(prepared: list, repo_dir: str, by: str, at: str, gate) -> 
     return None
 
 
+def _store_recheck(path: str) -> str | None:
+    """店の下書き（頭に `from_store:`）なら、確定の前にその商品を 1 回読み直す（設計 ショップ §4.3）。
+
+    変わっていれば断る理由を返す。読み直せない機械（店の台帳が無い）では知らせを stderr に 1 行出して通す。
+    店の下書きでなければ網に出ない（`thth/shop/recheck.py`）。
+    """
+    try:
+        front_matter = queuefile.parse(path).front_matter
+    except (OSError, ValueError):
+        return None  # 読めない原稿は `_prepare_one` が先に断っている
+    if "from_store" not in front_matter:
+        return None
+    from .shop import recheck
+    problem, note = recheck.check(path, front_matter)
+    if note:
+        print(note, file=sys.stderr)
+    return problem
+
+
 def cmd_approve(args) -> int:
     """`thth approve <file...>`（**二段確認**・複数本まとめて可）。
 
@@ -1032,6 +1051,9 @@ def cmd_approve(args) -> int:
                   if not problems else None)
         if unsynced and not (args.confirm and args.confirm != bundle):
             problems = unsynced
+        if args.confirm and args.confirm == bundle and not problems:
+            # 店の下書きは、確定の段で 1 回だけ商品を読み直す（値段・公開・在庫切れが変わっていれば断る）。
+            problems = [p for p in (_store_recheck(one["path"]) for one in prepared) if p]
         if problems:
             if digest_only and args.json:
                 # 4.5.3: --digest-only --json は断りも JSON で返す（本文は無し・digest は出さない）。
@@ -1299,6 +1321,9 @@ def _approve_confirm_file(args) -> int:
                         # ⑦（4.4.1）: hub の承認の番号が要る口座・台帳が読めない口座はその本だけ断る。
                         problem = (_gate_problem([one["account"]], gate)
                                    or _ledger_problem([one["account"]]))
+                    if not problem and one["digest"] == t["digest"]:
+                        # 店の下書きは確定の前に 1 回だけ読み直す（設計 ショップ §4.3）。
+                        problem = _store_recheck(t["path"])
                     if problem:
                         refused.append({"line": t["line"], "file": t["path"], "reason": problem})
                         continue

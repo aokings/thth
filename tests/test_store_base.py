@@ -282,7 +282,7 @@ def test_token_setは店が見えないとき保存しない(capsys, env):
 def test_token_setは過ぎた期限と別の店を断る(capsys, env):
     setup_store(capsys, env)
     rc_, _, err = run(capsys, "shop", "token", "set", STORE, "--expires", "2026-09-01", "--by", "m")
-    assert rc_ == 2 and "store_token_expired" in err
+    assert rc_ == 2 and "store_token_expires_past" in err
     env["shop_id"] = "another"
     rc_, _, err = run(capsys, "shop", "token", "set", STORE, "--expires", "2027-01-31", "--by", "m")
     assert rc_ == 2 and "store_shop_mismatch" in err
@@ -466,7 +466,7 @@ def test_写しが無ければ下書きは作らない(capsys, env, isolated_acc
     account = isolated_account_factory()
     setup_store(capsys, env)
     rc_, value, _ = jrun(capsys, "shop", "draft", STORE, "--to", account["name"], "--kind", "new")
-    assert rc_ == 2 and value["code"] == "store_draft_nothing"
+    assert rc_ == 2 and value["code"] == "store_draft_no_baseline"
 
 
 # ------------------------------------------------------------------ 目録と関門

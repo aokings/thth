@@ -9,6 +9,11 @@
                                        前の写しとの違い（読むだけ）。--accept で今の読みを写しにする。初回は基準を取るだけ
     thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
                                        違いから queue の下書き（承認されていない形）を 1 本か上限 3 本
+    thth shop remove <店> --by <名前> [--confirm D] [--json]
+                                       店を外す（二段確認・鍵 → 写し → 台帳の順に消す）
+
+記録（`admin_log`）の動きの名前は `ACTION_PREFIX`（shopread_）で始める: add・token set・remove・draft。
+名前・店・時刻・欄の前後だけで、鍵は入れない。
 
 **注文と買い手の情報は読まない。店には書かない（打つのは GET だけ）。鍵は引数で受けない・出力しない。**
 手元の MCP と thth.me の鍵の道には出さない（鍵は手元の thth に置く形だけ）。
@@ -20,10 +25,12 @@ import argparse
 import datetime
 import getpass
 import json
+import os
 import sys
 
 from .. import admin_log, jst, redact, refusal
-from . import COMMAND, NOT_BY_BASE, base, diff as diff_mod, draft as draft_mod, ledger
+from . import ACTION_PREFIX, COMMAND, NOT_BY_BASE, base, diff as diff_mod, draft as draft_mod, ledger
+from . import remove as remove_mod
 from .wire import StoreRefused
 
 # 試験の差し込み口（本物の網に出ない）。None なら `wire.default_transport`。
@@ -66,6 +73,23 @@ def _by(args) -> str:
         raise StoreRefused("store_args_invalid", "by") from None
 
 
+def _log_ready() -> None:
+    """変更ログに書けない置き場なら、何かを変える前に断る（`thth leave` と同じ筋）。"""
+    try:
+        with admin_log.transaction():
+            pass
+    except (OSError, ValueError, admin_log.AdminLogError):
+        raise StoreRefused("store_log_unavailable") from None
+
+
+def _record(event: str, store: str, by: str, diff: dict) -> None:
+    """記録に 1 行（動きの名前は `shopread_…`・名前・店・時刻・欄の前後だけ。鍵は入れない）。"""
+    try:
+        admin_log.append(ACTION_PREFIX + event, store, {"media": "base"}, by=by, diff=diff)
+    except (OSError, ValueError, admin_log.AdminLogError):
+        raise StoreRefused("store_log_unavailable", "after_change") from None
+
+
 def _open(args):
     """台帳・鍵・期限・口。期限を過ぎていれば打たずに断る。"""
     cfg = ledger.load(args.store)
@@ -94,12 +118,14 @@ def _note(args, when) -> None:
 # ------------------------------------------------------------------ add・token set
 
 def cmd_add(args) -> int:
-    _by(args)
+    by = _by(args)
     ledger.check_name(args.store)
     from .. import accounts
     if not accounts.name_is_safe(args.project):
         raise StoreRefused("store_args_invalid", "project")
+    _log_ready()
     path = ledger.write_new(args.store, ledger.build(args.store, kind=args.kind, project=args.project))
+    _record("added", args.store, by, {"kind": [None, args.kind], "project": [None, args.project]})
     print(f"台帳を書きました: {path}（0600）")
     print(f"次に、店の持ち主が BASE Developers で読むだけの権限（items.read・user.read）の PAT を発行し、"
           f"thth {COMMAND} token set {args.store} --expires <期限の日> --by <名前> で渡してください。")
@@ -118,13 +144,14 @@ def _read_secret(args) -> str:
 
 
 def cmd_token_set(args) -> int:
-    _by(args)
+    by = _by(args)
     cfg = ledger.load(args.store)
     day = ledger.parse_day(args.expires)
     if day is None:
         raise StoreRefused("store_args_invalid", "expires")
     if day < _today():
-        raise StoreRefused("store_token_expired", day.isoformat())
+        raise StoreRefused("store_token_expires_past", day.isoformat())
+    _log_ready()
     value = (_read_secret(args) or "").strip()
     if not value or any(c.isspace() for c in value) or len(value) > 4096:
         raise StoreRefused("store_token_empty")
@@ -138,7 +165,19 @@ def cmd_token_set(args) -> int:
         raise StoreRefused("store_shop_mismatch")
     ledger.write_token(cfg, {"access_token": value, "expires_on": day.isoformat(), "obtained_at": ledger.now_iso(),
                              "shop_id": shop["shop_id"]})
+    # 別の店の鍵に替えたら、前の店の写しを捨てる（次の diff が基準を取り直す・監査 5.15.0 の 4）。
+    try:
+        snapshot = ledger.read_snapshot(args.store)
+    except StoreRefused:
+        snapshot = None  # 壊れた写しは diff が断る（ここでは鍵を置き換えたことだけを確かにする）
+    dropped = bool(snapshot and snapshot.get("shop_id") != shop["shop_id"] and ledger.drop_snapshot(args.store))
+    _record("token_set", args.store, by,
+            {"shop_id": [before.get("shop_id") if before else None, shop["shop_id"]],
+             "expires_on": [before.get("expires_on") if before else None, day.isoformat()],
+             "replaced": [None, before is not None], "snapshot_dropped": [None, dropped]})
     print(f"保存しました: {cfg['token']}（600）・店 {shop['shop_name'] or '（名前なし）'}・鍵の期限 {day.isoformat()}")
+    if dropped:
+        print(f"店が替わったので、前の店の写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します")
     note = _expiry_note(ledger.expiry({"expires_on": day.isoformat()}, _today()))
     if note:
         print(note, file=sys.stderr)
@@ -188,16 +227,25 @@ def cmd_items(args) -> int:
     return 0
 
 
-def _read_and_compare(args, client):
+def _snapshot_for(store: str, token: dict):
+    """今の鍵の店の写し。写しの店（shop_id）が鍵の店と違えば、捨てて無いものとする（基準の取り直し）。"""
+    snapshot = ledger.read_snapshot(store)
+    if snapshot and snapshot.get("shop_id") and token.get("shop_id") and snapshot["shop_id"] != token["shop_id"]:
+        ledger.drop_snapshot(store)
+        return None, True
+    return snapshot, False
+
+
+def _read_and_compare(args, client, token):
     read = client.items()
-    snapshot = ledger.read_snapshot(args.store)
+    snapshot, switched = _snapshot_for(args.store, token)
     changes = diff_mod.compare(snapshot["items"], read["items"], complete=read["complete"]) if snapshot else []
-    return read, snapshot, changes
+    return read, snapshot, changes, switched
 
 
 def cmd_diff(args) -> int:
     _cfg, token, when, client = _open(args)
-    read, snapshot, changes = _read_and_compare(args, client)
+    read, snapshot, changes, switched = _read_and_compare(args, client, token)
     read_at = ledger.now_iso()
     baseline = snapshot is None
     if (baseline or args.accept) and not read["complete"]:
@@ -208,10 +256,12 @@ def cmd_diff(args) -> int:
         accepted = True
     value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
              "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
-             "accepted": accepted, "token": when, "note": _incomplete_note(read)}
+             "accepted": accepted, "token": when, "note": _incomplete_note(read), "shop_switched": switched}
     if args.json:
         _print(value)
         return 0
+    if switched:
+        print(f"{args.store}: 写しが今の鍵の店と別の店のものだったので、捨てて基準を取り直しました")
     if baseline:
         print(f"{args.store}: 基準を取りました（{len(read['items'])} 件）。違いはまだありません。次からの thth {COMMAND} diff が"
               "この写しと比べます")
@@ -230,25 +280,40 @@ def cmd_diff(args) -> int:
 def cmd_draft(args) -> int:
     if (args.item is None) == (args.kind is None):
         raise StoreRefused("store_args_invalid", "item_or_kind")
-    cfg, _token, when, client = _open(args)
+    # 下書きは承認されていない形なので --by は任意（無ければ THTH_ACTOR か命令の名前で記録する）。
+    by = _by(argparse.Namespace(by=getattr(args, "by", None) or os.environ.get("THTH_ACTOR")
+                                or f"thth {COMMAND} draft"))
+    cfg, token, when, client = _open(args)
     account = draft_mod.load_account(args.to)
     queue = draft_mod.queue_dir(account)
-    read, snapshot, changes = _read_and_compare(args, client)
+    shop = client.user()
+    if shop["able_to_business"] is False:
+        # 店そのものが公開前なら、見た人が買えないお知らせになるので作らない（監査 5.15.0 の 6）。
+        raise StoreRefused("store_not_open")
+    read, snapshot, changes, _switched = _read_and_compare(args, client, token)
     if snapshot is None:
-        raise StoreRefused("store_draft_nothing", "no_baseline")
+        raise StoreRefused("store_draft_no_baseline")
     picked = draft_mod.choose(changes, read["items"], item=args.item, kind=args.kind)
     if not picked:
         raise StoreRefused("store_draft_nothing")
-    shop = client.user()
+    since = snapshot.get("read_at")
+    for change, row in picked:
+        # 写しを進めていない間に、同じ違いから 2 本目を作らない（日をまたいでも・監査 5.15.0 の 3）。
+        found = draft_mod.same_change_exists(queue, args.store, row["id"], change, since)
+        if found:
+            raise StoreRefused("store_draft_exists", "same_change")
+    _log_ready()
     now = jst.now_jst()
     read_at = jst.iso(now)
     written = []
     for change, row in picked:
         text = draft_mod.text_for(args.store, args.to, account["media"], change, row, shop_url=shop["shop_url"],
-                                  read_at=read_at, publish_at=draft_mod.publish_at(now))
+                                  read_at=read_at, publish_at=draft_mod.publish_at(now), since=since)
         name = draft_mod.file_name(args.store, row["id"], change["draft_kind"], now)
         written.append({"id": row["id"], "kind": change["draft_kind"],
                         "path": draft_mod.write(queue, name, text)})
+    _record("drafted", args.store, by, {"to": [None, args.to], "items": [[], [row["id"] for row in written]],
+                                        "kinds": [[], [row["kind"] for row in written]]})
     notes = ["status は draft です（承認されていません）。本文は素の 1〜2 行なので、出す前に整えて thth approve に通してください",
              "商品頁の URL は組み方を公式で確かめられなかったので、店の URL を載せました（from_store_url: shop）",
              "画像は載せていません（from_store_image: none）",
@@ -268,6 +333,53 @@ def cmd_draft(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ 外す（二段確認）
+
+def _remove_lines(found) -> list:
+    words = {"token": "鍵", "state": "写し", "ledger": "台帳"}
+    lines = [f"  {words[t['category']]}: {t['path']}" for t in found["targets"]]
+    for kept in found["kept"]:
+        lines.append(f"  残す: {words[kept['category']]} {kept['path']}（既定の置き場でないので、THTH は消しません。"
+                     "店の鍵なら手で消してください）")
+    return lines
+
+
+def cmd_remove(args) -> int:
+    by = _by(args)
+    found = remove_mod.plan(args.store)
+    if not found["targets"] and not found["kept"]:
+        raise StoreRefused("store_missing")
+    digest = remove_mod.digest(found)
+    payload = {"store": args.store, "targets": found["targets"], "kept": found["kept"], "by": by}
+    if not args.confirm:
+        if args.json:
+            _print({"ok": False, "stage": 1, "digest": digest, **payload})
+            return 1
+        print(f"消しません（確認の一段目です）: 店 {args.store}。二段目で次の順に消します")
+        for line in _remove_lines(found):
+            print(line)
+        print("  BASE の側の PAT は消えません。BASE Developers で店の持ち主が取り消してください")
+        print(f"  消すなら: thth {COMMAND} remove {args.store} --by {json.dumps(by, ensure_ascii=False)} "
+              f"--confirm {digest}")
+        return 1
+    if args.confirm != digest:
+        raise StoreRefused("store_remove_unconfirmed", digest)
+    _log_ready()
+    done = remove_mod.execute(found)
+    _record("removed", args.store, by, {"deleted": [[], done], "kept": [[], [k["category"] for k in found["kept"]]]})
+    if args.json:
+        _print({"ok": True, "deleted": done, **payload})
+        return 0
+    words = {"token": "鍵", "state": "写し", "ledger": "台帳"}
+    for target in found["targets"]:
+        if target["category"] in done:
+            print(f"消しました: {words[target['category']]} {target['path']}")
+    for line in _remove_lines({"targets": [], "kept": found["kept"]}):
+        print(line)
+    print("BASE の側の PAT は消えていません。BASE Developers で店の持ち主が取り消してください")
+    return 0
+
+
 # ------------------------------------------------------------------ 登録
 
 def _item_id(value: str) -> int:
@@ -284,6 +396,7 @@ PARENT_DESCRIPTION = """店を読む（BASE など）: 第 1 引数は店の名�
     thth shop diff <店> [--accept] [--json]                               写しとの違い（読むだけ・--accept で写しを進める）
     thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
                                                                           queue の下書き（承認されていない形・1 本か上限 3 本）
+    thth shop remove <店> --by <名前> [--confirm D]                       店を外す（二段確認・鍵・写し・台帳を消す）
   この道具は BASE が提供するものではありません。
 
 Instagram の商品タグ: 第 1 引数は Instagram の口座
@@ -293,7 +406,7 @@ Instagram の商品タグ: 第 1 引数は Instagram の口座
     thth shop tag <IG> <media-id> --product <id> --by <名前> [--confirm D]  既存の投稿に付ける（二段確認）
 """
 # この家族が足す動詞（Instagram の商品タグの動詞とぶつからない）。
-VERBS = ("add", "token", "whoami", "items", "diff", "draft")
+VERBS = ("add", "token", "whoami", "items", "diff", "draft", "remove")
 
 
 def parent(sub):
@@ -338,3 +451,11 @@ def register(verbs) -> None:
             q.add_argument("--item", type=_item_id, default=None, help="この商品 1 つだけ")
             q.add_argument("--kind", choices=tuple(draft_mod.PHRASES), default=None,
                            help=f"この種類の違いから（上限 {draft_mod.MAX_DRAFTS} 本）")
+            q.add_argument("--by", default=None, help="誰が頼んだか（記録に残す・無ければ THTH_ACTOR）")
+
+    p_remove = verbs.add_parser("remove", help="店を読む: 店を外す（二段確認・鍵・写し・台帳を消す）")
+    p_remove.add_argument("store", metavar="店")
+    p_remove.add_argument("--by", required=True)
+    p_remove.add_argument("--confirm", default=None, help="一段目が表示した digest。これが無いと何も消さない")
+    p_remove.add_argument("--json", action="store_true")
+    p_remove.set_defaults(func=_run(cmd_remove))
