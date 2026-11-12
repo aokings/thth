@@ -213,3 +213,45 @@ def test_3xxはBASEの口でredirectの断りになる(monkeypatch):
     with pytest.raises(StoreRefused) as caught:
         client.user()
     assert caught.value.detail == "redirect"
+
+
+# ------------------------------------------------------------------ 共通の網の守り（監査 5.17.0 直したほうがよい 2）
+
+def test_httpsafeのviaはbuild_openerの作ったものだけ受ける():
+    from thth import httpsafe
+
+    class Bare:
+        def open(self, *a, **k):
+            pytest.fail("守りを通らずに打った")
+    request = urllib.request.Request("file:///etc/hosts")
+    for bad in (Bare(), urllib.request.build_opener()):
+        with pytest.raises(httpsafe.EndpointRejected):
+            httpsafe.urlopen(request, timeout=1, via=bad)
+    assert type(wire.OPENER) is type(httpsafe.build_opener())
+
+
+def test_viaを渡すのはshopのwire_pyだけ():
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "thth"
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "urlopen"
+                    and any(k.arg == "via" for k in node.keywords)):
+                found.append(str(path.relative_to(root.parent)))
+    assert found == ["thth/shop/wire.py"]
+
+
+def test_httpsafeは危ない領域に入っている():
+    import fnmatch
+    import importlib.util
+    import pathlib
+    import sys
+    path = pathlib.Path(__file__).resolve().parents[1] / "tools" / "release_gate.py"
+    spec = importlib.util.spec_from_file_location("release_gate_wire", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    patterns = [p for ps in module.DANGER_AREAS.values() for p in ps]
+    assert any(fnmatch.fnmatchcase("thth/httpsafe.py", p) for p in patterns)

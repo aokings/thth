@@ -122,7 +122,11 @@ def urlopen(req, *, timeout: float, via=None):
     """Same-origin redirects, explicit HTTP(S), and account stop lease.
 
     `via` は `build_opener` で作った別の opener（店を読む口の「リダイレクトを追わない」opener・
-    `thth/shop/wire.py`）。無ければ今の同じホストだけ追う opener。
+    `thth/shop/wire.py`）。無ければ今の同じホストだけ追う opener。**`build_opener` の作った型だけを受ける**
+    （素の urllib の opener を渡すと、http と https だけ・proxy を断る・試験の loopback の印の守りが外れるため・
+    監査 5.17.0 直したほうがよい 2）。
     """
     from . import leave_gate
+    if via is not None and type(via) is not _HTTPOnlyOpener:
+        raise EndpointRejected('endpoint_opener_invalid')
     return leave_gate.urlopen((via or opener()).open, req, timeout=timeout)
