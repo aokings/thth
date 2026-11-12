@@ -919,6 +919,35 @@ def _ads_names(target, kind) -> list:
         return []
 
 
+def _store_key_lines(projects, now) -> list:
+    """店（`thth/shop/`・BASE の PAT）の鍵の期限が 14 日を切った・過ぎた・分からない、の 1 行ずつ。網には出ない。"""
+    from .shop import COMMAND, ledger as store_ledger
+    from .shop.wire import StoreRefused
+    lines = []
+    for name in store_ledger.list_names():
+        try:
+            cfg = store_ledger.load(name)
+            if cfg["project"] not in projects:
+                continue
+            when = store_ledger.expiry(store_ledger.load_token(cfg), now.date())
+        except StoreRefused:
+            continue
+        if when["state"] == "ok":
+            continue
+        head = {"soon": f"あと {when['days_left']} 日で切れます（{when['expires_on']}）",
+                "expired": f"期限を過ぎています（{when['expires_on']}）",
+                "unknown": "期限が分かりません"}[when["state"]]
+        lines.append(f"店 {name} の鍵（BASE の PAT）: {head}（thth {COMMAND} token set {name} --expires <日付> --by <名前>）")
+    return lines
+
+
+def _guard_store_keys(configs, now) -> list:
+    try:
+        return _store_key_lines({cfg.get("project") for cfg in configs.values()}, now)
+    except Exception:  # noqa: BLE001 — 店の台帳で 1 枚を落とさない
+        return []
+
+
 def _ads_rows(names, now) -> list:
     """広告の口座ごとの状態（鍵の残り・最後の読み・動いている物・要対応）。**Meta は呼ばない。**"""
     from .ads import watch
@@ -1376,7 +1405,10 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                  # **管理者の 1 枚だけ**（サーバ型の利用者に他のテナントの量を渡さない）。無ければ鍵を足さない。
                  **({"app_usage": lines} if allowed_names is None and (lines := _app_usage_lines(now)) else {}),
                  # 段 M5（`thth/permission_watch.py`）: 権限の不使用の知らせ。**管理者の 1 枚だけ**。無ければ鍵を足さない。
-                 **({"meta_watch": line} if allowed_names is None and (line := _meta_watch_line(now)) else {})})},
+                 **({"meta_watch": line} if allowed_names is None and (line := _meta_watch_line(now)) else {}),
+                 # 店の鍵の期限（`thth/shop/`・14 日前から）。**管理者の 1 枚だけ**。無ければ鍵を足さない。
+                 **({"store_keys": store_lines} if allowed_names is None and (store_lines := _guard_store_keys(configs, now))
+                    else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
     ]
 
@@ -1572,6 +1604,8 @@ def _render_section(section, out) -> None:
             out(f"  {line}（thth media app-usage）")
         if value.get("meta_watch"):
             out(f"  {value['meta_watch']}")
+        for line in value.get("store_keys") or []:
+            out(f"  {line}")
         ads = value.get("ads")
         if ads is not None:
             if ads.get("cannot_say") is not None:

@@ -63,6 +63,8 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # 上の 3 つに集まっていて、入口の直しは CI の全件と互換の柵で縛る（監査 5.14.2 の気づき）。
     "ads_write": ("thth/ads/graphwrite.py", "thth/ads/ops.py", "thth/ads/budget.py"),
     "oauth": ("thth/oauth.py", "thth/ads/auth.py"),
+    # 店を読む口（11/12・設計 ショップとWordPressの口 §6）: 新しい読む口・鍵の受け取り・queue に下書きを書く口。
+    "store_read": ("thth/shop/*",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

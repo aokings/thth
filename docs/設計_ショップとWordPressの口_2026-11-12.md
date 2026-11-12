@@ -45,12 +45,23 @@
 - 応答の欄: `id`・`name`・`detail`・`price`・`proper_price`・`stock`・`visible`・`sales_status`・`images[]`（`url`・`scaled_url`・`square_url`）・`variations[]`（`stock` など）・`modified_at` ほか。`type` は `normal`・`digital`・`takeout`・`subscription`・`lottery`。
 - **商品頁の URL は応答に無い。** `GET /api/user`（認証の利用者とショップの情報）から店の URL を取り、商品の URL を組む形を作るときに確かめる（組めなければ、URL なしで下書きを作り、その旨を出す）。
 - β のため予告なく変わることがある。呼び出しの上限は今は無いが、正式版の前に設ける予定。**THTH の側で控えめにする**（1 回の diff で読むのは数ページ・間を空ける）。
+- 作るときに確かめたこと（2026-11-12・公式 `https://apiv2.thebase.com/docs/endpoints/get-api-user.md`・`get-api-items.md`・`/docs/errors/`）:
+  - `GET /api/user`（scope `user.read`）の店の URL は `shop_url`（独自ドメインがあればそれ、無ければ BASE のドメイン）。ほかに `shop_id`・`shop_name`・`able_to_business`（偽の間は商品頁が公開されない）。**`mail_address`（ログインのメール）・`nickname`・`shop_introduction`・`external_service_account` も返る**ので、THTH は店の id・名前・URL・公開の有無だけを取り出し、ほかは読み捨てる。
+  - `GET /api/items` の応答は包む鍵の無い配列。`id` は整数。`images[]` は `url`（原寸）・`scaled_url`・`square_url`。`_links` は API の操作へのリンクで、店の頁ではない。
+  - **商品頁の URL の組み方は、公式の頁（v2 の文書・BASE のヘルプ）で確かめられなかった**（v1 の文書 `docs.thebase.in/docs/api/` は 404）。だから組まない: 写しと一覧の `item_url` は空、下書きには店の URL（`shop_url`）を載せ、頭に `from_store_url: shop` と書く。`<shop_url>/items/<id>` の形は一般に知られているが【推測】で、持ち主の画面で確かめてから足す。
+  - PAT の期限・scope を問い合わせる口は無い（期限は BASE Developers の画面で見る）。だから `thth shop token set` で期限の日（`--expires`）を受けて持ち、`thth morning` が 14 日前から知らせる。鍵の scope は読めないので、書く権限の鍵は見分けられない（`thth shop add` の案内と断りの文で、読むだけの権限で作るよう頼む）。
+  - 断りは Problem Details（`type`・`title`・`status`）。401 `/errors/auth/unauthenticated`（期限切れも）・403 `/errors/auth/forbidden`（scope が足りない）・503 `/errors/internal/maintenance`。上限の断りの形はまだ文書に無い。
 
 ### 3.3 Shopify
 
 - 初めの版は**1 店向けのカスタムのアプリ**（店主が自分の店の管理画面で作る・審査なし）の Admin API の鍵で読む。外の店主に配る公開アプリ（OAuth・審査）は、試しが回ってから考える。
 - Admin GraphQL（新しい公開アプリは GraphQL だけ・REST はレガシー。下調べ【公式】）。商品・種類・在庫・画像・`onlineStoreUrl`（商品頁の URL。下調べでは【推測】なので作るときに確かめる）。
 - 呼び出しは費用の点数方式（下調べ）。応答の点数の残りを見て控えめにする。
+- 作るときに確かめたこと（2026-11-12・公式。**Shopify は初めの版から外した**ので、作るときの材料として残す）:
+  - `Product.onlineStoreUrl`（URL・null ならオンラインストアに出ていない）は今もある（`admin-graphql/latest/objects/Product`・版 2026-10）。ほかに `handle`・`status`・`totalInventory`・`priceRangeV2`・`featuredMedia`・`updatedAt`。`featuredImage` は廃止予定。`ProductVariant.price` は `Money`・`inventoryQuantity` は Int（null あり）。
+  - `Shop` の `name`・`myshopifyDomain`・`primaryDomain`・`url`。許された scope は `currentAppInstallation.accessScopes`（`AppInstallation` の頁）で読めるので、書く権限の鍵を見分けられる。
+  - 呼び先は `https://{店}.myshopify.com/admin/api/2026-10/graphql.json`・鍵は `X-Shopify-Access-Token`。点数は応答の `extensions.cost.throttleStatus`（`maximumAvailable`・`currentlyAvailable`・`restoreRate`）。
+  - **2026-01-01 から、店の管理画面で新しいカスタムアプリ（固定の Admin API の鍵）は作れない**（既にあるものは動く・公式の掲示板と記事）。新しく作るなら Dev Dashboard のアプリで、client credentials の流れ（`POST https://{店}.myshopify.com/admin/oauth/access_token`・鍵は約 24 時間・アプリと店が同じ組織のときだけ・公式 `client-credentials-grant`）。つまり「1 店向けの固定の鍵を貼る」形は新しい店では取れず、client secret を預かって 1 日ごとに鍵を取り直す形になる。設計 §3.3 の前提が変わるので、Shopify を入れるときに決め直す。
 - 試しの店: Shopify の開発用の店（Partner の登録が要る・masaru の手）。それまでは、公式の応答の形に沿った試験の材料で作る。
 
 ## 4. WordPress の口

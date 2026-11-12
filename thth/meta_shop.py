@@ -182,10 +182,8 @@ def cmd_tag(args) -> int:
     return 0
 
 
-def register(sub) -> None:
-    """`thth/cli.py` の `build_parser()` から 1 行で呼ばれる。"""
-    shop = sub.add_parser("shop", help="Instagram の商品タグ（資格・カタログ・商品・タグは読む／付けるのは二段確認）")
-    shop_sub = shop.add_subparsers(dest="shop_command", required=True)
+def register(shop_sub) -> None:
+    """親の `thth shop`（`thth/shop/cli.py` の `parent()` が 1 か所で作る）の下に、Instagram の商品タグの動詞を足す。"""
 
     def add(name, help_text, func, *, write=False):
         parser = shop_sub.add_parser(name, help=help_text)
