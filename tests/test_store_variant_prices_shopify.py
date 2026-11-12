@@ -68,6 +68,53 @@ def test_Shopifyの商品の問い合わせは種類の値段を読み注文の�
     assert shopify.MAX_ITEMS >= 500
 
 
+# 問い合わせで読む欄の集まり（監査 5.18.1 直したほうがよい 6）。語の拒否の並びだけでは、`sku`（品番）のような
+# scalar を足しても緑のまま（点数も 0 で増えない）。privacy が言う「読む物」（店の名前・myshopify のドメイン・URL・
+# 通貨・鍵の scope の名前／商品の ID・名前・公開・URL・在庫の数・値段・画像・種類ごとの ID と値段）と、文の欄の
+# 集まりを 1 つも違わずに結ぶ。欄を足す・外すときは、ここと privacy を一緒に直す。
+_FIELDS_SHOP = {
+    "shop": {"id": None, "name": None, "myshopifyDomain": None, "url": None, "currencyCode": None},
+    "currentAppInstallation": {"accessScopes": {"handle": None}},
+}
+_FIELDS_PRODUCTS = {
+    "products(after=$after,first=$first,sortKey=ID)": {
+        "nodes": {
+            "id": None, "legacyResourceId": None, "title": None, "status": None, "onlineStoreUrl": None,
+            "totalInventory": None, "tracksInventory": None, "updatedAt": None,
+            "priceRangeV2": {"minVariantPrice": {"amount": None, "currencyCode": None}},
+            "featuredMedia": {"preview": {"image": {"url": None}}},
+            f"variants(first={wire.SHOPIFY_VARIANTS_FIRST})": {
+                "nodes": {"legacyResourceId": None, "price": None},
+                "pageInfo": {"hasNextPage": None},
+            },
+        },
+        "pageInfo": {"hasNextPage": None, "endCursor": None},
+    },
+}
+
+
+def _field_tree(text):
+    from tests.test_store_shopify_cost import _TOKEN, _parse
+    tokens = _TOKEN.findall(text)
+    fields, end = _parse(tokens, tokens.index("{"))
+    assert end == len(tokens), "文の終わりのあとに字が残っています"
+
+    def tree(rows):
+        out = {}
+        for name, args, children in rows:
+            key = name + ("(" + ",".join(f"{k}={v}" for k, v in sorted(args.items())) + ")" if args else "")
+            assert key not in out, key
+            out[key] = tree(children) if children is not None else None
+        return out
+    return tree(fields)
+
+
+@pytest.mark.parametrize("name,want", [("shop", _FIELDS_SHOP), ("products", _FIELDS_PRODUCTS)])
+def test_柵_Shopifyの問い合わせの欄は決めた集まりと1つも違わない(name, want):
+    assert _field_tree(wire.QUERIES[name]) == want
+    assert set(wire.QUERIES) == {"shop", "products"}
+
+
 @pytest.mark.parametrize("variants", [None, {"nodes": "x", "pageInfo": {"hasNextPage": False}},
                                       {"nodes": [{"legacyResourceId": "1", "price": "12.5"}],
                                        "pageInfo": {"hasNextPage": False}},
