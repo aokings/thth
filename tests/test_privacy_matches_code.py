@@ -16,6 +16,7 @@ import pytest
 
 from thth import map_store, map_world, meta_public, meta_write, meter, permission_watch, relay
 from thth.meta import calls as meta_calls
+from thth.shop import ledger as shop_ledger
 from thth.shop import wire as shop_wire
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,9 +109,21 @@ def facts() -> list[tuple[str, str]]:
         ("広告の予算を延ばす口（ads extend・二段確認）", "lifetime budget within the owner's limits after a two-step"),
         ("広告の予算を延ばす口・日本語", "上限の内側で広告セットの終了日や通しの予算を延ばす"),
         ("店を読む送り先（shop/wire.BASE_HOST）", f"GET requests to <code>{shop_wire.BASE_HOST}</code>, to two paths"),
-        ("店を読む送り先・日本語", f"<code>{shop_wire.BASE_HOST}</code> への GET だけで、道は 2 つ"),
+        ("店を読む送り先・日本語", f"<code>{shop_wire.BASE_HOST}</code> への GET だけで、道は {len(shop_wire.BASE_PATHS)} つ"),
         ("店を読む道の数（shop/wire.BASE_PATHS）", "to two paths" if len(shop_wire.BASE_PATHS) == 2 else "道の数が privacy と違う"),
-        ("店の鍵の置き場の権限", "<code>~/.config/thth/</code>, mode 600) and never on the operator's server or thth.me"),
+        ("店の鍵の置き場（shop/ledger.default_token）",
+         f"<code>{shop_ledger.default_token('x').rsplit('/', 1)[0]}/</code>, mode 600); THTH has no path that sends it"),
+        ("店の鍵の置き場・日本語", f"<code>{shop_ledger.default_token('x').rsplit('/', 1)[0]}/</code>・600）に置きます"),
+        ("店の注文を読まない道（BASE_PATHS に注文が無い）",
+         "THTH does not read orders" if not any("order" in x for x in shop_wire.BASE_PATHS) else "注文の道がある"),
+        ("承認の読み直しは鍵のある機械だけ（shop/recheck）", "on a computer without the token it does not read again"),
+        ("承認の読み直しは鍵のある機械だけ・日本語", "トークンの無いコンピューターでは読み直さず"),
+        ("投稿の時刻には読み直さない", "does not read the item again at posting time"),
+        ("投稿の時刻には読み直さない・日本語", "投稿する時刻には読み直しません"),
+        ("leave は打った機械の分だけ（leave._purge_stores）", "deletes the shop files on the computer where it runs"),
+        ("leave は打った機械の分だけ・日本語", "打ったコンピューターにあるショップのファイルを消します"),
+        ("鍵の期限の知らせ（shop/ledger.EXPIRY_NOTICE_DAYS）", f"can warn {shop_ledger.EXPIRY_NOTICE_DAYS} days ahead"),
+        ("鍵の期限の知らせ・日本語", f"{shop_ledger.EXPIRY_NOTICE_DAYS} 日前から知らせられます"),
         ("店の注文を読まない", "THTH does not read orders or anything about the shop's customers"),
         ("店の注文を読まない・日本語", "注文やショップのお客さんの情報は読まず"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
