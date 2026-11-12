@@ -471,7 +471,7 @@ def test_garden_check_リンクは外へ向けてよい(tmp_path):
     (b"<html>\x00</html>", "garden_text_refused", "utf-8"),
     ("<p>é</p>".encode("latin-1"), "garden_text_refused", "utf-8"),
     (b"<p>" + b"a" * (garden.HTML_MAX + 1) + b"</p>", "garden_size_refused", "1 MB"),
-])
+], ids=["utf16-bom", "nul", "latin1", "over-1mb"])
 def test_garden_check_monbanの制限を先に断る(tmp_path, raw, code, detail):
     with pytest.raises(wire.VaultRefused) as exc:
         garden.check_dir(str(_site(tmp_path, raw=raw)))
