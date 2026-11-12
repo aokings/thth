@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 import secrets
 import stat
-from . import accounts, admin_log, relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
+from . import accounts, admin_log, article_media, relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
 
 PHASES={'stopped','worker_revoked','remote_pending','remote_confirmed','manual_unconfirmed','deleting','deleted_pending_log','completed'}
 
@@ -45,7 +45,7 @@ def _valid(row,account):
         or not jst.parse(row['stopped_at']) or not isinstance(row['stopped_by'],str) or not row['stopped_by'] or row['remote'] not in ('pending','confirmed','unconfirmed_manual','unconfirmed_shared')):return False
     categories={'token','env','state','ledger','managed_repo'}
     if type(row['deleted']) is not dict or set(row['deleted'])-categories or any(type(n) is not int or n<0 for n in row['deleted'].values()):return False
-    if 'preserved' in row and (type(row['preserved']) is not list or any(x not in ('token_shared','env_shared','external_repo') for x in row['preserved'])):return False
+    if 'preserved' in row and (type(row['preserved']) is not list or any(x not in ('token_shared','env_shared','external_repo','principal_token') for x in row['preserved'])):return False
     if row['phase']=='completed':
         # `timers`（3.5.1 件 1）は完了のあとに 1 回だけ足す記録。無い row（3.5.0 までの
         # 完了）もそのまま読む。
@@ -196,14 +196,29 @@ def _shared_globals():
     return [_path(appenv.default_path()),apps,signer]
 
 
+def _principal_owns_token(cfg):
+    """口座の `token` の持ち主が主体か（記事の口座・5.18.1）。
+
+    記事の口座（WordPress・はてなブログ）の `token` は、主体（`thth principal`）の鍵のパスを写したもの
+    （`account_cli` の add・`principals.check_account` の 4）。鍵を書くのも消すのも主体の口
+    （`thth principal auth <主体> --forget`）で、口座の leave は数えない・読まない・消さない。
+    """
+    return article_media.is_article_account(cfg)
+
+
 def inventory(account,cfg):
     root=Path(accounts.thth_root()).resolve();registry=_registry();targets=[];preserved=[]
-    token,token_identity=_token(cfg)
+    principal_token=_principal_owns_token(cfg)
+    # 主体の鍵は読まない（口座の退出に要らない秘密を開けない）。
+    token,token_identity=({},None) if principal_token else _token(cfg)
     if type(token) is not dict:raise ValueError('credential_unreadable')
     token_shared=False
     for category in ('token','env'):
         value=cfg.get(category)
         if not value:continue
+        if category=='token' and principal_token:
+            # 主体の鍵は主体の物——同じ主体のほかの口座の有無によらず残す（5.18.1）。
+            preserved.append('principal_token');continue
         path=_path(value);identity=token_identity if category=='token' else _identity(path,private=True)
         if identity is None:continue
         # **ファイルの共有と値の共有を分ける**（3.1.2 件 6・masaru 裁定 09-23）。
@@ -272,6 +287,10 @@ def revoke(cfg,token,progress,save):
     media=cfg.get('media')
     # Facebook ページの鍵の取り消しは、ページの持ち主が Meta の画面（ビジネス連携）で外す。
     if media in ('threads','bluesky','facebook','instagram'):return 'unconfirmed_manual'
+    # 記事の口座（5.18.1）: 鍵は主体の物で、遠隔の取り消しは本人の手（WordPress はプロフィールのアプリケーション
+    # パスワード、はてなは連携アプリの解除）。THTH が WordPress に送る道（投稿・カテゴリー・タグ・users/me）にも、
+    # はてなの AtomPub にも、取り消しは入れていない。
+    if article_media.is_article_media(media):return 'unconfirmed_manual'
     if media=='mastodon':
         from .adapters.auth_mastodon import client_for_token,request
         base,client=client_for_token(cfg,token)
@@ -453,7 +472,13 @@ def _run_locked(account,*,by):
                     current_targets,current_preserved,currently_shared=inventory(account,cfg)
                     if currently_shared and not row['token_shared']:row['token_shared']=True
                     has_token=any(target['category']=='token' for target in row['targets'])
-                    if 'token_shared' in current_preserved and has_token:
+                    if _principal_owns_token(cfg):
+                        # 記事の口座（5.18.1）: 主体の鍵は消す対象から外し、共有の接続とも数えない。5.18.0 で
+                        # 止まった row（主体の鍵を消す対象に入れて remote_revoke_unsupported）もここで直す。
+                        row['targets']=[target for target in row['targets'] if target['category']!='token']
+                        row['preserved']=sorted((set(row['preserved'])-{'token_shared'})|{'principal_token'})
+                        row['token_shared']=False
+                    elif 'token_shared' in current_preserved and has_token:
                         # いまはファイルごとの共有——自分のファイルも消さない。
                         row['targets']=[target for target in row['targets'] if target['category']!='token']
                         row['preserved']=sorted(set(row['preserved'])|{'token_shared'})
@@ -482,7 +507,7 @@ def _run_locked(account,*,by):
                         row['phase']='manual_unconfirmed';_save(row)
                     else:
                         row['phase']='remote_pending';_save(row)
-                        token,token_identity=_token(cfg)
+                        token,token_identity=({},None) if _principal_owns_token(cfg) else _token(cfg)
                         # Same saved credential bytes; never revoke a replacement made by a different operator.
                         own=next((t for t in row['targets'] if t['category']=='token'),None)
                         if own and token_identity!=own['identity']:raise ValueError('credential_changed')
@@ -505,9 +530,12 @@ def _run_locked(account,*,by):
                         os.fsync(admin_log._active_fd.get())
                     else:
                         admin_log.repair_append_boundary()
-                        admin_log.append('account_removed',account,{'media':cfg.get('media')},by=by,
-                            diff={'deleted_categories':[[],sorted(row['deleted'])],
-                                  'deleted_counts':[[],[row['deleted'][k] for k in sorted(row['deleted'])]], 'remote':[None,row['remote']]},run_id=row['operation_id'])
+                        diff={'deleted_categories':[[],sorted(row['deleted'])],
+                              'deleted_counts':[[],[row['deleted'][k] for k in sorted(row['deleted'])]], 'remote':[None,row['remote']]}
+                        # 記事の口座は主体の名を残す（完了の案内が、打ち直しでも主体の鍵の残りと消し方を言えるように）。
+                        if _principal_owns_token(cfg) and accounts.name_is_safe(cfg.get('principal') or ''):
+                            diff['principal']=[None,cfg['principal']]
+                        admin_log.append('account_removed',account,{'media':cfg.get('media')},by=by,diff=diff,run_id=row['operation_id'])
                 row={k:row[k] for k in ('schema_version','account','operation_id','stopped_at','stopped_by','remote','deleted','preserved')}
                 row.update(phase='completed',completed_at=jst.iso());_save(row)
             return public(row)
@@ -525,7 +553,8 @@ def command(args):
         else:
             print('local_complete: '+args.name)
             if result['remote']=='unconfirmed_shared':print('remote_unconfirmed: 他 account と共有の接続です。解除すると他 account に影響するため、運用者が解除対象を切り分けてください')
-            if result['remote']=='unconfirmed_manual':print('remote_unconfirmed: Threads の接続設定、または Bluesky の App Password を本人が解除してください')
+            if result['remote']=='unconfirmed_manual':
+                for line in _manual_guide(args.name,result):print(line)
             timers=result.get('timers') or {}
             if timers.get('pending'):
                 # 貼ってそのまま打てる形（unit 名は台帳の名前から組んだものだけ）。
@@ -538,6 +567,64 @@ def command(args):
         print('leave_incomplete: '+detail+'。停止状態と再試行用の認証情報を確認し、同じ leave を再実行してください',file=sys.stderr)
         if args.json:print(json.dumps({'account':args.name,'completed':False,'reason':'leave_incomplete','detail':detail},ensure_ascii=False))
         return 2
+
+
+# 遠隔の取り消しが本人の手の媒体ごとの 1 行（5.18.1 で媒体ごとに分けた。前は Threads・Bluesky の決め打ち）。
+# 言い方は privacy の「停止とデータの削除」の節にそろえる。
+MANUAL_REVOKE={
+    'threads':'Threads の接続の解除は本人の手です。Threads の設定で THTH との接続を解除してください',
+    'bluesky':'Bluesky の App Password の削除は本人の手です。Bluesky の設定で THTH に入れた App Password を削除してください',
+    'facebook':'Facebook ページの許可の解除は本人の手です。Facebook の設定（ビジネス連携）で THTH を外してください',
+    'instagram':'Instagram の許可の解除は本人の手です。Facebook の設定（ビジネス連携）で THTH を外してください',
+    'wordpress':('WordPress のアプリケーションパスワードの取り消しは本人の手です（THTH が WordPress に送る道は投稿・カテゴリー・'
+                 'タグ・users/me で、取り消しは入れていません）。WordPress の管理画面の「ユーザー」→「プロフィール」の'
+                 '「アプリケーションパスワード」で、THTH に入れたものを取り消してください'),
+    'hatenablog':('はてなの連携の解除は本人の手です（THTH ははてなに連携を外す要求を送りません）。はてなのアカウントの設定の'
+                  '連携アプリ（OAuth で許したアプリ）から THTH を外してください'),
+}
+
+
+def _removed_entry(account):
+    """この口座の最後の `account_removed` の記録（媒体と、記事の口座なら主体の名）。読めなければ `{}`。"""
+    try:entries,_=admin_log.read(account=account,event='account_removed')
+    except (OSError,ValueError,admin_log.AdminLogError):return {}
+    return entries[-1] if entries else {}
+
+
+def _manual_guide(account,result):
+    """`unconfirmed_manual` の完了の案内（媒体ごとの 1 行と、記事の口座なら主体の鍵の残りと消し方）。"""
+    entry=_removed_entry(account);media=entry.get('medium')
+    principal=((entry.get('diff') or {}).get('principal') or [None,None])[-1]
+    line=MANUAL_REVOKE.get(media) or '遠隔の許可の解除は本人の手です。その媒体の設定で THTH との接続を外してください'
+    lines=['remote_unconfirmed: '+line]
+    if 'principal_token' in (result.get('preserved') or []):lines.append(_principal_token_line(principal,media))
+    return lines
+
+
+def _principal_token_line(principal,media):
+    """記事の口座の完了の案内の 2 行め: 主体の鍵が残ること・消し方（無ければ、そう言う）。鍵の値は読まない。"""
+    from . import principals
+    head='principal_token_kept: '
+    if not isinstance(principal,str) or not accounts.name_is_safe(principal):
+        return (head+'主体の鍵は残しました（鍵の持ち主は主体で、口座の leave では消しません）。どの主体かは '
+                'thth principal show <主体> で確かめ、もう使わないなら thth principal auth <主体> --by <名前> --forget で消せます')
+    try:
+        cfg=principals.load_principal(principal)
+    except (principals.PrincipalError,accounts.AccountError,OSError,ValueError):
+        return (head+f'主体 {principal} の台帳が読めず、鍵が残っているかを確かめられませんでした（口座の leave は主体の鍵を'
+                f'消しません）。thth principal show {principal} で台帳と鍵の有無を確かめてください')
+    if not os.path.exists(cfg['token']):
+        return head+f'主体 {principal} の鍵のファイルはもうありません（消す物はありません）。遠隔の取り消しは上の 1 行のとおりです'
+    others=[name for name,_ in principals.accounts_of(principal)]
+    text=head+f'主体 {principal} の鍵は残しました（鍵の持ち主は主体で、口座の leave では消しません）。'
+    if others:
+        text+=f'この主体はまだ {"・".join(others)} が使っています。消すとそちらも出せなくなるので、使い終わってから '
+    else:
+        text+='この主体を使う口座はもうありません。消すなら '
+    text+=f'thth principal auth {principal} --by <名前> --forget'
+    # consumer を持つのは はてなの主体だけ（`--forget-consumer` もはてなの主体だけ）。
+    if cfg.get('kind')=='hatena' and cfg.get('consumer'):text+='（consumer も消すなら --forget-consumer）'
+    return text+' で消せます'
 
 
 def _incomplete_detail(exc):

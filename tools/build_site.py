@@ -781,6 +781,13 @@ def build_privacy() -> str:
         "records the exit (time, operator, deleted categories and counts) in the change log. Files shared "
         "with another account and external repositories are kept. Its plaza posts and replies are deleted as "
         'described under <a href="#plaza">Plaza</a>. Reports and the change log are not removed by this step.</p>')
+    add("<p>For a WordPress or Hatena Blog account, the WordPress application password or the Hatena token belongs "
+        "to the principal (the WordPress user or Hatena ID the account publishes as), which other blogs may also "
+        "use, so <code>thth account leave</code> keeps that file. <code>thth principal auth &lt;name&gt; --forget</code> "
+        "deletes it on the computer where it runs. Revoking it is done by the person: for WordPress, under the "
+        "user's profile (Application Passwords); for Hatena, by removing THTH from the applications linked in the "
+        "Hatena account settings. The account's own settings entry, environment file and server state are deleted "
+        "as described above, and the change log records the principal's name with the exit.</p>")
     add("<p>Meta data deletion requests: <code>https://thth.me/data-deletion</code> accepts a signed request "
         "and returns a confirmation code with a status URL "
         "(<code>https://thth.me/data-deletion-status?code=…</code>). Receipt is automatic. The operator then "
@@ -1230,6 +1237,12 @@ def build_privacy() -> str:
         "そこに置いたインサイト・返信・言及）、サーバー側のリポジトリを削除し、退会（時刻・実行者・削除した種類と件数）を"
         "変更ログに残します。他のアカウントと共有しているファイルと、外部のリポジトリは残します。プラザの書き込みと"
         "返信は上の「プラザ」のとおり削除します。報告と変更ログはこの手順では消えません。</p>")
+    add("<p>WordPress とはてなブログの口座では、WordPress のアプリケーションパスワードとはてなの token は主体（口座が"
+        "名乗る WordPress の利用者・はてな ID）の物で、ほかのブログも使うことがあるので、<code>thth account leave</code> は"
+        "そのファイルを残します。<code>thth principal auth &lt;主体&gt; --forget</code> で、打ったコンピューターのファイルを"
+        "消せます。取り消しは本人が行います。WordPress は利用者のプロフィール（アプリケーションパスワード）で、はてなは"
+        "アカウントの設定の連携アプリから THTH を外します。口座の設定の項目・環境のファイル・サーバーの state は上の"
+        "とおり削除し、退会の記録には主体の名も残します。</p>")
     add("<p>Meta からのデータ削除の依頼: <code>https://thth.me/data-deletion</code> が署名付きの依頼を受け付け、"
         "確認コードと状況の URL（<code>https://thth.me/data-deletion-status?code=…</code>）を返します。受付は自動です。"
         "その後、運営者がサーバーで署名を検証して Threads のアカウントと照合し、上の退会を実行します。状況の URL は"
