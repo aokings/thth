@@ -5470,6 +5470,9 @@ def build_parser() -> argparse.ArgumentParser:
     shop_sub = store_cli.parent(sub)
     meta_shop.register(shop_sub)
     store_cli.register(shop_sub)
+    # `thth sync`・`thth garden`（金庫と庭の段 1・仮）: 口は `thth/vault/` に閉じる。暗号は monban の道具が持つ。
+    from .vault import cli as vault_cli
+    vault_cli.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

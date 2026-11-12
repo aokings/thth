@@ -68,6 +68,9 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # WordPress に記事を出す口（5.16.0）: 鍵（アプリケーションパスワード）を送る adapter と、承認の指紋に入る
     # 本文の変換（規則が変われば承認が古くなる・生の HTML を通さない柵）。
     "wordpress_write": ("thth/adapters/wordpress.py", "thth/wp_html.py"),
+    # 金庫と庭の口（11/12 夜・段 1・仮）: 台帳を外の金庫へ送る口・戻しの文字列の通り道・誰でも読める庭へ置く口と、
+    # 出す前の検査（script・外の資源・非公開の商品の柵）。
+    "vault_garden": ("thth/vault/*",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

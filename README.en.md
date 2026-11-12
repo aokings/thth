@@ -112,6 +112,8 @@ All subcommands `thth --help` lists, one line each:
 - `creators` — search the creator marketplace (`creators search`; read-only, ids only, nothing stored)
 - `wa` — WhatsApp (`wa add|auth`; `wa numbers|templates` read; `wa template create` and `wa send` are two-step, templates only, recipient number and text never stored)
 - `shop` — Instagram product tags (`shop eligibility|catalogs|products|tags` read; `shop tag` adds a product tag to an existing post and is two-step; nothing stored)
+- `sync` — keep your register (a git repo) the same across your devices through a monban vault (stage 1, provisional: check, `git pull --no-rebase monban`, `git push monban`; the encryption is monban's tools, THTH never sees the recovery string)
+- `garden` — build a static shop page from the store snapshot (only items that are public and on sale; no script, form or outside resources) and place it in a monban garden (stage 1, provisional; `garden publish` is two-step, `garden stop` is immediate)
 - `quota` — read the platform usage headers, any rate-limit wait and (Instagram) the daily publishing limit for an account (read-only; Facebook and Instagram)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH

@@ -142,6 +142,8 @@ COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
 COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
 # 監査 5.15.0 の 1: 店を外す（二段確認・--json は 1 つの値）。
 COMMANDS += ['shop remove']
+# 金庫と庭の段 1（`thth/vault/`・仮・--json は 1 つの値・断りは {"ok": false, "code": …}）。init と join は --json を持たない。
+COMMANDS += ['sync', 'sync status', 'garden build', 'garden check', 'garden publish', 'garden stop', 'garden status']
 
 
 def test_json_table_covers_every_parser():
