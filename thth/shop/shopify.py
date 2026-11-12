@@ -50,11 +50,18 @@ HTTP の数と、検査した符丁の語だけで決める。`errors` の文・
   小さくするのは 1 回の読みで `MAX_SHRINKS` 回まで・`MIN_PAGE_FIRST` 件まで。読める商品の数（`MAX_ITEMS`＝500）は保つ。
 - `THROTTLED` なら、`throttleStatus` から足りない点が戻るまで（読めなければ公式の目安の 1 秒）待って、同じ問い合わせを
   `THROTTLE_RETRIES` 回まで打ち直す。1 回の待ちは `MAX_THROTTLED_WAIT_SECONDS` まで。
+- **頁の間の待ち**（`throttle_wait`）: 応答の残りの点が次に頼む点より少なければ、足りない点が戻るまで（＋
+  `MIN_INTERVAL_SECONDS`・1 回は `MAX_THROTTLE_WAIT_SECONDS` まで）待つ。足りていれば `MIN_INTERVAL_SECONDS`。
+  種類の多い 500 件の店は頼む点の和がバケツより大きいので、この待ちは混んでいなくても 2 分ほどになる（直す前の
+  「残りが頼む点の 2 倍より少なければ頼む点 ÷ 戻る速さで長くて 5 秒」は、5 秒では足りず THROTTLED を招いた）。
 - **1 回の読み全体にも上限**（監査 5.18.1 直したほうがよい 2）: 上の回数は問い合わせごとなので、頁ごとに混んでいると
   合わせて数十回・数分になりうる。1 回の読み（`Client` 1 つ）で、打ち直しは合わせて `READ_RESENDS_MAX` 回まで
-  （`THROTTLED` の待ちと、頁を小さくしての打ち直しの和）・眠るのは合わせて `READ_WAIT_SECONDS_MAX` 秒まで（頁の間の
-  待ちも含む）。超えそうなら眠らず・打たずに `store_unavailable（read_budget）` で断る。承認の読み直し
-  （`recheck.check`）も同じ `items()` を通るので、確定がその間より長く止まらない。
+  （`THROTTLED` の待ちと、頁を小さくしての打ち直しの和）・**混んだせいで**（`THROTTLED` のあと）眠るのは合わせて
+  `READ_WAIT_SECONDS_MAX` 秒まで。頁の間の調子合わせの待ちはこれに数えない（監査 5.18.1 の確かめの危ない 1:
+  数えると、混んでいない店でも種類の多い 300〜500 件で毎回止まった）。頁の間の待ちは別に、合わせて
+  `READ_PACE_SECONDS_MAX` 秒まで（混んでいない標準の店の種類 20 の 500 件は 2 分ほどで、その 1.5 倍）。どちらも
+  超えそうなら眠らず・打たずに `store_unavailable（read_budget）` で断る。承認の読み直し（`recheck.check`）も同じ
+  `items()` を通るので、確定がその間より長く止まらない。
 - 網に出るのは今までどおり `wire.py` だけ・文は 2 本・変数は `first` と `after` だけ（`first` を変えるだけ）。
 """
 from __future__ import annotations
@@ -81,14 +88,18 @@ VARIANTS_FIRST = wire.SHOPIFY_VARIANTS_FIRST
 # 頼む点の目安（上限の 8 割）。見込みの数（728）も、応答の requestedQueryCost も、これを超えれば頁を小さくする。
 COST_BUDGET = wire.SHOPIFY_QUERY_COST_MAX * 8 // 10
 THROTTLE_RETRIES = 2
-# 1 回の読み全体の上限（打ち直しの和・眠る秒の和）。頁を 5 件まで小さくしても、点数に余りのある店なら頁の間の
-# 0.5 秒 × 99 で 500 件を読み切れる大きさ（`tests/test_store_shopify_cost.py` が縛る）。
+# 1 回の読み全体の上限。打ち直しの和と、混んだせい（`THROTTLED`）で眠る秒の和（頭の説明）。
 READ_RESENDS_MAX = 4
 READ_WAIT_SECONDS_MAX = 60.0
+# 頁の間の待ちの和の上限（別に持つ）。混んでいない標準の店（2,000 点・毎秒 100 点）の種類 20 の 500 件は約 120 秒、
+# 頁を 5 件まで小さくしても点に余りがあれば 0.5 秒 × 99。どちらも収まる大きさ（`tests/test_store_shopify_cost.py`）。
+READ_PACE_SECONDS_MAX = 180.0
 MAX_THROTTLED_WAIT_SECONDS = 10.0
 MIN_INTERVAL_SECONDS = 0.5
 UNKNOWN_COST_WAIT_SECONDS = 1.0
-MAX_THROTTLE_WAIT_SECONDS = 5.0
+MAX_THROTTLE_WAIT_SECONDS = 10.0
+PACE_FACTOR_STEP = 1.5
+PACE_FACTOR_MAX = 3.0
 SLEEP = time.sleep
 REQUIRED_SCOPE = "read_products"
 CURRENCY = "JPY"
@@ -175,8 +186,11 @@ def _number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def throttle_wait(payload) -> float:
-    """次の頁までに空ける秒（点数が読めて残りが少なければ回復を待つ・読めなければ 1 秒）。"""
+def throttle_wait(payload, factor: float = 1.0) -> float:
+    """次の頁までに空ける秒。残りの点が頼む点（この頁と同じと見る）より少なければ、足りない点が戻るまで
+    （× `factor` ＋ `MIN_INTERVAL_SECONDS`・長くて `MAX_THROTTLE_WAIT_SECONDS`）。足りていれば `MIN_INTERVAL_SECONDS`。
+    読めなければ 1 秒。`factor` は、ほかのアプリが点を使っていて戻る速さが見かけより遅い店のための余裕
+    （`Client` が `THROTTLED` のたびに上げる）。"""
     try:
         cost = payload["extensions"]["cost"]
         requested = _number(cost["requestedQueryCost"])
@@ -186,8 +200,8 @@ def throttle_wait(payload) -> float:
         return max(MIN_INTERVAL_SECONDS, UNKNOWN_COST_WAIT_SECONDS)
     if requested is None or available is None or not restore or restore <= 0:
         return max(MIN_INTERVAL_SECONDS, UNKNOWN_COST_WAIT_SECONDS)
-    if available < 2 * requested:
-        return max(MIN_INTERVAL_SECONDS, min(requested / restore, MAX_THROTTLE_WAIT_SECONDS))
+    if available < requested:
+        return min((requested - available) / restore * factor + MIN_INTERVAL_SECONDS, MAX_THROTTLE_WAIT_SECONDS)
     return MIN_INTERVAL_SECONDS
 
 
@@ -307,12 +321,21 @@ class Client:
         self.throttled = 0
         self.resends = 0
         self.slept = 0.0
+        self.paced = 0.0
+        self.pace_factor = 1.0
 
     def _sleep(self, seconds: float) -> None:
-        """眠る（1 回の読みで眠る合計は `READ_WAIT_SECONDS_MAX` まで。超えるなら眠らずに断る）。"""
+        """混んだせい（`THROTTLED`）で眠る（1 回の読みで合計 `READ_WAIT_SECONDS_MAX` まで。超えるなら眠らずに断る）。"""
         if self.slept + seconds > READ_WAIT_SECONDS_MAX:
             raise StoreRefused("store_unavailable", "read_budget")
         self.slept += seconds
+        SLEEP(seconds)
+
+    def _pace(self, seconds: float) -> None:
+        """頁の間の調子合わせで眠る（`READ_WAIT_SECONDS_MAX` には数えない・別に合計 `READ_PACE_SECONDS_MAX` まで）。"""
+        if self.paced + seconds > READ_PACE_SECONDS_MAX:
+            raise StoreRefused("store_unavailable", "read_budget")
+        self.paced += seconds
         SLEEP(seconds)
 
     def _resend(self) -> None:
@@ -386,6 +409,8 @@ class Client:
                 self._resend()
                 self._sleep(throttled_wait(payload))
                 self.throttled += 1
+                # 頁の間の待ちが足りなかった（ほかのアプリが点を使っている）。次の頁からは多めに待つ。
+                self.pace_factor = min(self.pace_factor * PACE_FACTOR_STEP, PACE_FACTOR_MAX)
                 continue
             exc.shrink = code in ("MAX_COST_EXCEEDED", "INTERNAL_SERVER_ERROR")
             exc.cost = exceeded_cost(errors) if code == "MAX_COST_EXCEEDED" else None
@@ -429,7 +454,7 @@ class Client:
         first, shrinks, seen_cost = PAGE_FIRST, [], None
         while pages < MAX_PAGES and len(rows) < MAX_ITEMS:
             if wait is not None:
-                self._sleep(wait)
+                self._pace(wait)
             asked = min(first, MAX_ITEMS - len(rows))
             try:
                 payload = self._query("products", {"first": asked, "after": after})
@@ -466,7 +491,7 @@ class Client:
             after = info.get("endCursor")
             if not isinstance(after, str) or not 0 < len(after) <= wire.AFTER_MAX:
                 raise StoreRefused("store_api_changed", "products")
-            wait = throttle_wait(payload)
+            wait = throttle_wait(payload, self.pace_factor)
         seen, out = set(), []
         for row in rows:
             if row["id"] not in seen:

@@ -482,9 +482,24 @@ def test_5181_Shopifyの送り直しの文は回数の上限があるときだ�
     n, seconds = shop_shopify.READ_RESENDS_MAX, shop_shopify.READ_WAIT_SECONDS_MAX
     assert 0 < n <= 4 and float(seconds).is_integer() and 0 < seconds <= 60
     assert "sends the same fixed query again a few" in page
-    assert f"(at most {n} times and {int(seconds)} seconds of waiting in one read;" in page
+    assert (f"(at most {n} times in one read, and at most {int(seconds)} seconds in all of waiting after Shopify "
+            "says the shop is busy;") in page
     assert "同じ決まった問い合わせを、頁を小さくするか待ってから数回だけ送り直します" in page
-    assert f"（1 回の読みで合わせて {n} 回・待つのは合わせて {int(seconds)} 秒まで。" in page
+    assert f"（1 回の読みで合わせて {n} 回まで、混んでいると言われて待つのは合わせて {int(seconds)} 秒まで。" in page
+    # 「混んでいると言われて待つ」の秒だけを上限に数える（頁の間の待ちは数えない・監査 5.18.1 の確かめの危ない 1）。
+    # 頁の間の待ちを上限に数え直すと、文の「混んでいると言われて」が偽になるので赤。
+    client = shop_shopify.Client({"shop": "x", "store": "x"}, {})
+    real = shop_shopify.SLEEP
+    shop_shopify.SLEEP = lambda seconds: None
+    try:
+        client._pace(1.0)
+        assert client.slept == 0.0
+        client._sleep(1.0)
+        assert client.slept == 1.0
+    finally:
+        shop_shopify.SLEEP = real
+    assert "Between pages, THTH also waits until Shopify's allowance has refilled enough" in page
+    assert "頁と頁の間でも、次の頁に足りるだけ Shopify の枠が戻るまで待ちます。" in page
 
 
 def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapterの口が合う():

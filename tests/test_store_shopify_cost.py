@@ -283,23 +283,38 @@ def test_柵_どの頁も混んでいる店でも1回の読みの打ち直しは
     assert found["fix"] == value["fix"]
     n, seconds = shopify.READ_RESENDS_MAX, int(shopify.READ_WAIT_SECONDS_MAX)
     assert f"合わせて {n} 回まで" in found["fix"] and f"合わせて {seconds} 秒まで" in found["fix"]
-    assert f"合わせて {n} 回まで・待つのは合わせて {seconds} 秒まで" in found["why"]
+    pace = int(shopify.READ_PACE_SECONDS_MAX)
+    assert f"合わせて {n} 回まで・混んでいると言われて待つのは合わせて {seconds} 秒まで" in found["why"]
+    assert f"頁の間に点の戻りを待つのは合わせて {pace} 秒まで" in found["why"]
+    assert f"合わせて {pace} 秒まで" in found["fix"] and "店の大きさだけでは届きません" in found["fix"]
     assert "secret-message-marker" not in json.dumps(value) + err
 
 
-def test_柵_頁の間の待ちが重なっても1回の読みで眠る合計は上限まで(capsys, env, monkeypatch):
+def test_柵_頁の間の待ちが重なっても1回の読みで眠る合計は別の上限まで(capsys, env, monkeypatch):
+    """頁の間の待ちは混んだせいの待ち（60 秒）には数えないが、別に `READ_PACE_SECONDS_MAX` までで止まる。"""
     env["products"] = [sh.product(i) for i in range(1, 501)]
     sh.setup_store(capsys, env)
-    env["extensions"] = sh.cost(requested=728, available=0, restore=100.0)   # 頁の間はいつも 5 秒
+    env["extensions"] = sh.cost(requested=728, available=0, restore=10.0)    # 頁の間はいつも 10 秒
     rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
     assert rc_ == 2 and value["code"] == "store_unavailable" and value["detail"] == "read_budget"
-    assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX
+    assert sum(env["slept"]) <= shopify.READ_PACE_SECONDS_MAX
 
 
 def test_上限は小さくした頁で500件を読み切る分は通す(capsys, env, monkeypatch):
     """頁を 5 件まで小さくしても、点数に余りのある店なら 500 件を最後まで読める（頁の間 0.5 秒 × 99）。"""
-    assert (shopify.MAX_PAGES - 1) * shopify.MIN_INTERVAL_SECONDS <= shopify.READ_WAIT_SECONDS_MAX
+    assert (shopify.MAX_PAGES - 1) * shopify.MIN_INTERVAL_SECONDS <= shopify.READ_PACE_SECONDS_MAX
     assert 0 < shopify.READ_RESENDS_MAX <= 4 and shopify.READ_WAIT_SECONDS_MAX <= 60
+
+
+def test_頁の間の待ちは混んだせいの待ちに数えない(monkeypatch):
+    """`_pace` は `slept`（60 秒の上限）を増やさず、`_sleep` だけが増やす（privacy の文と結ぶ）。"""
+    seen = []
+    monkeypatch.setattr(shopify, "SLEEP", seen.append)
+    client = shopify.Client({"shop": "x", "store": "x"}, {})
+    client._pace(5.0)
+    assert client.slept == 0.0 and client.paced == 5.0
+    client._sleep(2.0)
+    assert client.slept == 2.0 and client.paced == 5.0 and seen == [5.0, 2.0]
 
 
 def test_承認の読み直しも1回の読みの上限で止まる(capsys, env, monkeypatch):
@@ -311,3 +326,86 @@ def test_承認の読み直しも1回の読みの上限で止まる(capsys, env,
     line, _ = recheck.check("x.md", front)
     assert line and "store_unavailable" in line and "数分置いて" in line
     assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX
+
+
+# ------------------------------------------------------------------ 混んでいない店は上限で止めない（監査 5.18.1 確かめの危ない 1）
+
+def _bucket(monkeypatch, env, *, maximum=2000.0, restore=100.0, per_product=29, latency=0.0, others=0.0):
+    """点数のバケツを真似る偽の店（調べと試験の土台の数: 2,000 点・毎秒 100 点戻る・頼む点は first × 29 ＋ 3）。
+
+    Shopify は頼んだ点を先に引き、実際の点との差を戻すので、応答の currentlyAvailable は実際の点を引いたあとの数。
+    頼む点に足りなければ `THROTTLED`（点は引かない）。`others` は、ほかのアプリが毎秒使う点。
+    """
+    real = store_cli.TRANSPORT
+    b = {"avail": maximum, "throttled": 0, "clock": 0.0}
+
+    def tick(seconds):
+        b["clock"] += seconds
+        b["avail"] = max(0.0, min(maximum, b["avail"] + (restore - others) * seconds))
+
+    def sleep(seconds):
+        env.setdefault("slept", []).append(seconds)
+        tick(seconds)
+
+    def ext(requested, actual):
+        return {"cost": {"requestedQueryCost": requested, "actualQueryCost": actual,
+                         "throttleStatus": {"maximumAvailable": maximum, "currentlyAvailable": int(b["avail"]),
+                                            "restoreRate": restore}}}
+
+    def transport(method, url, headers, body=None):
+        if body is not None and url.endswith(sh.GQL_PATH):
+            payload = json.loads(body.decode())
+            if payload["query"] == wire.QUERIES["products"]:
+                wire.check_request(method, url, body)
+                tick(latency)
+                requested = 3 + 29 * payload["variables"]["first"]
+                if b["avail"] < requested:
+                    b["throttled"] += 1
+                    return 200, json.dumps({"errors": [{"message": "x", "extensions": {"code": "THROTTLED"}}],
+                                            "extensions": ext(requested, 0)}).encode()
+                status, raw = real(method, url, headers, body)
+                out = json.loads(raw.decode())
+                actual = 3 + per_product * len(out["data"]["products"]["nodes"])
+                b["avail"] -= actual
+                out["extensions"] = ext(requested, actual)
+                return status, json.dumps(out).encode()
+        return real(method, url, headers, body)
+
+    monkeypatch.setattr(store_cli, "TRANSPORT", transport)
+    monkeypatch.setattr(shopify, "SLEEP", sleep)
+    return b
+
+
+@pytest.mark.parametrize("per_product,latency", [(29, 0.0), (29, 0.5), (20, 0.0), (15, 0.0), (10, 0.0)])
+def test_柵_混んでいない店で種類20の商品500件を最後まで読める(capsys, env, monkeypatch, per_product, latency):
+    """ほかに誰も読んでいない標準の店（2,000 点・毎秒 100 点）。直す前（ae6413c〜）は 300〜500 件で毎回 read_budget。"""
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    env["slept"] = []
+    b = _bucket(monkeypatch, env, per_product=per_product, latency=latency)
+    rc_, value, err = sh.jrun(capsys, "shop", "items", sh.STORE)
+    assert rc_ == 0, value
+    assert value["complete"] is True and len(value["items"]) == 500
+    assert b["throttled"] == 0                     # 頁の間で足りない点が戻るのを待つので、混んだとは言われない
+
+
+def test_柵_ほかのアプリが少し使う店でも種類20の商品500件を読める(capsys, env, monkeypatch):
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    env["slept"] = []
+    _bucket(monkeypatch, env, per_product=29, others=20.0)
+    rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
+    assert rc_ == 0 and value["complete"] is True and len(value["items"]) == 500
+
+
+def test_柵_どの頁も足りない店ではTHROTTLEDの上限で止まる(capsys, env, monkeypatch):
+    """ほかのアプリが戻る点をほとんど使う店（毎秒 95 点）。頁の間の待ちでは足りず THROTTLED が続き、上限で止まる。"""
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    env["slept"] = []
+    b = _bucket(monkeypatch, env, per_product=29, others=95.0)
+    rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
+    # 問い合わせごとの回数（throttled）か、読み全体の上限（read_budget）の先に届いた方で止まる。
+    assert rc_ == 2 and value["code"] == "store_unavailable" and value["detail"] in ("throttled", "read_budget")
+    assert b["throttled"] <= shopify.READ_RESENDS_MAX + 1
+    assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX + shopify.READ_PACE_SECONDS_MAX
