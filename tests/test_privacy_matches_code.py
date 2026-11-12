@@ -473,11 +473,18 @@ def test_5181_種類ごとの値段と下書きの上限はコードと同じ():
 
 
 def test_5181_Shopifyの送り直しの文は回数の上限があるときだけ():
-    """「数回だけ送り直す」は、shopify.py の小さくする回数・待つ回数に上限があることと結ぶ（4e4dd4d）。"""
+    """「数回だけ送り直す」は、shopify.py の 1 回の読み全体の上限（打ち直しの和・眠る秒の和）と結ぶ（4e4dd4d・監査 5.18.1 の 2）。
+
+    問い合わせごとの回数（`MAX_SHRINKS`・`THROTTLE_RETRIES`）だけでは、頁ごとに混むと読み全体で数十回になりうる。
+    """
     page = PRIVACY.read_text(encoding="utf-8")
     assert 0 < shop_shopify.MAX_SHRINKS <= 3 and 0 < shop_shopify.THROTTLE_RETRIES <= 3
+    n, seconds = shop_shopify.READ_RESENDS_MAX, shop_shopify.READ_WAIT_SECONDS_MAX
+    assert 0 < n <= 4 and float(seconds).is_integer() and 0 < seconds <= 60
     assert "sends the same fixed query again a few" in page
+    assert f"(at most {n} times and {int(seconds)} seconds of waiting in one read;" in page
     assert "同じ決まった問い合わせを、頁を小さくするか待ってから数回だけ送り直します" in page
+    assert f"（1 回の読みで合わせて {n} 回・待つのは合わせて {int(seconds)} 秒まで。" in page
 
 
 def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapterの口が合う():

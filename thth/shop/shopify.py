@@ -50,6 +50,11 @@ HTTP の数と、検査した符丁の語だけで決める。`errors` の文・
   小さくするのは 1 回の読みで `MAX_SHRINKS` 回まで・`MIN_PAGE_FIRST` 件まで。読める商品の数（`MAX_ITEMS`＝500）は保つ。
 - `THROTTLED` なら、`throttleStatus` から足りない点が戻るまで（読めなければ公式の目安の 1 秒）待って、同じ問い合わせを
   `THROTTLE_RETRIES` 回まで打ち直す。1 回の待ちは `MAX_THROTTLED_WAIT_SECONDS` まで。
+- **1 回の読み全体にも上限**（監査 5.18.1 直したほうがよい 2）: 上の回数は問い合わせごとなので、頁ごとに混んでいると
+  合わせて数十回・数分になりうる。1 回の読み（`Client` 1 つ）で、打ち直しは合わせて `READ_RESENDS_MAX` 回まで
+  （`THROTTLED` の待ちと、頁を小さくしての打ち直しの和）・眠るのは合わせて `READ_WAIT_SECONDS_MAX` 秒まで（頁の間の
+  待ちも含む）。超えそうなら眠らず・打たずに `store_unavailable（read_budget）` で断る。承認の読み直し
+  （`recheck.check`）も同じ `items()` を通るので、確定がその間より長く止まらない。
 - 網に出るのは今までどおり `wire.py` だけ・文は 2 本・変数は `first` と `after` だけ（`first` を変えるだけ）。
 """
 from __future__ import annotations
@@ -76,6 +81,10 @@ VARIANTS_FIRST = wire.SHOPIFY_VARIANTS_FIRST
 # 頼む点の目安（上限の 8 割）。見込みの数（728）も、応答の requestedQueryCost も、これを超えれば頁を小さくする。
 COST_BUDGET = wire.SHOPIFY_QUERY_COST_MAX * 8 // 10
 THROTTLE_RETRIES = 2
+# 1 回の読み全体の上限（打ち直しの和・眠る秒の和）。頁を 5 件まで小さくしても、点数に余りのある店なら頁の間の
+# 0.5 秒 × 99 で 500 件を読み切れる大きさ（`tests/test_store_shopify_cost.py` が縛る）。
+READ_RESENDS_MAX = 4
+READ_WAIT_SECONDS_MAX = 60.0
 MAX_THROTTLED_WAIT_SECONDS = 10.0
 MIN_INTERVAL_SECONDS = 0.5
 UNKNOWN_COST_WAIT_SECONDS = 1.0
@@ -296,6 +305,21 @@ class Client:
         self.minted = None
         self.calls = 0
         self.throttled = 0
+        self.resends = 0
+        self.slept = 0.0
+
+    def _sleep(self, seconds: float) -> None:
+        """眠る（1 回の読みで眠る合計は `READ_WAIT_SECONDS_MAX` まで。超えるなら眠らずに断る）。"""
+        if self.slept + seconds > READ_WAIT_SECONDS_MAX:
+            raise StoreRefused("store_unavailable", "read_budget")
+        self.slept += seconds
+        SLEEP(seconds)
+
+    def _resend(self) -> None:
+        """同じ問い合わせを打ち直す前に数える（1 回の読みで合わせて `READ_RESENDS_MAX` 回まで）。"""
+        if self.resends >= READ_RESENDS_MAX:
+            raise StoreRefused("store_unavailable", "read_budget")
+        self.resends += 1
 
     @property
     def auth(self) -> str:
@@ -359,8 +383,9 @@ class Client:
             exc = errors_refusal(errors)
             code = error_code(errors)
             if code == "THROTTLED" and attempt < THROTTLE_RETRIES:
+                self._resend()
+                self._sleep(throttled_wait(payload))
                 self.throttled += 1
-                SLEEP(throttled_wait(payload))
                 continue
             exc.shrink = code in ("MAX_COST_EXCEEDED", "INTERNAL_SERVER_ERROR")
             exc.cost = exceeded_cost(errors) if code == "MAX_COST_EXCEEDED" else None
@@ -404,7 +429,7 @@ class Client:
         first, shrinks, seen_cost = PAGE_FIRST, [], None
         while pages < MAX_PAGES and len(rows) < MAX_ITEMS:
             if wait is not None:
-                SLEEP(wait)
+                self._sleep(wait)
             asked = min(first, MAX_ITEMS - len(rows))
             try:
                 payload = self._query("products", {"first": asked, "after": after})
@@ -414,6 +439,7 @@ class Client:
                 smaller = smaller_first(asked, exc.cost)
                 if smaller < MIN_PAGE_FIRST:
                     raise
+                self._resend()
                 shrinks.append({"from": asked, "to": smaller, "why": exc.detail})
                 first, wait = smaller, MIN_INTERVAL_SECONDS
                 continue

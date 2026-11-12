@@ -29,8 +29,13 @@ _VARIANT_PAIR = re.compile(r"([A-Za-z0-9]{1,64})=(-?[0-9]{1,12})\Z")
 _MATERIAL = re.compile(r"price (-?[0-9]{1,12}) -> (-?[0-9]{1,12})\Z")
 
 
+_DETAIL_WORD = re.compile(r"[a-z_]{1,40}\Z")
+
+
 def _line(path: str, code: str, detail: str | None) -> str:
-    found = refusal.parts(code) or {}
+    # 詳細が静的な語なら、その語の通し方を引く（`by_detail`・Shopify の read_budget など・監査 5.18.1 の 2）。
+    word = {"reason": detail} if isinstance(detail, str) and _DETAIL_WORD.fullmatch(detail) else {}
+    found = refusal.parts(code, **word) or {}
     text = f"{path}: {code}: {found.get('why') or code}" + (f"（{detail}）" if detail else "")
     fix = found.get("fix")
     if isinstance(fix, dict):

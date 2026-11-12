@@ -8,6 +8,8 @@
   - 見込みが外れても止まらない: `MAX_COST_EXCEEDED` は `extensions.cost` との比で頁を小さくして同じ文で打ち直す
     （読めなければ半分）・`INTERNAL_SERVER_ERROR` は半分・応答の `requestedQueryCost` が 800 を超えれば次の頁から
     小さく・`THROTTLED` は足りない点が戻るまで待って 2 回まで。どれも回数に上限があり、上限のあとは前向きに断る。
+  - 1 回の読み全体にも上限（監査 5.18.1 の 2）: 打ち直しの和は `READ_RESENDS_MAX`・眠る秒の和は `READ_WAIT_SECONDS_MAX`。
+    どの頁も混んでいる店でも、そこで `store_unavailable（read_budget）` で断る。承認の読み直しも同じ。
   - 打ち直しも柵を通る（文は同じ・変数は first と after だけ・first は 1〜50）。読める商品の数 500 は頁を小さくしても保つ。
 本物の店は呼ばない（偽の transport・`tests/test_store_shopify.py` の env）。
 """
@@ -242,3 +244,70 @@ def test_頁を小さくしても500件まで読み501件目があれば読み�
     rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
     assert rc_ == 0 and value["complete"] is False and len(value["items"]) == 500
     assert "500 件の上限" in value["note"]
+
+
+# ------------------------------------------------------------------ 1 回の読み全体の上限（監査 5.18.1 直したほうがよい 2）
+
+def _every_page_throttled(monkeypatch, env, times):
+    """どの頁も `times` 回 `THROTTLED` を返してから通す偽の店。打った回数と頁を env に残す。"""
+    real = store_cli.TRANSPORT
+    env["firsts"], env["afters"], seen = [], [], {}
+
+    def transport(method, url, headers, body=None):
+        if body is not None and url.endswith(sh.GQL_PATH):
+            payload = json.loads(body.decode())
+            if payload["query"] == wire.QUERIES["products"]:
+                wire.check_request(method, url, body)
+                after = payload["variables"].get("after")
+                env["firsts"].append(payload["variables"]["first"])
+                env["afters"].append(after)
+                seen[after] = seen.get(after, 0) + 1
+                if seen[after] <= times:
+                    return 200, _errors("THROTTLED")
+        return real(method, url, headers, body)
+
+    monkeypatch.setattr(store_cli, "TRANSPORT", transport)
+
+
+def test_柵_どの頁も混んでいる店でも1回の読みの打ち直しは合わせて上限まで(capsys, env, monkeypatch):
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    _every_page_throttled(monkeypatch, env, 2)
+    rc_, value, err = sh.jrun(capsys, "shop", "items", sh.STORE)
+    assert rc_ == 2 and value["code"] == "store_unavailable" and value["detail"] == "read_budget"
+    pages = len(set(env["afters"]))
+    assert len(env["firsts"]) - pages <= shopify.READ_RESENDS_MAX         # 打ち直しは読み全体で上限まで
+    assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX
+    assert value["why"] and value["fix"] and value["better"]
+    found = refusal.parts("store_unavailable", reason="read_budget")
+    assert found["fix"] == value["fix"]
+    n, seconds = shopify.READ_RESENDS_MAX, int(shopify.READ_WAIT_SECONDS_MAX)
+    assert f"合わせて {n} 回まで" in found["fix"] and f"合わせて {seconds} 秒まで" in found["fix"]
+    assert f"合わせて {n} 回まで・待つのは合わせて {seconds} 秒まで" in found["why"]
+    assert "secret-message-marker" not in json.dumps(value) + err
+
+
+def test_柵_頁の間の待ちが重なっても1回の読みで眠る合計は上限まで(capsys, env, monkeypatch):
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    env["extensions"] = sh.cost(requested=728, available=0, restore=100.0)   # 頁の間はいつも 5 秒
+    rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
+    assert rc_ == 2 and value["code"] == "store_unavailable" and value["detail"] == "read_budget"
+    assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX
+
+
+def test_上限は小さくした頁で500件を読み切る分は通す(capsys, env, monkeypatch):
+    """頁を 5 件まで小さくしても、点数に余りのある店なら 500 件を最後まで読める（頁の間 0.5 秒 × 99）。"""
+    assert (shopify.MAX_PAGES - 1) * shopify.MIN_INTERVAL_SECONDS <= shopify.READ_WAIT_SECONDS_MAX
+    assert 0 < shopify.READ_RESENDS_MAX <= 4 and shopify.READ_WAIT_SECONDS_MAX <= 60
+
+
+def test_承認の読み直しも1回の読みの上限で止まる(capsys, env, monkeypatch):
+    from thth.shop import recheck
+    env["products"] = [sh.product(i) for i in range(1, 501)]
+    sh.setup_store(capsys, env)
+    _every_page_throttled(monkeypatch, env, 2)
+    front = {"from_store": f"store/{sh.STORE}/item/1", "from_store_price": "1200"}
+    line, _ = recheck.check("x.md", front)
+    assert line and "store_unavailable" in line and "数分置いて" in line
+    assert sum(env["slept"]) <= shopify.READ_WAIT_SECONDS_MAX
