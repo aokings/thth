@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しも同じ日。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しと 5.15.0 のネットショップの節も同じ日（出す日がずれたら直す）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 def build_privacy() -> str:
@@ -538,6 +538,24 @@ def build_privacy() -> str:
         "file. THTH's use and transfer to any other app of information received from Google APIs will adhere to the "
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data '
         "Policy</a>, including the Limited Use requirements.</p>")
+
+    add("<h2>Online shops (BASE, read-only)</h2>")
+    add("<p><code>thth shop</code> can read the owner's own online shop on BASE so that THTH can draft a post when "
+        "an item is new, back in stock or reduced in price. It runs only on the owner's own computer: the owner "
+        "creates a personal access token on BASE with the read scopes <code>items.read</code> and "
+        "<code>user.read</code> and gives it to THTH, which keeps it in a file only the owner can read "
+        "(<code>~/.config/thth/</code>, mode 600) and never on the operator's server or thth.me. THTH sends only GET "
+        "requests to <code>apiv2.thebase.com</code>, to two paths: the shop (of which THTH keeps only the shop's ID, "
+        "name, URL and whether it is open, and discards the rest, such as the login email address) and the item "
+        "list. THTH does not read orders or anything about the shop's customers, and it never writes to the shop. "
+        "It keeps one latest snapshot of the items on the owner's computer (ID, name, price, stock, whether on "
+        "sale, image URL and the time it changed); for items that are not public it keeps only the ID and that "
+        "they are not public. Item descriptions are not kept. Drafts are written to the owner's queue unapproved; "
+        "before an approved draft is posted THTH reads the item once more and refuses if the price, visibility or "
+        "availability has changed. A record of who added the shop, set the token, drafted and removed it is kept "
+        "on the owner's computer without the token. <code>thth shop remove</code> deletes the shop's ledger, "
+        "snapshot and token, and <code>thth leave</code> does the same when the project's last account leaves; the "
+        "token on BASE itself is revoked on BASE. THTH is not provided by BASE.</p>")
 
     add("<h2>Attachments</h2>")
     add("<p>Images, video and audio attached to a draft are checked before use. For images, THTH removes "
@@ -941,6 +959,22 @@ def build_privacy() -> str:
         "THTH による利用と他のアプリへの移転は、限定使用（Limited Use）の要件を含む"
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API サービスのユーザーデータに関するポリシー</a>'
         "に従います。</p>")
+
+    add("<h2>ネットショップ（BASE・読むだけ）</h2>")
+    add("<p><code>thth shop</code> は、商品が新しく入った・再入荷した・値下げしたときに投稿の下書きを作れるよう、"
+        "持ち主本人の BASE のネットショップを読みます。動くのは持ち主自身のコンピューターの中だけです。持ち主が BASE で"
+        "読むためのスコープ <code>items.read</code> と <code>user.read</code> の個人用アクセストークンを作って THTH に"
+        "渡し、THTH はそれを本人だけが読めるファイル（<code>~/.config/thth/</code>・600）に置きます。運営者のサーバーや"
+        " thth.me には置きません。THTH が送るのは <code>apiv2.thebase.com</code> への GET だけで、道は 2 つです。ショップ"
+        "（THTH が残すのはショップの ID・名前・URL・公開しているかだけで、ログインのメールアドレスなどほかは捨てます）と"
+        "商品の一覧です。注文やショップのお客さんの情報は読まず、ショップに書き込むこともありません。持ち主のコンピューターに"
+        "商品の最新の写しを 1 枚だけ持ちます（ID・名前・値段・在庫・販売中か・画像の URL・変わった時刻）。公開していない"
+        "商品は ID と非公開であることだけです。商品の説明文は残しません。下書きは承認されていない形で持ち主の queue に"
+        "書きます。承認された下書きを出す前に THTH は商品をもう一度読み、値段・公開・買えるかが変わっていれば断ります。"
+        "誰がショップを足し・トークンを置き・下書きを作り・外したかの記録を、トークンを入れずに持ち主のコンピューターに"
+        "残します。<code>thth shop remove</code> はショップの台帳・写し・トークンを消し、<code>thth leave</code> も"
+        "プロジェクトの最後の口座が抜けるときに同じことをします。BASE の側のトークンは BASE で取り消します。THTH は"
+        " BASE が提供するものではありません。</p>")
 
     add("<h2>添付</h2>")
     add("<p>下書きに付けた画像・動画・音声は、使う前に検査します。画像は、位置情報などの埋め込みメタデータ"

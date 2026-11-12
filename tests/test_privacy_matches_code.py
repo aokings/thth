@@ -16,6 +16,7 @@ import pytest
 
 from thth import map_store, map_world, meta_public, meta_write, meter, permission_watch, relay
 from thth.meta import calls as meta_calls
+from thth.shop import wire as shop_wire
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -106,6 +107,12 @@ def facts() -> list[tuple[str, str]]:
         ("広告の呼び出しの成否の窓・日本語", f"直近 {meta_calls.RATE_WINDOW} 回"),
         ("広告の予算を延ばす口（ads extend・二段確認）", "lifetime budget within the owner's limits after a two-step"),
         ("広告の予算を延ばす口・日本語", "上限の内側で広告セットの終了日や通しの予算を延ばす"),
+        ("店を読む送り先（shop/wire.BASE_HOST）", f"GET requests to <code>{shop_wire.BASE_HOST}</code>, to two paths"),
+        ("店を読む送り先・日本語", f"<code>{shop_wire.BASE_HOST}</code> への GET だけで、道は 2 つ"),
+        ("店を読む道の数（shop/wire.BASE_PATHS）", "to two paths" if len(shop_wire.BASE_PATHS) == 2 else "道の数が privacy と違う"),
+        ("店の鍵の置き場の権限", "<code>~/.config/thth/</code>, mode 600) and never on the operator's server or thth.me"),
+        ("店の注文を読まない", "THTH does not read orders or anything about the shop's customers"),
+        ("店の注文を読まない・日本語", "注文やショップのお客さんの情報は読まず"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
