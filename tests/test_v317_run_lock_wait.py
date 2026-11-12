@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -103,6 +104,26 @@ def test_cmd_runは投稿と採取の両方に待ち時間を渡す(tmp_path, is
     monkeypatch.setattr(cli.core, "throw_once", fake_throw)
     monkeypatch.setattr(cli.collect_mod, "run_collect", fake_collect)
     cli.main(["run", account["name"]])
-    assert waits == {"throw": core.RUN_LOCK_WAIT_SECONDS,
-                     "collect": core.RUN_LOCK_WAIT_SECONDS}
-    assert 0 < core.RUN_LOCK_WAIT_SECONDS < 300
+    assert set(waits) == {"throw", "collect"}
+    # 通しの持ち時間（RunWait）の残りを渡す: 最初の段はほぼ満額、あとの段は前の段より多くならない。
+    assert core.RUN_LOCK_WAIT_SECONDS - 5 < waits["throw"] <= core.RUN_LOCK_WAIT_SECONDS
+    assert 0 <= waits["collect"] <= waits["throw"]
+
+
+def test_RunWaitは段のあいだで1つの締め切りを分け合う():
+    now = [1000.0]
+    run_wait = core.RunWait(150, clock=lambda: now[0])
+    assert run_wait.left() == 150
+    now[0] += 70          # 最初の段が 70 秒待った
+    assert run_wait.left() == 80
+    now[0] += 200         # 持ち時間を使い切った
+    assert run_wait.left() == 0.0
+
+
+def test_待ちの持ち時間はserviceの締め切りに作業の余白を残す():
+    # 11/12 nigamilab: 60 秒では同じ repo の threads の 70 秒の実行を待てなかった。
+    assert core.RUN_LOCK_WAIT_SECONDS >= 120
+    # 待ちを使い切っても、投稿と採取の作業に 2 分は残す（service の timeout で途中で切られない）。
+    assert core.RUN_LOCK_WAIT_SECONDS + 120 <= core.RUN_SERVICE_TIMEOUT_SECONDS
+    unit = (Path(__file__).resolve().parents[1] / "systemd" / "thth@.service").read_text(encoding="utf-8")
+    assert f"TimeoutStartSec={core.RUN_SERVICE_TIMEOUT_SECONDS}" in unit

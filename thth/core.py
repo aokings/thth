@@ -228,7 +228,7 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str, wait=0)
     同じはてな ID を使う別レーンの 2 process は repo が違うので repo では待たず、principal で
     1 つが待つ。順は全順序（repo < principal < account）で、principal を持ったまま repo を
     待つ経路は無い。SNS の口座は principal を取らない（今までどおり 2 段）。待つ締め切りは
-    3 つで共有する（timer の run は 60 秒）。
+    3 つで共有する（timer の run は `RunWait` の通しの 150 秒）。
     """
     from . import principals as principals_mod
     repo_lock_path = accounts_mod.repo_lock_path_for(account_cfg["repo_dir"])
@@ -262,9 +262,26 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str, wait=0)
 # ぶら下がるアカウントは、名前のハッシュで決まる起点（`systemd_gen.offset_minutes`）が
 # 重なると同じ分に起動する。待たないと、片方の実行（kopicha-x と
 # kopicha-mastodon は 10/8 から 1 日 70〜85 回）が丸ごと見送られて exit 1 になっていた。
-# 60 秒は 10 分の刻みと service の timeout（300 秒）より十分短い。手で打つ
-# `thth throw` などは今までどおり待たない（`--wait` で選ぶ）。
-RUN_LOCK_WAIT_SECONDS = 60
+# 手で打つ `thth throw` などは今までどおり待たない（`--wait` で選ぶ）。
+#
+# **150 秒・1 回の run で通しの持ち時間**（11/12 nigamilab）: 同じ repo の threads と
+# hatenablog が同じ分に起き、threads が repo のロックを 70 秒持ったので、60 秒で諦めた
+# hatenablog が account_locked で exit 1 になった。段（投稿・反応・ブックマーク・採取）ごとに
+# 150 秒待つと足して service の timeout（300 秒）を越えて途中で切られるので、待つのは
+# `RunWait` の 1 つの締め切りまで（あとの段は残りだけ待つ。残りが 0 なら待たずに見送る）。
+RUN_LOCK_WAIT_SECONDS = 150
+RUN_SERVICE_TIMEOUT_SECONDS = 300
+
+
+class RunWait:
+    """1 回の timer の run で、ロックを待つ持ち時間を段のあいだで分け合う。"""
+
+    def __init__(self, seconds=RUN_LOCK_WAIT_SECONDS, clock=time.monotonic):
+        self._clock = clock
+        self._deadline = clock() + seconds
+
+    def left(self) -> float:
+        return max(0.0, self._deadline - self._clock())
 
 
 def throw_once(account_name: str, *, production_flag: bool = False,

@@ -4002,8 +4002,9 @@ def cmd_run(args) -> int:
             print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
             notify("fail", reason="missing_token")
             return 2
+        run_wait = core.RunWait()
         result = core.throw_once(args.account, production_flag=True, log=print,
-                                 wait=core.RUN_LOCK_WAIT_SECONDS)
+                                 wait=run_wait.left())
 
         # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
         # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
@@ -4016,7 +4017,7 @@ def cmd_run(args) -> int:
             from . import hatena_reactions
             try:
                 hatena_rc = hatena_reactions.run_collect(
-                    args.account, log=print, trigger=collect_mod.TRIGGER_RUN, wait=core.RUN_LOCK_WAIT_SECONDS)
+                    args.account, log=print, trigger=collect_mod.TRIGGER_RUN, wait=run_wait.left())
                 if hatena_rc:
                     print(f"（反応の採取は完全ではありません: exit={hatena_rc}。次の実行で埋めます）")
             except Exception as e:  # 採取の失敗で投稿の経路を壊さない
@@ -4025,7 +4026,7 @@ def cmd_run(args) -> int:
             # 待ちが無ければロックも取らない。失敗で投稿の rc を悪くしない（採取と同じ規律）。
             from . import bookmark_batch
             try:
-                bookmark_batch.run_due(args.account, account_cfg, log=print, wait=core.RUN_LOCK_WAIT_SECONDS)
+                bookmark_batch.run_due(args.account, account_cfg, log=print, wait=run_wait.left())
             except Exception as e:
                 print(f"（ブックマークのまとめを付けられませんでした: {e.__class__.__name__}。次の実行で続けます）",
                       file=sys.stderr)
@@ -4033,7 +4034,7 @@ def cmd_run(args) -> int:
             try:
                 collect_rc = collect_mod.run_collect(
                     args.account, log=print, trigger=collect_mod.TRIGGER_RUN,
-                    wait=core.RUN_LOCK_WAIT_SECONDS)
+                    wait=run_wait.left())
                 if collect_rc:
                     print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
             except Exception as e:  # 採取の失敗で投稿の経路を壊さない
