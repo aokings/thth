@@ -10,7 +10,8 @@
 
 - 入口は REST `<site>/wp-json/wp/v2/posts`。`<site>` は主体のブログの行の `site_url`（無ければ
   `https://<blog_id>`）**だけ**から組む（原稿にも依頼にも URL を書く欄は無い）。平文の HTTP は `httpsafe` の
-  柵（`THTH_TEST_ALLOW_HTTP=1` かつ loopback）の内だけ（ここで柵は緩めない）。
+  柵（`THTH_TEST_ALLOW_HTTP=1` かつ loopback）の内だけ（ここで柵は緩めない）。送るのは `httpsafe.public_opener()`
+  で、名前を引いた先が内向き（loopback・私用の網・link-local など）ならつながず、確かめた IP へつなぐ。
 - 認証は**アプリケーションパスワード**（WordPress 5.6 から標準・Basic）。鍵は主体の `token` のファイル
   （0600・`thth principal auth <主体> --by <名前>` が標準入力か隠した入力で受け取る）。引数では受けない。
 - 本文は承認の前に `thth/wp_html.py` で HTML にしてある（変換したあとの sha が指紋に入る）。ここは送るだけ。
@@ -239,7 +240,8 @@ class WordPressAdapter:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         limit = READ_TIMEOUT if method == "GET" else WRITE_TIMEOUT
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
-        with httpsafe.urlopen(req, timeout=min(self.timeout, limit)) as response:
+        # 宛先は台帳が決めるので、名前を引いた先が内向きならつながない opener（5.16.0 監査 直したほうがよい 6）。
+        with httpsafe.urlopen(req, timeout=min(self.timeout, limit), via=httpsafe.public_opener()) as response:
             status = response.status
             raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
