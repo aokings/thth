@@ -54,7 +54,9 @@ NOT_MEDIA: dict[str, str] = {
 
 # 投稿先の adapter を持たない、表に並ぶ名前（はてな・サイト・広告）。媒体の集合の比較から外す。
 # `ads` は糸の段の媒体（5.7.0・広告の口座の記録を読むだけ・`thth/ads/`）で、投稿先ではない。
-NON_ADAPTER_NAMES = frozenset({"hatenablog", "hatena_bookmark", "hatenabookmark", "fotolife", "site", "ads"})
+# `wordpress`（5.16.0）は、はてなブログと同じ記事の道（`hatena_publish`・`thth/adapters/wordpress.py`）で出し、
+# 投稿先の adapter の表（`adapters.REGISTRY`）には載せない。
+NON_ADAPTER_NAMES = frozenset({"hatenablog", "wordpress", "hatena_bookmark", "hatenabookmark", "fotolife", "site", "ads"})
 
 # (表の名前, 媒体) → 載せない理由。**理由の無い欠けは試験が赤にする。** 載せたら、ここから消す
 # （消し忘れも試験が赤にする）。表の名前は `tests/test_media_registry.py` の `TABLES` の鍵。
