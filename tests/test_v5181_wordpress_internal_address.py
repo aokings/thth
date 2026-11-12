@@ -115,6 +115,7 @@ def test_台帳_はてなのblog_idは今までどおり(prod):
     ["127.0.0.1"], ["10.0.0.5"], ["172.16.3.4"], ["192.168.1.10"], ["169.254.169.254"], ["100.64.0.1"],
     ["0.0.0.0"], ["224.0.0.1"], ["::1"], ["fe80::1"], ["fc00::1"], ["::ffff:127.0.0.1"], ["::ffff:169.254.169.254"],
     ["64:ff9b::a9fe:a9fe"], ["2002:7f00:1::1"],
+    ["::10.0.0.1"], ["::127.0.0.1"], ["fec0::1"],   # 監査 5.18.1 直したほうがよい 3（IPv4 互換・site-local）
     [PUBLIC_V4, "10.0.0.5"],   # 外と内が混ざった答え（どちらにつながるかを相手に選ばせない）
 ])
 def test_名前で書かれても引いた先が内向きなら鍵を送らずに断る(prod, monkeypatch, answer):
@@ -198,3 +199,42 @@ def test_断りの文はコードの検査と合う():
     assert entry["fix"]["text"] and entry["fix"]["command"] and entry["better"]
     site = refusal_catalog.get("site_url_invalid")
     assert "IP" in site["why"] and site["fix"] and site["better"]
+
+
+# ------------------------------------------------------------------ 内向きの表（監査 5.18.1 直したほうがよい 3）
+# Python の `ipaddress.is_global` の表は版で変わる（2024 年の直しで足された範囲がある）。IANA の特別な用途の表
+# （IPv4・IPv6 Special-Purpose Address Registry）のうち外の網でない範囲を `httpsafe` が自前でも持ち、版によらず
+# 内向きに数える。外の網の例は通ること（引きすぎない）も見る。
+
+INTERNAL_ONES = [
+    # IPv4 互換の IPv6（::/96・廃止）と IPv4 翻訳（::ffff:0:0:0/96）・site-local（fec0::/10・廃止）
+    "::10.0.0.1", "::127.0.0.1", "::8.8.8.8", "::ffff:0:127.0.0.1", "::ffff:0:808:808", "fec0::1", "feff::1",
+    # 版で答えが変わりうる範囲（NAT64 の私用・6to4・捨てる口・偽の接頭辞・ベンチマーク・ORCHID・文書用・SRv6）
+    "64:ff9b:1::1", "2002:808:808::1", "100::1", "100:0:0:1::1", "2001:2::1", "2001:10::1", "2001:20::1",
+    "2001:db8::1", "3fff::1", "5f00::1", "2001::1",
+    # 今までの範囲（IPv6）
+    "::", "::1", "fe80::1", "fc00::1", "fd00::1", "ff02::1",
+    # IPv4
+    "0.0.0.1", "10.0.0.1", "100.64.0.1", "127.0.0.1", "169.254.169.254", "172.16.0.1", "192.0.0.8", "192.0.2.1",
+    "192.88.99.1", "192.168.0.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1", "240.0.0.1",
+    "255.255.255.255",
+]
+EXTERNAL_ONES = [PUBLIC_V4, PUBLIC_V6, "8.8.8.8", "1.1.1.1", "2001:4860:4860::8888", "64:ff9b::808:808"]
+
+
+@pytest.mark.parametrize("address", INTERNAL_ONES)
+def test_柵_特別な用途のアドレスは版によらず内向き(address):
+    assert httpsafe.internal_address(address)
+    assert httpsafe.internal_address(address, allow_loopback=True) or address in ("::1", "127.0.0.1")
+
+
+@pytest.mark.parametrize("address", EXTERNAL_ONES)
+def test_外の網のアドレスは内向きに数えない(address):
+    assert not httpsafe.internal_address(address)
+
+
+def test_自前の表は外の網の範囲を含まない():
+    import ipaddress
+    for net in httpsafe.INTERNAL_NETWORKS:
+        for address in EXTERNAL_ONES:
+            assert ipaddress.ip_address(address) not in net, (net, address)

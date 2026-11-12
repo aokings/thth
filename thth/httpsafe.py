@@ -121,9 +121,46 @@ def _embedded_v4(ip):
     return [v for v in out if v is not None]
 
 
+# 自前の内向きの表（監査 5.18.1 直したほうがよい 3）。`ipaddress.is_global` の表は Python の版で変わり（2024 年の直しで
+# 64:ff9b:1::/48・2002::/16 などが足された）、IPv4 互換の IPv6（::/96）・site-local（fec0::/10）は今の版でも外の網と
+# 答える。IANA の特別な用途の表（IPv4・IPv6 Special-Purpose Address Registry・2025 年までの足し）のうち外の網でない
+# 範囲と、廃止された範囲を、版によらずここで内向きに数える。is_global の答えと「どちらかが内向きなら内向き」で合わせる。
+# 外の網の範囲で、特別な用途でも globally reachable のもの（AS112・AMT など）は is_global に任せる。
+# 2001:20::/28（ORCHIDv2）は表では globally reachable だが、場所の番地でなく名札で、ブログの口は無いので内向きに数える。
+INTERNAL_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    # IPv4
+    '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12',
+    '192.0.0.0/24', '192.0.2.0/24', '192.88.99.0/24', '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24',
+    '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4',
+    # IPv6
+    '::/96',            # 未指定・loopback・IPv4 互換（廃止）
+    '::ffff:0:0:0/96',  # IPv4 翻訳（SIIT）
+    '64:ff9b:1::/48',   # NAT64 の私用
+    '100::/64',         # 捨てる口
+    '100:0:0:1::/64',   # 偽の接頭辞
+    '2001::/32',        # Teredo（中の IPv4 は別に見る）
+    '2001:2::/48',      # ベンチマーク
+    '2001:10::/28',     # ORCHID（廃止）
+    '2001:20::/28',     # ORCHIDv2
+    '2001:db8::/32',    # 文書用
+    '2002::/16',        # 6to4（すべて）
+    '3fff::/20',        # 文書用
+    '5f00::/16',        # SRv6 の SID
+    'fc00::/7',         # 私用（ULA）
+    'fe80::/10',        # link-local
+    'fec0::/10',        # site-local（廃止）
+    'ff00::/8',         # マルチキャスト
+))
+
+
+def _in_internal_table(ip) -> bool:
+    return any(ip.version == net.version and ip in net for net in INTERNAL_NETWORKS)
+
+
 def internal_address(text, *, allow_loopback=False) -> bool:
     """外の網（IANA の globally reachable）でないアドレスか。loopback・私用の網・link-local（169.254 の
-    メタデータの口を含む）・CGNAT・予約・未指定・マルチキャスト。IPv6 の中の IPv4 も見る。読めない形は内向きに数える。"""
+    メタデータの口を含む）・CGNAT・予約・未指定・マルチキャスト・IPv4 互換の IPv6・site-local。IPv6 の中の IPv4 も見る。
+    `is_global` と自前の表（`INTERNAL_NETWORKS`）のどちらかが内向きと言えば内向き。読めない形は内向きに数える。"""
     try:
         ip = ipaddress.ip_address(str(text).split('%', 1)[0])
     except ValueError:
@@ -131,7 +168,7 @@ def internal_address(text, *, allow_loopback=False) -> bool:
     for one in (ip, *_embedded_v4(ip)):
         if allow_loopback and one.is_loopback:
             continue
-        if not one.is_global or one.is_multicast:
+        if not one.is_global or one.is_multicast or _in_internal_table(one):
             return True
     return False
 
