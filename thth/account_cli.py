@@ -21,6 +21,7 @@ subparsers が同じ位置を取り合って `thth account <name>` が壊れる�
 """
 from __future__ import annotations
 
+from . import article_media
 from . import admin_log, leave_gate
 
 import argparse
@@ -270,7 +271,7 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
     data["repo_dir"] = repo_dir or f"$THTH_ROOT/repos/{project}"
     data["env"] = f"~/.config/thth/{name}.env"
     data["token"] = f"~/.config/thth/{name}.token"
-    if media == "hatenablog":
+    if article_media.is_article_media(media):
         # **はてなの口座は「主体 ＋ ブログ 1 つ」を指すだけ**（設計 4.0 S1 §3.3）。
         # token と handle の正本は主体の台帳——同じパス・同じ名乗りを写す（loader が強制する）。
         # token は展開する前の綴りのまま写す（`~/.config/thth/<主体>.token`）。
@@ -409,7 +410,7 @@ def cmd_add(args) -> int:
     # はてな（設計 4.0 S1 §3.3）: `--principal` と `--blog` が要る。ほかの媒体には付けさせない。
     principal_arg = getattr(args, "principal", None)
     blog_arg = getattr(args, "blog", None)
-    if args.media == "hatenablog":
+    if article_media.is_article_media(args.media):
         if not principal_arg or not blog_arg:
             print(f"--principal と --blog が要ります（はてなの口座は主体とブログ 1 つを指します）",
                   file=sys.stderr)
@@ -461,7 +462,7 @@ def cmd_add(args) -> int:
                             repo_dir=args.repo_dir, redirect_uri=args.redirect_uri,
                             principal=principal_arg, blog_id=blog_arg,
                             page_id=getattr(args, "page_id", None))
-        if args.media == "hatenablog":
+        if article_media.is_article_media(args.media):
             # 書く前に loader と同じ突き合わせ（§3.3 の 1〜5）を通す。外れる台帳は書かない。
             from . import principals
             checked = dict(data)

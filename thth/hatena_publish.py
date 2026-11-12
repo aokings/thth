@@ -144,16 +144,19 @@ def remote_differences(ledger, remote, *, base_sha) -> list:
     return out
 
 
-def _default_factory():
-    """差し込まれていなければ S2 の本物の adapter（`thth/adapters/hatenablog.py`）。"""
+def _default_factory(account_cfg=None):
+    """差し込まれていなければ口座の媒体の本物の adapter（`adapters.ARTICLE_ADAPTERS` の表から引く・
+    はてなブログは `thth/adapters/hatenablog.py`）。表に無ければ None（`unsupported_medium`）。"""
     if ADAPTER_FACTORY is not None:
         return ADAPTER_FACTORY
-    from .adapters import hatenablog
-    return hatenablog.factory
+    from . import adapters
+    # 媒体の欄の無い台帳（試験の材料・古い呼び手）は今までどおりはてなブログ。
+    module = adapters.article_module((account_cfg or {}).get("media") or "hatenablog")
+    return getattr(module, "factory", None) if module is not None else None
 
 
 def make_adapter(account_cfg, principal_cfg, adapter_factory=None):
-    factory = adapter_factory or _default_factory()
+    factory = adapter_factory or _default_factory(account_cfg)
     if factory is None:
         raise Unsupported("unsupported_medium")
     return factory(account_cfg, principal_cfg)

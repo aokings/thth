@@ -16,6 +16,7 @@ import dataclasses
 import json
 import os
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import deliveries as deliveries_mod
 from . import refusal_catalog
@@ -82,7 +83,7 @@ def find_delivery(account_cfg: dict, delivery: str):
     elsewhere = False
     unreadable = False
     for name, data in _raw_accounts():
-        if data.get("media") != "hatenablog":
+        if not article_media.is_article_account(data):
             continue
         try:
             record = deliveries_mod.read(name, delivery)

@@ -43,6 +43,7 @@ import datetime
 import json
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import jst
@@ -1284,7 +1285,7 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name]),
             # 4.0 S6 §6.1: はてなの口座だけ・窓の中に採った反応の数（本文なし・鍵は足すだけ）。
             **({"articles": _article_rows(name, cfg, now, read_ats[name], allowed_names)}
-               if cfg.get("media") == "hatenablog" else {})})
+               if article_media.has(cfg, "reactions") else {})})
 
     # 第 3 段: 世間。`--no-world`（3.11.1）なら `_world()` を 1 回も呼ばない
     # ——API を叩くのは言及などだけになる（`calls` に検索が出ない・実行記録も書かない）。
@@ -1313,10 +1314,11 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
             "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
             # 4.0 S5 §3.4: 正本を直したのに更新していない配信（はてなの口座だけ・鍵は足すだけ）。
-            **({"behind_items": _guard(lambda name=name, cfg=cfg: _behind_rows(name, cfg)),
-                # 止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6・鍵は足すだけ）。
-                "bookmark_batch": _guard(lambda name=name: _bookmark_batch_row(name, now))}
-               if cfg.get("media") == "hatenablog" else {}),
+            **({"behind_items": _guard(lambda name=name, cfg=cfg: _behind_rows(name, cfg))}
+               if article_media.is_article_account(cfg) else {}),
+            # 止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6・鍵は足すだけ）。はてなの口座だけ。
+            **({"bookmark_batch": _guard(lambda name=name: _bookmark_batch_row(name, now))}
+               if article_media.has(cfg, "bookmarks") else {}),
             # 10/29 段 0: データに触れる期限（Meta の口座だけ・鍵は足すだけ。段 3 で instagram も）。
             **({"data_access": _guard(lambda name=name, cfg=cfg: _data_access_row(name, cfg, now))}
                if cfg.get("media") in ("facebook", "instagram") else {}),

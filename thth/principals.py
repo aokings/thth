@@ -297,8 +297,9 @@ def blog_entry(principal_cfg: dict, blog_id) -> dict | None:
 
 
 def uses_principal(account_cfg) -> bool:
-    """主体を通す口座か（`media: hatenablog` のときだけ。SNS の口座の `principal` は読まない）。"""
-    return isinstance(account_cfg, dict) and account_cfg.get("media") == MEDIA
+    """主体を通す口座か（記事の口座＝`article_media.is_article_account`。SNS の口座の `principal` は読まない）。"""
+    from . import article_media
+    return article_media.is_article_account(account_cfg)
 
 
 def _same_path(a, b) -> bool:

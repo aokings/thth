@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import jst
@@ -200,7 +201,7 @@ def inspect(account_name: str, *, now) -> dict:
     except accounts_mod.AccountError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
 
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         return _inspect_hatena(row, account_cfg)
 
     if account_cfg.get('media') == 'x':

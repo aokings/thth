@@ -12,6 +12,7 @@ tester の認可画面に降りてくるのは 5 つだけだった（設計 §2
 """
 from __future__ import annotations
 
+from . import article_media
 from . import leave_gate
 
 import json
@@ -135,7 +136,7 @@ def _diagnose(account_name: str) -> dict:
     account_cfg = accounts_mod.load_account(account_name)
     token = accounts_mod.load_token(account_cfg)
 
-    if account_cfg.get('media') == 'hatenablog':
+    if article_media.is_article_account(account_cfg):
         return _diagnose_hatenablog(account_name, account_cfg)
 
     if account_cfg.get('media') == 'x':
@@ -630,7 +631,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     # 無い」（2）でもなく、**診断はできたが×がある**ので、probe が落ちたときと
     # 同じ 1。台帳の値は人が直すもので、道具は測るだけ（設計 §4.2）。
     dummies = accounts_mod.dummy_fields(account_cfg)
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         # はてなの口座（設計 4.0 S1 §3.3）は主体の台帳の雛形の値も名指しする（`principal.<欄>`）。
         # 主体の台帳は `load_account` が読めたので、ここで読めないことは無い。
         from . import principals as principals_mod

@@ -5,6 +5,7 @@ CLI（`thth throw`・`thth run`）も MCP も、投稿を伴う操作はすべ�
 """
 from __future__ import annotations
 
+from . import article_media
 from . import api_diagnostic as api_diagnostic_mod
 
 import contextlib
@@ -452,7 +453,7 @@ def send_due_replies(account_name: str, paths, *, adapter_factory=None, log=None
         out["skipped"] = "account_unreadable"
         return out
     from . import guard as guard_mod, principals
-    if account_cfg.get("media") == "hatenablog" or principals.uses_principal(account_cfg):
+    if article_media.is_article_account(account_cfg) or principals.uses_principal(account_cfg):
         out["skipped"] = "not_sns"
     elif not bool(account_cfg.get("production")):
         out["skipped"] = "not_production"
@@ -718,7 +719,7 @@ def _account_stopped(account_name) -> bool:
 
 def _reply_window_for(account_name, account_cfg, now):
     """返信の窓。はてなの口座・表が作れないときは None（返信も `max_per_run` に数える 4.2 までの形）。"""
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         return None
     from . import guard as guard_mod
     try:
@@ -940,7 +941,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         for rej in result.rejections:
             # はてなの配信原稿は、承認が古い・S2 の断り（画像・相対リンク・未 commit）を run のログに
             # 次の一手つきで 1 行出す（設計 4.0 S2 §8 の 2）。SNS の口座は今までどおり。
-            hatena_note = (account_cfg.get("media") == "hatenablog"
+            hatena_note = (article_media.is_article_account(account_cfg)
                            and _hatena_refusal_noted(rej.reason))
             if (_is_error_reason(rej.reason) or hatena_note) and rej.file not in logged_error_paths:
                 logged_error_paths.add(rej.file)
@@ -990,7 +991,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             skip_posts = True
             continue
         excluded_paths.add(chosen.path)
-        if account_cfg.get("media") == "hatenablog":
+        if article_media.is_article_account(account_cfg):
             # はてなブログの配信原稿（設計 4.0 S1 §6.5）。送信は S2 の adapter（無ければ出さない）。
             from . import hatena_publish
             one_result = hatena_publish.throw_chosen(
@@ -1979,7 +1980,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     run_id = uuid.uuid4().hex[:12]
 
     account_cfg = accounts_mod.load_account(account_name)
-    if account_cfg.get("media") == "hatenablog":
+    if article_media.is_article_account(account_cfg):
         # はてなブログは配信原稿を承認して timer で出す道だけ（設計 4.0 S1 §5・S2 §9 の 7）。
         # 同席の送信・返信は持たない（主体の 3 段の数え・配信の台帳を通らない書き込みを作らない）。
         msg = ("unsupported_operation: はてなブログの口座には thth send（返信も）で出せません。"

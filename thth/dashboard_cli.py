@@ -32,6 +32,7 @@ import json
 import os
 import sys
 
+from . import article_media
 from . import accounts as accounts_mod
 from . import jst
 from . import refusal_catalog
@@ -970,7 +971,7 @@ def _episode(item, measured_index, bookmarks, readable):
            "impressions": None, "reactions_total": None, "engagement_rate_pct": None,
            "bookmarks_received": None, "clicks": None, "collected_at": None, "cannot_say": {}}
     why = row["cannot_say"]
-    if medium == "hatenablog":
+    if article_media.is_article_media(medium):
         why["impressions"] = NOT_COLLECTED["blog_pv"]
         delivery = item.get("delivery")
         if not delivery:
@@ -1005,8 +1006,8 @@ def _episode(item, measured_index, bookmarks, readable):
 def _episodes(items):
     """回ごとの成果の列（`show` の `items[]` から）。"""
     cannot_say: set = set()
-    sns = [i.get("account") for i in items if i.get("medium") not in ("hatenablog", None) and i.get("posted")]
-    blogs = [i.get("account") for i in items if i.get("medium") == "hatenablog" and i.get("delivery")]
+    sns = [i.get("account") for i in items if i.get("medium") is not None and not article_media.is_article_media(i.get("medium")) and i.get("posted")]
+    blogs = [i.get("account") for i in items if article_media.is_article_media(i.get("medium")) and i.get("delivery")]
     measured_index = _measured_index(sns, cannot_say)
     bookmarks = _bookmarks_by_delivery(blogs, cannot_say)
     readable = set() if "reactions_unreadable" in cannot_say else {"reactions"}
@@ -1031,7 +1032,7 @@ def _impressions_outcome(episodes):
         return only["sum"], None, by_account
     if by_account:
         return None, "accounts_not_summed", by_account
-    if any(r["medium"] != "hatenablog" and r["status"] == "posted" for r in episodes):
+    if any(not article_media.is_article_media(r["medium"]) and r["status"] == "posted" for r in episodes):
         return None, "not_measured_yet", by_account
     return None, "not_published_yet", by_account
 
@@ -1065,7 +1066,7 @@ def _campaign_detail(project, thread, events, now, allowed_names=None):
     else:
         cannot_say.add("scenario_show_unavailable")
     impressions, why_impressions, by_account = _impressions_outcome(episodes)
-    blogs = [r for r in episodes if r["medium"] == "hatenablog" and r["delivery"]]
+    blogs = [r for r in episodes if article_media.is_article_media(r["medium"]) and r["delivery"]]
     bookmarks = [r["bookmarks_received"] for r in blogs if _int(r["bookmarks_received"])]
     outcomes = {
         "impressions": impressions, "impressions_by_account": by_account,
