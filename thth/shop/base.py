@@ -22,38 +22,18 @@ import re
 import time
 import urllib.parse
 
+# 店に寄らない行の部品は `rows.py`（3 つの店で共通）。今の試験と呼ぶ側が使う名前はここにも残す。
+from .rows import NAME_MAX, ROW_FIELDS, URL_MAX, _CONTROL, buyable, clean_text, snapshot_row  # noqa: F401
+from .rows import https_url as _https_url
+from .rows import is_int as _int
 from .wire import BASE_ORIGIN, StoreRefused, default_transport
 
 PAGE_LIMIT = 100
 MAX_PAGES = 5
 MIN_INTERVAL_SECONDS = 1.0
 SLEEP = time.sleep
-NAME_MAX = 200
-URL_MAX = 2048
 SALES_STATUSES = ("item_waiting_for_sale", "item_now_on_sale", "item_end_of_sale")
 _TYPE = re.compile(r"/errors/[a-z_]+/[a-z_-]+\Z")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f  ]")
-# 写しと出力に持つ欄（公開の商品）。非公開の商品は `id` と `visible` だけ。
-ROW_FIELDS = ("id", "name", "price", "stock", "visible", "sales_status", "image_url", "item_url", "modified_at")
-
-
-def clean_text(value, limit=NAME_MAX) -> str:
-    """利用者の入力（商品名など）: 改行・制御文字を空白に、`---` を落とし、空白を詰めて切る。"""
-    text = _CONTROL.sub(" ", value if isinstance(value, str) else "")
-    while "---" in text:
-        text = text.replace("---", "-")
-    return " ".join(text.split())[:limit]
-
-
-def _https_url(value) -> str | None:
-    if not isinstance(value, str) or len(value) > URL_MAX or _CONTROL.search(value) or " " in value:
-        return None
-    parts = urllib.parse.urlsplit(value)
-    return value if parts.scheme == "https" and parts.hostname and not parts.username else None
-
-
-def _int(value) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def refusal_for(status: int, raw: bytes) -> StoreRefused:
@@ -140,13 +120,3 @@ def normalize(item) -> dict:
             "visible": True, "sales_status": item["sales_status"], "image_url": _https_url(first.get("url")),
             "item_url": None, "modified_at": clean_text(item["modified_at"], 40)}
 
-
-def snapshot_row(row: dict) -> dict:
-    if not row.get("visible"):
-        return {"id": row["id"], "visible": False}
-    return {key: row.get(key) for key in ROW_FIELDS}
-
-
-def buyable(row: dict) -> bool:
-    """公開で買える（下書きを作ってよい）商品か。"""
-    return bool(row.get("visible")) and row.get("sales_status") == "item_now_on_sale" and (row.get("stock") or 0) > 0

@@ -4,7 +4,7 @@
 1 回読み直す。値段・公開・在庫切れ（買えるか）が下書きを作ったときと変わっていれば、前向きに断る
 （`store_item_changed`）。見せる段（1 段目）は網に出ない。
 
-- 読むのは `GET /api/items` だけ（`wire.py` の網の口・定数のホスト・GET だけ）。注文は読まない。
+- 読むのは店の種類の口（`kinds.py`）の商品の一覧だけ（`wire.py` の網の口・表にある道だけ）。注文は読まない。
 - 店の台帳が**この機械に無い**ときは読み直せない（店の台帳と鍵は手元の thth にだけ置く決め）。断らずに 1 行の
   知らせを返す（承認の道を止めない・人が `thth shop items` で確かめる）。
 - 台帳はあるのに読めない（鍵の期限切れ・BASE に届かない・読み切れずに見つからない）ときは、確かめられない
@@ -15,10 +15,11 @@ from __future__ import annotations
 import re
 
 from .. import jst, redact, refusal
-from . import COMMAND, base, ledger
+from . import COMMAND, kinds, ledger, rows
 from .wire import StoreRefused
 
-_ORIGIN = re.compile(r"store/([A-Za-z0-9_.-]{1,64})/item/([0-9]{1,18})\Z")
+# 商品の id は整数の店と文字列の店がある（設計 Shopify と STORES §6.2）。比べるのは `str()` 同士。
+_ORIGIN = re.compile(r"store/([A-Za-z0-9_.-]{1,64})/item/([A-Za-z0-9]{1,64})\Z")
 _PRICE = re.compile(r"-?[0-9]{1,12}\Z")
 _MATERIAL = re.compile(r"price (-?[0-9]{1,12}) -> (-?[0-9]{1,12})\Z")
 
@@ -54,7 +55,7 @@ def check(path: str, front_matter: dict, *, transport=None) -> tuple[str | None,
     matched = _ORIGIN.fullmatch(str(value).strip())
     if not matched:
         return _line(path, "store_item_changed", "from_store_unreadable"), None
-    store, item_id = matched.group(1), int(matched.group(2))
+    store, item_id = matched.group(1), matched.group(2)
     try:
         cfg = ledger.load(store)
     except StoreRefused as exc:
@@ -71,16 +72,19 @@ def check(path: str, front_matter: dict, *, transport=None) -> tuple[str | None,
         if transport is None:
             from . import cli as store_cli
             transport = store_cli.TRANSPORT
-        read = base.Client(token["access_token"], transport=transport).items()
+        item_id = str(kinds.get(cfg["kind"])["parse_item_id"](item_id))
+        read = kinds.client(cfg, token, transport).items()
     except StoreRefused as exc:
+        if exc.code == "store_args_invalid":
+            return _line(path, "store_item_changed", "from_store_unreadable"), None
         return _line(path, exc.code, exc.detail), None
-    row = next((r for r in read["items"] if r["id"] == item_id), None)
+    row = next((r for r in read["items"] if str(r["id"]) == item_id), None)
     if row is None:
         return _line(path, "store_item_changed" if read["complete"] else "store_read_incomplete",
                      "item_gone" if read["complete"] else None), None
     if not row.get("visible"):
         return _line(path, "store_item_changed", "unpublished"), None
-    if not base.buyable(row):
+    if not rows.buyable(row):
         return _line(path, "store_item_changed", "not_buyable"), None
     expected = _expected_price(front_matter)
     if expected is not None and row.get("price") != expected:

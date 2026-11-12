@@ -29,7 +29,7 @@ import os
 import sys
 
 from .. import admin_log, jst, redact, refusal
-from . import ACTION_PREFIX, COMMAND, NOT_BY_BASE, base, diff as diff_mod, draft as draft_mod, ledger
+from . import ACTION_PREFIX, COMMAND, diff as diff_mod, draft as draft_mod, kinds, ledger
 from . import remove as remove_mod
 from .wire import StoreRefused
 
@@ -82,10 +82,10 @@ def _log_ready() -> None:
         raise StoreRefused("store_log_unavailable") from None
 
 
-def _record(event: str, store: str, by: str, diff: dict) -> None:
+def _record(event: str, store: str, by: str, diff: dict, kind: str = "base") -> None:
     """記録に 1 行（動きの名前は `shopread_…`・名前・店・時刻・欄の前後だけ。鍵は入れない）。"""
     try:
-        admin_log.append(ACTION_PREFIX + event, store, {"media": "base"}, by=by, diff=diff)
+        admin_log.append(ACTION_PREFIX + event, store, {"media": kind}, by=by, diff=diff)
     except (OSError, ValueError, admin_log.AdminLogError):
         raise StoreRefused("store_log_unavailable", "after_change") from None
 
@@ -97,7 +97,7 @@ def _open(args):
     when = ledger.expiry(token, _today())
     if when["state"] == "expired":
         raise StoreRefused("store_token_expired", when["expires_on"])
-    return cfg, token, when, base.Client(token["access_token"], transport=TRANSPORT)
+    return cfg, token, when, kinds.client(cfg, token, TRANSPORT)
 
 
 def _expiry_note(when) -> str | None:
@@ -125,11 +125,11 @@ def cmd_add(args) -> int:
         raise StoreRefused("store_args_invalid", "project")
     _log_ready()
     path = ledger.write_new(args.store, ledger.build(args.store, kind=args.kind, project=args.project))
-    _record("added", args.store, by, {"kind": [None, args.kind], "project": [None, args.project]})
+    _record("added", args.store, by, {"kind": [None, args.kind], "project": [None, args.project]}, args.kind)
     print(f"台帳を書きました: {path}（0600）")
     print(f"次に、店の持ち主が BASE Developers で読むだけの権限（items.read・user.read）の PAT を発行し、"
           f"thth {COMMAND} token set {args.store} --expires <期限の日> --by <名前> で渡してください。")
-    print(NOT_BY_BASE)
+    print(kinds.get(args.kind)["not_by"])
     return 0
 
 
@@ -156,7 +156,7 @@ def cmd_token_set(args) -> int:
     if not value or any(c.isspace() for c in value) or len(value) > 4096:
         raise StoreRefused("store_token_empty")
     redact.register_secret(value)
-    shop = base.Client(value, transport=TRANSPORT).user()
+    shop = kinds.client(cfg, {"access_token": value}, TRANSPORT).user()
     try:
         before = ledger.load_token(cfg)
     except StoreRefused:
@@ -174,7 +174,7 @@ def cmd_token_set(args) -> int:
     _record("token_set", args.store, by,
             {"shop_id": [before.get("shop_id") if before else None, shop["shop_id"]],
              "expires_on": [before.get("expires_on") if before else None, day.isoformat()],
-             "replaced": [None, before is not None], "snapshot_dropped": [None, dropped]})
+             "replaced": [None, before is not None], "snapshot_dropped": [None, dropped]}, cfg["kind"])
     print(f"保存しました: {cfg['token']}（600）・店 {shop['shop_name'] or '（名前なし）'}・鍵の期限 {day.isoformat()}")
     if dropped:
         print(f"店が替わったので、前の店の写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します")
@@ -187,32 +187,37 @@ def cmd_token_set(args) -> int:
 # ------------------------------------------------------------------ 読む口
 
 def cmd_whoami(args) -> int:
-    _cfg, _token, when, client = _open(args)
+    cfg, _token, when, client = _open(args)
     shop = client.user()
-    value = {"store": args.store, "kind": "base", **shop, "token": when, "notice": NOT_BY_BASE}
+    not_by = kinds.get(cfg["kind"])["not_by"]
+    value = {"store": args.store, "kind": cfg["kind"], **shop, "token": when, "notice": not_by}
     if args.json:
         _print(value)
         return 0
     print(f"{args.store}: {shop['shop_name'] or '（名前なし）'}  {shop['shop_url']}"
           f"（公開 {'はい' if shop['able_to_business'] else 'いいえ' if shop['able_to_business'] is False else '不明'}）")
     print(f"  鍵の期限: {when['expires_on'] or '不明'}" + (f"（あと {when['days_left']} 日）" if when["days_left"] is not None else ""))
-    print(f"  {NOT_BY_BASE}")
+    print(f"  {not_by}")
     _note(args, when)
     return 0
 
 
-def _incomplete_note(read) -> str | None:
+def _incomplete_note(read, cfg) -> str | None:
     if read["complete"]:
         return None
-    return (f"全部は読めていません（{read['pages']} 頁・{base.PAGE_LIMIT * base.MAX_PAGES} 件の上限）。"
+    return (f"全部は読めていません（{read['pages']} 頁・{kinds.get(cfg['kind'])['read_cap']()} 件の上限）。"
             "消えた・売り切れは言わず、写しも進めません")
 
 
+def _stock_text(stock) -> str:
+    return "—（数えない）" if stock is None else str(stock)
+
+
 def cmd_items(args) -> int:
-    _cfg, _token, when, client = _open(args)
+    cfg, _token, when, client = _open(args)
     read = client.items()
     value = {"store": args.store, "complete": read["complete"], "pages": read["pages"], "items": read["items"],
-             "token": when, "note": _incomplete_note(read)}
+             "token": when, "note": _incomplete_note(read, cfg)}
     if args.json:
         _print(value)
         return 0
@@ -221,7 +226,7 @@ def cmd_items(args) -> int:
             print(f"{row['id']}  （非公開）")
             continue
         price = "—" if row["price"] is None else f"{row['price']:,} 円"
-        print(f"{row['id']}  {row['name']}  {price}  在庫 {row['stock']}  {row['sales_status']}")
+        print(f"{row['id']}  {row['name']}  {price}  在庫 {_stock_text(row['stock'])}  {row['sales_status']}")
     print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
     _note(args, when)
     return 0
@@ -244,7 +249,7 @@ def _read_and_compare(args, client, token):
 
 
 def cmd_diff(args) -> int:
-    _cfg, token, when, client = _open(args)
+    cfg, token, when, client = _open(args)
     read, snapshot, changes, switched = _read_and_compare(args, client, token)
     read_at = ledger.now_iso()
     baseline = snapshot is None
@@ -256,7 +261,7 @@ def cmd_diff(args) -> int:
         accepted = True
     value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
              "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
-             "accepted": accepted, "token": when, "note": _incomplete_note(read), "shop_switched": switched}
+             "accepted": accepted, "token": when, "note": _incomplete_note(read, cfg), "shop_switched": switched}
     if args.json:
         _print(value)
         return 0
@@ -284,6 +289,8 @@ def cmd_draft(args) -> int:
     by = _by(argparse.Namespace(by=getattr(args, "by", None) or os.environ.get("THTH_ACTOR")
                                 or f"thth {COMMAND} draft"))
     cfg, token, when, client = _open(args)
+    # `--item` は字の形だけ見て受け、店の種類の id の形（整数か文字列）にここで直す。
+    item = kinds.get(cfg["kind"])["parse_item_id"](args.item) if args.item is not None else None
     account = draft_mod.load_account(args.to)
     queue = draft_mod.queue_dir(account)
     shop = client.user()
@@ -293,7 +300,7 @@ def cmd_draft(args) -> int:
     read, snapshot, changes, _switched = _read_and_compare(args, client, token)
     if snapshot is None:
         raise StoreRefused("store_draft_no_baseline")
-    picked = draft_mod.choose(changes, read["items"], item=args.item, kind=args.kind)
+    picked = draft_mod.choose(changes, read["items"], item=item, kind=args.kind)
     if not picked:
         raise StoreRefused("store_draft_nothing")
     since = snapshot.get("read_at")
@@ -313,11 +320,12 @@ def cmd_draft(args) -> int:
         written.append({"id": row["id"], "kind": change["draft_kind"],
                         "path": draft_mod.write(queue, name, text)})
     _record("drafted", args.store, by, {"to": [None, args.to], "items": [[], [row["id"] for row in written]],
-                                        "kinds": [[], [row["kind"] for row in written]]})
-    notes = ["status は draft です（承認されていません）。本文は素の 1〜2 行なので、出す前に整えて thth approve に通してください",
-             "商品頁の URL は組み方を公式で確かめられなかったので、店の URL を載せました（from_store_url: shop）",
-             "画像は載せていません（from_store_image: none）",
-             f"写しは進めていません。済んだら thth {COMMAND} diff {args.store} --accept で進めます"]
+                                        "kinds": [[], [row["kind"] for row in written]]}, cfg["kind"])
+    notes = ["status は draft です（承認されていません）。本文は素の 1〜2 行なので、出す前に整えて thth approve に通してください"]
+    if any(draft_mod.url_kind(row) == "shop" for _change, row in picked):
+        notes.append("商品頁の URL は組み方を公式で確かめられなかったので、店の URL を載せました（from_store_url: shop）")
+    notes += ["画像は載せていません（from_store_image: none）",
+              f"写しは進めていません。済んだら thth {COMMAND} diff {args.store} --accept で進めます"]
     if account.get("project") != cfg["project"]:
         notes.append(f"注意: 口座 {args.to} の project（{account.get('project')}）が店の project（{cfg['project']}）と"
                      "違います。出す先が合っているか確かめてください")
@@ -344,9 +352,19 @@ def _remove_lines(found) -> list:
     return lines
 
 
+def _revoke_note(store: str, *, done: bool) -> str:
+    """店の側の鍵は THTH が消せないことの 1 行（店の種類ごと・台帳が読めなければ BASE の文）。"""
+    try:
+        kind = ledger.load(store)["kind"]
+    except StoreRefused:
+        kind = "base"
+    return kinds.get(kind)["revoke_done" if done else "revoke_plan"]
+
+
 def cmd_remove(args) -> int:
     by = _by(args)
     found = remove_mod.plan(args.store)
+    revoke_done = _revoke_note(args.store, done=True)
     if not found["targets"] and not found["kept"]:
         raise StoreRefused("store_missing")
     digest = remove_mod.digest(found)
@@ -358,7 +376,7 @@ def cmd_remove(args) -> int:
         print(f"消しません（確認の一段目です）: 店 {args.store}。二段目で次の順に消します")
         for line in _remove_lines(found):
             print(line)
-        print("  BASE の側の PAT は消えません。BASE Developers で店の持ち主が取り消してください")
+        print("  " + _revoke_note(args.store, done=False))
         print(f"  消すなら: thth {COMMAND} remove {args.store} --by {json.dumps(by, ensure_ascii=False)} "
               f"--confirm {digest}")
         return 1
@@ -376,16 +394,17 @@ def cmd_remove(args) -> int:
             print(f"消しました: {words[target['category']]} {target['path']}")
     for line in _remove_lines({"targets": [], "kept": found["kept"]}):
         print(line)
-    print("BASE の側の PAT は消えていません。BASE Developers で店の持ち主が取り消してください")
+    print(revoke_done)
     return 0
 
 
 # ------------------------------------------------------------------ 登録
 
-def _item_id(value: str) -> int:
-    if not value.isdigit() or len(value) > 18:
-        raise argparse.ArgumentTypeError("商品の id は数字です（thth shop items に出ます）")
-    return int(value)
+def _item_id(value: str) -> str:
+    """字の形（英数字 64 字まで）だけ見る。店の id の形（BASE は数字）は台帳を読んでから直す（`kinds.parse_item_id`）。"""
+    if not kinds.item_text_ok(value):
+        raise argparse.ArgumentTypeError("商品の id は英数字です（thth shop items に出ます）")
+    return value
 
 
 PARENT_HELP = "店（店を読む: BASE など）と Instagram の商品タグ"

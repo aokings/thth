@@ -5,13 +5,16 @@
 - `new`: 写しに無かった公開の商品。
 - `published`: 非公開から公開になった。`unpublished`: 公開から非公開になった。
 - `price_down`・`price_up`: 値段の上下（前と今の数は材料として持つ。下書きの本文には書かない）。
-- `sold_out`・`restock`: 在庫の節目だけ（1 以上 → 0、0 → 1 以上）。ほかの在庫の増減は違いに数えない。
+- `sold_out`・`restock`: 在庫の節目だけ（ある → 無い、無い → ある。在庫を数えない商品は「ある」）。ほかの在庫の増減は
+  違いに数えない。
 - `removed`: 写しにあって今の読みに無い。
 
 **全ページを読み切れなかったとき**（`complete` が偽）は、`removed` と `sold_out` を言わない（読めなかった頁に
 あるだけかもしれない）。写しも進めない（呼ぶ側）。
 """
 from __future__ import annotations
+
+from .rows import in_stock
 
 KINDS = ("new", "published", "unpublished", "price_down", "price_up", "sold_out", "restock", "removed")
 # 下書きを作れる違い → 下書きの選び方（`--kind`）。
@@ -38,10 +41,11 @@ def compare(before_items: dict, rows: list, *, complete: bool) -> list:
         if isinstance(price_a, int) and isinstance(price_b, int) and price_a != price_b:
             changes.append(_change("price_down" if price_b < price_a else "price_up", row,
                                    before=price_a, after=price_b))
-        stock_a, stock_b = old.get("stock") or 0, row.get("stock") or 0
-        if stock_a > 0 and stock_b == 0 and complete:
+        # 在庫の節目は「在庫があるか」の前と今で決める（None は数えない＝ある・`rows.in_stock`）。
+        had, has = in_stock(old), in_stock(row)
+        if had and not has and complete:
             changes.append(_change("sold_out", row))
-        elif stock_a == 0 and stock_b > 0:
+        elif not had and has:
             changes.append(_change("restock", row))
     if complete:
         for key, old in before_items.items():

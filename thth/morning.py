@@ -921,8 +921,8 @@ def _ads_names(target, kind) -> list:
 
 
 def _store_key_lines(projects, now) -> list:
-    """店（`thth/shop/`・BASE の PAT）の鍵の期限が 14 日を切った・過ぎた・分からない、の 1 行ずつ。網には出ない。"""
-    from .shop import COMMAND, ledger as store_ledger
+    """店（`thth/shop/`・BASE の PAT など・種類の名前は `shop/kinds.py`）の鍵の期限が 14 日を切った・過ぎた・分からない、の 1 行ずつ。網には出ない。"""
+    from .shop import COMMAND, kinds as store_kinds, ledger as store_ledger
     from .shop.wire import StoreRefused
     lines = []
     for name in store_ledger.list_names():
@@ -938,7 +938,8 @@ def _store_key_lines(projects, now) -> list:
         head = {"soon": f"あと {when['days_left']} 日で切れます（{when['expires_on']}）",
                 "expired": f"期限を過ぎています（{when['expires_on']}）",
                 "unknown": "期限が分かりません"}[when["state"]]
-        lines.append(f"店 {name} の鍵（BASE の PAT）: {head}（thth {COMMAND} token set {name} --expires <日付> --by <名前>）")
+        key_name = store_kinds.get(cfg["kind"])["key_name"]
+        lines.append(f"店 {name} の鍵（{key_name}）: {head}（thth {COMMAND} token set {name} --expires <日付> --by <名前>）")
     return lines
 
 

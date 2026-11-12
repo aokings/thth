@@ -6,8 +6,9 @@
 - 本文は素の 1〜2 行（商品名・「新しく入りました」などの一言・URL）。文は利用者の LLM が書く前提。
   値下げの「前 → 今」の数は本文に書かず、頭（front-matter）に材料として置くだけ。
 - 頭に出所: `from_store: store/<店>/item/<id>`・読んだ時刻・違いの種類。商品名は利用者の入力なので、改行・
-  制御文字・`---` を落としてから入れる（`base.clean_text`）。
-- 商品頁の URL は公式で組み方を確かめられなかったので、店の URL（`GET /api/user` の `shop_url`）を載せ、
+  制御文字・`---` を落としてから入れる（`rows.clean_text`）。
+- 商品頁の URL が応答にある店（Shopify の `onlineStoreUrl`）はそれを載せ、`from_store_url: item` と書く。
+  無い店（BASE）は、組み方を公式で確かめられなかったので店の URL（`GET /api/user` の `shop_url`）を載せ、
   `from_store_url: shop` と書く。画像は今の queue の画像の欄（repo の中のファイル）に素直に乗らないので載せず、
   `from_store_image: none` と書く。
 - 書く前に今の lint（`thth/lint.py`）に通す。同じ名前のファイルがあれば上書きしない。commit・push はしない
@@ -27,7 +28,7 @@ import secrets
 from pathlib import Path
 
 from .. import accounts, jst
-from . import base
+from . import rows as rows_mod
 from .diff import DRAFT_KINDS
 from .wire import StoreRefused
 
@@ -52,14 +53,15 @@ def queue_dir(cfg) -> Path:
 
 def choose(changes: list, rows: list, *, item=None, kind=None) -> list:
     """下書きにする `(違い, 行)` の組（上限 `MAX_DRAFTS`）。"""
-    by_id = {row["id"]: row for row in rows}
+    # id は整数の店と文字列の店があるので、`str()` 同士で比べる（設計 Shopify と STORES §6.2）。
+    by_id = {str(row["id"]): row for row in rows}
     picked = []
     for change in changes:
         draft_kind = DRAFT_KINDS.get(change["kind"])
-        row = by_id.get(change["id"])
-        if draft_kind is None or row is None or not base.buyable(row) or not display_name(row):
+        row = by_id.get(str(change["id"]))
+        if draft_kind is None or row is None or not rows_mod.buyable(row) or not display_name(row):
             continue
-        if item is not None and change["id"] != item:
+        if item is not None and str(change["id"]) != str(item):
             continue
         if kind is not None and draft_kind != kind:
             continue
@@ -69,7 +71,7 @@ def choose(changes: list, rows: list, *, item=None, kind=None) -> list:
 
 def display_name(row: dict) -> str:
     """本文に載せる商品名（改行・制御文字・`---` を落とし、頭の `#` も落とす）。空なら作らない。"""
-    return base.clean_text(row.get("name"), DRAFT_NAME_MAX).lstrip("#＃ ").strip()
+    return rows_mod.clean_text(row.get("name"), DRAFT_NAME_MAX).lstrip("#＃ ").strip()
 
 
 def origin(store: str, row_id) -> str:
@@ -88,15 +90,25 @@ def text_for(store: str, account: str, media: str, change: dict, row: dict, *, s
     name = display_name(row)
     lines = ["---", "thth: 1", f"account: {account}", "status: draft", f"publish_at: {publish_at}",
              f"from_store: {origin(store, row['id'])}", f"from_store_read_at: {read_at}",
-             f"from_store_change: {change['kind']}", "from_store_url: shop", "from_store_image: none"]
+             f"from_store_change: {change['kind']}", f"from_store_url: {url_kind(row)}", "from_store_image: none"]
     if isinstance(since, str) and since:
-        lines.append(f"from_store_since: {base.clean_text(since, 40)}")
+        lines.append(f"from_store_since: {rows_mod.clean_text(since, 40)}")
     if isinstance(row.get("price"), int) and not isinstance(row.get("price"), bool):
         lines.append(f"from_store_price: {row['price']}")
     if material(change):
         lines.append(f"from_store_material: {material(change)}")
-    lines += ["---", "", f"## {media}", "", f"{name} {PHRASES[kind]}", shop_url, ""]
+    lines += ["---", "", f"## {media}", "", f"{name} {PHRASES[kind]}", row_url(row) or shop_url, ""]
     return "\n".join(lines)
+
+
+def row_url(row: dict) -> str | None:
+    """商品頁の URL が取れる店（Shopify の `onlineStoreUrl`）なら、その URL（https の検査を通したもの）。"""
+    return rows_mod.https_url(row.get("item_url"))
+
+
+def url_kind(row: dict) -> str:
+    """頭の `from_store_url`: 商品頁の URL を載せたら item、店の URL なら shop。"""
+    return "item" if row_url(row) else "shop"
 
 
 def file_name(store: str, row_id, kind: str, now) -> str:
@@ -127,7 +139,7 @@ def _head(text: str) -> dict:
 def same_change_exists(queue: Path, store: str, row_id, change: dict, since) -> str | None:
     """同じ出所・同じ違い・同じ写しから作った下書きが queue にあれば、そのファイルの名前。"""
     want = {"from_store": origin(store, row_id), "from_store_change": change["kind"],
-            "from_store_since": base.clean_text(since, 40) if isinstance(since, str) else ""}
+            "from_store_since": rows_mod.clean_text(since, 40) if isinstance(since, str) else ""}
     wanted_material = material(change)
     marker = "from_store: " + want["from_store"]
     for path in sorted(queue.glob("*.md")):

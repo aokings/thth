@@ -23,11 +23,14 @@ import json
 import os
 
 from .. import accounts, jst, redact, secrets_fs
+from . import kinds as kinds_mod
 from .wire import StoreRefused
 
 STORES_DIR_ENV = "THTH_STORES_DIR"
-KINDS = ("base",)  # Shopify は初めの版から外した（2026-11-12）。足すときはここと `base.py` の隣に。
-FIELDS = ("store", "kind", "project", "token")
+# 店の種類は `kinds.py` の表（足すときはそこと口のモジュールに）。
+KINDS = kinds_mod.NAMES
+# BASE の台帳の欄（種類ごとの欄は `kinds.KINDS[<種類>]["ledger_fields"]`）。
+FIELDS = kinds_mod.BASE_FIELDS
 SNAPSHOT_FILE = "snapshot.json"
 SNAPSHOT_SCHEMA = "thth.store_snapshot/1"
 # 鍵の期限の知らせ（`thth morning` と同じ 14 日前から）。
@@ -63,9 +66,14 @@ def list_names() -> list:
     return [e[:-5] for e in entries if e.endswith(".json") and accounts.name_is_safe(e[:-5])]
 
 
+def fields_for(kind) -> tuple:
+    found = kinds_mod.KINDS.get(kind) if isinstance(kind, str) else None
+    return found["ledger_fields"] if found else ()
+
+
 def validate(name: str, data) -> None:
-    if (not isinstance(data, dict) or set(data) != set(FIELDS) or data["store"] != name
-            or data["kind"] not in KINDS
+    if (not isinstance(data, dict) or data.get("kind") not in KINDS or set(data) != set(fields_for(data["kind"]))
+            or data["store"] != name
             or not isinstance(data["project"], str) or not accounts.name_is_safe(data["project"])
             or not isinstance(data["token"], str) or not data["token"].strip()):
         raise StoreRefused("store_ledger_invalid")
@@ -91,8 +99,9 @@ def default_token(name: str) -> str:
     return f"~/.config/thth/store-{check_name(name)}.token"
 
 
-def build(name: str, *, kind: str, project: str) -> dict:
-    return {"store": name, "kind": kind, "project": project, "token": default_token(name)}
+def build(name: str, *, kind: str, project: str, **extra) -> dict:
+    """台帳の 1 本。種類ごとの欄（Shopify の `shop` など）は `extra` で渡す（検査は `validate`）。"""
+    return {"store": name, "kind": kind, "project": project, "token": default_token(name), **extra}
 
 
 def write_new(name: str, data: dict) -> str:
@@ -167,10 +176,10 @@ def read_snapshot(name: str) -> dict | None:
 
 
 def write_snapshot(name: str, *, shop_id, items: list, read_at: str) -> str:
-    """写しを 1 枚に置き換える。持つのは許した欄だけ（`base.snapshot_row`）。"""
-    from . import base
+    """写しを 1 枚に置き換える。持つのは許した欄だけ（`rows.snapshot_row`）。"""
+    from . import rows
     value = {"schema": SNAPSHOT_SCHEMA, "read_at": read_at, "shop_id": shop_id,
-             "items": {str(row["id"]): base.snapshot_row(row) for row in items}}
+             "items": {str(row["id"]): rows.snapshot_row(row) for row in items}}
     path = snapshot_path(name)
     secrets_fs.atomic_write_json(path, value, mode=0o600)
     return path

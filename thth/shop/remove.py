@@ -126,9 +126,10 @@ def purge_for_leave(account: str, project, *, by: str) -> list:
     from . import ACTION_PREFIX
     removed = []
     for name in names:
+        kind = ledger.load(name)["kind"]
         found = plan(name)
         done = execute(found)
-        admin_log.append(ACTION_PREFIX + "removed", name, {"media": "base"}, by=by,
+        admin_log.append(ACTION_PREFIX + "removed", name, {"media": kind}, by=by,
                          diff={"deleted": [[], done], "via": [None, "leave"],
                                "kept": [[], [k["category"] for k in found["kept"]]]})
         removed.append(name)
