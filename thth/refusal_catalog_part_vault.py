@@ -189,8 +189,10 @@ ENTRIES = {
         "文字コードは <meta charset=\"utf-8\"> の 1 つに任せると、どの端末でも崩れません。"),
     "garden_active_refused": _entry(
         "頁に、動く部品（script・form・iframe・入力欄・on…= の差し込み・javascript: のリンク）があります（1 行目の（））。"
-        "段 1 の庭は静的な頁だけで、偽の sign-in の頁や入力を盗む頁を作れなくしてあります。",
-        "その部品を外し、買う・申し込むは店の頁（https）へのリンクにしてから打ち直してください。",
+        "段 1 の庭は静的な頁だけで、偽の sign-in の頁や入力を盗む頁を作れなくしてあります。script or form は字面で"
+        "見つけたもので、注（<!-- -->）や CDATA の中の字でも止めます（読み手どうしで注の終わりの読み方が違うため）。",
+        "その部品を外し、買う・申し込むは店の頁（https）へのリンクにしてから打ち直してください。部品の名前を字として"
+        "見せたいときは &lt;form&gt; のように書けば通ります。",
         None,
         "thth garden build で作ると、決まりに合った頁が最初から出来ます。"),
     "garden_external_refused": _entry(
@@ -198,11 +200,17 @@ ENTRIES = {
         "決まりで、配る側の CSP でも外の資源は読めません。",
         "使う画像や CSS をフォルダの中に置き、相対の道（images/a.webp など）で指してから打ち直してください。",
         None,
-        "リンク（<a href>）は外へ向けてかまわないので、店や SNS へはリンクで案内できます。"),
+        "リンク（<a href>）・<link rel=\"canonical\">・rel=\"alternate\"・rel=\"me\"・itemtype・cite は読みに行かないので外へ"
+        "向けてかまいません。店や SNS へはリンクで案内できます。"),
     "garden_markup_refused": _entry(
         "頁の書き方に、配る側で効かないか、読み違えられる所があります（1 行目の（）: broken tag は閉じないタグか引用符の"
-        "合わないタグ・style は inline の style か <style>（monban の CSP は style-src 'self' なので効きません）・entity は DTD の entity）。",
-        "タグを閉じて引用符をそろえ、見た目は style.css に移し、DTD の entity を外してから打ち直してください。",
+        "合わないタグ・style は inline の style か <style>（monban の CSP は style-src 'self' なので効きません）・entity は DTD の entity・"
+        "comment は <!--> や <!---> や --!> や -- > の注（ブラウザと検査で注の終わりが割れる）・cdata は HTML の <![CDATA[ と "
+        "<![if …]> か閉じない CDATA・title は <title> の中のタグに見える字・old raw tag は xmp などの古いタグ・"
+        "xml-stylesheet は XML と SVG の <?xml-stylesheet（XSLT で頁を組み直せるため））。",
+        "タグを閉じて引用符をそろえ、見た目は style.css に移し、DTD の entity を外してから打ち直してください。注は "
+        "<!-- 文 --> の形だけにし、字として見せる < は &lt; と書いてください。SVG は style を fill=\"#c00\" などの属性に"
+        "書き直すと通ります（Inkscape は「最適化した SVG」で保存、SVGO なら convertStyleToAttrs）。",
         None,
         "見た目を style.css 1 枚にまとめると、頁を足しても同じ見た目にそろいます。"),
     "garden_guide_missing": _entry(

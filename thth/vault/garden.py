@@ -20,7 +20,10 @@
 - THTH の柵（タグと属性は標準の html.parser で読む・文字参照を戻し、URL はブラウザの読み方に寄せてタブと改行を捨て
   バックスラッシュを `/` と読む）: script・form・iframe など・`on…=` の差し込み・`javascript:`、外の資源（`<a>` のリンクを除く、
   URL を持つ属性の外の先・CSS の外の `url(…)` と `@import`）、閉じないタグ・DTD の entity・inline の style と `<style>`
-  （monban の CSP は `style-src 'self'` なので効かない）、案内の枠が 1 つでない HTML。script と form も monban の CSP で
+  （monban の CSP は `style-src 'self'` なので効かない）、案内の枠が 1 つでない HTML。ブラウザと html.parser の版で読みの
+  割れる書き方（`<!-->`・`--!>` などの注・HTML の `<![`・`<title>` の中のタグに見える字・xmp などの古いタグ）と、XML・SVG の
+  `<?xml-stylesheet` は、html.parser に渡す前に字面で断る（監査 段 1 の 6）。読みに行かない印（`<link rel="canonical">` など・
+  `cite`・`itemtype`・CSS の `content` の文字列）は外の先でも通す（監査 段 1 の 7）。script と form も monban の CSP で
   止まるが、止まった頁は壊れて見えるので、出す前に前向きに断る。案内の枠の検査はうっかりを見つけるためのもので、
   原則の 7 を守る壁ではない（持ち主は monban-vault を直に呼べる・有料版が来たら Edge の側へ）。
 
@@ -70,12 +73,24 @@ URL_ATTRS = frozenset(("src", "srcset", "imagesrcset", "href", "xlink:href", "po
 # リンク（読みに行かない・押した人だけが行く）は外へ向けてよい。`ping` は押すと外へ送るので外さない。
 LINK_TAGS = frozenset(("a", "area"))
 LINK_ATTRS = frozenset(("href", "xlink:href"))
+# 読みに行かない印の属性（引用の出所・schema.org の型）。外の先は通し、javascript: などは断る（監査 段 1 の 7）。
+NOFETCH_ATTRS = frozenset(("cite", "itemtype"))
+# `<link href>` で、ブラウザが読みに行かない rel（rel の語が全部ここにあるときだけ外の先を通す）。stylesheet・icon・
+# preload・prefetch・preconnect・dns-prefetch・modulepreload・manifest・next（先読みする端末がある）などは入れない。
+NOFETCH_RELS = frozenset(("canonical", "alternate", "me", "author", "license", "help", "bookmark", "shortlink",
+                          "privacy-policy", "terms-of-service"))
+# 古い「中身を字として読む」タグ（ブラウザと html.parser の版で中身の読み方が違う）。
+_OLD_RAW = re.compile(r"<\s*/?\s*(?:xmp|plaintext|noembed|noframes)\b", re.IGNORECASE)
+# 注の終わりの読み違い（監査 段 1 の 6）: ブラウザは `<!-->`・`<!--->` ですぐ閉じ、`--!>` でも閉じる。Python 3.12 までの
+# html.parser はそこを閉じずに読み進め、3.13 からはブラウザに寄せた。`-- >` は 3.12 までだけが閉じる。どれも断る。
+_COMMENT_ODD = re.compile(r"<!---?>|--!>|--\s+>")
+_XML_STYLESHEET = re.compile(r"<\?xml-stylesheet", re.IGNORECASE)
+_TAGLIKE = re.compile(r"<[A-Za-z/!?]")
 _SCHEME = re.compile(r"([a-z][a-z0-9+.-]*):")
 _ACTIVE_SCHEMES = frozenset(("javascript", "vbscript", "livescript"))
 _CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})\s?|\\(.)", re.DOTALL)
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE | re.DOTALL)
-_CSS_STRING = re.compile(r"(['\"])(.*?)\1", re.DOTALL)
 _ENTITY = re.compile(r"<!ENTITY|<!DOCTYPE[^>]*\[", re.IGNORECASE)
 
 
@@ -122,16 +137,124 @@ def _css_text(text: str) -> str:
     return _CSS_ESCAPE.sub(back, text)
 
 
+_CSS_ONE_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\(.)", re.DOTALL)
+# 上の段（関数の中でない）の文字列を字として見せるだけの性質。ここの文字列は読みに行かない（監査 段 1 の 7）。
+CSS_TEXT_PROPS = frozenset(("content", "quotes"))
+_CSS_IDENT = re.compile(r"[\w-]")
+
+
+def _css_escape(text: str, i: int):
+    m = _CSS_ONE_ESCAPE.match(text, i)
+    if m is None:
+        return "", i + 1
+    if m.group(1):
+        code = int(m.group(1), 16)
+        return ("\ufffd" if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF else chr(code)), m.end()
+    return ("" if m.group(2) == "\n" else m.group(2)), m.end()
+
+
+def _css_string(text: str, i: int):
+    quote, out, i = text[i], [], i + 1
+    while i < len(text):
+        ch = text[i]
+        if ch == quote:
+            return "".join(out), i + 1
+        if ch == "\n":
+            return "".join(out), i  # 閉じない文字列は行の終わりまで（CSS の読み方）
+        if ch == "\\":
+            got, i = _css_escape(text, i)
+            out.append(got)
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), i
+
+
+def _css_values(text: str):
+    """CSS を字句の順に読み、URL になりうる値を (場所, 値) で返す。場所は `url`（url(…) の中）・`func`（ほかの関数の
+    中の文字列: image-set・src・var で渡す先など）・`top`（宣言の上の段の文字列）・`free`（content・quotes の上の段と、
+    セレクタの中の文字列: 読みに行かない）。注・文字列・崩し（\\）を 1 回で読むので、文字列の中の `/*` に惑わされない。"""
+    out, pending, stack, ident, prop_buf = [], [], [], [], []
+    prop, paren_seen, i, n = None, False, 0, len(text)
+
+    def flush(prelude):
+        where = "free" if prelude or (prop in CSS_TEXT_PROPS) else "top"
+        out.extend((where, v) for v in pending)
+        pending.clear()
+
+    while i < n:
+        ch = text[i]
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i, ident = (n if end < 0 else end + 2), []
+            continue
+        if ch == "\\":
+            got, i = _css_escape(text, i)
+            ident.append(got)
+            prop_buf.append(got)
+            continue
+        if ch in "\"'":
+            value, i = _css_string(text, i)
+            ident = []
+            if stack:
+                out.append(("url" if stack[-1] == "url" else "func", value))
+            elif paren_seen:
+                out.append(("func", value))  # 崩した ) で関数を閉じたように見せても、( の後ろはいつも関数の中と見る
+            else:
+                pending.append(value)
+            continue
+        if ch == "(":
+            name, ident, paren_seen = "".join(ident).lower(), [], True
+            i += 1
+            if name == "url":
+                j = i
+                while j < n and text[j] in " \t\n\r\f":
+                    j += 1
+                if j >= n or text[j] not in "\"'":
+                    value = []
+                    while j < n and text[j] != ")":
+                        if text[j] == "\\":
+                            got, j = _css_escape(text, j)
+                            value.append(got)
+                        else:
+                            value.append(text[j])
+                            j += 1
+                    out.append(("url", "".join(value).strip()))
+                    i = j + 1
+                    continue
+            stack.append(name)
+            continue
+        if ch == ")":
+            if stack:
+                stack.pop()
+        elif ch in ";{}" and not stack:
+            flush(ch == "{")
+            prop, paren_seen, prop_buf = None, False, []
+            i, ident = i + 1, []
+            continue
+        elif ch == ":" and not stack and prop is None:
+            prop = "".join(prop_buf).strip().lower()
+        if _CSS_IDENT.match(ch):
+            ident.append(ch)
+        else:
+            ident = []
+        prop_buf.append(ch)
+        i += 1
+    flush(False)
+    return out
+
+
 def css_problem(text: str):
-    """CSS の外の資源（url(…)・@import・文字列の外の URL）。断る理由の語か None。"""
-    text = _css_text(text)
-    if re.search(r"@import", text, re.IGNORECASE):
+    """CSS の外の資源（url(…)・@import・関数の中と宣言の上の段の文字列の外の URL）。断る理由の語か None。
+    content と quotes の上の段の文字列（`content:"Note: "`）とセレクタの中の文字列は読みに行かないので見ない。"""
+    flat = _css_text(text)
+    if re.search(r"@import", flat, re.IGNORECASE):
         return "@import"
-    for _, value in _CSS_URL.findall(text):
+    for _, value in _CSS_URL.findall(flat):  # 注を外した姿でも見る（url( の中の注・安全な側）
         if url_kind(value) in ("external", "active"):
             return "url"
-    for _, value in _CSS_STRING.findall(text):
-        if url_kind(value) in ("external", "active") and ("/" in value or ":" in value):
+    for where, value in _css_values(text):
+        if where != "free" and url_kind(value) in ("external", "active"):
             return "url"
     return None
 
@@ -157,13 +280,18 @@ class _Reader(HTMLParser):
 
     def _tag(self, tag, attrs):
         tag = tag.lower().split(":")[-1]
-        if "<" in (self.get_starttag_text() or "")[1:]:
-            return self._set("garden_markup_refused", "broken tag")  # 引用符の合わない属性が次のタグを呑んだ
+        if _TAGLIKE.search((self.get_starttag_text() or "")[1:]):
+            # 引用符の合わない属性が次のタグを呑んだ（alt="a < b" のような字の < は通す・監査 段 1 の 7）
+            return self._set("garden_markup_refused", "broken tag")
         if tag in ACTIVE_TAGS:
             return self._set("garden_active_refused", tag)
         if tag == "style":
             return self._set("garden_markup_refused", "style")
         names = {name.lower() for name, _ in attrs}
+        rels = set()
+        for name, value in attrs:
+            if name.lower() == "rel":
+                rels |= set((value or "").lower().split())
         for name, value in attrs:
             name = name.lower()
             value = value or ""
@@ -178,14 +306,45 @@ class _Reader(HTMLParser):
                 kind = url_kind(part)
                 if kind == "active":
                     return self._set("garden_active_refused", "javascript")
-                if kind == "external" and not (tag in LINK_TAGS and name in LINK_ATTRS):
-                    return self._set("garden_external_refused", f"{tag} {name}"[:24])
+                if kind != "external" or name in NOFETCH_ATTRS or (tag in LINK_TAGS and name in LINK_ATTRS):
+                    continue
+                if tag == "link" and name == "href" and rels and rels <= NOFETCH_RELS:
+                    continue  # canonical・alternate など、読みに行かない link
+                return self._set("garden_external_refused", f"{tag} {name}"[:24])
         if (GUIDE_ATTR in [(n.lower(), v) for n, v in attrs]) and tag == "aside" and "hidden" not in names:
             self.guides += 1
 
     def handle_data(self, data):
-        if re.search(r"<[A-Za-z/!?]", data):
+        if _TAGLIKE.search(data):
             self._set("garden_markup_refused", "broken tag")
+
+
+def _parser_text(text: str, kind: str):
+    """html.parser に渡す前に、ブラウザ（と XML の読み手）と html.parser の版で読みの割れる書き方を字面で断る
+    （監査 段 1 の 6）。返すのは (html.parser に渡す字, 断る理由の語か None)。どれも字面の検査なので、属性の値の中に
+    書いてあっても断る（安全な側の誤り）。"""
+    if _COMMENT_ODD.search(text):
+        return text, "comment"
+    if _OLD_RAW.search(text):
+        return text, "old raw tag"
+    if kind == "html":
+        if "<![" in text:  # HTML の <![CDATA[ はブラウザでは最初の > で閉じる注・html.parser は ]]> まで読む
+            return text, "cdata"
+    else:
+        if kind in ("xml", "svg") and _XML_STYLESHEET.search(text):
+            return text, "xml-stylesheet"  # XSLT で頁を組み直す道を塞ぐ（手堅い側）
+        if re.search(r"<!\[(?!CDATA\[)", text) or re.search(r"<!\[CDATA\[(?![\s\S]*\]\]>)", text):
+            return text, "cdata"
+        # XML の CDATA の中身は字だが、ここでは印だけを外して中身もタグとして読む（読み手より多く見る側に倒す・
+        # 版で CDATA の読み方が違う html.parser に印を見せない）。
+        text = text.replace("<![CDATA[", " " * 9).replace("]]>", "   ")
+    # <title> の中身は、ブラウザと Python 3.13 からの html.parser は字として、3.12 までは タグとして読む。タグに見える
+    # 字を断って、版で結果が割れないようにする。
+    for m in re.finditer(r"<title\b[^>]*>", text, re.IGNORECASE):
+        end = re.compile(r"</title", re.IGNORECASE).search(text, m.end())
+        if end is None or _TAGLIKE.search(text, m.end(), end.start()):
+            return text, "title"
+    return text, None
 
 
 def _text_problem(path: str, data: bytes, kind: str):
@@ -204,10 +363,14 @@ def _text_problem(path: str, data: bytes, kind: str):
         return "garden_markup_refused", _detail(path, "entity")
     if _ACTIVE_RAW.search(text):  # 読み手が見落としても字面で止める（本文の < は build が escape する）
         return "garden_active_refused", _detail(path, "script or form")
+    feed, why = _parser_text(text, kind)
+    if why:
+        return "garden_markup_refused", _detail(path, why)
     reader = _Reader()
-    reader.feed(text)
-    if reader.problem is None and reader.rawdata.strip():
-        reader.problem = ("garden_markup_refused", "broken tag")  # 閉じないタグ・引用符の合わないタグ
+    reader.feed(feed)
+    if reader.problem is None and "<" in reader.rawdata:
+        # 閉じないタグ・引用符の合わないタグ（終わりの `R&D` のような字だけの残りは本文として通す・監査 段 1 の 7）
+        reader.problem = ("garden_markup_refused", "broken tag")
     reader.close()
     if reader.problem:
         return reader.problem[0], _detail(path, reader.problem[1])

@@ -544,6 +544,154 @@ def test_garden_check_CSSの外の資源(tmp_path, css):
     assert exc.value.code == "garden_external_refused"
 
 
+# 監査 段 1 の 6: html.parser（3.12 まで）とブラウザで注の終わりの読み方が違う 4 つ。後ろのタグが検査に見えなかった。
+_OUT = '<img src="https://e.example.invalid/x.png" onerror="x()">'
+
+
+@pytest.mark.parametrize("body,detail", [
+    ("<![CDATA[>" + _OUT + "]]>", "cdata"),
+    ("<!-- a --!>" + _OUT + "<!-- b -->", "comment"),
+    ("<!-->" + _OUT + "<!-- b -->", "comment"),
+    ("<!--->" + _OUT + "<!-- b -->", "comment"),
+    ("<!-- a --!>x<!-- b -->", "comment"),  # 後ろに何も無くても、版で読みが割れる書き方そのものを断る
+    ("<!--[if IE]><p>x</p><![endif]-->", "cdata"),  # 古い IE の条件つき注も <![ を含む
+], ids=["cdata", "bang", "abrupt", "abrupt3", "bang-alone", "if-ie"])
+def test_garden_check_注の終わりの読み違いを断る(tmp_path, body, detail):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, body)))
+    assert exc.value.code == "garden_markup_refused" and detail in exc.value.detail
+
+
+@pytest.mark.parametrize("body,detail", [
+    ("<xmp><img src=\"https://e.example.invalid/x.png\"></xmp>", "old raw tag"),
+    ("<noembed><p>x</p></noembed>", "old raw tag"),
+    ("<!-- a -- >" + _OUT + "<!-- b -->", "comment"),  # 3.12 までの html.parser だけが閉じる
+], ids=["xmp", "noembed", "dash-space"])
+def test_garden_check_版で読みの割れる書き方を断る(tmp_path, body, detail):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, body)))
+    assert exc.value.code == "garden_markup_refused" and detail in exc.value.detail
+
+
+def test_garden_check_titleの中のタグに見える字(tmp_path):
+    raw = GOOD.format(body="<p>x</p>").replace("<title>t</title>", "<title>a <b>b</b></title>").encode("utf-8")
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, raw=raw)))
+    assert exc.value.code == "garden_markup_refused" and "title" in exc.value.detail
+    ok = GOOD.format(body="<p>x</p>").replace("<title>t</title>", "<title>1 < 2 &amp; 抹茶</title>").encode("utf-8")
+    assert "/index.html" in garden.check_dir(str(_site(tmp_path, raw=ok)))["files"]
+
+
+@pytest.mark.parametrize("name,raw,detail", [
+    ("a.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><!--><rect fill="url(#a)"/><!-- b --></svg>', "comment"),
+    ("a.xml", b'<?xml version="1.0"?><r><!-- a --!><x/><!-- b --></r>', "comment"),
+    ("a.xml", b'<?xml version="1.0"?><r><![CDATA[ x </r>', "cdata"),  # 閉じない CDATA
+    ("a.xml", b'<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="s.xsl"?><r/>', "xml-stylesheet"),
+    ("a.svg", b'<?xml-stylesheet href="s.css"?><svg xmlns="http://www.w3.org/2000/svg"/>', "xml-stylesheet"),
+    ("a.svg", b'<?XML-STYLESHEET href="s.css"?><svg xmlns="http://www.w3.org/2000/svg"/>', "xml-stylesheet"),
+], ids=["svg-abrupt", "xml-bang", "xml-cdata-open", "xml-ss", "svg-ss", "svg-ss-upper"])
+def test_garden_check_SVGとXMLの注とxml_stylesheet(tmp_path, name, raw, detail):
+    site = _site(tmp_path, extra={name: raw})
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(site))
+    assert exc.value.code == "garden_markup_refused" and detail in exc.value.detail
+
+
+def test_garden_check_XMLのCDATAは字として読む(tmp_path):
+    feed = ('<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>t</title>'
+            '<item><title><![CDATA[抹茶 & ほうじ茶 <新しい>]]></title>'
+            '<description><![CDATA[<p>今週の <a href="https://kopicha.example.invalid/">新しい缶</a></p>]]></description>'
+            '</item></channel></rss>').encode("utf-8")
+    assert "/feed.xml" in garden.check_dir(str(_site(tmp_path, extra={"feed.xml": feed})))["files"]
+    for inner in (b"<script>x()</script>", b"<form>"):  # 字面の検査は CDATA の中でも止める（安全な側）
+        bad = b'<?xml version="1.0"?><r><![CDATA[' + inner + b"]]></r>"
+        with pytest.raises(wire.VaultRefused) as exc:
+            garden.check_dir(str(_site(tmp_path, extra={"feed.xml": bad})))
+        assert exc.value.code == "garden_active_refused"
+
+
+# 監査 段 1 の 7: 普通の頁を誤って断っていた所のうち、読みに行かないもの。
+@pytest.mark.parametrize("body", [
+    '<link rel="canonical" href="https://kopicha.example.invalid/">',
+    '<link rel="alternate" hreflang="en" href="https://kopicha.example.invalid/en/">',
+    '<link rel="alternate" type="application/rss+xml" href="https://kopicha.example.invalid/feed.xml">',
+    '<link rel="ME author" href="https://sns.example.invalid/kopicha">',
+    '<div itemscope itemtype="https://schema.org/Product"><span itemprop="name">抹茶</span></div>',
+    '<blockquote cite="https://news.example.invalid/a">引用</blockquote>',
+    '<q cite="https://news.example.invalid/a">短い引用</q>',
+    '<img src="a.webp" alt="a < b">',
+    '<img src="a.webp" alt="1 <= 2 &lt;b&gt;">',
+], ids=["canonical", "alternate-lang", "alternate-rss", "me-author", "itemtype", "blockquote-cite", "q-cite",
+        "alt-lt", "alt-lt-escaped"])
+def test_garden_check_読みに行かない印は通る(tmp_path, body):
+    assert "/index.html" in garden.check_dir(str(_site(tmp_path, body)))["files"]
+
+
+@pytest.mark.parametrize("body,code", [
+    ('<link rel="alternate stylesheet" href="https://f.example.invalid/a.css">', "garden_external_refused"),
+    ('<link rel="canonical stylesheet" href="https://f.example.invalid/a.css">', "garden_external_refused"),
+    ('<link rel="icon" href="https://f.example.invalid/a.ico">', "garden_external_refused"),
+    ('<link rel="alternate icon" href="https://f.example.invalid/a.ico">', "garden_external_refused"),
+    ('<link rel="preload" as="image" href="https://f.example.invalid/a.png">', "garden_external_refused"),
+    ('<link rel="prefetch" href="https://f.example.invalid/a">', "garden_external_refused"),
+    ('<link rel="dns-prefetch" href="//f.example.invalid">', "garden_external_refused"),
+    ('<link href="https://f.example.invalid/a.css">', "garden_external_refused"),
+    ('<link rel="canonical" href="a.html" imagesrcset="https://f.example.invalid/a.png 1x">', "garden_external_refused"),
+    ('<link rel="canonical" href="javascript:x()">', "garden_active_refused"),
+    ('<blockquote cite="javascript:x()">引用</blockquote>', "garden_active_refused"),
+    ('<img src="a.webp" alt="閉じない><b>x</b>', "garden_markup_refused"),  # 引用符の合わない属性が次のタグを呑む
+], ids=["alt-stylesheet", "canonical-stylesheet", "icon", "alt-icon", "preload", "prefetch", "dns-prefetch",
+        "no-rel", "imagesrcset", "canonical-js", "cite-js", "swallow"])
+def test_garden_check_読みに行くlinkと動く先は断るまま(tmp_path, body, code):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, body)))
+    assert exc.value.code == code
+
+
+def test_garden_check_終わりがアンドの語でも通る(tmp_path):
+    raw = GOOD.format(body="<p>研究</p>").encode("utf-8") + b"\nR&D"
+    assert "/index.html" in garden.check_dir(str(_site(tmp_path, raw=raw)))["files"]
+
+
+@pytest.mark.parametrize("css", [b'p.note::before{content:"Note: "}',
+                                 b"q{quotes:'\xe3\x80\x8c: ' '\xe3\x80\x8d'}",
+                                 b'li::after{content:counter(n) ". see: "}',
+                                 b'a[href^="https:"]::after{content:" (out)"}',
+                                 b'body{font-family:"Hiragino Sans",sans-serif}'],
+                         ids=["content", "quotes", "counter", "attr-selector", "font"])
+def test_garden_check_CSSのcontentの文字列は通る(tmp_path, css):
+    assert "/style.css" in garden.check_dir(str(_site(tmp_path, extra={"style.css": css})))["files"]
+
+
+@pytest.mark.parametrize("css", [
+    b'p{background:image-set("https://t.example.invalid/a.png" 1x)}',
+    b'p::before{content:image-set("https://t.example.invalid/a.png" 1x)}',
+    b'p::before{content:"x" url(https://t.example.invalid/a.png)}',
+    b':root{--u:"https://t.example.invalid/a.png"}p{background:image-set(var(--u) 1x)}',
+    b'p{content:"/*"; background:image-set("https://t.example.invalid/a.png" 1x) /*"*/}',
+    b'p{content:"/*"; background:url(https://t.example.invalid/a.png) /*"*/}',
+    b'p::before{content:image-set(x\\29 "https://t.example.invalid/a.png" 1x)}',
+    b'p{background:image-set(; content:"https://t.example.invalid/a.png" 1x)}',
+    b'p{cont\\65nt:"x"; background:image-set("//t.example.invalid/a.png" 1x)}',
+    b'@im\\70ort "a.css";',
+], ids=["image-set", "content-image-set", "content-url", "var", "comment-in-string", "comment-in-string-url",
+        "escaped-paren", "semicolon-in-paren", "escaped-prop", "escaped-import"])
+def test_garden_check_CSSの文字列の外の資源は断るまま(tmp_path, css):
+    with pytest.raises(wire.VaultRefused) as exc:
+        garden.check_dir(str(_site(tmp_path, extra={"style.css": css})))
+    assert exc.value.code == "garden_external_refused"
+
+
+def test_garden_check_断るままの所に直し方がある():
+    markup, active, external = (rc.get(c) for c in ("garden_markup_refused", "garden_active_refused",
+                                                     "garden_external_refused"))
+    assert "SVG" in markup["fix"]["text"] and "fill=" in markup["fix"]["text"] and "&lt;" in markup["fix"]["text"]
+    for word in ("comment", "cdata", "xml-stylesheet", "title", "old raw tag"):  # 検査の出す詳細の語を全部説明する
+        assert word in markup["why"]
+    assert "注" in active["why"] and "&lt;" in active["fix"]["text"]
+    assert "canonical" in external["better"]
+
+
 def test_garden_check_日本語の名前でもどれかを言う(tmp_path):
     site = _site(tmp_path, extra={"抹茶の缶.js": b"x"})
     with pytest.raises(wire.VaultRefused) as exc:
