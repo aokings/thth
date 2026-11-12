@@ -1,0 +1,340 @@
+"""`thth shop …` の店を読む動詞（初めの版は BASE v2 だけ・Instagram の商品タグの動詞は `thth/meta_shop.py`）。
+
+    thth shop add <店> --kind base --project <project> --by <名前>     台帳を 1 本書く（0600）
+    thth shop token set <店> --expires YYYY-MM-DD --by <名前> [--stdin]
+                                       BASE の PAT を標準入力か隠した入力で受け、店が見えたときだけ保存する
+    thth shop whoami <店> [--json]    鍵の確かめ・店の名前と URL・鍵の期限
+    thth shop items <店> [--json]     商品の一覧（許した欄だけ・非公開の商品は id だけ）
+    thth shop diff <店> [--accept] [--json]
+                                       前の写しとの違い（読むだけ）。--accept で今の読みを写しにする。初回は基準を取るだけ
+    thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
+                                       違いから queue の下書き（承認されていない形）を 1 本か上限 3 本
+
+**注文と買い手の情報は読まない。店には書かない（打つのは GET だけ）。鍵は引数で受けない・出力しない。**
+手元の MCP と thth.me の鍵の道には出さない（鍵は手元の thth に置く形だけ）。
+この道具は BASE が提供するものではありません。
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import getpass
+import json
+import sys
+
+from .. import admin_log, jst, redact, refusal
+from . import COMMAND, NOT_BY_BASE, base, diff as diff_mod, draft as draft_mod, ledger
+from .wire import StoreRefused
+
+# 試験の差し込み口（本物の網に出ない）。None なら `wire.default_transport`。
+TRANSPORT = None
+# 鍵の読み手の差し込み口（試験用）。None なら標準入力か getpass。
+READ_SECRET = None
+PROMPT = "BASE の個人用アクセストークン（PAT）を貼り付けてください（表示されません）: "
+
+
+def _refuse(args, exc: StoreRefused) -> int:
+    found = refusal.parts(exc.code) or {}
+    line = f"{exc.code}: {found.get('why') or exc.code}"
+    if exc.detail:
+        line += f"（{exc.detail}）"
+    payload = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}
+    return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload)
+
+
+def _run(handler):
+    def call(args) -> int:
+        try:
+            return handler(args)
+        except StoreRefused as exc:
+            return _refuse(args, exc)
+    return call
+
+
+def _print(value) -> None:
+    print(json.dumps(value, ensure_ascii=False))
+
+
+def _today() -> datetime.date:
+    return jst.now_jst().date()
+
+
+def _by(args) -> str:
+    try:
+        return admin_log.actor(getattr(args, "by", None))
+    except ValueError:
+        raise StoreRefused("store_args_invalid", "by") from None
+
+
+def _open(args):
+    """台帳・鍵・期限・口。期限を過ぎていれば打たずに断る。"""
+    cfg = ledger.load(args.store)
+    token = ledger.load_token(cfg)
+    when = ledger.expiry(token, _today())
+    if when["state"] == "expired":
+        raise StoreRefused("store_token_expired", when["expires_on"])
+    return cfg, token, when, base.Client(token["access_token"], transport=TRANSPORT)
+
+
+def _expiry_note(when) -> str | None:
+    if when["state"] == "soon":
+        return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日）です。BASE Developers で新しい PAT を"
+                f"発行し、thth {COMMAND} token set で差し替えてください（期限はあとから変えられません）")
+    if when["state"] == "unknown":
+        return f"注意: 鍵の期限が分かりません。thth {COMMAND} token set --expires で期限の日を持たせてください"
+    return None
+
+
+def _note(args, when) -> None:
+    note = _expiry_note(when)
+    if note and not getattr(args, "json", False):
+        print(note, file=sys.stderr)
+
+
+# ------------------------------------------------------------------ add・token set
+
+def cmd_add(args) -> int:
+    _by(args)
+    ledger.check_name(args.store)
+    from .. import accounts
+    if not accounts.name_is_safe(args.project):
+        raise StoreRefused("store_args_invalid", "project")
+    path = ledger.write_new(args.store, ledger.build(args.store, kind=args.kind, project=args.project))
+    print(f"台帳を書きました: {path}（0600）")
+    print(f"次に、店の持ち主が BASE Developers で読むだけの権限（items.read・user.read）の PAT を発行し、"
+          f"thth {COMMAND} token set {args.store} --expires <期限の日> --by <名前> で渡してください。")
+    print(NOT_BY_BASE)
+    return 0
+
+
+def _read_secret(args) -> str:
+    if READ_SECRET is not None:
+        return READ_SECRET()
+    if args.stdin:
+        return sys.stdin.readline()
+    if not sys.stdin.isatty():
+        raise StoreRefused("store_token_input_unsafe")
+    return getpass.getpass(PROMPT)
+
+
+def cmd_token_set(args) -> int:
+    _by(args)
+    cfg = ledger.load(args.store)
+    day = ledger.parse_day(args.expires)
+    if day is None:
+        raise StoreRefused("store_args_invalid", "expires")
+    if day < _today():
+        raise StoreRefused("store_token_expired", day.isoformat())
+    value = (_read_secret(args) or "").strip()
+    if not value or any(c.isspace() for c in value) or len(value) > 4096:
+        raise StoreRefused("store_token_empty")
+    redact.register_secret(value)
+    shop = base.Client(value, transport=TRANSPORT).user()
+    try:
+        before = ledger.load_token(cfg)
+    except StoreRefused:
+        before = None
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+        raise StoreRefused("store_shop_mismatch")
+    ledger.write_token(cfg, {"access_token": value, "expires_on": day.isoformat(), "obtained_at": ledger.now_iso(),
+                             "shop_id": shop["shop_id"]})
+    print(f"保存しました: {cfg['token']}（600）・店 {shop['shop_name'] or '（名前なし）'}・鍵の期限 {day.isoformat()}")
+    note = _expiry_note(ledger.expiry({"expires_on": day.isoformat()}, _today()))
+    if note:
+        print(note, file=sys.stderr)
+    return 0
+
+
+# ------------------------------------------------------------------ 読む口
+
+def cmd_whoami(args) -> int:
+    _cfg, _token, when, client = _open(args)
+    shop = client.user()
+    value = {"store": args.store, "kind": "base", **shop, "token": when, "notice": NOT_BY_BASE}
+    if args.json:
+        _print(value)
+        return 0
+    print(f"{args.store}: {shop['shop_name'] or '（名前なし）'}  {shop['shop_url']}"
+          f"（公開 {'はい' if shop['able_to_business'] else 'いいえ' if shop['able_to_business'] is False else '不明'}）")
+    print(f"  鍵の期限: {when['expires_on'] or '不明'}" + (f"（あと {when['days_left']} 日）" if when["days_left"] is not None else ""))
+    print(f"  {NOT_BY_BASE}")
+    _note(args, when)
+    return 0
+
+
+def _incomplete_note(read) -> str | None:
+    if read["complete"]:
+        return None
+    return (f"全部は読めていません（{read['pages']} 頁・{base.PAGE_LIMIT * base.MAX_PAGES} 件の上限）。"
+            "消えた・売り切れは言わず、写しも進めません")
+
+
+def cmd_items(args) -> int:
+    _cfg, _token, when, client = _open(args)
+    read = client.items()
+    value = {"store": args.store, "complete": read["complete"], "pages": read["pages"], "items": read["items"],
+             "token": when, "note": _incomplete_note(read)}
+    if args.json:
+        _print(value)
+        return 0
+    for row in read["items"]:
+        if not row["visible"]:
+            print(f"{row['id']}  （非公開）")
+            continue
+        price = "—" if row["price"] is None else f"{row['price']:,} 円"
+        print(f"{row['id']}  {row['name']}  {price}  在庫 {row['stock']}  {row['sales_status']}")
+    print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
+    _note(args, when)
+    return 0
+
+
+def _read_and_compare(args, client):
+    read = client.items()
+    snapshot = ledger.read_snapshot(args.store)
+    changes = diff_mod.compare(snapshot["items"], read["items"], complete=read["complete"]) if snapshot else []
+    return read, snapshot, changes
+
+
+def cmd_diff(args) -> int:
+    _cfg, token, when, client = _open(args)
+    read, snapshot, changes = _read_and_compare(args, client)
+    read_at = ledger.now_iso()
+    baseline = snapshot is None
+    if (baseline or args.accept) and not read["complete"]:
+        raise StoreRefused("store_read_incomplete", pages=read["pages"])
+    accepted = False
+    if baseline or args.accept:
+        ledger.write_snapshot(args.store, shop_id=token.get("shop_id"), items=read["items"], read_at=read_at)
+        accepted = True
+    value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
+             "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
+             "accepted": accepted, "token": when, "note": _incomplete_note(read)}
+    if args.json:
+        _print(value)
+        return 0
+    if baseline:
+        print(f"{args.store}: 基準を取りました（{len(read['items'])} 件）。違いはまだありません。次からの thth {COMMAND} diff が"
+              "この写しと比べます")
+        _note(args, when)
+        return 0
+    for change in changes:
+        extra = f"（{change['before']} → {change['after']} 円）" if "before" in change else ""
+        print(f"{change['kind']:<12} {change['id']}  {change.get('name') or ''}{extra}")
+    print(f"違い {len(changes)} 件（{value['since']} の写しと比べて）"
+          + ("・写しを今の読みに進めました" if accepted else f"・写しは進めていません（--accept で進めます）")
+          + (f"・{value['note']}" if value["note"] else ""))
+    _note(args, when)
+    return 0
+
+
+def cmd_draft(args) -> int:
+    if (args.item is None) == (args.kind is None):
+        raise StoreRefused("store_args_invalid", "item_or_kind")
+    cfg, _token, when, client = _open(args)
+    account = draft_mod.load_account(args.to)
+    queue = draft_mod.queue_dir(account)
+    read, snapshot, changes = _read_and_compare(args, client)
+    if snapshot is None:
+        raise StoreRefused("store_draft_nothing", "no_baseline")
+    picked = draft_mod.choose(changes, read["items"], item=args.item, kind=args.kind)
+    if not picked:
+        raise StoreRefused("store_draft_nothing")
+    shop = client.user()
+    now = jst.now_jst()
+    read_at = jst.iso(now)
+    written = []
+    for change, row in picked:
+        text = draft_mod.text_for(args.store, args.to, account["media"], change, row, shop_url=shop["shop_url"],
+                                  read_at=read_at, publish_at=draft_mod.publish_at(now))
+        name = draft_mod.file_name(args.store, row["id"], change["draft_kind"], now)
+        written.append({"id": row["id"], "kind": change["draft_kind"],
+                        "path": draft_mod.write(queue, name, text)})
+    notes = ["status は draft です（承認されていません）。本文は素の 1〜2 行なので、出す前に整えて thth approve に通してください",
+             "商品頁の URL は組み方を公式で確かめられなかったので、店の URL を載せました（from_store_url: shop）",
+             "画像は載せていません（from_store_image: none）",
+             f"写しは進めていません。済んだら thth {COMMAND} diff {args.store} --accept で進めます"]
+    if account.get("project") != cfg["project"]:
+        notes.append(f"注意: 口座 {args.to} の project（{account.get('project')}）が店の project（{cfg['project']}）と"
+                     "違います。出す先が合っているか確かめてください")
+    value = {"store": args.store, "account": args.to, "drafts": written, "notes": notes, "token": when}
+    if args.json:
+        _print(value)
+        return 0
+    for row in written:
+        print(f"下書きを書きました: {row['path']}（{row['kind']}・商品 {row['id']}）")
+    for line in notes:
+        print(f"  {line}")
+    _note(args, when)
+    return 0
+
+
+# ------------------------------------------------------------------ 登録
+
+def _item_id(value: str) -> int:
+    if not value.isdigit() or len(value) > 18:
+        raise argparse.ArgumentTypeError("商品の id は数字です（thth shop items に出ます）")
+    return int(value)
+
+
+PARENT_HELP = "店（店を読む: BASE など）と Instagram の商品タグ"
+PARENT_DESCRIPTION = """店を読む（BASE など）: 第 1 引数は店の名前（thth shop add で書いた台帳の名前）
+    thth shop add <店> --kind base --project <project> --by <名前>
+    thth shop token set <店> --expires YYYY-MM-DD --by <名前> [--stdin]   鍵は標準入力か隠した入力で（引数では受けない）
+    thth shop whoami|items <店> [--json]                                  読むだけ・注文は読まない
+    thth shop diff <店> [--accept] [--json]                               写しとの違い（読むだけ・--accept で写しを進める）
+    thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
+                                                                          queue の下書き（承認されていない形・1 本か上限 3 本）
+  この道具は BASE が提供するものではありません。
+
+Instagram の商品タグ: 第 1 引数は Instagram の口座
+    thth shop eligibility|catalogs <IG> [--json]                          読む
+    thth shop products <IG> --catalog <id> [--q 語] [--json]              読む
+    thth shop tags <IG> <media-id> [--json]                               読む
+    thth shop tag <IG> <media-id> --product <id> --by <名前> [--confirm D]  既存の投稿に付ける（二段確認）
+"""
+# この家族が足す動詞（Instagram の商品タグの動詞とぶつからない）。
+VERBS = ("add", "token", "whoami", "items", "diff", "draft")
+
+
+def parent(sub):
+    """親の `thth shop` を 1 か所で作り、動詞を足す先（subparsers）を返す（cli.py が 1 度だけ呼ぶ）。"""
+    shop = sub.add_parser(COMMAND, help=PARENT_HELP, description=PARENT_DESCRIPTION,
+                          formatter_class=argparse.RawDescriptionHelpFormatter)
+    return shop.add_subparsers(dest="shop_command", required=True)
+
+
+def register(verbs) -> None:
+    """親の `thth shop` の下に、店を読む口の動詞を足す。"""
+    p_add = verbs.add_parser("add", help="店を読む: 店の台帳を 1 本書く")
+    p_add.add_argument("store", metavar="店")
+    p_add.add_argument("--kind", required=True, choices=ledger.KINDS)
+    p_add.add_argument("--project", required=True)
+    p_add.add_argument("--by", required=True)
+    p_add.set_defaults(func=_run(cmd_add))
+
+    p_token = verbs.add_parser("token", help="店を読む: 鍵（BASE の PAT）の受け取り")
+    token_verbs = p_token.add_subparsers(dest="store_token_verb", required=True)
+    p_set = token_verbs.add_parser("set", help="PAT を標準入力か隠した入力で受け、店が見えたときだけ保存する（引数では受けない）")
+    p_set.add_argument("store", metavar="店")
+    p_set.add_argument("--expires", required=True, metavar="YYYY-MM-DD",
+                       help="BASE Developers で発行したときに決めた期限の日（あとから変えられない）")
+    p_set.add_argument("--by", required=True)
+    p_set.add_argument("--stdin", action="store_true", help="標準入力から黙って 1 行読む（パイプ用）")
+    p_set.add_argument("--force", action="store_true", help="前の鍵と別の店でも置き換える")
+    p_set.set_defaults(func=_run(cmd_token_set))
+
+    for verb, help_text, func in (("whoami", "鍵の確かめ・店の名前と URL・鍵の期限", cmd_whoami),
+                                  ("items", "商品の一覧（許した欄だけ）", cmd_items),
+                                  ("diff", "前の写しとの違い（読むだけ・--accept で写しを進める）", cmd_diff),
+                                  ("draft", "違いから queue の下書き（承認されていない形・1 本か上限 3 本）", cmd_draft)):
+        q = verbs.add_parser(verb, help="店を読む: " + help_text)
+        q.add_argument("store", metavar="店")
+        q.add_argument("--json", action="store_true")
+        q.set_defaults(func=_run(func))
+        if verb == "diff":
+            q.add_argument("--accept", action="store_true", help="今の読みを写しにする（全部読めたときだけ）")
+        if verb == "draft":
+            q.add_argument("--to", required=True, metavar="口座", help="下書きを置く THTH の口座")
+            q.add_argument("--item", type=_item_id, default=None, help="この商品 1 つだけ")
+            q.add_argument("--kind", choices=tuple(draft_mod.PHRASES), default=None,
+                           help=f"この種類の違いから（上限 {draft_mod.MAX_DRAFTS} 本）")

@@ -5436,9 +5436,14 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth brand`・`thth creators`（ブランドコンテンツとクリエイターマーケットプレイス・書く口は二段確認）。`thth/meta_brand.py` に閉じる。
     from . import meta_brand
     meta_brand.register(sub)
-    # `thth shop`（Instagram の商品タグ・書く口は二段確認）。`thth/meta_shop.py` に閉じる。
+    # `thth shop`: 親の parser は `thth/shop/cli.py` の `parent()` の 1 か所で作り、その下に 2 つの家族の動詞を足す。
+    # Instagram の商品タグ（書く口は二段確認）は `thth/meta_shop.py`、店を読む口（BASE v2・読むだけ・下書きは
+    # 承認されていない形）は `thth/shop/` に閉じる。
     from . import meta_shop
-    meta_shop.register(sub)
+    from .shop import cli as store_cli
+    shop_sub = store_cli.parent(sub)
+    meta_shop.register(shop_sub)
+    store_cli.register(shop_sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

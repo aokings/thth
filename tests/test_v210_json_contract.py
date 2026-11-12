@@ -138,6 +138,8 @@ COMMANDS += ['ads leave']
 COMMANDS += ['gads accounts', 'gads keywords', 'gads report']
 # Search Console（読むだけ・auth は端末での対話なので --json を持たない）。
 COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
+# 店を読む口（`thth/shop/`・BASE v2・読むだけ・add と token set は --json を持たない）。
+COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
 
 
 def test_json_table_covers_every_parser():
