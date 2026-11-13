@@ -25,6 +25,9 @@ REASONS = frozenset((
     "register_kind_invalid", "register_yaml_refused", "register_record_invalid", "register_record_missing",
     "register_unit_ambiguous", "register_link_invalid", "register_judgment_invalid", "register_judgment_same_person",
     "register_carry_unnamed",
+    # 台帳の器 段 2: 取り込み・戻す・控え・まとめての入れ替え・変えた跡・表の 1 行。
+    "register_adopt_unusable", "register_batch_pending", "register_batch_conflict", "register_kept_missing",
+    "register_record_vanished", "register_write_unsafe",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 

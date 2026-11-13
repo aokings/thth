@@ -324,4 +324,51 @@ ENTRIES = {
         "中身を変えた者（commit の書き手や、取り込んだ道具の名前）を名指しして、もう一度結び直してください。",
         _CHECK,
         "取り込みの道具が、直した者の名前を変更の記録に残すようにしておくと、結び直しのたびに調べずに済みます。"),
+    # ---------------------------------------------------------------- 台帳の器 段 2
+    "register_adopt_unusable": _entry(
+        "取り込みか戻す出口か束の、フォルダの組み合わせが使えません（1 行目の（）の語: source は元が無い・"
+        "inside は片方がもう片方の中・not_empty は書き先が空でない・other_source は台帳が別の元から取り込まれた・"
+        "symlink は範囲の中に symlink がある・thth_in_source は範囲が .thth/ を含む・plan は範囲の JSON の形）。"
+        "元には何も書いていません。",
+        "語に合わせて直してください: 書き先は新しい空のフォルダにする・元の repo の外に置く・symlink と .thth/ は"
+        "範囲の exclude に足す・範囲は {\"schema\": \"thth.adopt_plan/1\", \"include\": [...], \"exclude\": [...]} の形にする。",
+        "thth register adopt <元> --to <新しいフォルダ> --plan <範囲.json> --by <名前>",
+        "影の台帳は ~/Documents/THTH/shadow/<メディア>/ のように repo の外の決まった置き場に作ると、元と取り違えません。"),
+    "register_batch_pending": _entry(
+        "台帳に、途中で止まったまとめての入れ替えが残っています（1 行目の（）が何の入れ替えか）。混ざった姿を読まない"
+        "ように、器の読み手は入れ替えの前の姿だけを見せ、ほかの書き込みは止めています。",
+        "続けるなら thth register resume <台帳> --continue --by <名前>（同じ命令を打ち直してもよい）、戻すなら"
+        " thth register resume <台帳> --rollback --by <名前> を打ってください。別の者が打ってもかまいません。",
+        "thth register resume <台帳> --continue --by <名前>",
+        "--json の batch・what・by・at で、誰がいつ何を入れ替えていたかが分かります。打ち直す前に、その者に一言かけると"
+        "二重に進めずに済みます。"),
+    "register_batch_conflict": _entry(
+        "入れ替えの途中か前に、台帳のファイルが器の知らない中身に変わっていました（1 行目の（）: moved は前でも後でも"
+        "ない中身・base は束を作った時から台帳が動いた・symlink は置き換える先が symlink）。黙って上書きせずに止めました。",
+        "--json の path のファイルを誰が書いたかを確かめ、その書き込みを済ませてから、thth register keep で今を控え、"
+        "束を今の台帳から作り直して打ち直してください。",
+        "thth register diff <台帳> last..now",
+        "元の形式の道具と器の入れ替えを同じ時間に走らせないと、この断りは出ません。"),
+    "register_kept_missing": _entry(
+        "器の控え（.thth/kept/）に、求めた前の版がありません（1 行目の（）の語）。取り出せる前の版は、器が取り込んだか"
+        "控えた時点からだけで、それより前と、控えと控えの間の版は取り出せません。",
+        "thth register keep <台帳> --list で控えた時点を並べ、その目録の指紋の頭（8 字以上）か first・last で打ち直して"
+        "ください。控えが壊れている（object_broken・snapshot_broken）ときは、元からもう一度取り込んでください。",
+        "thth register keep <台帳> --list",
+        "元の形式の道具で直したあとに thth register keep を打つ習いにすると、git の外の台帳でも前の版を取り出せます。"),
+    "register_record_vanished": _entry(
+        "前の時点にあった記録の番号（かファイル）が、後の時点にありません。番号が消えると、その番号への判断と、"
+        "指していた記録がたどれなくなります。",
+        "消すつもりでなければ、thth register restore <台帳> --at <前の控え> --to <フォルダ> で前の版を書き出して戻して"
+        "ください。退役させたいなら、記録を消さずに状態を退役にしてください。",
+        "thth register diff <台帳> <前>..<後> --json",
+        "名前を変えただけなら、番号の表（.thth/ids.json）に新しい場所を書くと、番号を引き継げます。"),
+    "register_write_unsafe": _entry(
+        "表の 1 行を書くと、触っていない行のバイトが変わるか、書いた行が読み直せない形になります（1 行目の（）の語: "
+        "other_rows・no_final_newline・unknown_field・id_field・id_exists・id_form・row_width・not_table・which_table・"
+        "table_shape・not_utf8）。表には何も書いていません。",
+        "語に合わせて直してください: 最後の行に改行が無い表は、元の道具で改行を足してから・欄の名前は表の見出しのとおりに・"
+        "番号の欄は直さずに新しい行として足す・番号が重なるなら別の番号で。",
+        "thth register links <台帳> <種類:番号>",
+        "1 行ずつ直すより、束をまとめて入れる（thth register merge）ほうが、止まっても前か後のどちらかに決まります。"),
 }
