@@ -166,18 +166,23 @@ def test_外の場所の見直し日を過ぎたら穴にする(capsys, cafe, cl
 
 def test_柵_比べは違いを見せ写した文を残さない(capsys, cafe, monkeypatch, env):
     confirm(capsys, "cafe-sample", SPECIAL)
+
+    def nothing_kept(mark):
+        for base in (cafe, env["root"], env["tmp"] / "home"):
+            for path in pathlib.Path(base).rglob("*"):
+                if path.is_file():
+                    assert mark not in path.read_text(encoding="utf-8", errors="ignore"), path
+
     rc_, value, err = compare(capsys, monkeypatch, "12/12 は 14:00-19:30 の営業です（目印 ZQXV）")
     assert rc_ == 0, err
     assert value["same"] is False
     assert value["only_register"]["times"] == ["18:00"] and value["only_outside"]["times"] == ["19:30"]
     assert value["only_register"]["dates"] == [] and value["only_outside"]["dates"] == []
     assert "決めません" in value["notes"][0]
-    rc_, value, err = compare(capsys, monkeypatch, "12月12日 14:00〜18:00 営業")
+    nothing_kept("ZQXV")                                                      # 比べるたびに確かめる
+    rc_, value, err = compare(capsys, monkeypatch, "12月12日 14:00〜18:00 営業（目印 WKJY）")
     assert rc_ == 0 and value["same"] is True, err
-    for base in (cafe, env["root"], env["tmp"] / "home"):
-        for path in pathlib.Path(base).rglob("*"):
-            if path.is_file():
-                assert "ZQXV" not in path.read_text(encoding="utf-8", errors="ignore"), path
+    nothing_kept("WKJY")
 
 
 def test_比べる文が空か長すぎれば断る(capsys, cafe, monkeypatch):
