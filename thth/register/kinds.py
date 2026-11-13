@@ -18,7 +18,8 @@
 | `special` | 臨時/<日>_<名>.md | `date`（要る）・`end_date`・`closed`（true か false）・`open`・`close`（closed が false のとき）・`reason`（既定で出さない） |
 | `event` | 催し/<日>_<名>.md | `name`・`starts`・`ends`（`YYYY-MM-DD HH:MM`・要る）・`place`・`fee`・`booking`・`organizer_url` |
 | `item` | 品/<名>.md | `name`（要る）・`price`・`since`（店頭に並んだ日）・`season_from`・`season_to` |
-| `voice` | 思い.md | 本文だけ |
+| `voice` | 思い.md | 本文だけ（品の思いなら `about: <品の番号>`） |
+| `place` | 外の場所/<名>.md | `place`（場所の番号）・`url`・`admin_by`（既定で出さない）・`synced_on`・`synced_row`（THTH が書く） |
 """
 from __future__ import annotations
 
@@ -171,7 +172,14 @@ RULES: dict[str, dict] = {
     "event": {"check": _check_event},
     "item": {"check": _check_item},
     "voice": {},
+    # 外の場所（段 4・`places.py`）。場所の行そのものは外に出す材料にしない（貼る文の材料は臨時・営業の時間・催しの行）。
+    "place": {"private_by_default": ("url", "admin_by"), "check": lambda head, body: _check_place(head, body)},
 }
+
+
+def _check_place(head, body):
+    from .places import check_place
+    return check_place(head, body)
 
 # 点検の語ごとの直し方（`form.PROBLEM_TEXT` に足す・語は `:` の前で引く）。
 PROBLEM_TEXT = {
@@ -186,6 +194,9 @@ PROBLEM_TEXT = {
     "event_range": "ends は starts より後にしてください",
     "item_price": "price は円の数字だけにしてください（例 1200）",
     "item_season": "season_to は season_from と同じ日か、それより後にしてください",
+    "place_name": "place は google_maps・tabelog・hotpepper・retty・gurunavi・ikyu・instagram・other のどれかにしてください",
+    "place_url": "url は店の頁の https の URL を ASCII の字だけで書いてください（THTH はここに何も送りません）",
+    "place_synced_row": "synced_row は THTH が書く欄です。手で直したなら消して、thth register pasted で記録し直してください",
 }
 
 

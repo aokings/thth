@@ -42,8 +42,8 @@ SOURCES = ("owner", "asked", "guess", "register")
 GUESS, YES, NO = "推測", "本人が認めた", "本人が違うと言った"
 CONFIRMS = (GUESS, YES, NO)
 LIST_FIELDS = ("private_fields", "public_fields")
-# THTH が台帳に書く欄はこれだけ（頭の決まった欄・本文には触らない）。段 4 で外の場所の 2 つを足す。
-MANAGED = ("confirmed", "confirmed_at")
+# THTH が台帳に書く欄はこれだけ（頭の決まった欄・本文には触らない）。段 4 で外の場所の 2 つ（貼った日・貼った行）を足した。
+MANAGED = ("confirmed", "confirmed_at", "synced_on", "synced_row")
 # 中身の材料として外に出さない、行の仕組みの欄。
 INTERNAL = HEAD_REQUIRED + ("confirmed_at",) + LIST_FIELDS
 ROW_MAX_BYTES = 64 * 1024

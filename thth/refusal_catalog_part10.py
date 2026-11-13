@@ -206,4 +206,26 @@ ENTRIES = {
         "THTH の置き場（$THTH_ROOT）の権限と空きを確かめて、同じ命令を打ち直してください。",
         "thth doctor",
         "thth doctor で置き場を一度点検しておくと、ほかの命令も同じ理由で止まらずに済みます。"),
+    # ---------------------------------------------------------------- 段 4: 外の場所に手で貼る束
+    "register_paste_kind": _entry(
+        "外の場所に貼る文を作れるのは、臨時（special）・営業の時間（hours）・催し（event）の行だけです（1 行目の（）が渡した行）。",
+        "貼りたい中身を臨時・営業の時間・催しのどれかの行にして、thth register paste <台帳> <その行> を打ち直してください。",
+        "thth register paste <台帳> <行>",
+        "品や店の紹介は、自前のメディアの記事（thth register draft）から外の場所へリンクで届けると、文を二か所で直さずに済みます。"),
+    "register_paste_nothing": _entry(
+        "この台帳に外の場所の行（kind: place）が 1 枚も無いので、どこに貼るかが分かりません。",
+        "店の情報が載っている場所（Google マップ・食べログなど）ごとに、kind: place・place: <場所の番号> の行を台帳に足して、"
+        "thth register check で形を確かめてから打ち直してください。",
+        _CHECK,
+        "場所の行に admin_by（管理画面を誰が持つか）を書いておくと、貼る人を毎回聞かずに済みます。"),
+    "register_place_not_place": _entry(
+        "1 行目の（）の行は外の場所の行（kind: place）ではありません。",
+        "thth register show <台帳> で kind が place の行の番号を見て、その番号で打ち直してください。",
+        _SHOW,
+        "場所の行の番号は place-tabelog・place-google のように場所の名前を入れると、取り違えにくくなります。"),
+    "register_compare_empty": _entry(
+        "比べる文が空か、長すぎます（5000 字まで）。",
+        "外の場所の頁の、営業の時間やお知らせの欄の文だけを写して、標準入力に渡して打ち直してください。",
+        "thth register compare <台帳> <場所の行> --for <行> < 写した文",
+        "欄の文だけを写すと、ほかの欄の日付と取り違えずに比べられます。"),
 }

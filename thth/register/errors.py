@@ -19,6 +19,8 @@ REASONS = frozenset((
     "register_draft_expired", "register_row_changed", "register_recheck_unavailable",
     # 段 3: 聞いて埋める（問いの記録）。
     "register_question_log_invalid", "register_question_missing", "register_question_answered",
+    # 段 4: 外の場所に手で貼る束。
+    "register_paste_kind", "register_paste_nothing", "register_place_not_place", "register_compare_empty",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 

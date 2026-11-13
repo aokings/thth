@@ -10,6 +10,8 @@
 | `hours:missing` | 営業の時間の行が無い | 店 |
 | `season:<季節>:<年>` | 季節の休み（年末年始・お盆・大型連休）の行が、その `SEASON_LEAD_DAYS` 日前を過ぎても無い | 店 |
 | `voice:<品>` | 品に思いの 1 枚（`about: <品の番号>` の voice の行）が無い | どれも |
+| `place:<場所>` | 外の場所の行の見直し日を過ぎた（段 4） | どれも |
+| `unpasted:<場所>:<行>` | 柵を通った臨時・営業の時間・催しの今の中身を、その外の場所にまだ貼っていない（段 4） | どれも |
 
 「本人が違うと言った」行と退役した行は穴にしない（同じことを二度聞かない）。
 
@@ -38,6 +40,8 @@ HOLE_TEXT = {
     "hours": "曜日ごとの営業の時間と定休日を聞いてください（「月 10:00-18:00」「水 休み」の形にします）",
     "season": "この季節に休みや時間の変更があるかを聞いてください（いつもどおりなら、それも 1 枚の行にできます）",
     "voice": "この品を置いた思い（なぜ選んだか・誰に届けたいか）を聞いてください",
+    "place": "この外の場所の今の文を持ち主に写してもらい、thth register compare で台帳と比べてください",
+    "unpasted": "この外の場所に、台帳の今の中身をまだ貼っていません。thth register paste で貼る文を出し、貼ったら thth register pasted で記録します",
 }
 
 
@@ -61,7 +65,7 @@ def _special_overlaps(rows: list, first: datetime.date, last: datetime.date) -> 
     return False
 
 
-def find(register_kind: str, rows: list, today: datetime.date) -> list:
+def find(register_kind: str, rows: list, today: datetime.date, records: dict | None = None, now=None) -> list:
     """穴の並び（`{"hole", "row", "kind", "hint"}`）。並びは聞く順（推測 → 見直し → 欠け → 季節 → 思い）。"""
     live = [row for row in rows if not row.problems and row.head.get("status") != form.RETIRED]
     holes = []
@@ -87,6 +91,32 @@ def find(register_kind: str, rows: list, today: datetime.date) -> list:
     for row in live:
         if row.kind == "item" and row.id not in about:
             holes.append({"hole": f"voice:{row.id}", "row": row.id, "kind": "voice"})
+    # 段 4: 見直し日を過ぎた外の場所（外の今の文と合っているかを持ち主の目で見る）と、まだ貼っていない変わり。
+    from . import places
+    for place in places.place_rows(rows):
+        if form.parse_day(place.head["review_by"]) < today:
+            holes.append({"hole": f"place:{place.id}", "row": place.id, "kind": "place"})
+    if records is not None:
+        for place, row in places.unpasted(rows, paste_rows(rows, records, now or _noon(today))):
+            holes.append({"hole": f"unpasted:{place.id}:{row.id}", "row": row.id, "place": place.id, "kind": "unpasted"})
     for hole in holes:
         hole["hint"] = HOLE_TEXT[hole["kind"]]
     return holes
+
+
+def _noon(day):
+    from .. import jst
+    return datetime.datetime.combine(day, datetime.time(12, 0), tzinfo=jst.JST)
+
+
+def paste_rows(rows: list, records: dict, now) -> list:
+    """外の場所に貼るべき今の行: 柵を通った臨時・営業の時間・催しのうち、きっかけの頃のもの（変わる日の無い営業の時間はいつも）。"""
+    from . import fence, places, triggers
+    out = []
+    for row in rows:
+        if row.kind not in places.PASTE_KINDS or fence.state(row, records, now.date()) is not None:
+            continue
+        found = triggers.window(row, now)
+        if (found is None and row.kind == "hours") or (found is not None and found[2] == "due"):
+            out.append(row)
+    return out

@@ -27,6 +27,12 @@
                                        （営業の時間と臨時は答えだけでは認めない・二段の confirm を通す）
     thth register questions <台帳> [--json]
                                        問いの数・答えの数・答えから増えた行の数
+    thth register paste <台帳> <行> [--json]
+                                       外の場所（Google マップ・食べログなど）ごとに貼る文と、貼ったかの点検表（網に出ない）
+    thth register pasted <台帳> <場所の行> --for <行> --by <名前> [--json]
+                                       持ち主が貼ったと記録する（場所の行の頭の synced_on・synced_row だけを書く）
+    thth register compare <台帳> <場所の行> --for <行> [--json] < 外の今の文
+                                       持ち主が写して貼った外の場所の今の文と、台帳の日付と時刻を比べる（貼った文は残さない）
 
 記録（`admin_log`）の動きの名前は `register_` で始める。名前・時刻・行の番号だけで、台帳の本文は入れない。
 **網に出ない。** 台帳には頭の決まった欄（`form.MANAGED`）しか書かない。
@@ -40,7 +46,7 @@ import sys
 
 from .. import admin_log, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
-from . import holes as holes_mod, questions as questions_mod, triggers as triggers_mod
+from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -355,7 +361,8 @@ def cmd_draft(args) -> int:
 
 def cmd_holes(args) -> int:
     cfg, root, scanned = open_register(args.register)
-    found = holes_mod.find(cfg["kind"], scanned["rows"], _today())
+    now = jst.now_jst()
+    found = holes_mod.find(cfg["kind"], scanned["rows"], now.date(), ledger.read_confirmed(args.register), now)
     if args.json:
         _print({"register": args.register, "holes": found})
         return 0
@@ -371,7 +378,7 @@ def cmd_ask(args) -> int:
     cfg, root, scanned = open_register(args.register)
     now = jst.now_jst()
     log = questions_mod.read(root)
-    found = holes_mod.find(cfg["kind"], scanned["rows"], now.date())
+    found = holes_mod.find(cfg["kind"], scanned["rows"], now.date(), ledger.read_confirmed(args.register), now)
     picked = questions_mod.pick(found, log, now.date(), per_day=holes_mod.ASK_MAX_PER_DAY,
                                 gap_days=holes_mod.ASK_GAP_DAYS)
     asked = []
@@ -450,6 +457,96 @@ def cmd_questions(args) -> int:
         return 0
     print(f"台帳 {args.register}: 聞いた {value['asked']}・答えた {value['answered']}・飛ばした {value['skipped']}・"
           f"答えから増えた行 {value['rows_from_answers']}・まだ答えの無い問い {value['open']}")
+    return 0
+
+
+# ------------------------------------------------------------------ 外の場所に手で貼る束（段 4）
+
+def _paste_row(row_id, scanned, records):
+    row = find_row(scanned, row_id)
+    if row.kind not in places_mod.PASTE_KINDS:
+        raise RegisterRefused("register_paste_kind", row.id)
+    return fence.usable(row, records, _today())
+
+
+def _place_row(scanned, place_id):
+    place = find_row(scanned, place_id)
+    if place.kind != "place":
+        raise RegisterRefused("register_place_not_place", place.id)
+    if place.problems:
+        raise RegisterRefused("register_row_invalid", place.id)
+    return place
+
+
+def cmd_paste(args) -> int:
+    _cfg, _root, scanned = open_register(args.register)
+    row = _paste_row(args.row, scanned, ledger.read_confirmed(args.register))
+    places = places_mod.place_rows(scanned["rows"])
+    if not places:
+        raise RegisterRefused("register_paste_nothing")
+    found = places_mod.bundle(row, places)
+    value = {"register": args.register, "row": row.id, "kind": row.kind, "places": found,
+             "notes": ["THTH は外の場所の頁を読まず、管理画面にも入りません。貼るのは持ち主です",
+                       "字数の目安は確かめていない数です（収まらないときは文を短くして貼ってください）"]}
+    if args.json:
+        _print(value)
+        return 0
+    for one in found:
+        mark = "貼った" if one["pasted"] else "まだ"
+        fits = "" if one["fits"] else f"（目安 {one['max_chars']} 字を超えています・{one['chars']} 字）"
+        print(f"[{mark}] {one['label']}（{one['place']}）: {one['field']}{fits}")
+        print("-----")
+        print(one["text"])
+        print("-----")
+    print(f"  貼ったら thth {COMMAND} pasted {args.register} <場所の行> --for {row.id} --by <名前> で記録します")
+    for line in value["notes"]:
+        print(f"  {line}")
+    return 0
+
+
+def cmd_pasted(args) -> int:
+    by = _by(args)
+    _cfg, root, scanned = open_register(args.register)
+    row = _paste_row(args.for_row, scanned, ledger.read_confirmed(args.register))
+    place = _place_row(scanned, args.place)
+    entries = dict(places_mod.synced(place.head) or {})
+    entries.pop(row.id, None)
+    entries[row.id] = form.fingerprint(row.text)
+    today = jst.today_str()
+    _log_ready()
+    confirm_mod.write_row(root, place, confirm_mod.with_head(place.text, {"synced_on": today,
+                                                                      "synced_row": places_mod.synced_text(entries)}))
+    _record("pasted", args.register, by, {"place": [None, place.id], "row": [None, row.id]})
+    value = {"register": args.register, "place": place.id, "row": row.id, "synced_on": today}
+    if args.json:
+        _print(value)
+        return 0
+    print(f"外の場所 {place.id} に行 {row.id} の今の中身を貼ったと記録しました（{today}）")
+    return 0
+
+
+def cmd_compare(args) -> int:
+    _cfg, _root, scanned = open_register(args.register)
+    row = _paste_row(args.for_row, scanned, ledger.read_confirmed(args.register))
+    place = _place_row(scanned, args.place)
+    outside = sys.stdin.read(places_mod.COMPARE_MAX + 1)
+    if not outside.strip() or len(outside) > places_mod.COMPARE_MAX:
+        raise RegisterRefused("register_compare_empty")
+    found = places_mod.compare(row, outside)
+    value = {"register": args.register, "place": place.id, "row": row.id, **found,
+             "notes": ["どちらが正しいかは THTH が決めません。違いがあれば持ち主に聞いてください。貼られた文は残していません"]}
+    if args.json:
+        _print(value)
+        return 0
+    if found["same"]:
+        print(f"外の場所 {place.id} の文の日付と時刻は、台帳の行 {row.id} と合っています")
+    else:
+        print(f"外の場所 {place.id} の文と台帳の行 {row.id} に違いがあります:")
+        for side, label in (("only_register", "台帳にあって外に無い"), ("only_outside", "外にあって台帳に無い")):
+            for key, values in found[side].items():
+                if values:
+                    print(f"  {label}: {key} {values}")
+    print(f"  {value['notes'][0]}")
     return 0
 
 
@@ -574,3 +671,24 @@ def register(sub) -> None:
     p.add_argument("register", metavar="台帳")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_questions))
+
+    p = verbs.add_parser("paste", help="外の場所ごとに貼る文と、貼ったかの点検表（網に出ない）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("row", metavar="行")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_paste))
+
+    p = verbs.add_parser("pasted", help="持ち主が貼ったと記録する（場所の行の頭の synced_on・synced_row だけを書く）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("place", metavar="場所の行")
+    p.add_argument("--for", dest="for_row", required=True, metavar="行")
+    p.add_argument("--by", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_pasted))
+
+    p = verbs.add_parser("compare", help="持ち主が写した外の場所の今の文（標準入力）と台帳の日付と時刻を比べる")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("place", metavar="場所の行")
+    p.add_argument("--for", dest="for_row", required=True, metavar="行")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_compare))
