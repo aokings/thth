@@ -620,6 +620,46 @@ def build_privacy() -> str:
         "14 days ahead. THTH cannot revoke the credential on STORES itself; the owner arranges that with STORES. "
         "THTH is not provided by STORES.</p>")
 
+    # 実店舗のレジ（計画 実店舗 段 5・`thth/shop/square.py`・`smaregi.py`・結び付けは tests/test_privacy_matches_code.py の末尾）。
+    add("<h2>Store registers (read-only)</h2>")
+    add("<p><code>thth shop</code> can also read the owner's own store register on Square or Smaregi, in the same way "
+        "as the online shops above: only on the owner's own computer, with a key the owner gives THTH and that THTH "
+        "keeps in a file only the owner can read (<code>~/.config/thth/</code>, mode 600), and with the same "
+        "snapshot, drafts, re-reading at approval, <code>thth shop remove</code> and <code>thth leave</code>. THTH "
+        "does not read sales, transactions, customers or members, staff, timecards or payments, and it never writes to "
+        "the register. A register also holds items that are not for announcing (such as bags or held items), so "
+        "<strong>by default THTH uses none of the register's items</strong>: only the items or categories that the "
+        "owner adds with <code>thth shop publish</code> become material for drafts. For every other item THTH keeps "
+        "only its ID and that it is not used, and it does not read its stock. To choose, the owner can list the "
+        "item and category names with <code>thth shop items --candidates</code>; that list is shown on the owner's "
+        "terminal and is not saved. THTH reads the stock count only for the items the owner added, and at most "
+        "50 counts in one read. The shop's ledger also holds the store's ID in the register, the list of items and "
+        "categories the owner added, and the shop page's URL that the owner entered, which THTH writes into drafts "
+        "and sends nothing to.</p>")
+    add("<p><strong>Square.</strong> The owner gives THTH a Square access token: the personal access token from the "
+        "Square Developer Console, which can do everything on the account, including payments, refunds and "
+        "customers, or a narrower OAuth token that the owner grants to their own app with only "
+        "<code>ITEMS_READ</code>, <code>INVENTORY_READ</code> and <code>MERCHANT_PROFILE_READ</code>; THTH "
+        "recommends the narrower token. THTH sends only GET requests to <code>connect.squareup.com</code>, to "
+        "three paths: the locations (of which THTH keeps only the store's name, whether it is active, the "
+        "merchant's ID and the weekly business hours, and discards the address, phone number, email address and "
+        "the rest), the catalog list (items, their variations' prices and inventory settings, categories and image "
+        "URLs) and the inventory count of one variation at the store. THTH shows the register's weekly business "
+        "hours and keeps them in the snapshot to tell the owner when they change; THTH does not make drafts from "
+        "them. If the owner gives the token's expiry date, THTH keeps it and <code>thth morning</code> on that "
+        "computer can warn 14 days ahead. The token on Square itself is revoked in the Developer Console or by "
+        "revoking the app's access. THTH is not provided by Square.</p>")
+    add("<p><strong>Smaregi.</strong> The administrator of the owner's Smaregi contract sets up the Platform API "
+        "on Smaregi's My Page (Premium plan or above) and gives THTH the client ID and client secret. THTH sends "
+        "one kind of POST request, to <code>id.smaregi.jp</code>, to obtain an access token for only "
+        "<code>pos.products:read</code>, <code>pos.stores:read</code> and <code>pos.stock:read</code>; it uses that "
+        "token for the one command and does not keep it. Otherwise THTH sends only GET requests to "
+        "<code>api.smaregi.jp</code>, to three paths: the store (asking only for its ID and name), the product list "
+        "(asking only for the ID, category, name, price and whether stock is counted) and the stock of one product "
+        "at the store. THTH tells the owner when the token comes back with other scopes. Smaregi has no business "
+        "hours. The secret on Smaregi itself is revoked or recreated on My Page. THTH is not provided by "
+        "Smaregi.</p>")
+
     # 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。数と欄の名前は tests/test_privacy_matches_code.py がコードと結ぶ。
     add("<h2>Registers (the owner's own records)</h2>")
     add("<p><code>thth register</code> reads a register: a folder of plain text files, one file per thing, that the "
@@ -638,8 +678,8 @@ def build_privacy() -> str:
     add("<p>For a physical shop, the register holds the shop, its opening hours, temporary closures or changed hours, "
         "events, items in the shop and the owner's thoughts. <code>thth register draft</code> makes an unapproved "
         "post draft from these rows when a closure, an event, a change of hours, a new item or a seasonal item comes "
-        "near. It uses only facts that the owner wrote in the register and confirmed; in this version THTH does not "
-        "read the shop's web pages or its till. The shop's address and phone number, and the reason for a closure, "
+        "near. It uses only facts that the owner wrote in the register and confirmed; these drafts do not use the "
+        "shop's web pages or its till (reading a till with <code>thth shop</code>, above, is a separate part). The shop's address and phone number, and the reason for a closure, "
         "are not put into drafts unless the owner marks that field as public, and THTH puts no photos into these "
         "drafts. Each draft records the row it came from and a time after which it is not posted; when a person "
         "approves it, THTH reads the row again and refuses if the row changed, is no longer confirmed or the time has "
@@ -1154,6 +1194,37 @@ def build_privacy() -> str:
         "コンピューターの <code>thth morning</code> が 14 日前から知らせられます。STORES の側のクレデンシャルは THTH には"
         "取り消せないので、取り消しは持ち主が STORES と進めます。THTH は STORES が提供するものではありません。</p>")
 
+    add("<h2>実店舗のレジ（読むだけ）</h2>")
+    add("<p><code>thth shop</code> は、持ち主本人の Square かスマレジのレジも、上のネットショップと同じ形で読めます。"
+        "動くのは持ち主自身のコンピューターの中だけで、持ち主が渡した鍵を本人だけが読めるファイル"
+        "（<code>~/.config/thth/</code>・600）に置き、写し・下書き・承認のときの読み直し・<code>thth shop remove</code>・"
+        "<code>thth leave</code> も同じです。売上・取引・お客さんや会員・スタッフ・勤怠・支払いは読まず、レジに書き込むことも"
+        "ありません。レジには知らせるための物でない品（袋・取り置きなど）も入っているので、"
+        "<strong>THTH は既定でレジのどの品も使いません</strong>。持ち主が <code>thth shop publish</code> で足した品か部門だけが、"
+        "下書きの材料になります。ほかの品は ID と使わないことだけを残し、在庫も読みません。選ぶために、持ち主は "
+        "<code>thth shop items --candidates</code> で品と部門の名前の一覧を見られます。この一覧は持ち主の端末に出すだけで、"
+        "残しません。在庫の数を読むのは持ち主が足した品だけで、1 回の読みで 50 までです。ショップの台帳には、レジの中の"
+        "店舗の ID・持ち主が足した品と部門の一覧・持ち主が入れたお店の頁の URL も入ります。THTH はその URL を下書きに書き、"
+        "そこには何も送りません。</p>")
+    add("<p><strong>Square</strong>: 持ち主が Square のアクセストークンを THTH に渡します。Square の Developer Console の"
+        "個人のアクセストークンは、支払い・返金・お客さんまで含めてアカウントの全部ができる鍵です。持ち主が自分のアプリに "
+        "<code>ITEMS_READ</code>・<code>INVENTORY_READ</code>・<code>MERCHANT_PROFILE_READ</code> だけを許した OAuth の鍵も渡せて、"
+        "THTH はこちらを勧めます。THTH が送るのは <code>connect.squareup.com</code> への GET だけで、道は 3 つです。"
+        "店舗の一覧（THTH が残すのは店舗の名前・営業中か・持ち主の ID・曜日ごとの営業の時間だけで、住所・電話・メールアドレス"
+        "などほかは捨てます）・品の一覧（品・種類ごとの値段と在庫の設定・部門・画像の URL）・店舗での 1 つの種類の在庫の数"
+        "です。レジの曜日ごとの営業の時間は見せるだけで、写しに残して変わったら持ち主に知らせます。そこから下書きは作りません。"
+        "持ち主が鍵の期限の日を渡せば残し、その"
+        "コンピューターの <code>thth morning</code> が 14 日前から知らせられます。Square の側の鍵は、Developer Console で"
+        "作り直すか、アプリの許可を取り消して止めます。THTH は Square が提供するものではありません。</p>")
+    add("<p><strong>スマレジ</strong>: 持ち主の契約の管理者が、スマレジのマイページでプラットフォーム API を設定し"
+        "（プレミアムプラン以上）、client ID と client secret を THTH に渡します。THTH は <code>id.smaregi.jp</code> に 1 種類の"
+        " POST を送り、<code>pos.products:read</code>・<code>pos.stores:read</code>・<code>pos.stock:read</code> だけの"
+        "アクセストークンを取ります。そのトークンはその命令の間だけ使い、残しません。ほかは <code>api.smaregi.jp</code> への"
+        " GET だけで、道は 3 つです。店舗（ID と名前だけを求めます）・商品の一覧（ID・部門・名前・値段・在庫を数えるかだけを"
+        "求めます）・店舗での 1 つの商品の在庫です。トークンにほかの scope が付いて返れば持ち主に知らせます。スマレジには"
+        "営業の時間がありません。スマレジの側の secret は、マイページで作り直すか止めます。THTH はスマレジが提供するもの"
+        "ではありません。</p>")
+
     add("<h2>台帳（持ち主の手元の記録）</h2>")
     add("<p><code>thth register</code> は、持ち主が自分のコンピューターに置く台帳（1 つのものを 1 枚の文のファイルにした"
         "フォルダ）を読み、持ち主が認めた事実だけを下書きの材料にします。台帳は持ち主の手元にあり、THTH の運営者は預かりません。"
@@ -1167,8 +1238,8 @@ def build_privacy() -> str:
         "どちらも台帳のフォルダは消しません。</p>")
     add("<p>実店舗の台帳には、店・営業の時間・臨時の休みや時間の変更・催し・店頭の品・持ち主の思いを置きます。"
         "<code>thth register draft</code> は、臨時の休み・催し・営業の時間の変わり・新しい品・季節の品が近づいたときに、"
-        "これらの行から承認されていない投稿の下書きを作ります。材料は、持ち主が台帳に書いて認めた事実だけです。この版の THTH は、"
-        "店の頁もレジも読みません。店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+        "これらの行から承認されていない投稿の下書きを作ります。材料は、持ち主が台帳に書いて認めた事実だけです。この下書きには、"
+        "店の頁もレジも使いません（上の <code>thth shop</code> でレジを読むのは別の部分です）。店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
         "下書きに入れず、写真も下書きに入れません。下書きには元の行と出さない期限を書き、人が承認するときに行を読み直して、"
         "行が変わった・認めたが外れた・期限を過ぎた、のどれかなら断ります。営業の時間と臨時の休みは二段で認めます。</p>")
     add("<p><code>thth register holes</code> は台帳の穴（推測のままの行・見直し日を過ぎた行・店や営業の時間の行の欠け・"

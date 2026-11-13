@@ -18,6 +18,11 @@
                                        違いから queue の下書き（承認されていない形）を 1 本か上限 3 本
     thth shop remove <店> --by <名前> [--confirm D] [--json]
                                        店を外す（二段確認・鍵 → 写し → 台帳の順に消す）
+    thth shop add <店> --kind square|smaregi --project <project> --url <店の頁> --location <店舗> [--contract <契約>] --by <名前>
+    thth shop publish <店> (--item <id> | --category <id>) [--off] --by <名前>
+                                       実店舗のレジ: 出してよい品の表（既定は空・変えたら写しを捨てる）
+    thth shop items <店> --candidates  実店舗のレジ: 出す品を選ぶための名前の一覧（残さない）
+    thth shop doctor <店> [--json]    台帳・鍵・期限・店の読みと、鍵の広さ・まだ確かめていない所
 
 記録（`admin_log`）の動きの名前は `ACTION_PREFIX`（shopread_）で始める: add・token set・remove・draft。
 名前・店・時刻・欄の前後だけで、鍵は入れない。
@@ -39,6 +44,7 @@ import sys
 
 from .. import admin_log, jst, redact, refusal
 from . import ACTION_PREFIX, COMMAND, diff as diff_mod, draft as draft_mod, kinds, ledger
+from . import pos as pos_mod
 from . import remove as remove_mod
 from . import wire
 from .wire import StoreRefused
@@ -49,6 +55,9 @@ TRANSPORT = None
 READ_SECRET = None
 PROMPT = "BASE の個人用アクセストークン（PAT）を貼り付けてください（表示されません）: "
 PROMPT_STORES = "STORES のプライベートアプリのクレデンシャルを貼り付けてください（表示されません）: "
+PROMPT_SQUARE = "Square のアクセストークン（個人の鍵か、自分の店に許した OAuth の鍵）を貼り付けてください（表示されません）: "
+PROMPT_SMAREGI_ID = "スマレジのマイページで発行した client id を貼り付けてください（表示されません）: "
+PROMPT_SMAREGI_SECRET = "スマレジのマイページで発行した client secret を貼り付けてください（表示されません）: "
 
 
 def _refuse(args, exc: StoreRefused) -> int:
@@ -59,6 +68,11 @@ def _refuse(args, exc: StoreRefused) -> int:
     if exc.detail:
         line += f"（{exc.detail}）"
     payload = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}
+    if exc.code == "pos_location_unknown" and exc.extra.get("locations") and not getattr(args, "json", False):
+        # 選べる店舗（持ち主の店の店舗の id と名前だけ）。台帳の --location をこのどれかにすると通る。
+        print("この鍵で見える店舗:", file=sys.stderr)
+        for found in exc.extra["locations"]:
+            print(redact.redact(f"  {found['id']}  {found['name']}"), file=sys.stderr)
     return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload, **reason)
 
 
@@ -116,6 +130,9 @@ def _open(args):
 def _expiry_note(when, kind: str = "base") -> str | None:
     # state が none（期限の日の無い鍵・Shopify と --expires の無い STORES）と ok は何も言わない。
     if when["state"] == "soon":
+        if kind == "square":
+            return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日・token set で入れた日）です。"
+                    f"Square の OAuth の鍵は 30 日で切れます。新しい鍵を作り、thth {COMMAND} token set で差し替えてください")
         if kind == "stores":
             return (f"注意: 鍵の期限は {when['expires_on']}（あと {when['days_left']} 日・token set で入れた日）です。"
                     f"STORES から新しいクレデンシャルを受け取り、thth {COMMAND} token set で差し替えてください。"
@@ -147,10 +164,11 @@ def cmd_add(args) -> int:
         extra["shop"] = shop_label(args.shop)
     elif args.shop is not None:
         raise StoreRefused("store_args_invalid", "shop")
-    if args.kind == "stores":
+    if args.kind in ("stores",) or kinds.is_pos(args.kind):
         extra["public_url"] = public_url(args.url)
     elif args.url is not None:
         raise StoreRefused("store_args_invalid", "url")
+    extra.update(_pos_add_fields(args))
     _log_ready()
     path = ledger.write_new(args.store, ledger.build(args.store, kind=args.kind, project=args.project, **extra))
     _record("added", args.store, by, {"kind": [None, args.kind], "project": [None, args.project],
@@ -160,6 +178,8 @@ def cmd_add(args) -> int:
         print(f"次に、店の持ち主が Dev Dashboard でアプリを作り、アプリの版で scope は read_products だけを選んで店に入れ、"
               f"Settings の Client ID と Client secret を thth {COMMAND} token set {args.store} --auth client --by <名前> で"
               "渡してください（既にある管理画面のカスタムアプリの固定の鍵なら --auth token）。")
+    elif kinds.is_pos(args.kind):
+        _pos_add_next(args)
     elif args.kind == "stores":
         print(f"次に、店の持ち主が STORES の開発パートナーの登録でプライベートアプリを申し込み（スタンダードプランが要ります）、"
               f"発行されたクレデンシャルを thth {COMMAND} token set {args.store} --by <名前> で渡してください"
@@ -172,6 +192,45 @@ def cmd_add(args) -> int:
               f"thth {COMMAND} token set {args.store} --expires <期限の日> --by <名前> で渡してください。")
     print(kinds.get(args.kind)["not_by"])
     return 0
+
+
+def _pos_add_fields(args) -> dict:
+    """実店舗のレジの台帳の欄（店舗の id・スマレジの契約 ID・出してよい品の表は空から）。ほかの種類に付けたら断る。"""
+    location, contract = getattr(args, "location", None), getattr(args, "contract", None)
+    if not kinds.is_pos(args.kind):
+        if location is not None:
+            raise StoreRefused("pos_args_invalid", "location")
+        if contract is not None:
+            raise StoreRefused("pos_args_invalid", "contract")
+        return {}
+    out = {}
+    if args.kind == "smaregi":
+        if not isinstance(contract, str) or not wire.SMAREGI_CONTRACT.fullmatch(contract.strip()):
+            raise StoreRefused("pos_args_invalid", "contract")
+        out["contract"] = contract.strip()
+    elif contract is not None:
+        raise StoreRefused("pos_args_invalid", "contract")
+    text = location.strip() if isinstance(location, str) else ""
+    pattern = wire.SQUARE_ID if args.kind == "square" else ledger.LOCATION_DIGITS
+    if not pattern.fullmatch(text):
+        raise StoreRefused("pos_args_invalid", "location")
+    out["location"] = text
+    out["publish"] = pos_mod.empty_publish()
+    return out
+
+
+def _pos_add_next(args) -> None:
+    if args.kind == "square":
+        print(f"次に、店の持ち主が Square の Developer Console でアプリを作り、本番のアクセストークンを "
+              f"thth {COMMAND} token set {args.store} --by <名前> で渡してください（OAuth の鍵なら --expires <切れる日>）。")
+    else:
+        print(f"次に、店の契約の管理者がマイページの「プラットフォーム API 設定」で基本情報とスコープ（pos.products:read・"
+              f"pos.stores:read・pos.stock:read）を設定し、発行された client id と secret を "
+              f"thth {COMMAND} token set {args.store} --by <名前> で渡してください（プレミアムプラン以上が要ります）。")
+    for line in pos_mod.KEY_NOTES[args.kind]:
+        print(f"  {line}")
+    print(f"  レジの品は、持ち主が thth {COMMAND} publish {args.store} --item <id> か --category <id> で出してよいとした物だけが"
+          "下書きの材料になります（今は 1 つもありません）。")
 
 
 def shop_label(value) -> str:
@@ -220,6 +279,10 @@ def cmd_token_set(args) -> int:
         raise StoreRefused("store_args_invalid", "auth")
     if cfg["kind"] == "stores":
         return _token_set_stores(args, cfg, by)
+    if cfg["kind"] == "square":
+        return _token_set_stores(args, cfg, by, PROMPT_SQUARE)
+    if cfg["kind"] == "smaregi":
+        return _token_set_smaregi(args, cfg, by)
     day = ledger.parse_day(args.expires)
     if day is None:
         raise StoreRefused("store_args_invalid", "expires")
@@ -259,7 +322,7 @@ def _drop_other_shop(store: str, shop_id) -> bool:
     return bool(snapshot and snapshot.get("shop_id") != shop_id and ledger.drop_snapshot(store))
 
 
-def _token_set_stores(args, cfg, by) -> int:
+def _token_set_stores(args, cfg, by, prompt=PROMPT_STORES) -> int:
     """STORES のクレデンシャル（1 行）。`GET /retail/202211/store` が通ったときだけ保存する。
 
     期限は公式に書かれていない【未確認】ので `--expires` は任意。付ければ BASE と同じく 14 日前から知らせ、
@@ -273,7 +336,7 @@ def _token_set_stores(args, cfg, by) -> int:
         if day < _today():
             raise StoreRefused("store_token_expires_past", day.isoformat())
     _log_ready()
-    value = _secret_line(args, PROMPT_STORES)
+    value = _secret_line(args, prompt)
     token = {"auth": "bearer", "access_token": value}
     shop = kinds.client(cfg, token, TRANSPORT).user()
     try:
@@ -295,9 +358,51 @@ def _token_set_stores(args, cfg, by) -> int:
     if dropped:
         print(f"店が替わったので、前の店の写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します")
     if day:
-        note = _expiry_note(ledger.expiry({"expires_on": expires_on}, _today()), "stores")
+        note = _expiry_note(ledger.expiry({"expires_on": expires_on}, _today()), cfg["kind"])
         if note:
             print(note, file=sys.stderr)
+    _pos_notes(cfg["kind"], shop)
+    return 0
+
+
+def _pos_notes(kind: str, shop: dict | None = None, *, indent: str = "") -> None:
+    """実店舗のレジの鍵の広さ・THTH が打つもの・まだ確かめていない所（token set・whoami・doctor）。"""
+    if not kinds.is_pos(kind):
+        return
+    for line in pos_mod.KEY_NOTES[kind] + pos_mod.UNVERIFIED[kind]:
+        print(indent + line)
+    extra = (shop or {}).get("scopes_extra") or []
+    if extra:
+        print(indent + f"この鍵は読む 3 つのほかに {len(extra)} つの scope が付いて返りました（{'・'.join(extra)}）。"
+              "THTH は使いませんが、マイページのスコープの設定で外すと、漏れたときの害が小さくなります。")
+
+
+def _token_set_smaregi(args, cfg, by) -> int:
+    """スマレジの client id と secret（2 行）。鍵を取り、店舗が見えたときだけ保存する。期限の日は無い。"""
+    if args.expires is not None:
+        raise StoreRefused("store_args_invalid", "expires")
+    _log_ready()
+    token = {"auth": "smaregi_client", "client_id": _secret_line(args, PROMPT_SMAREGI_ID),
+             "client_secret": _secret_line(args, PROMPT_SMAREGI_SECRET)}
+    shop = kinds.client(cfg, token, TRANSPORT).user()
+    try:
+        before = ledger.load_token(cfg)
+    except StoreRefused:
+        before = None
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+        raise StoreRefused("store_shop_mismatch")
+    ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
+                             "expires_on": None, "no_expiry": True})
+    dropped = _drop_other_shop(args.store, shop["shop_id"])
+    _record("token_set", args.store, by,
+            {"shop_id": [before.get("shop_id") if before else None, shop["shop_id"]],
+             "replaced": [None, before is not None], "snapshot_dropped": [None, dropped],
+             "scopes_extra": [None, len(shop.get("scopes_extra") or [])]}, cfg["kind"])
+    print(f"保存しました: {cfg['token']}（600）・店舗 {shop['shop_name'] or '（名前なし）'}（契約 {shop['shop_id']}・"
+          f"店舗 {shop['location']}）・鍵の期限の日はありません")
+    if dropped:
+        print(f"店が替わったので、前の店の写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します")
+    _pos_notes(cfg["kind"], shop)
     return 0
 
 
@@ -383,12 +488,38 @@ def cmd_whoami(args) -> int:
     else:
         print(f"  鍵の期限: {when['expires_on'] or '不明'}"
               + (f"（あと {when['days_left']} 日）" if when["days_left"] is not None else ""))
-    note = scope_note(shop)
+    note = scope_note(shop) if cfg["kind"] == "shopify" else None
     if note:
         print(f"  {note}")
+    if kinds.is_pos(cfg["kind"]):
+        _print_hours(shop.get("hours"), indent="  ")
+        print(f"  出してよい品: {_publish_text(cfg)}")
+        _pos_notes(cfg["kind"], shop, indent="  ")
     print(f"  {not_by}")
     _note(args, when, cfg["kind"])
     return 0
+
+
+_DAY_WORDS = {"MON": "月", "TUE": "火", "WED": "水", "THU": "木", "FRI": "金", "SAT": "土", "SUN": "日"}
+
+
+def _print_hours(hours, *, indent: str = "") -> None:
+    if hours is None:
+        print(indent + "営業の時間: レジに営業の時間の欄がありません（台帳の営業の時間が正本です）")
+        return
+    if not hours:
+        print(indent + "営業の時間: レジに入っていません（台帳の営業の時間が正本です）")
+        return
+    text = "・".join(f"{_DAY_WORDS[p['day']]} {p['start']}〜{p['end']}" for p in hours)
+    print(indent + f"営業の時間（レジに入っている値・台帳の営業の時間が正本です）: {text}")
+
+
+def _publish_text(cfg) -> str:
+    publish = cfg["publish"]
+    if pos_mod.nothing_published(publish):
+        return (f"まだありません（レジの品は既定で下書きの材料にしません。thth {COMMAND} items {cfg['store']} --candidates"
+                f" で選び、thth {COMMAND} publish {cfg['store']} --item <id> で足します）")
+    return f"品 {len(publish['items'])} つ・部門 {len(publish['categories'])} つ"
 
 
 def _incomplete_note(read, cfg) -> str | None:
@@ -421,6 +552,8 @@ def _stock_text(stock) -> str:
 
 def cmd_items(args) -> int:
     cfg, _token, when, client = _open(args)
+    if getattr(args, "candidates", False):
+        return _items_candidates(args, cfg, when, client)
     read = client.items()
     value = {"store": args.store, "complete": read["complete"], "pages": read["pages"], "items": read["items"],
              "token": when, "note": _incomplete_note(read, cfg), "read_adjusted": read.get("adjusted"),
@@ -428,15 +561,37 @@ def cmd_items(args) -> int:
     if args.json:
         _print(value)
         return 0
+    hidden = "（出さない品）" if kinds.is_pos(cfg["kind"]) else "（非公開）"
     for row in read["items"]:
         if not row["visible"]:
-            print(f"{row['id']}  （非公開）")
+            print(f"{row['id']}  {hidden}")
             continue
         price = "—" if row["price"] is None else f"{row['price']:,} 円"
         print(f"{row['id']}  {row['name']}  {price}  在庫 {_stock_text(row['stock'])}  {row['sales_status']}")
     print(f"{len(read['items'])} 件" + (f"・{value['note']}" if value["note"] else ""))
     if value["read_note"]:
         print(value["read_note"])
+    _note(args, when, cfg["kind"])
+    return 0
+
+
+def _items_candidates(args, cfg, when, client) -> int:
+    """出す品を選ぶための一覧（レジだけ・名前を見せるが写しにもファイルにも残さない・在庫は読まない）。"""
+    if not kinds.is_pos(cfg["kind"]):
+        raise StoreRefused("pos_args_invalid", "candidates")
+    found = client.candidates()
+    value = {"store": args.store, **found, "token": when,
+             "note": "この一覧は出す品を選ぶためのもので、写しにもファイルにも残しません"}
+    if args.json:
+        _print(value)
+        return 0
+    for row in found["candidates"]:
+        mark = "出す" if row["published"] else "出さない"
+        cats = "・".join(f"{c['id']} {c['name']}".strip() for c in row["categories"])
+        print(f"{row['id']}  {row['name']}  [{mark}]" + (f"  部門 {cats}" if cats else "")
+              + ("  （アーカイブ）" if row.get("archived") else ""))
+    print(f"{len(found['candidates'])} 件・{value['note']}。出すなら thth {COMMAND} publish {args.store} --item <id> --by <名前>"
+          "（部門ごとなら --category <id>）")
     _note(args, when, cfg["kind"])
     return 0
 
@@ -496,14 +651,19 @@ def cmd_diff(args) -> int:
     if (baseline or args.accept) and not read["complete"]:
         raise StoreRefused("store_read_incomplete", pages=read["pages"])
     accepted = False
+    hours_change = _hours_change(snapshot, read)
     if baseline or args.accept:
-        ledger.write_snapshot(args.store, shop_id=token.get("shop_id"), items=read["items"], read_at=read_at)
+        ledger.write_snapshot(args.store, shop_id=token.get("shop_id"), items=read["items"], read_at=read_at,
+                              hours=read.get("hours"))
         accepted = True
     value = {"store": args.store, "read_at": read_at, "since": snapshot.get("read_at") if snapshot else None,
              "complete": read["complete"], "pages": read["pages"], "baseline": baseline, "changes": changes,
              "accepted": accepted, "token": when, "note": _incomplete_note(read, cfg), "shop_switched": switched,
              "variant_note": _variant_note(changes, accepted), "read_adjusted": read.get("adjusted"),
              "read_note": _adjusted_note(read)}
+    if kinds.is_pos(cfg["kind"]):
+        value["store_changes"] = [hours_change] if hours_change else []
+        value["publish_note"] = (_publish_text(cfg) if pos_mod.nothing_published(cfg["publish"]) else None)
     if args.json:
         _print(value)
         return 0
@@ -526,8 +686,28 @@ def cmd_diff(args) -> int:
         print(value["variant_note"])
     if value["read_note"]:
         print(value["read_note"])
+    if hours_change:
+        print("営業の時間がレジで変わりました（台帳の営業の時間が正本です。合っているか確かめてください・下書きは作りません）: "
+              + _hours_words(hours_change["before"]) + " → " + _hours_words(hours_change["after"]))
+    if value.get("publish_note"):
+        print("出してよい品: " + value["publish_note"])
     _note(args, when, cfg["kind"])
     return 0
+
+
+def _hours_words(hours) -> str:
+    if not hours:
+        return "（なし）"
+    return "・".join(f"{_DAY_WORDS[p['day']]} {p['start']}〜{p['end']}" for p in hours)
+
+
+def _hours_change(snapshot, read) -> dict | None:
+    """前の写しと今のレジの営業の時間の違い（Square だけ・写しに時間の無い前の版は言わない）。"""
+    now = read.get("hours")
+    if snapshot is None or now is None or "hours" not in snapshot or not isinstance(snapshot.get("hours"), list):
+        return None
+    before = snapshot["hours"]
+    return None if before == now else {"kind": "hours_changed", "before": before, "after": now}
 
 
 def cmd_draft(args) -> int:
@@ -537,6 +717,9 @@ def cmd_draft(args) -> int:
     by = _by(argparse.Namespace(by=getattr(args, "by", None) or os.environ.get("THTH_ACTOR")
                                 or f"thth {COMMAND} draft"))
     cfg, token, when, client = _open(args)
+    if kinds.is_pos(cfg["kind"]) and pos_mod.nothing_published(cfg["publish"]):
+        # レジの品は既定で材料にしない（設計 実店舗 §5.2）。網に出る前に断る。
+        raise StoreRefused("pos_publish_empty")
     # `--item` は字の形だけ見て受け、店の種類の id の形（整数か文字列）にここで直す。
     item = kinds.get(cfg["kind"])["parse_item_id"](args.item) if args.item is not None else None
     account = draft_mod.load_account(args.to)
@@ -570,7 +753,9 @@ def cmd_draft(args) -> int:
     _record("drafted", args.store, by, {"to": [None, args.to], "items": [[], [row["id"] for row in written]],
                                         "kinds": [[], [row["kind"] for row in written]]}, cfg["kind"])
     notes = ["status は draft です（承認されていません）。本文は素の 1〜2 行なので、出す前に整えて thth approve に通してください"]
-    if any(draft_mod.url_kind(row) == "shop" for _change, row in picked):
+    if kinds.is_pos(cfg["kind"]):
+        notes.append("レジの品には商品頁が無いので、台帳の店の頁の URL を載せました（from_store_url: shop）")
+    elif any(draft_mod.url_kind(row) == "shop" for _change, row in picked):
         notes.append("商品頁の URL は組み方を公式で確かめられなかったので、店の URL を載せました（from_store_url: shop）")
     notes += ["画像は載せていません（from_store_image: none）",
               f"写しは進めていません。済んだら thth {COMMAND} diff {args.store} --accept で進めます"]
@@ -585,6 +770,79 @@ def cmd_draft(args) -> int:
         print(f"下書きを書きました: {row['path']}（{row['kind']}・商品 {row['id']}）")
     for line in notes:
         print(f"  {line}")
+    _note(args, when, cfg["kind"])
+    return 0
+
+
+# ------------------------------------------------------------------ 出してよい品（レジだけ）
+
+def cmd_publish(args) -> int:
+    """出してよい品（か部門）の表を変える（網に出ない）。変えたら写しを捨て、次の diff が基準を取り直す。
+
+    写しを残すと、いま足した品が次の diff で「新しく入った」に見え、前からある品の新着の下書きができてしまうので。
+    """
+    by = _by(args)
+    raw = ledger.load_raw(args.store)
+    if not kinds.is_pos(raw["kind"]):
+        raise StoreRefused("pos_args_invalid", "publish_kind")
+    if (args.item is None) == (args.category is None):
+        raise StoreRefused("pos_args_invalid", "item_or_category")
+    key, value = ("items", args.item) if args.item is not None else ("categories", args.category)
+    publish = {k: list(v) for k, v in raw["publish"].items()}
+    before = list(publish[key])
+    if args.off:
+        publish[key] = [i for i in publish[key] if i != value]
+    elif value not in publish[key]:
+        if len(publish[key]) >= pos_mod.PUBLISH_MAX:
+            raise StoreRefused("pos_args_invalid", "publish_full")
+        publish[key].append(value)
+    if publish[key] == before:
+        print(f"変わりませんでした（{'品' if key == 'items' else '部門'} {value} は"
+              f"{'もともと表にありません' if args.off else 'もう表にあります'}）")
+        return 0
+    _log_ready()
+    ledger.rewrite(args.store, dict(raw, publish=publish))
+    dropped = ledger.drop_snapshot(args.store)
+    _record("publish_set", args.store, by, {key: [before, publish[key]], "snapshot_dropped": [None, dropped]}, raw["kind"])
+    word = "外しました" if args.off else "足しました"
+    print(f"{'品' if key == 'items' else '部門'} {value} を出してよい品の表から{word}"
+          f"（品 {len(publish['items'])} つ・部門 {len(publish['categories'])} つ）")
+    if dropped:
+        print(f"写しを捨てました。次の thth {COMMAND} diff {args.store} が基準を取り直します（いま足した品を「新しく入った」と"
+              "取り違えないため）")
+    return 0
+
+
+# ------------------------------------------------------------------ 診る（読むだけ）
+
+def cmd_doctor(args) -> int:
+    """台帳・鍵・期限を手元で確かめ、店を 1 回だけ読む（whoami と同じ道）。鍵の広さと THTH が打つものを言う。"""
+    cfg = ledger.load(args.store)
+    entry = kinds.get(cfg["kind"])
+    checks = [{"name": "ledger", "ok": True}]
+    token = ledger.load_token(cfg)
+    checks.append({"name": "token_file", "ok": True})
+    when = ledger.expiry(token, _today())
+    checks.append({"name": "token_expiry", "ok": when["state"] != "expired", "state": when["state"]})
+    if when["state"] == "expired":
+        raise StoreRefused("store_token_expired", when["expires_on"])
+    shop = kinds.client(cfg, token, TRANSPORT).user()
+    checks.append({"name": "read_shop", "ok": True})
+    notes = list(pos_mod.KEY_NOTES.get(cfg["kind"], ())) + list(pos_mod.UNVERIFIED.get(cfg["kind"], ()))
+    value = {"store": args.store, "kind": cfg["kind"], "checks": checks, "shop_name": shop["shop_name"],
+             "token": when, "notes": notes, "notice": entry["not_by"]}
+    if kinds.is_pos(cfg["kind"]):
+        value["publish"] = {k: len(v) for k, v in cfg["publish"].items()}
+        value["hours"] = shop.get("hours")
+    if args.json:
+        _print(value)
+        return 0
+    print(f"{args.store}（{entry['label']}）: 台帳・鍵のファイル・期限・店の読みはどれも通りました（店 {shop['shop_name'] or '（名前なし）'}）")
+    if kinds.is_pos(cfg["kind"]):
+        _print_hours(shop.get("hours"), indent="  ")
+        print(f"  出してよい品: {_publish_text(cfg)}")
+        _pos_notes(cfg["kind"], shop, indent="  ")
+    print(f"  {entry['not_by']}")
     _note(args, when, cfg["kind"])
     return 0
 
@@ -666,7 +924,7 @@ def _item_id(value: str) -> str:
     return value
 
 
-PARENT_HELP = "店（店を読む: BASE・Shopify・STORES）と Instagram の商品タグ"
+PARENT_HELP = "店（店を読む: BASE・Shopify・STORES・実店舗のレジの Square・スマレジ）と Instagram の商品タグ"
 PARENT_DESCRIPTION = """店を読む（BASE など）: 第 1 引数は店の名前（thth shop add で書いた台帳の名前）
     thth shop add <店> --kind base --project <project> --by <名前>
     thth shop add <店> --kind shopify --project <project> --shop <ラベル> --by <名前>
@@ -676,12 +934,21 @@ PARENT_DESCRIPTION = """店を読む（BASE など）: 第 1 引数は店の名�
     thth shop token set <店> --expires YYYY-MM-DD --by <名前> [--stdin]   BASE の PAT（鍵は標準入力か隠した入力で・引数では受けない）
     thth shop token set <店> [--auth client|token] --by <名前> [--stdin]  Shopify: client id と secret の 2 行か固定の鍵の 1 行
     thth shop token set <店> [--expires YYYY-MM-DD] --by <名前> [--stdin] STORES: クレデンシャルの 1 行（期限の日は任意）
+    thth shop add <店> --kind square --project <project> --url <店の頁の URL> --location <店舗の id> --by <名前>
+    thth shop add <店> --kind smaregi --project <project> --url <店の頁の URL> --contract <契約 ID> --location <店舗 ID> --by <名前>
+                                                                          実店舗のレジ（読むだけ・Square は GET だけ）
+    thth shop token set <店> [--expires YYYY-MM-DD] --by <名前> [--stdin] Square: アクセストークンの 1 行
+    thth shop token set <店> --by <名前> [--stdin]                        スマレジ: client id と secret の 2 行
+    thth shop publish <店> (--item <id> | --category <id>) [--off] --by <名前>
+                                                                          レジの品を出してよい品の表に足す・外す（既定は 0）
+    thth shop items <店> --candidates [--json]                            レジ: 出す品を選ぶための名前の一覧（残さない）
+    thth shop doctor <店> [--json]                                        台帳・鍵・期限・店の読みと、鍵の広さの知らせ
     thth shop whoami|items <店> [--json]                                  読むだけ・注文は読まない
     thth shop diff <店> [--accept] [--json]                               写しとの違い（読むだけ・--accept で写しを進める）
     thth shop draft <店> --to <口座> (--item <id> | --kind new|restock|price_down) [--json]
                                                                           queue の下書き（承認されていない形・1 本か上限 3 本）
     thth shop remove <店> --by <名前> [--confirm D]                       店を外す（二段確認・鍵・写し・台帳を消す）
-  この道具は BASE・Shopify・STORES が提供するものではありません。
+  この道具は BASE・Shopify・STORES・Square・スマレジが提供するものではありません。
 
 Instagram の商品タグ: 第 1 引数は Instagram の口座
     thth shop eligibility|catalogs <IG> [--json]                          読む
@@ -690,7 +957,7 @@ Instagram の商品タグ: 第 1 引数は Instagram の口座
     thth shop tag <IG> <media-id> --product <id> --by <名前> [--confirm D]  既存の投稿に付ける（二段確認）
 """
 # この家族が足す動詞（Instagram の商品タグの動詞とぶつからない）。
-VERBS = ("add", "token", "whoami", "items", "diff", "draft", "remove")
+VERBS = ("add", "token", "whoami", "items", "diff", "draft", "remove", "publish", "doctor")
 
 
 def parent(sub):
@@ -710,6 +977,9 @@ def register(verbs) -> None:
                        help="Shopify の店の myshopify のラベル（admin.shopify.com/store/<ここ> か <ここ>.myshopify.com）")
     p_add.add_argument("--url", default=None, metavar="URL",
                        help="STORES の店の頁の URL（https・応答に無いので持ち主が入れる・下書きに載せるだけで何も送らない）")
+    p_add.add_argument("--location", default=None, metavar="店舗",
+                       help="実店舗のレジ: 読む店舗の id（Square の Location の id・スマレジの店舗 ID）")
+    p_add.add_argument("--contract", default=None, metavar="契約 ID", help="スマレジの契約 ID")
     p_add.add_argument("--by", required=True)
     p_add.set_defaults(func=_run(cmd_add))
 
@@ -729,6 +999,7 @@ def register(verbs) -> None:
     p_set.set_defaults(func=_run(cmd_token_set))
 
     for verb, help_text, func in (("whoami", "鍵の確かめ・店の名前と URL・鍵の期限", cmd_whoami),
+                                  ("doctor", "台帳・鍵・期限・店の読みを確かめ、鍵の広さを知らせる（読むだけ）", cmd_doctor),
                                   ("items", "商品の一覧（許した欄だけ）", cmd_items),
                                   ("diff", "前の写しとの違い（読むだけ・--accept で写しを進める）", cmd_diff),
                                   ("draft", "違いから queue の下書き（承認されていない形・1 本か上限 3 本）", cmd_draft)):
@@ -738,12 +1009,23 @@ def register(verbs) -> None:
         q.set_defaults(func=_run(func))
         if verb == "diff":
             q.add_argument("--accept", action="store_true", help="今の読みを写しにする（全部読めたときだけ）")
+        if verb == "items":
+            q.add_argument("--candidates", action="store_true",
+                           help="実店舗のレジ: 出す品を選ぶための名前の一覧（写しにもファイルにも残さない）")
         if verb == "draft":
             q.add_argument("--to", required=True, metavar="口座", help="下書きを置く THTH の口座")
             q.add_argument("--item", type=_item_id, default=None, help="この商品 1 つだけ")
             q.add_argument("--kind", choices=tuple(draft_mod.PHRASES), default=None,
                            help=f"この種類の違いから（上限 {draft_mod.MAX_DRAFTS} 本）")
             q.add_argument("--by", default=None, help="誰が頼んだか（記録に残す・無ければ THTH_ACTOR）")
+
+    p_publish = verbs.add_parser("publish", help="店を読む: レジの品を出してよい品の表に足す・外す（網に出ない）")
+    p_publish.add_argument("store", metavar="店")
+    p_publish.add_argument("--item", type=_item_id, default=None, help="品の id（thth shop items <店> --candidates に出る）")
+    p_publish.add_argument("--category", type=_item_id, default=None, help="部門の id（その部門の品を全部出してよい）")
+    p_publish.add_argument("--off", action="store_true", help="表から外す")
+    p_publish.add_argument("--by", required=True)
+    p_publish.set_defaults(func=_run(cmd_publish))
 
     p_remove = verbs.add_parser("remove", help="店を読む: 店を外す（二段確認・鍵・写し・台帳を消す）")
     p_remove.add_argument("store", metavar="店")

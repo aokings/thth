@@ -81,6 +81,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 店を読む口（`thth shop`・設計 ショップ §4.1・監査 5.15.0 の 8）。subject は店の名前。名前・時刻・
                    # 欄の前後だけで鍵は入れない。頭は `thth/shop/__init__.py` の `ACTION_PREFIX`（shopread_）。通知は送らない。
                    'shopread_added', 'shopread_token_set', 'shopread_removed', 'shopread_drafted',
+                   # 実店舗のレジ（計画 実店舗 段 5）: 出してよい品の表を変えた（品と部門の id の前後だけ）。通知は送らない。
+                   'shopread_publish_set',
                    # 台帳の機械（`thth register`・計画 実店舗 段 1〜4）。subject は台帳の名前。行の番号と欄の前後だけで、
                    # 台帳の本文は入れない。頭は `thth/register/__init__.py` の `ACTION_PREFIX`（register_）。通知は送らない。
                    'register_added', 'register_confirmed', 'register_denied', 'register_removed', 'register_drafted',
@@ -300,7 +302,8 @@ def transaction(*, rollback=None):
                                       'shopread_added', 'shopread_token_set', 'shopread_removed',
                                       'shopread_drafted', 'register_added', 'register_confirmed',
                                       'register_denied', 'register_removed', 'register_drafted',
-                                      'register_asked', 'register_answered', 'register_pasted'):
+                                      'register_asked', 'register_answered', 'register_pasted',
+                                      'shopread_publish_set'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

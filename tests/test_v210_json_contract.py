@@ -146,6 +146,8 @@ COMMANDS += ['shop remove']
 COMMANDS += ['register add', 'register check', 'register show', 'register use', 'register confirm', 'register deny',
              'register remove', 'register triggers', 'register draft', 'register holes', 'register ask',
              'register answer', 'register questions', 'register paste', 'register pasted', 'register compare']
+# 実店舗のレジ（計画 実店舗 段 5）: 鍵の広さと THTH が打つものを言う口（網に出ない・--json は 1 つの値）。
+COMMANDS += ['shop doctor']
 
 
 def test_json_table_covers_every_parser():

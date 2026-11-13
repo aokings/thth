@@ -124,11 +124,38 @@ def validate(name: str, data) -> None:
             or not isinstance(data["project"], str) or not accounts.name_is_safe(data["project"])
             or not isinstance(data["token"], str) or not data["token"].strip()
             or ("shop" in data and not (isinstance(data["shop"], str) and SHOPIFY_LABEL.fullmatch(data["shop"])))
-            or ("public_url" in data and check_public_url(data["public_url"]) is None)):
+            or ("public_url" in data and check_public_url(data["public_url"]) is None)
+            or not _pos_fields_ok(data)):
         raise StoreRefused("store_ledger_invalid")
 
 
+def _pos_fields_ok(data: dict) -> bool:
+    """実店舗のレジの欄（`location`・`contract`・`publish`）。無い種類は真。"""
+    from . import pos
+    from .wire import SMAREGI_CONTRACT, SQUARE_ID
+    if "publish" in data and not pos.publish_ok(data["publish"]):
+        return False
+    if "contract" in data and not (isinstance(data["contract"], str) and SMAREGI_CONTRACT.fullmatch(data["contract"])):
+        return False
+    if "location" in data:
+        pattern = SQUARE_ID if data.get("kind") == "square" else LOCATION_DIGITS
+        if not (isinstance(data["location"], str) and pattern.fullmatch(data["location"])):
+            return False
+    return True
+
+
+# スマレジの店舗 ID（数字 9 桁まで・公式の在庫の欄の説明）。
+LOCATION_DIGITS = re.compile(r"[0-9]{1,9}\Z")
+
+
 def load(name: str) -> dict:
+    out = load_raw(name)
+    out["token"] = accounts._expand(out["token"])
+    return out
+
+
+def load_raw(name: str) -> dict:
+    """台帳を書いたままの形で（鍵の置き場は `~` のまま・置き換える `rewrite` の元）。"""
     path = path_for(name)
     try:
         with open(path, encoding="utf-8") as f:
@@ -138,9 +165,7 @@ def load(name: str) -> dict:
     except (OSError, ValueError):
         raise StoreRefused("store_ledger_invalid") from None
     validate(name, data)
-    out = dict(data)
-    out["token"] = accounts._expand(out["token"])
-    return out
+    return dict(data)
 
 
 def default_token(name: str) -> str:
@@ -156,6 +181,16 @@ def default_access(name: str) -> str:
 def build(name: str, *, kind: str, project: str, **extra) -> dict:
     """台帳の 1 本。種類ごとの欄（Shopify の `shop` など）は `extra` で渡す（検査は `validate`）。"""
     return {"store": name, "kind": kind, "project": project, "token": default_token(name), **extra}
+
+
+def rewrite(name: str, data: dict) -> str:
+    """今ある台帳を置き換える（出してよい品の表を変えるとき・`thth shop publish`）。0600 で原子的に書く。"""
+    validate(name, data)
+    path = path_for(name)
+    if not os.path.isfile(path) or os.path.islink(path):
+        raise StoreRefused("store_missing")
+    secrets_fs.atomic_write_json(path, data, mode=0o600)
+    return path
 
 
 def write_new(name: str, data: dict) -> str:
@@ -187,7 +222,7 @@ def load_token(cfg: dict) -> dict:
     if found is not None and value.get("auth") not in found["auths"]:
         # 店の種類と鍵の形が合わない（取り違え）。
         raise StoreRefused("store_token_missing")
-    if value.get("auth") == "shopify_client":
+    if value.get("auth") in ("shopify_client", "smaregi_client"):
         wanted = ("client_id", "client_secret")
     elif value.get("auth") in (None, "shopify_token", "bearer"):
         wanted = ("access_token",)
@@ -249,11 +284,17 @@ def read_snapshot(name: str) -> dict | None:
     return value
 
 
-def write_snapshot(name: str, *, shop_id, items: list, read_at: str) -> str:
-    """写しを 1 枚に置き換える。持つのは許した欄だけ（`rows.snapshot_row`）。"""
+def write_snapshot(name: str, *, shop_id, items: list, read_at: str, hours=None) -> str:
+    """写しを 1 枚に置き換える。持つのは許した欄だけ（`rows.snapshot_row`）。
+
+    `hours` は実店舗のレジ（Square）の曜日ごとの営業の時間（`square.hours_of` の形）。あるときだけ写す（BASE などの
+    写しの形は変えない）。
+    """
     from . import rows
     value = {"schema": SNAPSHOT_SCHEMA, "read_at": read_at, "shop_id": shop_id,
              "items": {str(row["id"]): rows.snapshot_row(row) for row in items}}
+    if hours is not None:
+        value["hours"] = hours
     path = snapshot_path(name)
     secrets_fs.atomic_write_json(path, value, mode=0o600)
     return path
