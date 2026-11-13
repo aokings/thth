@@ -18,4 +18,6 @@ thth register show media-sample
 
 1 行 = 1 枚の .md。頭の 7 つの欄（id・kind・status・source・confirmed・review_by・public）が要る。この README のように頭の無い .md は読み物として数えるだけ。
 
+**本文は外に出る材料**として持ち主の LLM に渡る（`thth register use`）。既定で出さない欄（店の住所と電話・臨時の休みの理由・外の場所の URL と管理する人）の値は、頭のその欄にだけ書き、本文には書かない。店・臨時・外の場所の行は、`use` が本文を返さない（持ち主が `public_fields` に `body` と書いたときだけ返す）。
+
 店の見本の `外の場所/` は、店の情報が載っている外の場所（Google マップ・食べログなど）ごとの 1 枚（kind `place`・段 4）。URL は架空。THTH はその頁を読まず、管理画面にも入らない。`thth register paste` で貼る文を出し、持ち主が貼ったら `thth register pasted` で記録する。

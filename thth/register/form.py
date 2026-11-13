@@ -257,6 +257,20 @@ def find(rows: list, row_id: str) -> Row | None:
     return next((row for row in rows if row.id == row_id), None)
 
 
+BODY_FIELD = "body"
+
+
+def outward_body(row: Row) -> str | None:
+    """外に出してよい本文（`register use` の材料）。既定で出さない欄を持つ種類（店・臨時・外の場所）は、持ち主が
+    `public_fields` に `body` と書いたときだけ返す（本文に理由や住所が書かれていても外に出さない・監査 5.19.0 の 3）。
+    `private_fields` に `body` と書いた行は、どの種類でも返さない。"""
+    if BODY_FIELD in set(parse_list(row.head.get("private_fields")) or []):
+        return None
+    if kinds_mod.private_by_default(row.kind) and BODY_FIELD not in set(parse_list(row.head.get("public_fields")) or []):
+        return None
+    return row.body.strip()
+
+
 def outward(row: Row) -> dict:
     """外に出してよい頭の欄（行の仕組みの欄・出さない印の欄・既定で出さない欄を除く）。"""
     private = set(parse_list(row.head.get("private_fields")) or [])

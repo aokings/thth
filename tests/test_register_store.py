@@ -436,3 +436,53 @@ def test_台帳の下書きの控えは道と頭の出所の行だけで本文�
     raw = pathlib.Path(state, draft_origin.FILE).read_text(encoding="utf-8")
     assert "お休み" not in raw and "設備の点検" not in raw
     assert oct(pathlib.Path(state, draft_origin.FILE).stat().st_mode & 0o777) == "0o600"
+
+
+# ------------------------------------------------------------------ use の本文（監査 5.19.0 直したほうがよい 3）
+
+def test_柵_見本の台帳の既定で出さない欄の値は同じ行の本文に現れない():
+    """見本を写して使う持ち主が、理由や住所を本文に書く形を覚えないように。"""
+    from thth.register import form
+    root = pathlib.Path(__file__).resolve().parent.parent / "registers.example"
+    checked = 0
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        for row in form.scan(str(folder))["rows"]:
+            for key in kinds.private_by_default(row.kind):
+                value = (row.head.get(key) or "").strip()
+                if value:
+                    checked += 1
+                    assert value not in row.body, f"{folder.name}/{row.path}: {key} の値が本文にある"
+    assert checked >= 8
+
+
+def test_柵_useは既定で出さない欄を持つ種類の本文を返さない(capsys, env, clock):
+    path = add(capsys, env, "cafe-sample", kind="store")
+    special = path / "臨時" / "2026-12-12_設備の点検.md"
+    # 持ち主が本文に理由を書いてしまっても、use の材料には出ない。
+    special.write_text(special.read_text(encoding="utf-8") + "設備の点検のため。\n", encoding="utf-8")
+    confirm(capsys, "cafe-sample", "cafe-special-2026-12-12")
+    rc_, value, err = jrun(capsys, "register", "use", "cafe-sample", "cafe-special-2026-12-12")
+    assert rc_ == 0, err
+    assert value["body"] is None and "reason" not in value["fields"]
+    assert "設備の点検" not in json.dumps(value, ensure_ascii=False)
+    assert any("public_fields に body" in n for n in value["notes"])
+    assert any("本文は外に出る材料" in n for n in value["notes"])
+    rc_, out, _ = run(capsys, "register", "use", "cafe-sample", "cafe-special-2026-12-12")
+    assert rc_ == 0 and "設備の点検" not in out and "本文は外に出る材料" in out
+    # 持ち主が public_fields に body と書けば本文を返す（店の行も同じ）。
+    edit(special, "reason: 設備の点検", "reason: 設備の点検\npublic_fields: body")
+    confirm(capsys, "cafe-sample", "cafe-special-2026-12-12")
+    rc_, value, err = jrun(capsys, "register", "use", "cafe-sample", "cafe-special-2026-12-12")
+    assert rc_ == 0, err
+    assert value["body"] and "午後 2 時から" in value["body"] and "reason" not in value["fields"]
+
+
+def test_既定で出さない欄の無い種類はuseが本文を返しprivate_fieldsのbodyで隠せる(capsys, env, clock):
+    path = add(capsys, env, "cafe-sample", kind="store")
+    confirm(capsys, "cafe-sample", "cafe-event-2026-12-14")
+    rc_, value, _ = jrun(capsys, "register", "use", "cafe-sample", "cafe-event-2026-12-14")
+    assert rc_ == 0 and value["body"]
+    edit(path / "催し" / "2026-12-14_試食会.md", "public: true", "public: true\nprivate_fields: body")
+    confirm(capsys, "cafe-sample", "cafe-event-2026-12-14")
+    rc_, value, _ = jrun(capsys, "register", "use", "cafe-sample", "cafe-event-2026-12-14")
+    assert rc_ == 0 and value["body"] is None

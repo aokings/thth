@@ -183,17 +183,26 @@ def cmd_show(args) -> int:
 def cmd_use(args) -> int:
     _cfg, _root, scanned = open_register(args.register)
     row = fence.usable(find_row(scanned, args.row), ledger.read_confirmed(args.register), _today())
+    body = form.outward_body(row)
+    notes = ["本文は外に出る材料です。投稿や頁にそのまま使われうるので、出したくないことは本文に書かないでください"]
+    if body is None:
+        # 既定で出さない欄を持つ種類（店・臨時・外の場所）は、本文に理由や住所が書かれていても外に出ないよう返さない
+        # （監査 5.19.0 直したほうがよい 3）。
+        notes.append(f"{row.kind} の行は既定で出さない欄を持つので、本文は返していません。本文も材料にするなら、"
+                     "頭の public_fields に body と書いてください")
     value = {"register": args.register, "row": row.id, "kind": row.kind, "fields": form.outward(row),
-             "body": row.body.strip(), "digest": form.fingerprint(row.text)}
+             "body": body, "digest": form.fingerprint(row.text), "notes": notes}
     if args.json:
         _print(value)
         return 0
     print(f"行 {row.id}（{row.kind}）は材料に使えます。外に出してよい欄:")
     for key, val in value["fields"].items():
         print(f"  {key}: {val}")
-    if value["body"]:
+    if body:
         print("本文:")
-        print(value["body"])
+        print(body)
+    for line in notes:
+        print(f"  {line}")
     return 0
 
 
