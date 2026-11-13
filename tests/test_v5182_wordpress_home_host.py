@@ -174,3 +174,30 @@ def test_目録になぜと通すにはともっと良くがある():
     said = refusal.parts(CODE)
     assert said and said["why"] and said["fix"] and said["better"]
     assert CODE in wordpress.WP_REFUSALS
+
+
+def test_入口をそろえる前に承認した原稿はapproval_staleで出ず断りがそれを先に言う(lane):
+    """監査（次の版・2026-11-13）の「直しの確かめ（645f37f）」の気づき 11。入口（site_url・blog_id）は承認の指紋に
+    入るので、替える前に承認した原稿は approval_stale で出ない（柵としては正しい）。断り（目録・principal auth・
+    doctor）が、承認し直すことを先に言う。承認し直せば出る。"""
+    home = home_elsewhere(lane)
+    rc, out, err = auth()
+    said = out + err
+    assert rc == 1 and "approval_stale" in said and "承認し直" in said, said        # principal auth の文
+    fix = refusal.parts(CODE)["fix"]
+    assert "approval_stale" in fix and "thth approve <ファイル>" in fix and "承認し直" in fix, fix
+    rc, out, err = call(["doctor", ACCOUNT])
+    assert "approval_stale" in out + err and "承認し直" in out + err, out + err     # doctor の文
+    path = lane.queue()
+    approve(path)                                                 # 替える前に承認
+    data = json.loads(lane.principal_path().read_text(encoding="utf-8"))
+    data["blogs"][0]["site_url"] = home                           # 文のとおりに入口をそろえる
+    lane.principal_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    rc, out, err = auth("--force")
+    assert rc == 0, out + err
+    result = throw()
+    assert result.action == "none" and [r["reason"] for r in result.rejections or []] == ["approval_stale"], result
+    assert posts_sent(lane.wp) == []                              # 記事は 1 本も出ていない
+    approve(path)                                                 # 承認し直す
+    result = throw()
+    assert (result.action, result.exit_code) == ("post", 0), result

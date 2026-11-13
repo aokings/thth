@@ -225,7 +225,8 @@ def _diagnose_wordpress(account_name: str, account_cfg: dict) -> dict:
         detail = (f"鍵は通りますが、記事の URL のホストが {who['home_host']} で、入口の {adapter.site_host} と違います"
                   "（wordpress_home_host_mismatch）。出すと記事は出ても台帳が conflict で止まります。主体のブログの行と"
                   f"口座の台帳の blog_id を両方 {who['home_host']} にそろえてください（site_url を書いているならそれも。"
-                  "片方だけでは通りません）。そろえたら thth doctor をもう一度")
+                  "片方だけでは通りません）。そろえたら thth doctor をもう一度。替える前に承認した原稿は approval_stale で"
+                  "出ないので、thth approve <ファイル> で承認し直してください")
     else:
         detail = f"読めません（{who['error']}）"
     probe = {"key": "wp_users_me", "label": f"REST の users/me（{account_cfg.get('blog_id')}）",
