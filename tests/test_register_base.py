@@ -328,6 +328,10 @@ STDLIB_DENIED = frozenset((
     "subprocess", "pty", "requests", "httpx",
 ))
 SUBPROCESS_ALLOWED = frozenset(("draft.py",))
+# 標準の外の部品で、許すのは YAML を字として読む PyYAML だけ（台帳の器 段 1・設計 §5.2「追加の部品を入れた機械だけ」）。
+# 許すのは yamlread.py の 1 枚だけ。PyYAML は網にも外の命令にも触れない。入れていない機械では import が失敗し、
+# YAML の記録は「中は見ていない」になる（依存 0 は変えない・`pip install 'thth[yaml]'`）。
+OPTIONAL_ALLOWED = {"yamlread.py": frozenset(("yaml",))}
 # 台帳の機械が使う、台帳の外の THTH の部品のうち、台帳の機械と同じ柵で縛る物（表の 1 つ・下書きの出所の控え）。
 REGISTER_EXTRA_FILES = (pathlib.Path(__file__).resolve().parent.parent / "thth" / "draft_origin.py",)
 
@@ -387,7 +391,8 @@ def import_problems(files, package: str) -> list:
                 if not (top == "subprocess" and path.name in SUBPROCESS_ALLOWED):
                     wrong.append(f"{path.name}: {name}")
             elif top not in sys.stdlib_module_names:
-                wrong.append(f"{path.name}: {name}")
+                if top not in OPTIONAL_ALLOWED.get(path.name, ()):
+                    wrong.append(f"{path.name}: {name}")
     return wrong
 
 
@@ -418,6 +423,12 @@ def test_柵_台帳の機械のimportは許した表の外なら赤(tmp_path, li
     """監査 5.19.0 直したほうがよい 6: レジを読む口・投稿の口・外の命令を import したら拾う（1 行ずつ）。"""
     (tmp_path / "bad.py").write_text(line + "\n", encoding="utf-8")
     assert net_imports(tmp_path), line
+
+
+def test_柵_yamlのimportはyamlreadの1枚だけ(tmp_path):
+    (tmp_path / "other.py").write_text("import yaml\n", encoding="utf-8")
+    (tmp_path / "yamlread.py").write_text("import yaml\nimport requests\n", encoding="utf-8")
+    assert sorted(net_imports(tmp_path)) == ["other.py: yaml", "yamlread.py: requests"]
 
 
 def test_台帳の機械のimportの表は標準の部品と許した部品だけ(tmp_path):

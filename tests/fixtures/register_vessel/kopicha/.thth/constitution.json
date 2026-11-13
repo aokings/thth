@@ -1,0 +1,22 @@
+{
+  "schema": "thth.constitution/1",
+  "words": {
+    "says_so": {
+      "supported": {
+        "conclusion": "good"
+      },
+      "contested": {
+        "conclusion": "pending",
+        "reason": "both_sides"
+      },
+      "unverified": {
+        "conclusion": "pending",
+        "reason": "unverified"
+      },
+      "contextual": {
+        "conclusion": "pending",
+        "reason": "contextual"
+      }
+    }
+  }
+}

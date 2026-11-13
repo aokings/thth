@@ -4,6 +4,10 @@
                                        台帳のフォルダを THTH に控える（控えは 0600・台帳そのものは預からない）
     thth register check <台帳> [--json]
                                        全部の行の形を点検する（頭の 7 つの欄・印・見直し日・秘密らしい値・種類ごとの形）
+    thth register kinds <台帳> [--json]
+                                       種類の宣言・憲法・備え付けの種類（台帳の器 段 1・読むだけ）
+    thth register links <台帳> <種類:番号> [--units] [--unit 指し先] [--key 欄=値 ...] [--json]
+                                       指す・指される・判断・観測。鍵で 2 つ以上に当たれば 1 つにせず断る（読むだけ）
     thth register show <台帳> [--json]
                                        行ごとに「中身の材料に使えるか」と、使えないならその符丁
     thth register use <台帳> <行> [--json]
@@ -47,6 +51,7 @@ import sys
 from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
+from . import vessel, vessel_cli
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -145,7 +150,12 @@ def cmd_add(args) -> int:
 
 
 def cmd_check(args) -> int:
-    cfg, _root, scanned = open_register(args.register)
+    cfg = ledger.load(args.register)
+    root = ledger.root_of(cfg)
+    if vessel.has_declarations(root):
+        # 台帳の器 段 1: .thth/kinds/ がある台帳は、器として読む（無い台帳は今の check のまま）。
+        return vessel_cli.cmd_check(args, root)
+    scanned = form.scan(root)
     value = {"register": args.register, "kind": cfg["kind"], "rows": len(scanned["rows"]),
              "skipped": scanned["skipped"], "problems": scanned["problems"]}
     if scanned["problems"]:
@@ -597,6 +607,18 @@ def cmd_compare(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ 台帳の器 段 1（読むだけ）
+
+def cmd_kinds(args) -> int:
+    cfg = ledger.load(args.register)
+    return vessel_cli.cmd_kinds(args, ledger.root_of(cfg))
+
+
+def cmd_links(args) -> int:
+    cfg = ledger.load(args.register)
+    return vessel_cli.cmd_links(args, ledger.root_of(cfg))
+
+
 # ------------------------------------------------------------------ 退出
 
 def purge_for_leave(account: str, project, *, by: str) -> list:
@@ -644,12 +666,28 @@ def register(sub) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_add))
 
-    for verb, help_text, func in (("check", "全部の行の形を点検する", cmd_check),
+    for verb, help_text, func in (("check", "全部の行の形を点検する（.thth/kinds/ があれば器として読む）", cmd_check),
                                   ("show", "行ごとに材料に使えるか", cmd_show)):
         p = verbs.add_parser(verb, help=help_text)
         p.add_argument("register", metavar="台帳")
+        if verb == "check":
+            p.add_argument("--catalog", action="store_true", help="目録（番号・種類・版・場所）も出す（器の台帳）")
         p.add_argument("--json", action="store_true")
         p.set_defaults(func=_run(func))
+
+    p = verbs.add_parser("kinds", help="種類の宣言・憲法・備え付けの種類の一覧（読むだけ）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_kinds))
+
+    p = verbs.add_parser("links", help="記録の指す・指される・判断・観測（読むだけ）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("record", metavar="種類:番号")
+    p.add_argument("--units", action="store_true", help="内側の単位の指し先を並べる")
+    p.add_argument("--unit", default=None, metavar="指し先")
+    p.add_argument("--key", action="append", default=None, metavar="欄=値", help="鍵で単位を引く（2 つ以上なら断る）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_links))
 
     p = verbs.add_parser("use", help="柵: その行を材料に使えるか")
     p.add_argument("register", metavar="台帳")

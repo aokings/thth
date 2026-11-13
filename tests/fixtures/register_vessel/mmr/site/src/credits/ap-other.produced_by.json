@@ -1,0 +1,16 @@
+{
+ "public": false,
+ "public_song": true,
+ "entity_id": "ap-other",
+ "role": "mastered_by",
+ "name": "見本の人",
+ "rows": [
+  {
+   "seed": "seed-liked-0831",
+   "title": "曲 D",
+   "status": "held",
+   "held_kind": "release_credits",
+   "held_reason_ja": "盤全体のクレジット"
+  }
+ ]
+}

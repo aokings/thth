@@ -1,0 +1,47 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "admission_result",
+  "note": "関東の入試結果（1 校 1 枚）。回の行は番号を持たない。鍵（年度・回・日・時間帯・性別・科目）と中身の指紋で指す",
+  "place": "admission_results/[0-9]*.json",
+  "format": "json",
+  "records": "file",
+  "max_bytes": 153600,
+  "id": {
+    "name": true
+  },
+  "units": {
+    "groups": [
+      "years",
+      "*"
+    ],
+    "items": [
+      "rounds",
+      "*"
+    ],
+    "key": [
+      "group.year",
+      "round",
+      "date",
+      "time_of_day",
+      "gender",
+      "subject_type"
+    ],
+    "time": {
+      "group": "year"
+    },
+    "scope": {
+      "key_fields": [
+        "gender"
+      ],
+      "separate": [
+        "capacity"
+      ]
+    },
+    "sources": {
+      "list": "sources",
+      "field": "field",
+      "split": "/,",
+      "rest": "rounds"
+    }
+  }
+}

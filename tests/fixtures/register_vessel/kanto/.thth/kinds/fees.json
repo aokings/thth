@@ -1,0 +1,40 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "fees",
+  "place": "fees/[0-9]*.json",
+  "format": "json",
+  "records": "file",
+  "id": {
+    "field": "school_id"
+  },
+  "units": {
+    "groups": [
+      "admissions_extra"
+    ],
+    "items": [
+      "rounds",
+      "*"
+    ],
+    "key": [
+      "group.year",
+      "round"
+    ],
+    "time": {
+      "group": "year"
+    },
+    "scope": {
+      "separate": [
+        "capacity"
+      ],
+      "fields": {
+        "capacity": "capacity_shared"
+      }
+    },
+    "sources": {
+      "list": "sources",
+      "field": "field",
+      "split": "/,",
+      "rest": "rounds"
+    }
+  }
+}

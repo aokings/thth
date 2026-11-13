@@ -1,0 +1,119 @@
+{
+ "school_id": "199",
+ "name": "コースのある学校（見本）",
+ "years": [
+  {
+   "year": 2026,
+   "rounds": [
+    {
+     "round": "第1回",
+     "date": "2026-02-01",
+     "time_of_day": "午前",
+     "gender": "男子",
+     "subject_type": "4科",
+     "capacity": null,
+     "applicants": 50,
+     "examinees": null,
+     "admitted": 20,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "コースＩ"
+    },
+    {
+     "round": "第1回",
+     "date": "2026-02-01",
+     "time_of_day": "午前",
+     "gender": "男子",
+     "subject_type": "4科",
+     "capacity": null,
+     "applicants": 30,
+     "examinees": null,
+     "admitted": 12,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "コースＩＩ"
+    },
+    {
+     "round": "第1回",
+     "date": "2026-02-01",
+     "time_of_day": "午前",
+     "gender": "女子",
+     "subject_type": "4科",
+     "capacity": null,
+     "applicants": 40,
+     "examinees": null,
+     "admitted": 18,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "コースＩ"
+    },
+    {
+     "round": "第1回",
+     "date": "2026-02-01",
+     "time_of_day": "午前",
+     "gender": "女子",
+     "subject_type": "4科",
+     "capacity": null,
+     "applicants": 25,
+     "examinees": null,
+     "admitted": 10,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "コースＩＩ"
+    },
+    {
+     "round": "第2回",
+     "date": "2026-02-02",
+     "time_of_day": "午後",
+     "gender": "男子",
+     "subject_type": "2科",
+     "capacity": null,
+     "applicants": 60,
+     "examinees": null,
+     "admitted": 25,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": null
+    }
+   ],
+   "sources": [
+    {
+     "field": "rounds",
+     "url": "https://example.invalid/199",
+     "quote": "第1回・第2回",
+     "retrieved": "2026-08-20"
+    }
+   ]
+  }
+ ]
+}

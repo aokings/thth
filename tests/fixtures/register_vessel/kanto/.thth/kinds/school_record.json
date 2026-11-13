@@ -1,0 +1,30 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "school_record",
+  "note": "結合したレコード（台本が作る）。時点は欄ごとの年度の表 field_years から読む。器は年度を計算しない",
+  "place": "school_records/[0-9]*.json",
+  "format": "json",
+  "records": "file",
+  "max_bytes": 307200,
+  "id": {
+    "field": "school_id"
+  },
+  "units": {
+    "groups": [
+      "admissions"
+    ],
+    "items": [
+      "rounds",
+      "*"
+    ],
+    "key": [
+      "round"
+    ],
+    "time": {
+      "per_field": "field_years"
+    },
+    "not_values": [
+      "prev"
+    ]
+  }
+}

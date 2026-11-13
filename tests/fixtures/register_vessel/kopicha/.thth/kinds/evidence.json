@@ -1,0 +1,28 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "evidence",
+  "place": "data/knowledge/evidence.csv",
+  "format": "csv",
+  "id": {
+    "field": "id"
+  },
+  "questions": [
+    {
+      "name": "reads_right",
+      "state": "extraction_status",
+      "depends": [
+        "finding_ja",
+        "locator",
+        "source_id"
+      ]
+    }
+  ],
+  "pointers": [
+    {
+      "field": "claim_id",
+      "meaning": "supports",
+      "meaning_from": "relation",
+      "to": "claim"
+    }
+  ]
+}

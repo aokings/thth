@@ -1,0 +1,7 @@
+id,claim_id,source_id,relation,evidence_type,locator,finding_ja,method,material,limitations,extraction_status
+e-milk-01,c-term-tea-grade-ctc-res-milktea1-24,s-1,supports,,,水浸出物 17.3%,,,,v_checked
+e-br-024-a,c-origin-brazil-024,s-2,supports,,,ナッツ,,,,v_checked
+e-br-024-b,c-origin-brazil-024,s-3,contradicts,,,チョコレート,,,,v_checked
+e-cer-003-a,c-origin-brazil-cerrado-003,s-2,supports,,,800-1300m,,,,v_checked
+e-cer-003-b,c-origin-brazil-cerrado-003,s-4,contradicts,,,700-1200m,,,,v_checked
+e-milk-02,c-term-tea-grade-ctc-res-milktea1-24,s-5,context,,,ミルクティーの文脈,,,,v_checked

@@ -1,0 +1,17 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "page",
+  "place": "src/content/origins/*.yaml",
+  "format": "yaml",
+  "id": {
+    "name": true
+  },
+  "pointers": [
+    {
+      "template": "origin-{id}",
+      "meaning": "about",
+      "to": "point",
+      "note": "見本: 産地の枚は origin-<枚の名前> の点について"
+    }
+  ]
+}

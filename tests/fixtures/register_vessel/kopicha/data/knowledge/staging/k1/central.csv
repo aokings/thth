@@ -1,0 +1,2 @@
+evidence_id,action,claim_status,extraction_status,statement_ja,predicate,object_text_ja,locator,finding_ja
+e-milk-01,fix,supported,integrator_checked,CTC 茶葉の水浸出物は 17.1% とされ、テアニンは 18.6% とされる,has_value,水浸出物 17.1%,,水浸出物 17.1%
