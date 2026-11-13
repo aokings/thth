@@ -756,13 +756,23 @@ def _read_units(rec: Record, kind: Kind) -> None:
         return
     raw = []
     for group, _g in _get(rec.values, decl["groups"]):
+        if not isinstance(group, dict) and "unit_not_object" not in rec.problems:
+            rec.problems.append("unit_not_object")  # まとまりの並びの中の物でない要素を黙って落とさない
+        if decl.get("sources") and isinstance(group, dict) and group.get(decl["sources"]["list"]) is not None \
+                and not isinstance(group.get(decl["sources"]["list"]), list):
+            # 出典の欄が並びでない: 「出典なし」と取り違えない（値はその読んだ値そのものに依る。`sources_for`）。
+            if "sources_unreadable" not in rec.problems:
+                rec.problems.append("sources_unreadable")
         for item, _i in _get(group, decl["items"]):
             if isinstance(item, dict):
                 raw.append((group if isinstance(group, dict) else {}, item))
+            elif "unit_not_object" not in rec.problems:
+                rec.problems.append("unit_not_object")  # 行の並びの中の物でない要素を黙って落とさない
     by_key = {}
     for group, item in raw:
         if decl["id"] and _id_ok(item.get(decl["id"])):
-            pointer_key = ("i", item.get(decl["id"]))
+            # 番号は字にそろえて比べる（数の 1 と字の "1" は同じ指し先 `i:1` なので、同じ組で比べて重なりを出す）。
+            pointer_key = ("i", _id_ok(item.get(decl["id"])))
         else:
             pointer_key = ("k", canonical(_key_of(decl, group, item)))
         by_key.setdefault(pointer_key, []).append((group, item))
@@ -846,8 +856,11 @@ def sources_for(decl: dict, group: dict, name: str) -> list:
     if not spec:
         return []
     listing = group.get(spec["list"]) if isinstance(group, dict) else None
-    if not isinstance(listing, list):
+    if listing is None:
         return []
+    if not isinstance(listing, list):
+        # 出典の欄を並びとして読めない（記録の問題 `sources_unreadable`）: どの値も、読んだ値そのものに依る。
+        return [["unreadable", listing]]
     sources = [s for s in listing if isinstance(s, dict)]
     # 辞書でない要素（手で書いた字など）は、どの欄の出典か読めない: 黙って落とさず、どの値も依る（安全な側）。
     loose = [s for s in listing if not isinstance(s, dict)]
@@ -889,8 +902,9 @@ def value_time(decl: dict, unit: Unit, name: str):
 
 
 def _label_word(value) -> str:
+    """札の語: 観測と同じ直し方で、前後の空白を落とす（尋ねる側も前後の空白を落として比べる。比べる両側を同じ形に）。"""
     word = word_of(value)
-    return "" if word is None else word
+    return "" if word is None else word.strip()
 
 
 def scope_of(decl: dict, unit: Unit, name: str):
@@ -906,20 +920,28 @@ def scope_of(decl: dict, unit: Unit, name: str):
     if name in scope["separate"]:
         holder = scope["fields"].get(name)
         raw = unit.item.get(holder) if holder else None
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
+        if _blank(raw):
             return "separate", None, None
         return "separate", {"field": {holder: raw}}, f"{holder}={_label_word(raw)}"
     axes = sorted(scope["key_fields"])
+    if any(_blank(unit.item.get(k)) for k in axes):
+        # 宣言した範囲の軸の値が欠け・null・空・空白だけ: 範囲は決まっていない（未宣言）。
+        return "key", None, None
     form = {"key": {k: unit.item.get(k) for k in axes}}
     label = ",".join(f"{k}={_label_word(unit.item.get(k))}" for k in axes) or "key"
     return "key", form, label
+
+
+def _blank(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def cell(decl: dict, unit: Unit, name: str) -> dict:
     """欄の 4 つ組 `{"value", "scope", "time", "sources"}`。値でない欄は `value` だけ（`scope`・`time` は None、
     `sources` は []。親の年度や出典を付けない）。"""
     value = unit.item.get(name)
-    if not is_value_field(decl, name):
+    if name not in unit.item or not is_value_field(decl, name):
+        # 値でない欄と、行に無い欄（欠け）は value だけ（欠けは null）。親の年度や出典を付けない。
         return {"value": value, "scope": None, "time": None, "sources": []}
     _kind, form, _label = scope_of(decl, unit, name)
     srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
@@ -1225,6 +1247,8 @@ def ambiguous_units(vessel: Vessel) -> list:
         for unit in rec.units:
             if unit.ambiguous and unit.pointer.startswith("kc:"):
                 groups.setdefault(unit.pointer.split(".")[0], []).append(unit)
+            elif unit.ambiguous and unit.pointer.startswith("i:"):
+                groups.setdefault(unit.pointer, []).append(unit)  # 同じ番号の別々の行
         for _key, members in groups.items():
             out.append({"record": rec.ref, "key": members[0].key, "units": [u.pointer for u in members],
                         "same_content": max(u.same_content for u in members)})
