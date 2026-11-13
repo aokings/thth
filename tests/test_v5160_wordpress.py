@@ -49,6 +49,7 @@ class FakeWordPress:
         self.mode = None
         self.roles = ["editor"]
         self.kses = None   # 本文を削る（WordPress の kses の真似）
+        self.home = None   # WordPress の「サイトアドレス」（home）。入口と違うホストの構えの真似（5.18.2）
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.port = self.server.server_address[1]
         self.base = f"http://127.0.0.1:{self.port}"
@@ -61,7 +62,7 @@ class FakeWordPress:
 
     def _post_json(self, pid):
         p = self.posts[pid]
-        return {"id": pid, "link": f"{self.base}/?p={pid}", "status": p["status"],
+        return {"id": pid, "link": f"{self.home or self.base}/?p={pid}", "status": p["status"],
                 "title": {"raw": p["title"], "rendered": p["title"]},
                 "content": {"raw": p["content"], "rendered": "<div>" + p["content"] + "</div>"},
                 "categories": p["categories"], "tags": p["tags"],
@@ -101,7 +102,10 @@ class FakeWordPress:
                     return self._send(401, {"code": "incorrect_password", "message": "x"})
                 path = url.path
                 if path == "/wp-json/wp/v2/users/me":
-                    return self._send(200, {"id": 2, "username": WP_USER, "roles": wp.roles})
+                    me = {"id": 2, "username": WP_USER, "roles": wp.roles}
+                    if wp.home:
+                        me["link"] = f"{wp.home}/author/{WP_USER}/"   # 著者の頁は home の上に組まれる
+                    return self._send(200, me)
                 for kind in ("categories", "tags"):
                     if path == f"/wp-json/wp/v2/{kind}":
                         rows = wp.terms[kind]

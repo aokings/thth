@@ -220,6 +220,12 @@ def _diagnose_wordpress(account_name: str, account_cfg: dict) -> dict:
         if who["strong"]:
             detail += ("。管理者の鍵です（出せますが、強すぎます）。WordPress に「編集者」の利用者を作り、"
                        "その利用者のアプリケーションパスワードに替えると、漏れたときの害が小さくなります")
+    elif who["error"] == "wordpress_home_host_mismatch":
+        # 5.18.2（5.16.0 監査 の 7）: 鍵は通るが、記事の URL のホストが入口と違う（出すと conflict で止まる）。
+        detail = (f"鍵は通りますが、記事の URL のホストが {who['home_host']} で、入口の {adapter.site_host} と違います"
+                  "（wordpress_home_host_mismatch）。出すと記事は出ても台帳が conflict で止まります。主体のブログの行と"
+                  f"口座の台帳の blog_id を両方 {who['home_host']} にそろえてください（site_url を書いているならそれも。"
+                  "片方だけでは通りません）。そろえたら thth doctor をもう一度")
     else:
         detail = f"読めません（{who['error']}）"
     probe = {"key": "wp_users_me", "label": f"REST の users/me（{account_cfg.get('blog_id')}）",
