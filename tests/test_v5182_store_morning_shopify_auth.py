@@ -44,3 +44,25 @@ def test_Shopifyの店の行は鍵の種類を選べる命令を言いそのと�
     assert rc_ == 0, out + err
     assert morning._store_key_lines({"nigamilab"}, NOW) == []
     assert env["fixed"] not in out + err and env["client_secret"] not in out + err
+
+
+def test_柵_Shopifyの店の行のどちらを選ぶかの一文のとおりに選べば通る(capsys, env):
+    """監査 次の版・2026-11-13 の「直しの確かめ（645f37f）」の気づき 13。行の「どちらを選ぶか」の一文は、抜いても
+    試験が緑だった。一文から「2 行なら」「1 行なら」の旗を読み、そのとおりに選んで打つと通ることを縛る
+    （一文を抜く・取り違える・旗の名を変えると赤）。"""
+    import re
+
+    assert add(capsys)[0] == 0
+    put_broken_token()
+    [line] = morning._store_key_lines({"nigamilab"}, NOW)
+    two = re.search(r"client id と secret の 2 行なら --auth (\S+?)[、）]", line)
+    one = re.search(r"固定の鍵 1 行なら --auth (\S+?)[、）]", line)
+    assert two and one, line                                           # どちらを選ぶかの一文がある
+    assert {two.group(1), one.group(1)} == {"client", "token"}, line   # 行の [--auth client|token] と同じ 2 つ
+    for chosen, given in ((two.group(1), [env["client_id"], env["client_secret"]]), (one.group(1), [env["fixed"]])):
+        put_broken_token()
+        env["lines"][:] = given
+        rc_, out, err = run(capsys, "shop", "token", "set", STORE, "--auth", chosen, "--by", "m")
+        assert rc_ == 0, (chosen, out + err)                           # 一文のとおりに選べば保存される
+        assert morning._store_key_lines({"nigamilab"}, NOW) == []
+        assert env["fixed"] not in out + err and env["client_secret"] not in out + err
