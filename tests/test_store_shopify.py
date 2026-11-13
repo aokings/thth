@@ -372,11 +372,14 @@ def test_頁を送って読み上限の頁で終わらなければ読み切れ�
 
 
 def test_点数が少なければ回復を待ち読めなければ1秒():
-    # 足りない点（頼む点 − 残り）が戻るまで ＋ 0.5 秒・長くて 10 秒。足りていれば 0.5 秒（監査 5.18.1 の確かめの危ない 1）。
+    # 足りない点（頼む点 − 残り）が戻るまで ＋ 0.5 秒・標準の店（毎秒 100 点）では長くて 10 秒。足りていれば 0.5 秒
+    # （監査 5.18.1 の確かめの危ない 1）。戻りの遅い店（毎秒 50 点）は 5.18.2 から頼む点 ÷ 戻る速さまで待つ
+    # （直したほうがよい 10。前は 10 秒で頭打ちになり、毎頁 THROTTLED を招いた）。
     assert shopify.throttle_wait({"extensions": cost(requested=312, available=500, restore=100.0)}) == 0.5
     assert shopify.throttle_wait({"extensions": cost(requested=728, available=128, restore=100.0)}) == 6.5
     assert shopify.throttle_wait({"extensions": cost(requested=728, available=128, restore=100.0)}, 1.5) == 9.5
-    assert shopify.throttle_wait({"extensions": cost(requested=1000, available=10, restore=50.0)}) == 10.0
+    assert shopify.throttle_wait({"extensions": cost(requested=1000, available=10, restore=50.0)}) == pytest.approx(20.3)
+    assert shopify.throttle_wait({"extensions": cost(requested=728, available=10, restore=100.0)}, 3.0) == 10.0
     assert shopify.throttle_wait({"extensions": cost()}) == shopify.MIN_INTERVAL_SECONDS
     assert shopify.throttle_wait({"data": {}}) == 1.0
     assert shopify.throttle_wait({"extensions": {"cost": {"requestedQueryCost": "x"}}}) == 1.0

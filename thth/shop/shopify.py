@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import decimal
 import json
+import math
 import re
 import time
 
@@ -94,10 +95,22 @@ READ_WAIT_SECONDS_MAX = 60.0
 # 頁の間の待ちの和の上限（別に持つ）。混んでいない標準の店（2,000 点・毎秒 100 点）の種類 20 の 500 件は約 120 秒、
 # 頁を 5 件まで小さくしても点に余りがあれば 0.5 秒 × 99。どちらも収まる大きさ（`tests/test_store_shopify_cost.py`）。
 READ_PACE_SECONDS_MAX = 180.0
+# 5.18.2（監査 5.18.1 の確かめの直したほうがよい 10）: 点の戻りが遅い店（バケツ 1,000 点・毎秒 50 点）では、頁 1 つの
+# 頼む点（728）が戻るのに 14.6 秒かかり、1 回 10 秒・合わせて 180 秒の上限では、混んでいなくても種類の多い店を
+# 読めなかった。上限は応答の戻る速さから決める: 1 回は「頼む点 ÷ 戻る速さ ＋ 0.5 秒」まで
+# （`MAX_THROTTLE_WAIT_SECONDS` より短くはしない・長くて `MAX_THROTTLE_WAIT_CEIL`）、合わせては「500 件を読み切るのに
+# 要る点 ÷ 戻る速さ」の `PACE_LIMIT_MARGIN` 倍まで（`READ_PACE_SECONDS_MAX` より短くはしない・長くて
+# `READ_PACE_SECONDS_CEIL`）。標準の店（2,000 点・毎秒 100 点）の 1 回の待ちは前と同じ 10 秒まで。
+READ_PACE_SECONDS_CEIL = 300.0
+PACE_LIMIT_MARGIN = 1.5
 MAX_THROTTLED_WAIT_SECONDS = 10.0
 MIN_INTERVAL_SECONDS = 0.5
 UNKNOWN_COST_WAIT_SECONDS = 1.0
 MAX_THROTTLE_WAIT_SECONDS = 10.0
+MAX_THROTTLE_WAIT_CEIL = 30.0
+# 点の欄で数として受ける大きさ（監査 5.18.1 の確かめの直したほうがよい 11: NaN・無限大・桁の大きな整数で
+# `time.sleep` が ValueError・OverflowError で落ちた）。外れたら「読めない」と同じ扱い（1 秒）。
+NUMBER_ABS_MAX = 10 ** 9
 PACE_FACTOR_STEP = 1.5
 PACE_FACTOR_MAX = 3.0
 SLEEP = time.sleep
@@ -183,40 +196,76 @@ def errors_refusal(errors) -> StoreRefused:
 
 
 def _number(value):
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    """点の欄の数（有限で、絶対値が `NUMBER_ABS_MAX` まで）。外れた数・数でない物は None（読めない）。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if -NUMBER_ABS_MAX <= value <= NUMBER_ABS_MAX else None
+    return value if math.isfinite(value) and abs(value) <= NUMBER_ABS_MAX else None
+
+
+def _cost_numbers(payload):
+    """`(頼んだ点, 今ある点, 戻る速さ, バケツの大きさ)`。読めない欄は None。形が違えば None。"""
+    try:
+        cost = payload["extensions"]["cost"]
+        requested = _number(cost["requestedQueryCost"])
+        status = cost["throttleStatus"]
+        available, restore = _number(status["currentlyAvailable"]), _number(status["restoreRate"])
+        maximum = _number(status.get("maximumAvailable")) if isinstance(status, dict) else None
+    except (KeyError, TypeError):
+        return None
+    return requested, available, restore, maximum
 
 
 def throttle_wait(payload, factor: float = 1.0) -> float:
     """次の頁までに空ける秒。残りの点が頼む点（この頁と同じと見る）より少なければ、足りない点が戻るまで
     （× `factor` ＋ `MIN_INTERVAL_SECONDS`・長くて `MAX_THROTTLE_WAIT_SECONDS`）。足りていれば `MIN_INTERVAL_SECONDS`。
     読めなければ 1 秒。`factor` は、ほかのアプリが点を使っていて戻る速さが見かけより遅い店のための余裕
-    （`Client` が `THROTTLED` のたびに上げる）。"""
-    try:
-        cost = payload["extensions"]["cost"]
-        requested = _number(cost["requestedQueryCost"])
-        status = cost["throttleStatus"]
-        available, restore = _number(status["currentlyAvailable"]), _number(status["restoreRate"])
-    except (KeyError, TypeError):
+    （`Client` が `THROTTLED` のたびに上げる）。
+
+    1 回の上限は戻る速さから決める（5.18.2）: 「頼む点 ÷ 戻る速さ ＋ `MIN_INTERVAL_SECONDS`」まで。ただし
+    `MAX_THROTTLE_WAIT_SECONDS` より短くはせず、長くて `MAX_THROTTLE_WAIT_CEIL`。点の欄が壊れた数（NaN・無限大・
+    桁の大きな整数）なら読めないのと同じ 1 秒。"""
+    numbers = _cost_numbers(payload)
+    if numbers is None:
         return max(MIN_INTERVAL_SECONDS, UNKNOWN_COST_WAIT_SECONDS)
+    requested, available, restore, _maximum = numbers
     if requested is None or available is None or not restore or restore <= 0:
         return max(MIN_INTERVAL_SECONDS, UNKNOWN_COST_WAIT_SECONDS)
     if available < requested:
-        return min((requested - available) / restore * factor + MIN_INTERVAL_SECONDS, MAX_THROTTLE_WAIT_SECONDS)
+        cap = min(max(MAX_THROTTLE_WAIT_SECONDS, requested / restore + MIN_INTERVAL_SECONDS), MAX_THROTTLE_WAIT_CEIL)
+        wait = min((requested - available) / restore * factor + MIN_INTERVAL_SECONDS, cap)
+        return wait if math.isfinite(wait) else max(MIN_INTERVAL_SECONDS, UNKNOWN_COST_WAIT_SECONDS)
     return MIN_INTERVAL_SECONDS
+
+
+def pace_limit(payload, asked: int) -> float:
+    """1 回の読みで頁の間に眠ってよい合計（5.18.2）。応答の頼んだ点（`asked` 件の頁）から `MAX_ITEMS` 件を読む点を
+    見込み、バケツの大きさを引いて戻る速さで割り、`PACE_LIMIT_MARGIN` 倍。`READ_PACE_SECONDS_MAX` より短くはせず、
+    長くて `READ_PACE_SECONDS_CEIL`。読めなければ `READ_PACE_SECONDS_MAX`。"""
+    numbers = _cost_numbers(payload)
+    if numbers is None or not isinstance(asked, int) or asked <= 0:
+        return READ_PACE_SECONDS_MAX
+    requested, _available, restore, maximum = numbers
+    if requested is None or requested <= 0 or not restore or restore <= 0:
+        return READ_PACE_SECONDS_MAX
+    need = requested * (MAX_ITEMS / asked) - (maximum if maximum is not None and maximum > 0 else 0)
+    seconds = need / restore * PACE_LIMIT_MARGIN
+    if not math.isfinite(seconds):
+        return READ_PACE_SECONDS_MAX
+    return min(max(READ_PACE_SECONDS_MAX, seconds), READ_PACE_SECONDS_CEIL)
 
 
 def throttled_wait(payload) -> float:
     """`THROTTLED` のあと打ち直すまでの秒。足りない点（頼んだ点 − 今ある点）が戻るまで。読めなければ公式の目安の 1 秒。"""
-    try:
-        cost = payload["extensions"]["cost"]
-        requested = _number(cost["requestedQueryCost"])
-        status = cost["throttleStatus"]
-        available, restore = _number(status["currentlyAvailable"]), _number(status["restoreRate"])
-    except (KeyError, TypeError):
+    numbers = _cost_numbers(payload)
+    if numbers is None:
         return UNKNOWN_COST_WAIT_SECONDS
+    requested, available, restore, _maximum = numbers
     if requested is None or available is None or not restore or restore <= 0:
         return UNKNOWN_COST_WAIT_SECONDS
-    return max(UNKNOWN_COST_WAIT_SECONDS, min((requested - available) / restore, MAX_THROTTLED_WAIT_SECONDS))
+    wait = max(UNKNOWN_COST_WAIT_SECONDS, min((requested - available) / restore, MAX_THROTTLED_WAIT_SECONDS))
+    return wait if math.isfinite(wait) else UNKNOWN_COST_WAIT_SECONDS
 
 
 def requested_cost(payload) -> int | None:
@@ -322,18 +371,24 @@ class Client:
         self.resends = 0
         self.slept = 0.0
         self.paced = 0.0
+        self.pace_max = READ_PACE_SECONDS_MAX
         self.pace_factor = 1.0
 
     def _sleep(self, seconds: float) -> None:
         """混んだせい（`THROTTLED`）で眠る（1 回の読みで合計 `READ_WAIT_SECONDS_MAX` まで。超えるなら眠らずに断る）。"""
+        if not math.isfinite(seconds) or seconds < 0:
+            seconds = UNKNOWN_COST_WAIT_SECONDS
         if self.slept + seconds > READ_WAIT_SECONDS_MAX:
             raise StoreRefused("store_unavailable", "read_budget")
         self.slept += seconds
         SLEEP(seconds)
 
     def _pace(self, seconds: float) -> None:
-        """頁の間の調子合わせで眠る（`READ_WAIT_SECONDS_MAX` には数えない・別に合計 `READ_PACE_SECONDS_MAX` まで）。"""
-        if self.paced + seconds > READ_PACE_SECONDS_MAX:
+        """頁の間の調子合わせで眠る（`READ_WAIT_SECONDS_MAX` には数えない・別に合計 `pace_max` まで。`pace_max` は
+        `READ_PACE_SECONDS_MAX` から始め、応答の戻る速さで `pace_limit` が広げる・長くて `READ_PACE_SECONDS_CEIL`）。"""
+        if not math.isfinite(seconds) or seconds < 0:
+            seconds = UNKNOWN_COST_WAIT_SECONDS
+        if self.paced + seconds > min(self.pace_max, READ_PACE_SECONDS_CEIL):
             raise StoreRefused("store_unavailable", "read_budget")
         self.paced += seconds
         SLEEP(seconds)
@@ -492,6 +547,7 @@ class Client:
             if not isinstance(after, str) or not 0 < len(after) <= wire.AFTER_MAX:
                 raise StoreRefused("store_api_changed", "products")
             wait = throttle_wait(payload, self.pace_factor)
+            self.pace_max = max(self.pace_max, pace_limit(payload, asked))
         seen, out = set(), []
         for row in rows:
             if row["id"] not in seen:

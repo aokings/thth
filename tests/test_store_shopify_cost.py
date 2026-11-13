@@ -283,21 +283,25 @@ def test_柵_どの頁も混んでいる店でも1回の読みの打ち直しは
     assert found["fix"] == value["fix"]
     n, seconds = shopify.READ_RESENDS_MAX, int(shopify.READ_WAIT_SECONDS_MAX)
     assert f"合わせて {n} 回まで" in found["fix"] and f"合わせて {seconds} 秒まで" in found["fix"]
-    pace = int(shopify.READ_PACE_SECONDS_MAX)
+    pace, ceil = int(shopify.READ_PACE_SECONDS_MAX), int(shopify.READ_PACE_SECONDS_CEIL)
     assert f"合わせて {n} 回まで・混んでいると言われて待つのは合わせて {seconds} 秒まで" in found["why"]
-    assert f"頁の間に点の戻りを待つのは合わせて {pace} 秒まで" in found["why"]
-    assert f"合わせて {pace} 秒まで" in found["fix"] and "店の大きさだけでは届きません" in found["fix"]
+    assert f"頁の間に点の戻りを待つのは合わせて {pace} 秒まで（点の戻りが遅い店では、戻る速さに合わせて長くて {ceil} 秒まで）" in found["why"]
+    assert f"合わせて {pace} 秒まで・点の戻りが遅い店では長くて {ceil} 秒まで" in found["fix"]
+    # 5.18.2（監査 5.18.1 の確かめの直したほうがよい 10）: 前の「店の大きさだけでは届きません」は毎秒 50 点の店で事実と
+    # 違った。今は言える条件（毎秒 50 点以上・混んでいない）を添えて言う（数は test_v5182_shopify_slow_store… が結ぶ）。
+    assert "店の大きさだけでは届きません" not in found["fix"] and "毎秒 50 点以上戻る店なら" in found["fix"]
     assert "secret-message-marker" not in json.dumps(value) + err
 
 
 def test_柵_頁の間の待ちが重なっても1回の読みで眠る合計は別の上限まで(capsys, env, monkeypatch):
-    """頁の間の待ちは混んだせいの待ち（60 秒）には数えないが、別に `READ_PACE_SECONDS_MAX` までで止まる。"""
+    """頁の間の待ちは混んだせいの待ち（60 秒）には数えないが、別の上限で止まる。上限は戻る速さで
+    `READ_PACE_SECONDS_MAX` から広がるが、長くて `READ_PACE_SECONDS_CEIL`（5.18.2）。"""
     env["products"] = [sh.product(i) for i in range(1, 501)]
     sh.setup_store(capsys, env)
     env["extensions"] = sh.cost(requested=728, available=0, restore=10.0)    # 頁の間はいつも 10 秒
     rc_, value, _ = sh.jrun(capsys, "shop", "items", sh.STORE)
     assert rc_ == 2 and value["code"] == "store_unavailable" and value["detail"] == "read_budget"
-    assert sum(env["slept"]) <= shopify.READ_PACE_SECONDS_MAX
+    assert sum(env["slept"]) <= shopify.READ_PACE_SECONDS_CEIL
 
 
 def test_上限は小さくした頁で500件を読み切る分は通す(capsys, env, monkeypatch):
