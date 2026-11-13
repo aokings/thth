@@ -2,7 +2,7 @@
 range: 5ddf3e8..09ea633
 dangers: 0
 waived:
-fixed: なし
+fixed: 645f37f
 auditor: Claude Fable 5.2（作った者とは別）
 ---
 # 監査 次の版の候補 2 つ（WordPress の記事の URL のホスト・morning の鍵の形）
@@ -141,3 +141,76 @@ morning（`tests/test_v5182_store_morning_key_shape.py`）。
 | 行から店の種類の名前（label）を抜く | 赤にならない（鍵の呼び名に「STORES」が入っているため。害は無い） |
 
 柵になっていないもの: 本物の形のホストでの通し方（直したほうがよい 1）・Shopify と BASE の店の行（直したほうがよい 3。今の試験は STORES の店だけで、BASE と Shopify は探りで確かめた）・診断の記録にホストが入ること（直したほうがよい 2。privacy に足すなら、文と記録を結ぶ柵を 1 本）。
+
+## 直しの確かめ（645f37f）
+
+確かめた者は、直した者（Opus の書き手）と別（Claude Fable 5.2）。見た範囲は `git diff b3525a3..645f37f`。コード・試験・ほかの文書は直していない。push・merge・stash・reset・checkout はしていない。本物の WordPress・本物の店・本番（ssh wt）は呼んでいない。`~/.config` の秘密には触っていない。repo に書いたのはこの書だけ（頭の `fixed` を `645f37f` に直し、この節を足した）。探りの台本と出力は会話の置き場 `scratchpad/aud_645f37f/` にある。
+
+途中で 1 度、探りをまとめて打つ命令が権限で断られた。別の書き方では続けずに止まって知らせ、masaru の許しのあと、命令を 1 つずつ分け、`rm` を使わない形で続けた。
+
+### 結論
+
+新しい危ないは 0 件。直したほうがよい 3 件のうち、1 と 3 は閉じた。2 は一部（コードの注記と柵は直った。privacy の文はまだ入っていない）。気づき 7 は閉じた。新しい直したほうがよいが 1 件（直しが開けた穴ではなく、前からあるもの）、新しい気づきが 4 件。
+
+| 項目 | 結果 | 確かめ |
+|---|---|---|
+| 直したほうがよい 1（通し方の文） | 閉じた | 【動】 |
+| 直したほうがよい 2（ホストが記録に残る） | 一部 | 【動】注記と柵。privacy の文は入っていない【読】 |
+| 直したほうがよい 3（Shopify の固定の鍵） | 閉じた | 【動】 |
+| 気づき 7（漏れの柵は 2 本だけ） | 閉じた | 【動】 |
+| 気づき 1〜6・8・9 | 開いたまま | この直しの範囲の外（書き手も触っていない）【読】 |
+
+### 動かして確かめたこと
+
+1. 【動】**通し方の文（1）。** `blog_id` が `example.com`・記事の URL が `www.example.com` の組（網には出ない。`users/me` の読みを差し替えた）。
+   - `thth principal auth` は rc 1 で、文は「主体のブログの行の blog_id と、口座の台帳の blog_id の両方を」と言う。`thth doctor` の文も同じ道を言う。
+   - 文のとおりに両方の `blog_id` を `www.example.com` に直すと、**鍵を打ち直さなくても** `thth doctor` が rc 0・`wp_users_me` が ○。
+   - `site_url` を書いている行: `https://www.example.com`・末尾に `/`・パスつき（`/blog`）は通る。古いホストのまま、または `http://` だと `site_url_invalid`（文の言うとおり）。欄を消す形も通る。
+   - 偽の WordPress（127.0.0.1 と localhost の組）では、知らせ → 入口をそろえる → 出す、で rc 0・記事が 1 本出て conflict にならない。届いた道は `users/me`・`categories`・`tags`・`posts` だけ。
+2. 【動】**ホストが残る所（2）。** `thth principal auth` のあと、試しの置き場のどのファイルにも記事の URL のホストは無い。`thth doctor` のあとは `state/<口座>/doctor.json` の 1 つだけに入る。`doctor --json` の出力にも載る。鍵の値はどの出力にも出ない。コードの注記はこの事実と合っている。管理の報告と遠くの道の doctor に `detail` が載ることは読んだだけ【読】。
+3. 【動】**Shopify の行（3）。** 行は `thth shop token set <店> [--auth client|token] --by <名前>` と、どちらを選ぶかの一文を言う（`thth shop` の助けと同じ書き方）。壊れた鍵の形 6 通り × 鍵の種類 2 通りの 12 本で、選んで打つと rc 0・知らせが消え、鍵の値と印は出力に出ない。別の project の 1 枚には出ない。BASE と STORES の行は前のまま（前の監査の探りを回し直した。赤は前と同じ探りの側の書き誤りの 1 本だけ）。
+4. 【動】**試験。** `python -m pytest -q -n 2` の終了コードを読んだ。
+   - 対象と周り（`tests/test_v5182_wordpress_home_host.py`・`tests/test_v5182_store_morning_key_shape.py`・`tests/test_v5182_store_morning_shopify_auth.py`・`tests/test_v5160_wordpress.py`・`tests/test_privacy_matches_code.py`・`tests/test_refusal_catalog.py`・`tests/test_store_shopify.py`・`tests/test_store_stores.py`）: 300 本が緑・rc 0。
+   - 全件: 12298 本が緑・4 本が飛ばし・rc 0（52 分。ほかの仕事で機械が混んでいた）。
+
+### 柵をわざと壊して赤を見た
+
+repo のファイルは触らず、pytest の差し込み（置き場の `mutplug2.py`）で、読み込んだあとのモジュールの中身を差し替えた。壊さない回しは 17 本が緑・rc 0。壊した回しは 8 通りで、7 通りが赤（rc 1）。差し込みを外せば元に戻る（repo に変更は無い）。
+
+| 壊し方 | 赤になった試験 |
+|---|---|
+| 目録の「通すには」を前の文（site_url だけ）に戻す | 本物の形のホストでも文のとおりに直せば通る |
+| `doctor` の文を前の形（site_url をそろえる）に戻す | 同上 |
+| `valid_site_url` のホストの見比べを外す（site_url だけ替える道が通る） | 同上 |
+| `doctor` の `detail` から 2 つのホストを抜く | 違うときのホストは画面と診断の記録に入り… |
+| `principal auth` が state にホストを書き残す | 同上 |
+| Shopify の行から `[--auth client|token]` を抜く | Shopify の店の行は…（client・token の 2 本） |
+| 行に鍵のファイルの中身を足す | 鍵の形の 3 本（BASE の PAT・Shopify の client・読めないファイル）と Shopify の 2 本。**気づき 7 は閉じた** |
+| Shopify の行から、どちらを選ぶかの一文を抜く | **赤にならない**（旗があれば命令は通る。害は小さい。下の気づき 13） |
+
+### 新しく見つけたこと
+
+危ない 0・直したほうがよい 1・気づき 4。番号は上の続き。
+
+直したほうがよい。
+
+4. 【動】**`thth principal show <WordPress の主体>` が落ちる。断りの「通すには」が案内している命令。**
+   - 場所: `thth/principal_cli.py` の `status`（187 行め `"hatena_id": p["hatena_id"]`）と `cmd_show`（217 行めの「はてな ID」）。
+   - 事実: 手を入れていない偽の WordPress の主体（鍵は置いた）で、`thth principal show wp-main` と `--json` のどちらも `KeyError: 'hatena_id'` で落ちた。WordPress の主体の台帳に `hatena_id` は無い（`wp_user`）。この行は 4.0 のころからあり、5.16.0 で WordPress の主体を足したときから落ちる。645f37f が開けた穴ではない。
+   - 広がり【読】: `thth/refusal_catalog_part_wp.py` の断りのうち 8 つが、次の一手の命令に `thth principal show <主体>` を出す。`wordpress_home_host_mismatch` もその 1 つで、直したあとの文の末尾にも付く。
+   - 害: 断りの案内のとおりに打つと、台帳が見える代わりに Python の例外が出る。記事が誤って出ることは無く、鍵も漏れない。前向きな断りの「通る直し方」が 1 つ外れている。
+   - 直す案: `status` と `cmd_show` を主体の種類の表（`ARTICLE_KINDS` の `id_field`）から引く。試験に「WordPress の主体で `principal show` と `--json` が rc 0」を 1 本。
+
+気づき。
+
+10. 【動】**記事の URL のホストが `blog_id` の形に入らないと、文のとおりに直しても通らない。** 末尾に点（`example.com.`）・点の無い名前（`wiki`）・IPv6（`::1`）は、知らせは出るが、そのホストを `blog_id` にすると `blog_id_invalid` で台帳ごと読めなくなる。IP アドレス（`192.168.0.10`）・punycode（`xn--…`）は通る。ポートつき（`www.example.com:8443`）は、ホストだけ（`www.example.com`）を言い、そろえると通るが、入口は 443 になる（もともと `site_url` はポートを許さない）。どれもまれ。直すなら、形に入らないホストのときは「このホストは今の THTH では入口にできません」と言う。
+11. 【動】**入口や `blog_id` を替えると、替える前に承認した原稿は `approval_stale` で出ない。** 柵としては正しい（指紋に `blog_id` と `site_url` が入る）。記事は 1 本も出なかった。文に「承認ずみの原稿は承認し直します」の一言があると迷わない。
+12. 【読】**同じブログの行を 2 つ以上の口座が使うとき。** 文は「その口座の台帳」と 1 つを言う。もう 1 つの口座の `blog_id` を替え忘れると、そちらが `blog_unknown` になる。まれ。
+13. 【動】**Shopify の行の「どちらを選ぶか」の一文は柵になっていない。** 抜いても試験は緑。`[--auth client|token]` を字のまま打つと使い方の誤りで rc 2（保存しない・漏れない）。`--auth` を付けずに固定の鍵 1 行を渡すと、前と同じく 2 行めで詰まる（文が選び方を言うので、行のとおりではない打ち方）。
+
+### 未確認
+
+- 本物の WordPress・本物の店【未】（前と同じ。偽と差し替えだけ）。
+- privacy の文【未】。この直しには入っていない（書き手は「まとめるときに入れる」と書いた）。入れたあと、文と記録を結ぶ柵を見る。
+- 管理の報告・遠くの道の doctor に `detail` が載ること【読】。
+- CI と release の関門【未】。push していないので CI は走っていない。
