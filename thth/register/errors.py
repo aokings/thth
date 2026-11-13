@@ -24,6 +24,7 @@ REASONS = frozenset((
     # 台帳の器 段 1: 読んで、同じ対象を指す（宣言・YAML の範囲・内側の単位・指す欄・判断の記録）。
     "register_kind_invalid", "register_yaml_refused", "register_record_invalid", "register_record_missing",
     "register_unit_ambiguous", "register_link_invalid", "register_judgment_invalid", "register_judgment_same_person",
+    "register_carry_unnamed",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 

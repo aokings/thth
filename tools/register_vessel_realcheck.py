@@ -24,7 +24,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from thth.register import vessel as V  # noqa: E402
+from thth.register import judgment as J, vessel as V  # noqa: E402
 
 
 def write_kinds(base: pathlib.Path, kinds: list, constitution: dict | None = None) -> str:
@@ -101,6 +101,21 @@ def kanto(root: str, tmp: pathlib.Path) -> dict:
             "problems": len(V.problems(v))}
 
 
+def page_kinds(root: str) -> list:
+    """`src/content/` の置き場（ディレクトリ）ごとに 1 つの種類（`page_<置き場>`）。別の置き場の同じ名前
+    （`origins/kyoto.yaml` と `producers/kyoto.yaml`）を、1 つの種類の同じ番号に重ねない。"""
+    content = pathlib.Path(root, "src", "content")
+    out = []
+    for directory in sorted(p for p in content.iterdir() if p.is_dir() and not p.name.startswith(".")) \
+            if content.is_dir() else []:
+        if not any(directory.glob("*.yaml")):
+            continue
+        name = "page_" + "".join(c if c.isalnum() else "_" for c in directory.name.lower())
+        out.append({"schema": "thth.kind/1", "kind": name[:32], "place": f"src/content/{directory.name}/*.yaml",
+                    "format": "yaml", "id": {"name": True}, "max_bytes": 262144})
+    return out
+
+
 def kopicha(root: str, tmp: pathlib.Path) -> dict:
     base = write_kinds(tmp / "kopicha", [
         {"schema": "thth.kind/1", "kind": "claim", "place": "data/knowledge/claims.csv", "format": "csv",
@@ -116,8 +131,13 @@ def kopicha(root: str, tmp: pathlib.Path) -> dict:
          "format": "csv", "id": {"key": ["file", "claim_id"]},
          "pointers": [{"field": "claim_id", "meaning": "derived_from", "to": "claim",
                        "recorded_version": {"field": "statement_hash", "of": ["statement_ja"], "hash": "sha1:12"}}]},
-        {"schema": "thth.kind/1", "kind": "page", "place": "src/content/*/*.yaml", "format": "yaml",
-         "id": {"name": True}, "max_bytes": 262144},
+        {"schema": "thth.kind/1", "kind": "central", "place": "data/knowledge/staging/*/central.csv",
+         "format": "csv", "id": {"field": "evidence_id"},
+         "pointers": [{"field": "evidence_id", "meaning": "about", "to": "evidence"}],
+         "inspects": {"follow": ["evidence_id", "claim_id"], "question": "says_so", "by": "central",
+                      "content": {"statement_ja": "statement_ja", "object_text_ja": "object_text_ja",
+                                  "claim_status": "claim_status"}}},
+        *page_kinds(root),
     ], {"schema": "thth.constitution/1", "words": {"says_so": {"supported": {"conclusion": "good"},
                                                                 "contested": {"conclusion": "pending",
                                                                               "reason": "both_sides"}}}})
@@ -125,7 +145,11 @@ def kopicha(root: str, tmp: pathlib.Path) -> dict:
     graph = V.links(v)
     probs = V.problems(v)
     yaml_refused = [p for p in probs if any(w.startswith("yaml:") for w in p["words"])]
-    pages = [r for r in v.all_records if r.kind == "page"]
+    pages = [r for r in v.all_records if r.kind.startswith("page_")]
+    central_probs = [p for p in probs if "/central.csv" in p["path"]]
+    other_probs = [p for p in probs if p not in central_probs and p not in yaml_refused]
+    found = J.inspections(v)
+    inspection_states = collections.Counter(J.evaluate(v, j) for j in found)
     contradicted = {e["to"] for e in graph["edges"] if e["meaning"] == "contradicts"}
     supports = {e["to"] for e in graph["edges"] if e["meaning"] == "supports"}
     both = contradicted & supports
@@ -138,9 +162,13 @@ def kopicha(root: str, tmp: pathlib.Path) -> dict:
             "dangling": len(graph["dangling"]), "dangling_kinds": dict(collections.Counter(
                 e["to"].split(":")[0] for e in graph["dangling"])),
             "claims_with_both": len(both), "both_by_status": dict(words),
-            "problems": len(probs) - len(yaml_refused),
-            "problem_words": dict(collections.Counter(w.split(":")[0] for p in probs for w in p["words"])),
-            "problem_paths": sorted(p["path"] for p in probs)[:10]}
+            "central_inspections": len(found), "central_inspection_states": dict(inspection_states),
+            # 中央の判断の表は、束ごとに同じ根拠の番号を書き直し、番号の無い行もある（今の台帳の形）。目録の問題とは
+            # 分けて数える（行は判断の材料で、記録の番号として指されない）。
+            "central_problems": dict(collections.Counter(w.split(":")[0] for p in central_probs for w in p["words"])),
+            "problems": len(other_probs),
+            "problem_words": dict(collections.Counter(w.split(":")[0] for p in other_probs for w in p["words"])),
+            "problem_paths": sorted(p["path"] for p in other_probs)[:10]}
 
 
 def mmr(root: str, tmp: pathlib.Path) -> dict:

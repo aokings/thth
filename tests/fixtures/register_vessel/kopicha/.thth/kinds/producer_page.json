@@ -1,0 +1,10 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "producer_page",
+  "place": "src/content/producers/*.yaml",
+  "format": "yaml",
+  "id": {
+    "name": true
+  },
+  "note": "別の置き場の同じ名前（origins/kyoto.yaml と producers/kyoto.yaml）は、種類を分けて 2 つの記録にする"
+}
