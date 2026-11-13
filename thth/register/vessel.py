@@ -69,6 +69,27 @@ def _lf(value):
     return value
 
 
+DEPTH_MAX = 64                        # 読んだ値の入れ子の深さの上限（深い入れ子は指紋の所で例外になりうる）
+
+
+def value_problem(value) -> str | None:
+    """読んだ値を指紋にできないわけ（`surrogate`・`too_deep`）。できれば None。再帰しないで見る。"""
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > DEPTH_MAX:
+            return "too_deep"
+        if isinstance(item, str):
+            if any("\ud800" <= c <= "\udfff" for c in item):
+                return "surrogate"
+        elif isinstance(item, dict):
+            stack.extend((k, depth + 1) for k in item.keys())
+            stack.extend((v, depth + 1) for v in item.values())
+        elif isinstance(item, list):
+            stack.extend((v, depth + 1) for v in item)
+    return None
+
+
 def canonical(value) -> str:
     """読んだ値の決まった書き方: 値の中の改行を LF にそろえ、JSON で、欄の名前の順に並べ、区切りの空白なし・
     字は逃がさない（`sort_keys`・`separators=(",", ":")`・`ensure_ascii=False`）。数は JSON の書き方のまま
@@ -180,7 +201,7 @@ _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason
 _P_KEYS = ("field", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "note")
 _RV_KEYS = ("field", "of", "hash")
 _U_KEYS = ("groups", "items", "id", "key", "time", "scope", "sources", "not_values", "note")
-_I_KEYS = ("follow", "question", "by", "content", "note")
+_I_KEYS = ("follow", "question", "by", "content", "required", "note")
 
 
 def parse_kind(data, path: str) -> Kind:
@@ -201,9 +222,13 @@ def _parse_inspects(raw) -> dict:
     content = raw.get("content")
     if not isinstance(content, dict) or not content:
         raise DeclarationError("inspects")
-    return {"follow": follow, "question": _name(raw.get("question"), "inspects"),
-            "by": _name(raw.get("by"), "inspects"),
-            "content": {_field(k, "inspects"): _field(v, "inspects") for k, v in content.items()}}
+    out = {"follow": follow, "question": _name(raw.get("question"), "inspects"),
+           "by": _name(raw.get("by"), "inspects"),
+           "content": {_field(k, "inspects"): _field(v, "inspects") for k, v in content.items()},
+           "required": _strs(raw["required"], FIELD, "inspects") if raw.get("required") is not None else None}
+    if out["required"] is not None and not set(out["required"]) <= set(out["content"]):
+        raise DeclarationError("inspects")
+    return out
 
 
 def _parse_kind(data, path: str) -> Kind:
@@ -370,9 +395,13 @@ def _read_json_file(path: str, limit: int):
     if len(data) > limit:
         raise DeclarationError("too_large")
     try:
-        return json.loads(data.decode("utf-8"), object_pairs_hook=_no_duplicates)
-    except (UnicodeDecodeError, ValueError):
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=_no_duplicates)
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise DeclarationError("json") from None
+    problem = value_problem(value)
+    if problem:
+        raise DeclarationError(problem)
+    return value
 
 
 def _no_duplicates(pairs):
@@ -429,6 +458,8 @@ def load_declarations(root: str, base: str | None = None) -> dict:
             for key, value in raw["ids"].items():
                 if not isinstance(key, str) or not isinstance(value, str) or ":" not in key:
                     raise DeclarationError("ids")
+            if len(set(raw["ids"].values())) != len(raw["ids"]):
+                raise DeclarationError("ids_path_duplicate")  # 1 つの置き場を 2 つの番号に当てない
             ids = dict(raw["ids"])
         except DeclarationError as exc:
             raise RegisterRefused("register_kind_invalid", f"ids: {exc.word}"[:80],
@@ -446,6 +477,7 @@ class Unit:
     group: dict
     ambiguous: bool            # 鍵で決まらない（鍵と中身の指紋で指した）
     same_content: int = 1      # 中身まで同じ単位の数（区別しない。判断はどれにも当たる）
+    content: str = ""          # 中身の指紋（`unit_content`。親の注など依らない物は入れない）
 
 
 @dataclass
@@ -498,8 +530,12 @@ def split_csv_rows(text: str) -> list:
     return rows
 
 
-def _parse_csv_line(raw: str) -> list:
-    return next(csv.reader(io.StringIO(raw, newline=""), strict=False), [])
+def _parse_csv_line(raw: str) -> list | None:
+    """1 行を読む。読めなければ None（大きすぎるセルなど。csv の部品の例外を漏らさない）。"""
+    try:
+        return next(csv.reader(io.StringIO(raw, newline=""), strict=False), [])
+    except csv.Error:
+        return None
 
 
 def _get(obj, steps):
@@ -592,9 +628,13 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
     except _DuplicateKey:
         return [Record(kind.name, _id_ok(name_id) if kind.id_rule.get("name") else None, rel, version, None, False,
                        ["json_key_duplicate"])]
-    except ValueError:
+    except (ValueError, RecursionError):
         return [Record(kind.name, _id_ok(name_id) if kind.id_rule.get("name") else None, rel, version, None, False,
                        ["json"])]
+    problem = value_problem(value)
+    if problem:
+        return [Record(kind.name, _id_ok(name_id) if kind.id_rule.get("name") else None, rel, version, None, False,
+                       [problem])]
     if kind.records == "file":
         rid = _id_ok(name_id) if kind.id_rule.get("name") else (
             _id_ok(value.get(kind.id_rule["field"])) if isinstance(value, dict) else None)
@@ -642,10 +682,18 @@ def _read_csv(rel: str, text: str, kind: Kind) -> list:
     out = []
     if len(lines) - 1 > TABLE_ROWS_MAX:
         return [Record(kind.name, None, rel, "", None, False, ["too_many_rows"])]
+    if header is None or len(set(header)) != len(header):
+        # 見出しが読めない・同じ名前の列がある: 黙って後ろの列に畳まず、表の全部の行を読まない。
+        word = "csv" if header is None else "csv_header_duplicate"
+        return [Record(kind.name, None, rel, bytes_version(raw.encode("utf-8")), None, False, [word])
+                for raw in lines[1:] if raw.strip("\r\n")] or [Record(kind.name, None, rel, "", None, False, [word])]
     for raw in lines[1:]:
         if not raw.strip("\r\n"):
             continue
         cells = _parse_csv_line(raw)
+        if cells is None:
+            out.append(Record(kind.name, None, rel, bytes_version(raw.encode("utf-8")), None, False, ["csv"]))
+            continue
         values = {name: (cells[i] if i < len(cells) else None) for i, name in enumerate(header)}
         problems = [] if len(cells) == len(header) else ["row_width"]
         if "field" in kind.id_rule:
@@ -677,14 +725,36 @@ def _key_of(units_decl: dict, group: dict, item: dict) -> dict:
     1 つの指し先に畳まない）。"""
     key = {}
     names = list(units_decl["key"])
-    if units_decl["time"].get("group") and "group." + units_decl["time"]["group"] not in names:
-        names.append("group." + units_decl["time"]["group"])
+    group_time = units_decl["time"].get("group")
+    if group_time and "group." + group_time not in names and _needs_group_time(units_decl, item):
+        names.append("group." + group_time)
     for name in names:
         if name.startswith("group."):
             key[name] = group.get(name[6:]) if isinstance(group, dict) else None
         else:
             key[name] = item.get(name)
     return key
+
+
+def _needs_group_time(units_decl: dict, item: dict) -> bool:
+    """値の欄のどれかが、まとまりの時点を自分の時点にするか（値ごとの時点の表に無い）。値の時点が優先なので、
+    全部の値が自分の時点を持つ行では、まとまりの年度は指し先に入れない（設計 §5.1「時点は値ごと」）。"""
+    table_name = units_decl["time"].get("per_field")
+    table = item.get(table_name) if table_name else None
+    if not isinstance(table, dict):
+        return True
+    skip = set(units_decl["key"]) | set(units_decl["not_values"]) | {table_name, units_decl["id"]}
+    return any(name not in table for name in item if name not in skip)
+
+
+def unit_content(decl: dict, unit: Unit) -> str:
+    """単位の中身の指紋: 単位の全部の欄を `{"value", "time", "sources"}` で包んだ物（依る所と同じ包み方）。
+    親のまとまりの欄は、時点と出典として値に効く分だけ入る（依らない注は入らない）。"""
+    parts = {}
+    for name in unit.item:
+        srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
+        parts[name] = {"value": unit.item.get(name), "time": value_time(decl, unit, name), "sources": sorted(srcs)}
+    return fp(parts)
 
 
 def _read_units(rec: Record, kind: Kind) -> None:
@@ -704,18 +774,20 @@ def _read_units(rec: Record, kind: Kind) -> None:
             pointer_key = ("k", canonical(_key_of(decl, group, item)))
         by_key.setdefault(pointer_key, []).append((group, item))
     for (how, keytext), members in by_key.items():
-        for group, item in members:
+        contents = [unit_content(decl, Unit("", {}, item, group, False)) for group, item in members]
+        for (group, item), content in zip(members, contents):
             key = {"id": keytext} if how == "i" else _key_of(decl, group, item)
             if how == "i":
+                # 同じ番号でも中身（依る所の包み方で）まで同じなら区別しない。違えば番号の重なり。
                 pointer = "i:" + str(keytext)
-                ambiguous = len(members) > 1
+                ambiguous = len(set(contents)) > 1
             elif len(members) == 1:
                 pointer, ambiguous = "k:" + short(fp(key)), False
             else:
                 # 鍵で決まらない: 鍵と中身の指紋で指す。中身の指紋は読んだ値から（バイトでなく）。
                 pointer, ambiguous = "kc:" + short(fp(key)) + "." + short(fp(item)), True
-            same = sum(1 for _g, other in members if canonical(other) == canonical(item))
-            rec.units.append(Unit(pointer, key, item, group, ambiguous, same))
+            same = contents.count(content)
+            rec.units.append(Unit(pointer, key, item, group, ambiguous, same, content))
     if any(u.pointer.startswith("i:") and u.ambiguous for u in rec.units):
         rec.problems.append("unit_id_duplicate")
 
@@ -737,7 +809,7 @@ def unit_at(rec: Record, pointer: str) -> Unit | None:
     same = [u for u in rec.units if u.pointer == pointer]
     if not same:
         return None
-    if len({canonical([u.group, u.item]) for u in same}) > 1:
+    if len({u.content for u in same}) > 1:
         raise RegisterRefused("register_unit_ambiguous", f"{len(same)} units", candidates=[pointer], record=rec.ref)
     return same[0]
 
@@ -747,13 +819,13 @@ def find_units(rec: Record, key: dict) -> Unit:
     want = {k: v for k, v in key.items()}
     hits = [u for u in rec.units
             if all(str(u.key.get(k)) == str(v) or str(u.item.get(k)) == str(v) for k, v in want.items())]
-    distinct = {u.pointer: u for u in hits}
+    distinct = sorted({u.pointer for u in hits})
     if not distinct:
         raise RegisterRefused("register_record_missing", "unit")
     if len(distinct) > 1:
         raise RegisterRefused("register_unit_ambiguous", f"{len(distinct)} units",
-                              candidates=sorted(distinct), record=rec.ref)
-    return next(iter(distinct.values()))
+                              candidates=distinct, record=rec.ref)
+    return unit_at(rec, distinct[0])  # 同じ指し先に中身の違う単位があれば断る（黙って 1 つに畳まない）
 
 
 # ------------------------------------------------------------------ 値（範囲・時点・親の出典）
@@ -852,6 +924,18 @@ def values_of(rec: Record, kind: Kind, unit: Unit) -> list:
     return out
 
 
+def unit_fields(kind: Kind, unit: Unit, question: Question | None = None) -> list:
+    """単位（行）への判断が依る欄。行への判断は、この欄の値にだけ当たる（`judgment.answer_value`）。"""
+    decl = kind.units
+    fields = question.depend_fields() if question is not None else None
+    if fields is None:
+        fields = [k for k in value_fields(decl, unit) if k not in decl["scope"]["separate"]]
+        for extra in ((question.state, question.reason_kind) if question is not None else ()):
+            if extra and extra not in fields:
+                fields.append(extra)
+    return fields
+
+
 def unit_depend(kind: Kind, unit: Unit, question: Question | None = None) -> str:
     """単位（行）への判断の依る所（設計 §5.1 の指紋の作り方）。
 
@@ -860,13 +944,7 @@ def unit_depend(kind: Kind, unit: Unit, question: Question | None = None) -> str
     入れない・試験 1 (d)）と、状態の欄と理由の種類の欄。欄ごとに `{"value", "time", "sources"}` で包む。"""
     decl = kind.units
     parts = {}
-    fields = question.depend_fields() if question is not None else None
-    if fields is None:
-        fields = [k for k in value_fields(decl, unit) if k not in decl["scope"]["separate"]]
-        for extra in ((question.state, question.reason_kind) if question is not None else ()):
-            if extra and extra not in fields:
-                fields.append(extra)
-    for name in fields:
+    for name in unit_fields(kind, unit, question):
         srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
         parts[name] = {"value": unit.item.get(name), "time": value_time(decl, unit, name), "sources": sorted(srcs)}
     return fp(parts)
@@ -909,6 +987,11 @@ def observations(kind: Kind, rec: Record) -> list:
     return out
 
 
+def word_of(value):
+    """書いてある値を語にする（観測と、検収の記録の状態で同じ直し方）。"""
+    return _word(value)
+
+
 def _word(value):
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -923,8 +1006,14 @@ class Vessel:
     kinds: dict
     constitution: dict
     ids: dict
-    records: dict              # ref → Record（同じ番号は最初の 1 つ。重なりは problems に）
+    records: dict              # ref → Record（同じ番号は最初の 1 つ。重なりは problems に。引くのは `unique`）
     all_records: list
+    _counts: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        for rec in self.all_records:
+            if rec.id is not None:
+                self._counts[rec.ref] = self._counts.get(rec.ref, 0) + 1
 
     def kind_of(self, rec: Record) -> Kind:
         return self.kinds[rec.kind]
@@ -939,6 +1028,13 @@ class Vessel:
             raise RegisterRefused("register_unit_ambiguous", f"{len(same)} records",
                                   candidates=sorted({r.path for r in same}), record=ref)
         return same[0]
+
+    def unique(self, ref: str) -> Record | None:
+        """番号で 1 つに決まる記録。無いか、同じ番号の記録が 2 つ以上あれば None（先頭を黙って選ばない）。"""
+        return self.records.get(ref) if self._counts.get(ref, 0) == 1 else None
+
+    def is_duplicated(self, ref: str) -> bool:
+        return self._counts.get(ref, 0) > 1
 
     def catalog(self) -> list:
         """目録（番号・種類・版・場所）。宣言とファイルから作り直せる物で、正本ではない。"""
@@ -1006,7 +1102,7 @@ def recorded_hash(spec: dict, target: Record) -> str | None:
 
 def links(vessel: Vessel) -> dict:
     """指す欄を全部たどる: `{"edges": [...], "dangling": [...], "cycles": [...], "review": [...]}`。"""
-    edges, dangling, review = [], [], []
+    edges, dangling, review, ambiguous = [], [], [], []
     for rec in vessel.all_records:
         if rec.id is None or rec.values is None:
             continue
@@ -1014,7 +1110,7 @@ def links(vessel: Vessel) -> dict:
         for spec in kind.pointers:
             for target_id in pointer_targets(rec, spec):
                 ref = f"{spec['to']}:{target_id}"
-                target = vessel.records.get(ref)
+                target = vessel.unique(ref)
                 meaning = spec["meaning"]
                 if spec.get("meaning_from"):
                     # 表の列が意味を言う（根拠の relation など）。器が意味を知らない語（こぴちゃの context など）は
@@ -1023,6 +1119,10 @@ def links(vessel: Vessel) -> dict:
                     meaning = said if said in MEANINGS else "related"
                 edge = {"from": rec.ref, "to": ref, "meaning": meaning, "field": spec.get("field")}
                 edges.append(edge)
+                if vessel.is_duplicated(ref):
+                    # 同じ番号の記録が 2 つ以上: 先頭を選んで来歴の控えを比べない（番号の重なりは problems に出る）。
+                    ambiguous.append(edge)
+                    continue
                 if target is None:
                     dangling.append(edge)
                     continue
@@ -1032,7 +1132,7 @@ def links(vessel: Vessel) -> dict:
                     if recorded != now:
                         review.append({**edge, "recorded": recorded, "now": now})
     cycles = _cycles(edges)
-    return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review}
+    return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review, "ambiguous": ambiguous}
 
 
 def _cycles(edges: list) -> list:

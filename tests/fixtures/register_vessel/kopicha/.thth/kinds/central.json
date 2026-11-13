@@ -25,6 +25,10 @@
       "object_text_ja": "object_text_ja",
       "claim_status": "claim_status"
     },
-    "note": "中央の行は直したあとの文と状態そのものを持つ。根拠（evidence_id）から主張（claim_id）へたどった先への検収の記録として読む"
+    "required": [
+      "statement_ja",
+      "claim_status"
+    ],
+    "note": "中央の行は直したあとの文と状態そのものを持つ。根拠（evidence_id）から主張（claim_id）へたどった先への検収の記録として読む。空でないことを求めるのは文と状態だけ（中身の文の空のセルは値）"
   }
 }

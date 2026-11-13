@@ -48,9 +48,11 @@ def read(root: str) -> list:
             continue
         try:
             item = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             raise RegisterRefused("register_judgment_invalid", f"line {number}") from None
         if not isinstance(item, dict) or item.get("schema") != SCHEMA or not isinstance(item.get("target"), dict):
+            raise RegisterRefused("register_judgment_invalid", f"line {number}")
+        if V.value_problem(item):
             raise RegisterRefused("register_judgment_invalid", f"line {number}")
         out.append(item)
     return out
@@ -254,7 +256,8 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
         if value.scope_kind == "separate" and said is None:
             continue
         scoped.append((said, j))
-    if value.scope_kind == "key":
+    if value.scope_kind == "key" and name in V.unit_fields(kind, unit, V.question_of(kind, question)):
+        # 行への判断は、その問いが依る欄の値にだけ当たる（依らない値は、変わっても判断が古くならないので）。
         scoped.extend((value.scope, j) for j in row_js)
     if not scoped:
         if value.scope_kind == "separate" and value.scope is None and (value_js or row_js):
@@ -349,9 +352,10 @@ def inspections(vessel: V.Vessel) -> list:
     """種類の宣言 `inspects` を持つ表（こぴちゃの中央の判断）の行ごとに、`follow` の指す欄を順にたどって
     対象の記録を見つけ、行の中身を「確かめた中身そのもの」として持つ検収の記録にする（書かない）。
 
-    中身の欄のどれかが空の行は、版を示せないので判断にしない。たどった先が無い・2 つ以上に分かれる行も、
-    黙って選ばずに判断にしない（`links` の指す先の切れで見える）。効くかは `evaluate`（中身の指紋が今の依る所と
-    合うか）で決まる。"""
+    中身は読んだ値のまま（空のセル "" も値。対象の空のセルと合えば効く）。ただし `required` の欄（既定は問いの
+    状態の欄）が空の行と、中身の欄が無い行は、版を示せないので判断にしない。たどった先が無い・2 つ以上に分かれる・
+    同じ番号の記録が 2 つ以上ある行も、黙って選ばずに判断にしない。状態の語は観測と同じ直し方（`word_of`）。
+    効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。"""
     out = []
     for rec in vessel.all_records:
         kind = vessel.kinds[rec.kind]
@@ -361,7 +365,7 @@ def inspections(vessel: V.Vessel) -> list:
         content = {}
         for to_field, from_field in spec["content"].items():
             raw = rec.values.get(from_field)
-            if raw in (None, ""):
+            if raw is None:
                 content = None
                 break
             content[to_field] = raw
@@ -375,16 +379,28 @@ def inspections(vessel: V.Vessel) -> list:
                     if pointer.get("field") != step:
                         continue
                     for target_id in V.pointer_targets(one, pointer):
-                        found = vessel.records.get(f"{pointer['to']}:{target_id}")
+                        ref = f"{pointer['to']}:{target_id}"
+                        if vessel.is_duplicated(ref):
+                            nxt.append(None)  # 同じ番号の記録が 2 つ以上: どちらとも決めない
+                            continue
+                        found = vessel.unique(ref)
                         if found is not None:
                             nxt.append(found)
             here = nxt
+            if any(r is None for r in here):
+                break
+        if any(r is None for r in here):
+            continue
         refs = sorted({r.ref for r in here})
         if len(refs) != 1:
             continue
         target_kind = vessel.kinds[here[0].kind]
         q = V.question_of(target_kind, spec["question"])
-        word = content.get(q.state) if q is not None and q.state else None
+        required = spec["required"] if spec["required"] is not None else (
+            [q.state] if q is not None and q.state in content else [])
+        if any(content.get(name) in (None, "") for name in required):
+            continue
+        word = V.word_of(content.get(q.state)) if q is not None and q.state in content else None
         out.append(make(vessel, {"record": refs[0]}, spec["question"], by=spec["by"], at=None, word=word,
                         content=content, source=rec.ref))
     return out
