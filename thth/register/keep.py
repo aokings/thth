@@ -390,6 +390,11 @@ def read_file(root: str, rel: str) -> bytes:
 
 
 def pending(root: str) -> dict | None:
+    return _pending_file(root)
+
+
+def _pending_file(root: str) -> dict | None:
+    """段取りのファイルそのもの（後始末の前に「まだ自分の段取りか」を確かめるときにも読む）。"""
     path = guard(root, os.path.join(thth_dir(root), BATCH, PENDING))
     if not os.path.exists(path):
         return None
@@ -556,6 +561,7 @@ def begin(root: str, plan: dict) -> None:
     if pending(root) is not None:
         refuse_if_pending(root)
     _bump(root)
+    plan["gen"] = seq(root)  # 段取りの世代: 同じ名の段取りが後で始まっても、別の物として見分ける
     path = os.path.join(thth_dir(root), BATCH, PENDING)
     tmp = f"{path}.{os.getpid()}.new"
     _write_json(root, tmp, plan)
@@ -575,7 +581,7 @@ def _tmpdir(root: str) -> str:
 
 
 def _aside(root: str, plan: dict, index: int) -> str:
-    return guard(root, os.path.join(_tmpdir(root), f"{plan['id']}-{index}.aside"))
+    return guard(root, os.path.join(_tmpdir(root), f"{plan['id']}-{plan.get('gen', 0)}-{index}.aside"))
 
 
 def _conflict(plan: dict, rel: str, word: str = "moved", **extra):
@@ -630,13 +636,15 @@ def _step(root: str, plan: dict, index: int, frm, to) -> bool:
         mode = os.stat(tmp).st_mode
         os.chmod(tmp, (mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) if to[1]
                  else (mode & ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)))
+    side = os.path.relpath(aside, root).replace(os.sep, "/")
     if frm is not None and not grabbed:
         os.rename(target, aside)  # 今の枚を 1 つに決める（ここから先にほかの者が書けば、新しい枚として見つかる）
         if _state_at(aside) != frm:
-            _put_back(aside, target)
             if tmp:
                 os.unlink(tmp)
-            raise _conflict(plan, rel)
+            if _put_back(aside, target):
+                raise _conflict(plan, rel)
+            raise _conflict(plan, rel, aside=side)  # 戻す道にもほかの者が置いた: 両方を残す
     if to is not None:
         makedirs(root, os.path.dirname(target))
         guard(root, target)
@@ -644,23 +652,51 @@ def _step(root: str, plan: dict, index: int, frm, to) -> bool:
             _replace(tmp, target)
         except FileExistsError:
             os.unlink(tmp)
-            if frm is not None and os.path.lexists(aside):
-                os.unlink(aside)  # 退かした前の枚は控えにある。ほかの者の枚はそのまま残す
-            raise _conflict(plan, rel) from None
+            # ほかの者が新しい道に置いた: その枚はそのまま。退かした前の枚も残して断る（何も上書きしない）。
+            raise _conflict(plan, rel, **({"aside": side} if frm is not None else {})) from None
+    # 置いたあと: 退かした枚（開いていた者が直に書きうる）と新しい道（ほかの者が置き換えうる）の両方を見る。
+    # どちらかが動いていれば、どれも書き換えずに断る（ほかの者の書き込みは、そのまま残る）。
+    moved_aside = frm is not None and _state_at(aside) != frm
+    moved_target = to is not None and _state_at(target) != to
+    if moved_aside or moved_target:
+        raise _conflict(plan, rel, **({"aside": side} if frm is not None else {}))
     if frm is not None:
-        if _state_at(aside) != frm:
-            # 退かしたあとに、前の枚へ直に書いた者がいる: その枚を戻し、新しい枚は置かなかったことにする。
-            os.replace(aside, target)
-            raise _conflict(plan, rel)
         os.unlink(aside)
     return True
 
 
-def _finish(root: str, plan: dict, state: str) -> None:
-    done = guard(root, os.path.join(thth_dir(root), BATCH, state, plan["id"] + ".json"))
+def _mine(root: str, plan: dict) -> bool:
+    """段取りのファイルが、まだこの段取り（名と世代が同じ）か。"""
+    now = _pending_file(root)
+    return now is not None and now.get("id") == plan["id"] and now.get("gen") == plan.get("gen")
+
+
+def _finish(root: str, plan: dict, state: str) -> bool:
+    """済んだ記録を書き、段取りのファイルが自分の世代のときだけ外す。ほかの者が先に済ませていれば、何も
+    消さずに False（そのあとに始まった別の段取りを消さない）。"""
+    batch = os.path.join(thth_dir(root), BATCH)
+    done = guard(root, os.path.join(batch, state, f"{plan['id']}-{plan.get('gen', 0)}.json"))
     makedirs(root, os.path.dirname(done))
-    os.replace(guard(root, os.path.join(thth_dir(root), BATCH, PENDING)), done)
-    _bump(root)
+    _write_json(root, done, plan)
+    path = guard(root, os.path.join(batch, PENDING))
+    held = guard(root, os.path.join(_tmpdir(root), f"pending-{plan['id']}-{os.getpid()}.taken"))
+    try:
+        os.rename(path, held)  # 段取りのファイルを 1 つに決めて取る
+    except FileNotFoundError:
+        return False
+    taken = _read_json(root, held, "batch")
+    if taken.get("id") == plan["id"] and taken.get("gen") == plan.get("gen"):
+        os.unlink(held)
+        _bump(root)
+        return True
+    # 取ったのは別の段取りだった: 元の場所へ戻す（戻せなければ、取った物を残して断る）。
+    try:
+        os.link(held, path)
+    except FileExistsError:
+        raise RegisterRefused("register_batch_conflict", "busy", batch=taken.get("id"),
+                              kept=os.path.relpath(held, root).replace(os.sep, "/")) from None
+    os.unlink(held)
+    return False
 
 
 def _from_to(e: dict, back: bool):
@@ -677,13 +713,17 @@ def apply(root: str, *, by: str, at: str) -> dict:
         return {"applied": 0}
     applied = 0
     for index, e in enumerate(plan["entries"]):
+        if not _mine(root, plan):
+            return {"applied": applied, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
         frm, to = _from_to(e, back=False)
         applied += _step(root, plan, index, frm, to)
+    if not _mine(root, plan):
+        return {"applied": applied, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
     entries = view_after(root)
     kept = save_snapshot(root, entries, what=plan["what"], by=by, at=at)
     plan["done"] = {"by": by, "at": at, **kept}
-    _write_json(root, os.path.join(thth_dir(root), BATCH, PENDING), plan)
-    _finish(root, plan, "done")
+    if not _finish(root, plan, "done"):
+        return {"applied": applied, **kept, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
     return {"applied": applied, **kept, "batch": plan["id"], "files": len(plan["entries"])}
 
 
@@ -694,11 +734,15 @@ def rollback(root: str, *, by: str, at: str) -> dict:
         return {"restored": 0}
     restored = 0
     for index in reversed(range(len(plan["entries"]))):
+        if not _mine(root, plan):
+            return {"restored": restored, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True,
+                    "fp": catalog_fp(view_after(root))}
         frm, to = _from_to(plan["entries"][index], back=True)
         restored += _step(root, plan, index, frm, to)
     plan["rolled_back"] = {"by": by, "at": at}
-    _write_json(root, os.path.join(thth_dir(root), BATCH, PENDING), plan)
-    _finish(root, plan, "rolled_back")
+    if not _finish(root, plan, "rolled_back"):
+        return {"restored": restored, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True,
+                "fp": catalog_fp(view_after(root))}
     log(root, {"at": at, "by": by, "what": "rollback", "batch": plan["id"]})
     return {"restored": restored, "batch": plan["id"], "files": len(plan["entries"]),
             "fp": catalog_fp(view_after(root))}

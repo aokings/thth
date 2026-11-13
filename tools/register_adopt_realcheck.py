@@ -10,8 +10,8 @@
   （元に書いていない）。範囲は目録 7 枚の §1 とレーンの答え。
 - 範囲: 目録の数（`EXPECTED`）と、元を glob で数え直した数を比べ、見つかった枚が全部台帳に入ったかを見る
   （範囲の JSON の選び方を使わずに確かめる）。
-- (b) こぴちゃの 8ead0fc と 3398d6d28 の再演（`--replay <フォルダ>` に、各 commit の 1 つ前と後の 3 枚ずつを置く）:
-  3 枚だけが変わり、版の変わる記録と、効かなくなる判断を数える。`--replay` が無いときは、代わりに表を読んで
+- (b) こぴちゃの 8ead0fc と 3398d6d28 の再演（`--replay <フォルダ>` に、各 commit の親の木と後の 3 枚を置く）:
+  親の木を取り込んでから 3 枚を当て、3 枚だけが変わり、外れた判断が期待の集合と等しいかを見る。`--replay` が無いときは、代わりに表を読んで
   書き戻す道と YAML の 1 枚で確かめる（`b_substitute`。再演ではない）。関東の年度の置き換え
   （`json.dumps(indent=1)` で 1 枚を丸ごと）。触っていない原物は 1 バイトも変わらず、効かなくなる判断は
   依る所が変わった物だけ。
@@ -225,42 +225,81 @@ REPLAY = {
 }
 
 
-def kopicha_replay(reg: pathlib.Path, replay: pathlib.Path) -> dict:
-    """`<replay>/<commit>/before/<道>` と `<replay>/<commit>/after/<道>` に、その commit の 1 つ前と後の 3 枚を
-    置いておく（こぴちゃの git から書き出す: `git -C <kopicha> show <commit>^:<道>` と `<commit>:<道>`）。
-    影の台帳で、3 枚を 1 つ前の版にしてから判断を作り、今の道具と同じく 3 枚を直に書き換えて、変わった枚・
-    版の変わった記録・効かなくなった判断を数える。ほかの枚は今の HEAD のまま（commit の 1 つ前の木そのものでは
-    ない。違いは報告に書く）。"""
+REPLAY_EXPORT = ("mkdir -p {dir}/{c}/parent && git -C <kopicha> archive {c}^ | tar -x -C {dir}/{c}/parent; "
+                 "for p in <3 枚>; do mkdir -p {dir}/{c}/after/$(dirname $p) && "
+                 "git -C <kopicha> show {c}:$p > {dir}/{c}/after/$p; done")
+
+
+def _depends(kind_name: str, question: str):
+    for kind in KOPICHA_KINDS:
+        if kind["kind"] == kind_name:
+            for q in kind.get("questions", []):
+                if q["name"] == question:
+                    return q.get("depends")
+    return None
+
+
+def kopicha_replay(base: pathlib.Path, replay: pathlib.Path) -> dict:
+    """試験 2 (b) の再演。commit ごとに、`<replay>/<commit>/parent/` の親 commit の木（`git archive <commit>^` を
+    展開した物）を、範囲（PLANS の kopicha）で新しい影の台帳に取り込み、全部の記録に判断を作ってから、今の道具と
+    同じく `<replay>/<commit>/after/` の 3 枚を台帳に直に書く。見る物:
+    - 当てる前の台帳が親の木（範囲の中の全部）と同じか（basis_is_parent）
+    - 変わった枚がその 3 枚だけで、ほかの枚が親の木と同じか（files_changed・others_same_as_parent）
+    - 外れた判断の集合が、期待の集合と等しいか（stale_as_expected）。期待は判断の評価と別に作る: 版の動いた記録の
+      うち、問いの依る欄が無い物か、依る欄の値が動いた物。"""
     out = {}
+    folder, include, exclude = PLANS["kopicha"]
+    plan = A.parse_plan({"schema": A.PLAN_SCHEMA, "include": include, "exclude": exclude})
     for commit, paths in REPLAY.items():
-        base = replay / commit
-        if not all((base / "before" / p).is_file() and (base / "after" / p).is_file() for p in paths):
-            out[commit] = {"skipped": f"{base} に before/after の 3 枚が無い"}
+        parent, after_dir = replay / commit / "parent", replay / commit / "after"
+        if not parent.is_dir() or not all((after_dir / p).is_file() for p in paths):
+            out[commit] = {"skipped": f"{parent} か {after_dir} の 3 枚が無い",
+                           "export": REPLAY_EXPORT.format(dir=replay, c=commit)}
             continue
-        K.run(str(reg), {p: (base / "before" / p).read_bytes() for p in paths}, what="merge", by=BY, at=AT)
-        v = V.open_vessel(str(reg))
-        records = [r for r in v.all_records if r.id and not r.problems]
-        judged = []
-        for r in records:
-            question = "says_so" if r.kind == "claim" else "reads_right"
-            judged.append(J.make(v, {"record": r.ref}, question, by="v", at=AT, conclusion="good"))
-        versions = {r.ref: r.version for r in records}
+        place = base / f"replay-{commit}"
+        decl = write_decl(place / "decl", KOPICHA_KINDS)
+        reg = place / "register"
+        adopted = A.adopt(str(parent), str(reg), plan=plan, by=BY, at=AT, decl=decl)
+        parent_shas = {e["path"]: e["sha256"] for e in A.source_catalog(str(parent), plan)}
         before = shas(reg)
+        v = V.open_vessel(str(reg))
+        records = {r.ref: r for r in v.all_records if r.id and not r.problems}
+        judged = []
+        for ref, r in records.items():
+            question = "says_so" if r.kind == "claim" else "reads_right"
+            judged.append((ref, question, J.make(v, {"record": ref}, question, by="v", at=AT, conclusion="good")))
         for p in paths:  # 今の道具と同じく、台帳のファイルに直に書く
-            (reg / p).write_bytes((base / "after" / p).read_bytes())
+            (reg / p).write_bytes((after_dir / p).read_bytes())
         after = shas(reg)
         v2 = V.open_vessel(str(reg))
-        moved = sorted(r.ref for r in v2.all_records if r.ref in versions and versions[r.ref] != r.version)
-        added = sorted(r.ref for r in v2.all_records if r.id and r.ref not in versions)
-        stale = sorted(j["target"]["record"] for j in judged if J.evaluate(v2, j) != "effective")
+        now = {r.ref: r for r in v2.all_records if r.id}
+        moved = sorted(ref for ref, r in records.items() if ref in now and now[ref].version != r.version)
+        added = sorted(ref for ref in now if ref not in records)
+        stale = sorted(ref for ref, _q, j in judged if J.evaluate(v2, j) != "effective")
+        expected = []
+        for ref, question, _j in judged:
+            if ref not in now:
+                expected.append(ref)  # 消えた記録の判断も外れる
+                continue
+            if ref not in moved:
+                continue
+            depends = _depends(ref.split(":")[0], question)
+            if depends is None or any((records[ref].values or {}).get(f) != (now[ref].values or {}).get(f)
+                                      for f in depends):
+                expected.append(ref)
+        expected = sorted(set(expected))
         lines = {}
         for p in paths:
-            old = (base / "before" / p).read_bytes().splitlines(keepends=True)
-            new = (base / "after" / p).read_bytes().splitlines(keepends=True)
+            old = (parent / p).read_bytes().splitlines(keepends=True)
+            new = (after_dir / p).read_bytes().splitlines(keepends=True)
             lines[p] = {"added": len(set(new) - set(old)), "removed": len(set(old) - set(new))}
-        out[commit] = {"files_changed": changed_files(before, after), "other_files_same": len(before) - len(paths),
+        out[commit] = {"register": str(reg), "files": adopted["files"],
+                       "basis_is_parent": adopted["same"] and before == parent_shas,
+                       "files_changed": changed_files(before, after),
+                       "others_same_as_parent": all(after[p] == parent_shas[p] for p in parent_shas if p not in paths),
                        "line_changes": lines, "records_moved": moved, "records_added": added,
-                       "judgments": len(judged), "stale": stale, "stale_only_moved": set(stale) <= set(moved)}
+                       "judgments": len(judged), "stale": stale, "expected_stale": expected,
+                       "stale_as_expected": stale == expected}
     return out
 
 
@@ -467,7 +506,7 @@ def main(argv=None) -> int:
     parser.add_argument("--shadow", default=os.path.expanduser("~/Documents/THTH/shadow"))
     parser.add_argument("--only", action="append", default=None)
     parser.add_argument("--replay", default=None,
-                        help="こぴちゃの 8ead0fc と 3398d6d28 の 1 つ前と後の 3 枚ずつを置いたフォルダ（kopicha_replay を見る）")
+                        help="こぴちゃの 8ead0fc と 3398d6d28 の、親 commit の木（parent/）と後の 3 枚（after/）を置いたフォルダ")
     args = parser.parse_args(argv)
     dev = pathlib.Path(args.developer)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -496,7 +535,7 @@ def main(argv=None) -> int:
             result["scope"] = scope_check(name, str(source), str(reg))
             if name == "kopicha":
                 if args.replay:
-                    result["b_replay"] = kopicha_replay(reg, pathlib.Path(args.replay))
+                    result["b_replay"] = kopicha_replay(place, pathlib.Path(args.replay))
                 else:
                     result["b_replay"] = {"skipped": "--replay が無い（再演の 3 枚ずつが要る）"}
                 result["b_substitute"] = kopicha_edits(reg)  # 再演の代わりではない（表を読んで書き戻す道の確かめ）

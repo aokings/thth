@@ -107,14 +107,17 @@ def cmd_diff(args) -> int:
             print(f"  消えた記録 {ref}")
         for path in f["removed"][:20]:
             print(f"  消えたファイル {path}")
+        for item in value["units"]["vanished"][:20]:
+            print(f"  消えた内側の番号 {item['record']} {item['unit']}")
         for item in r["changed"][:20]:
             units = item.get("units")
             extra = f"（単位 足した {units['added']}・消えた {units['vanished']}）" if units else ""
             print(f"  変わった {item['record']}{extra}")
     if value["red"]:
         raise RegisterRefused("register_record_vanished", f"{len(value['records']['vanished'])} records "
-                              f"{len(value['files']['removed'])} files",
+                              f"{len(value['files']['removed'])} files {len(value['units']['vanished'])} units",
                               vanished=value["records"]["vanished"][:50], removed=value["files"]["removed"][:50],
+                              units_vanished=value["units"]["vanished"][:50],
                               diff=value)
     return 0
 
