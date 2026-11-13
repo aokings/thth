@@ -8,8 +8,12 @@
 
 - (a) 7 つとも、取り込み → 戻す → 数・名前・sha256 が全部同じ。元の範囲の物の sha256 と変えた時刻が、前と後で同じ
   （元に書いていない）。範囲は目録 7 枚の §1 とレーンの答え。
-- (b) 影の台帳の上で、今の道具の書き方で 1 回直す: こぴちゃの表（読んで書き戻す）と YAML の 1 枚・関東の年度の
-  置き換え（`json.dumps(indent=1)` で 1 枚を丸ごと）。触っていない原物は 1 バイトも変わらず、効かなくなる判断は
+- 範囲: 目録の数（`EXPECTED`）と、元を glob で数え直した数を比べ、見つかった枚が全部台帳に入ったかを見る
+  （範囲の JSON の選び方を使わずに確かめる）。
+- (b) こぴちゃの 8ead0fc と 3398d6d28 の再演（`--replay <フォルダ>` に、各 commit の 1 つ前と後の 3 枚ずつを置く）:
+  3 枚だけが変わり、版の変わる記録と、効かなくなる判断を数える。`--replay` が無いときは、代わりに表を読んで
+  書き戻す道と YAML の 1 枚で確かめる（`b_substitute`。再演ではない）。関東の年度の置き換え
+  （`json.dumps(indent=1)` で 1 枚を丸ごと）。触っていない原物は 1 バイトも変わらず、効かなくなる判断は
   依る所が変わった物だけ。
 - (c) MMR の `research_status` を書き換える（`json.dumps(indent=2)`）: 曲の頁の判断は効いたまま。`title` なら外れる。
 - (d) こぴちゃの影で、表 4 枚の入れ替えを 2 枚めのあとで止める: 読み手には前の姿・続けると後の姿。
@@ -36,17 +40,39 @@ from thth.register import adopt as A, judgment as J, keep as K, vessel as V  # n
 BY = "register_adopt_realcheck"
 AT = "2026-11-14T00:00:00+09:00"
 
+# 取り込む物の範囲。目録 7 枚（docs/目録_台帳の器_*_2026-11-13.md）の §1「移す物」と、§5「検収の記録」
+# （判断の元の記録として置く物）から作る。
 PLANS = {
-    "kopicha": ("kopicha", ["src/content/**", "data/knowledge/*.csv", "data/sister-links.csv", "data/article-links.csv",
-                            "data/hatena/bookmark-list.csv"], []),
-    "nigami": ("nigamilab", ["data/*.csv", "data/questions/**", "data/i18n/en/*.csv", "schema/*"], []),
-    "sometokagaku": ("sometokagaku", ["data/*.csv", "site/src/content/articles/*.md", "site/src/content/pillars/*.md",
-                                      "site/src/content/pillars-en/*.md", "site/src/lib/entity-page-rules.ts",
-                                      "site/photos.yaml", "site/owner-read.txt"], []),
-    "jiangshi": ("jiangshi-lab", ["data/*.csv", "lab.yaml", "drafts/article-*.md", "images/files/*",
-                                  "audits/reader/*.json"], []),
-    "mmr": ("music-research", ["data/*.csv", "data/dossiers/**", "queue.json", "ledger.json", "content/**",
-                               "site/src/credits/*.json", "site/src/credit-versions/versions.json", "lab.yaml"], []),
+    "kopicha": ("kopicha", [
+        "src/content/**", "data/knowledge/*.csv", "data/sister-links.csv", "data/article-links.csv",
+        "data/hatena/bookmark-list.csv",
+        # §5 検収の記録（束の作業の場 staging/ のうち、検めの判定・検めに渡した中身・中央の判断・取り込みの印）
+        "data/knowledge/staging/*/verify_v.csv", "data/knowledge/staging/*/verify_t.csv",
+        "data/knowledge/staging/*/verify_input.csv", "data/knowledge/staging/*/verify_input_t.csv",
+        "data/knowledge/staging/*/central.csv", "data/knowledge/staging/*/.merged",
+        "docs/knowledge/*_結果_*.md"], []),
+    "nigami": ("nigamilab", [
+        "data/*.csv", "data/questions/**", "data/i18n/en/*.csv", "schema/*",
+        # §5 検収の記録
+        "data/staging/**/VERIFY.md", "data/staging/**/verify.json", "data/staging/**/verify_r*.json",
+        "data/staging/**/AUDIT.md", "data/staging/**/*.merged"],
+        # 束の作業の場の道具の置き場（symlink。検収の記録は無い）
+        ["data/staging/**/node_modules/**"]),
+    "sometokagaku": ("sometokagaku", [
+        "data/*.csv", "site/src/content/articles/*.md", "site/src/content/pillars/*.md",
+        "site/src/content/pillars-en/*.md", "site/src/lib/entity-page-rules.ts", "site/photos.yaml",
+        "site/owner-read.txt",
+        # §5 検収の記録
+        "staging/*/verify.json", "staging/*/recheck.json", "staging/*/.merged", "docs/original-check-log.md"], []),
+    "jiangshi": ("jiangshi-lab", [
+        "data/*.csv", "lab.yaml", "drafts/article-*.md", "images/files/*",
+        # §5 検収の記録
+        "audits/reader/*.json", "docs/original-check-log.md", "staging/*/verify.json", "staging/*/recheck.json"], []),
+    "mmr": ("music-research", [
+        "data/*.csv", "data/dossiers/**", "queue.json", "ledger.json", "content/**",
+        "site/src/credits/*.json", "site/src/credit-versions/versions.json", "lab.yaml",
+        # §5 検収の記録（git の外）
+        "staging/credits/judg/*"], []),
     "kanto": ("asmon/research", [
         "kanto_type/*/[0-9]*.json", "kanto_type/boshu_henkou/2027/[0-9]*.json",
         "kanto_type/submission_docs/2027/[0-9]*.json", "kanto_type/knowledge/insights/*.yaml",
@@ -54,9 +80,79 @@ PLANS = {
         "kanto_type/admission_results.csv", "kanto_type/admission_results_summary.csv", "kanto_type/school_master.csv",
         "kanto_type/features_school_subject.csv", "kanto_type/types_school_subject.csv",
         "kanto_type/human_review_ledger.csv", "kanto_type/high_school_admissions.csv",
-        "kanto_type/shinro_disclosure.csv", "kanto_type/round_alias.csv", "results/kanto_type/full/*.csv"], []),
+        "kanto_type/shinro_disclosure.csv", "kanto_type/round_alias.csv", "results/kanto_type/full/*.csv",
+        # §5 検収の記録
+        "kanto_type/admission_results/_audit_*.csv", "kanto_type/admission_results/_audit_20261004/*",
+        "kanto_type/admission_results/_audit_2025/*", "kanto_type/admission_results/_audit_2024/*",
+        "kanto_type/events/_patrol_verified.json"], []),
     "media_hub": ("media-hub", ["registry/concepts.csv", "registry/README.md", "media.yaml"], []),
 }
+
+# 期待値: 目録に書かれた数（選び方と別に確かめる）。数え直しは、範囲の JSON（PLANS）でなく、ここの型で元を
+# glob し（器の選び方を使わない）、目録の数と比べ、見つかった枚が全部台帳に入ったかを見る。目録の数と今の数が
+# 違えば「動いた」として差を言う（目録は 11/13 の数）。None は目録に数が無い（未確認・名前だけ）。
+EXPECTED = {
+    "kopicha": {"source": "docs/目録_台帳の器_こぴちゃ_2026-11-13.md", "groups": [
+        ("src/content/**/*", 296, "§1.1"), ("data/knowledge/*.csv", 11, "§1.1"),
+        ("data/knowledge/staging/*/verify_v.csv", 227, "§5 検証 V"),
+        ("data/knowledge/staging/*/verify_t.csv", 225, "§5 検証 T"),
+        ("data/knowledge/staging/*/verify_input.csv", 228, "§5 検めに渡した中身"),
+        ("data/knowledge/staging/*/verify_input_t.csv", 77, "§5 検めに渡した中身 T"),
+        ("data/knowledge/staging/*/central.csv", 226, "§5 中央の判断"),
+        ("data/knowledge/staging/*/.merged", 215, "§5 束の取り込みの印"),
+        ("docs/knowledge/*_結果_*.md", None, "§5 結果の書（10 枚ほど・名前だけ）")]},
+    "nigami": {"source": "docs/目録_台帳の器_にがみラボ_2026-11-13.md", "groups": [
+        ("data/*.csv", 33, "§1.1"), ("data/questions/**/*", 174, "§1.2"), ("data/i18n/en/*.csv", 4, "期待する答え §3 (a)"),
+        ("schema/*", 2, "期待する答え §3 (a)"),
+        ("data/staging/**/VERIFY.md", 109, "§5 束の検め"), ("data/staging/**/verify.json", 8, "§5 ほかの検め"),
+        ("data/staging/**/verify_r*.json", 2, "§5 ほかの検め"), ("data/staging/**/AUDIT.md", 3, "§5 ほかの検め"),
+        ("data/staging/**/*.merged", 2, "§5 束の取り込みの印")]},
+    "sometokagaku": {"source": "docs/目録_台帳の器_染めと化学_2026-11-13.md", "groups": [
+        ("data/*.csv", 8, "§1.1"), ("site/src/content/articles/*.md", 33, "§1.2"),
+        ("site/src/content/pillars/*.md", 8, "§1.2"), ("site/src/content/pillars-en/*.md", 8, "§1.2"),
+        ("site/src/lib/entity-page-rules.ts", 1, "§1.2"), ("site/owner-read.txt", 1, "§1.2・§5"),
+        ("staging/*/verify.json", 83, "§5 独立の検証"), ("staging/*/recheck.json", 82, "§5 3 度目の読み"),
+        ("staging/*/.merged", 18, "§5 取り込みの印"), ("docs/original-check-log.md", 1, "§5 原文確認の記録")]},
+    "jiangshi": {"source": "docs/目録_台帳の器_キョンシーラボ_2026-11-13.md", "groups": [
+        ("data/*.csv", 11, "§1.1"), ("lab.yaml", 1, "§1.1"), ("drafts/article-*.md", 38, "§1.1"),
+        ("images/files/*", 26, "§1.1"), ("audits/reader/*.json", 56, "§5 読者監査（結果 54・state・scope）"),
+        ("docs/original-check-log.md", 1, "§5 原文確認の記録"),
+        ("staging/*/verify.json", None, "§5 束の検め（未確認）"), ("staging/*/recheck.json", None, "§5 束の検め（未確認）")]},
+    "mmr": {"source": "docs/目録_台帳の器_MMR_2026-11-13.md", "groups": [
+        ("data/*.csv", 15, "§0・§1.1"), ("queue.json", 1, "§1.1"), ("ledger.json", 1, "§1.1"),
+        ("content/index.yaml", 1, "§1.1"), ("site/src/credits/*.json", 789, "§1.1"),
+        ("site/src/credit-versions/versions.json", 1, "§1.1"), ("lab.yaml", 1, "§1.1"),
+        ("content/reviews/**/*", 414, "§5 記事の監査"), ("staging/credits/judg/*", 794, "§5 照合台帳の判定")]},
+    "kanto": {"source": "docs/目録_台帳の器_関東_2026-11-13.md", "groups": [
+        ("kanto_type/admission_results/[0-9]*.json", 265, "§1.1"), ("kanto_type/school_records/[0-9]*.json", 265, "§1.1"),
+        ("kanto_type/school_master/[0-9]*.json", 265, "§1.1"), ("kanto_type/events/[0-9]*.json", 264, "§1.1"),
+        ("kanto_type/procedures/[0-9]*.json", 46, "§1.1"), ("kanto_type/boshu_henkou/2027/[0-9]*.json", 163, "§1.1"),
+        ("kanto_type/knowledge/insights/*.yaml", 229, "§1.1"),
+        ("kanto_type/admission_results/_audit_*.csv", 8, "§5 入試結果の監査（項目ごと）"),
+        ("kanto_type/admission_results/_audit_20261004/*", 238, "§5 入試結果の監査（2026 年度）"),
+        ("kanto_type/admission_results/_audit_2025/*", 265, "§5 入試結果の監査（2025 年度）"),
+        ("kanto_type/admission_results/_audit_2024/*", 207, "§5 入試結果の監査（2024 年度）"),
+        ("kanto_type/human_review_ledger.csv", 1, "§5 型の人の検収"),
+        ("kanto_type/events/_patrol_verified.json", 1, "§5 巡回の印")]},
+    "media_hub": {"source": "docs/目録_台帳の器_media-hub_2026-11-13.md", "groups": [
+        ("registry/concepts.csv", 1, "§1.1"), ("registry/README.md", 1, "§1.1"), ("media.yaml", 1, "期待する答え §3 (a)")]},
+}
+
+
+def scope_check(name: str, source: str, register: str) -> dict:
+    """目録の数と、範囲に入れた物を、器の選び方と別に比べる。"""
+    import glob as globmod
+    inside = {e["path"] for e in K.dir_catalog(register)}
+    groups, missing_total = [], 0
+    for pattern, expected, where in EXPECTED[name]["groups"]:
+        found = sorted(p for p in globmod.glob(pattern, root_dir=source, recursive=True, include_hidden=True)
+                       if os.path.isfile(os.path.join(source, p)) and not os.path.islink(os.path.join(source, p)))
+        missing = [p for p in found if p.replace(os.sep, "/") not in inside]
+        missing_total += len(missing)
+        groups.append({"glob": pattern, "where": where, "inventory": expected, "now": len(found),
+                       "moved": None if expected is None else len(found) - expected,
+                       "not_adopted": len(missing), "not_adopted_head": missing[:3]})
+    return {"inventory": EXPECTED[name]["source"], "groups": groups, "all_adopted": missing_total == 0}
 
 
 def write_decl(base: pathlib.Path, kinds: list) -> str:
@@ -113,7 +209,59 @@ KOPICHA_KINDS = [
                                             "depends": ["statement_ja", "object_text_ja"]}]},
     {"schema": "thth.kind/1", "kind": "page", "place": "src/content/origins/*.yaml", "format": "yaml",
      "id": {"name": True}, "max_bytes": 262144},
+    {"schema": "thth.kind/1", "kind": "evidence", "place": "data/knowledge/evidence.csv", "format": "csv",
+     "id": {"field": "id"}},
+    {"schema": "thth.kind/1", "kind": "entity", "place": "data/knowledge/entities.csv", "format": "csv",
+     "id": {"field": "id"}},
+    {"schema": "thth.kind/1", "kind": "article_claim", "place": "data/knowledge/article-claims.csv", "format": "csv",
+     "id": {"key": ["file", "claim_id"]}},
 ]
+
+# 試験 2 (b) の再演（期待する答え §3 (b)）: こぴちゃの 2 つの commit が変えた 3 枚ずつ。
+REPLAY = {
+    "8ead0fc": ["data/knowledge/claims.csv", "data/knowledge/evidence.csv", "data/knowledge/article-claims.csv"],
+    "3398d6d28": ["src/content/origins/sikkim.yaml", "data/knowledge/entities.csv",
+                  "data/knowledge/article-claims.csv"],
+}
+
+
+def kopicha_replay(reg: pathlib.Path, replay: pathlib.Path) -> dict:
+    """`<replay>/<commit>/before/<道>` と `<replay>/<commit>/after/<道>` に、その commit の 1 つ前と後の 3 枚を
+    置いておく（こぴちゃの git から書き出す: `git -C <kopicha> show <commit>^:<道>` と `<commit>:<道>`）。
+    影の台帳で、3 枚を 1 つ前の版にしてから判断を作り、今の道具と同じく 3 枚を直に書き換えて、変わった枚・
+    版の変わった記録・効かなくなった判断を数える。ほかの枚は今の HEAD のまま（commit の 1 つ前の木そのものでは
+    ない。違いは報告に書く）。"""
+    out = {}
+    for commit, paths in REPLAY.items():
+        base = replay / commit
+        if not all((base / "before" / p).is_file() and (base / "after" / p).is_file() for p in paths):
+            out[commit] = {"skipped": f"{base} に before/after の 3 枚が無い"}
+            continue
+        K.run(str(reg), {p: (base / "before" / p).read_bytes() for p in paths}, what="merge", by=BY, at=AT)
+        v = V.open_vessel(str(reg))
+        records = [r for r in v.all_records if r.id and not r.problems]
+        judged = []
+        for r in records:
+            question = "says_so" if r.kind == "claim" else "reads_right"
+            judged.append(J.make(v, {"record": r.ref}, question, by="v", at=AT, conclusion="good"))
+        versions = {r.ref: r.version for r in records}
+        before = shas(reg)
+        for p in paths:  # 今の道具と同じく、台帳のファイルに直に書く
+            (reg / p).write_bytes((base / "after" / p).read_bytes())
+        after = shas(reg)
+        v2 = V.open_vessel(str(reg))
+        moved = sorted(r.ref for r in v2.all_records if r.ref in versions and versions[r.ref] != r.version)
+        added = sorted(r.ref for r in v2.all_records if r.id and r.ref not in versions)
+        stale = sorted(j["target"]["record"] for j in judged if J.evaluate(v2, j) != "effective")
+        lines = {}
+        for p in paths:
+            old = (base / "before" / p).read_bytes().splitlines(keepends=True)
+            new = (base / "after" / p).read_bytes().splitlines(keepends=True)
+            lines[p] = {"added": len(set(new) - set(old)), "removed": len(set(old) - set(new))}
+        out[commit] = {"files_changed": changed_files(before, after), "other_files_same": len(before) - len(paths),
+                       "line_changes": lines, "records_moved": moved, "records_added": added,
+                       "judgments": len(judged), "stale": stale, "stale_only_moved": set(stale) <= set(moved)}
+    return out
 
 
 def csv_roundtrip(path: pathlib.Path) -> bool:
@@ -285,7 +433,7 @@ def mmr_edit(reg: pathlib.Path) -> dict:
     seed = "seed-liked-0443" if any(r.id == "seed-liked-0443" for r in songs) else songs[0].id
     versions = {r.ref: r.version for r in songs}
     before = shas(reg)
-    first_fp = K.save_snapshot(str(reg), K.view(str(reg)), what="keep", by=BY, at=AT)
+    first_fp = K.save_snapshot(str(reg), K.view(str(reg)), what="keep", by=BY, at=AT)["snapshot"]
 
     def write(change):
         data = json.loads(path.read_bytes())
@@ -299,7 +447,7 @@ def mmr_edit(reg: pathlib.Path) -> dict:
     v2 = V.open_vessel(str(reg))
     moved = sorted(r.ref for r in v2.all_records if r.kind == "song" and versions.get(r.ref) != r.version)
     status_states = collections.Counter(J.evaluate(v2, j) for j in judged + judged_credit)
-    second_fp = K.save_snapshot(str(reg), K.view(str(reg)), what="keep", by=BY, at=AT)
+    second_fp = K.save_snapshot(str(reg), K.view(str(reg)), what="keep", by=BY, at=AT)["snapshot"]
     old_title = next(i.get("title") for i in items if i["seed_id"] == seed)
     write({"title": old_title + "（影の直し）"})
     v3 = V.open_vessel(str(reg))
@@ -318,6 +466,8 @@ def main(argv=None) -> int:
     parser.add_argument("--developer", default=os.path.expanduser("~/Developer"))
     parser.add_argument("--shadow", default=os.path.expanduser("~/Documents/THTH/shadow"))
     parser.add_argument("--only", action="append", default=None)
+    parser.add_argument("--replay", default=None,
+                        help="こぴちゃの 8ead0fc と 3398d6d28 の 1 つ前と後の 3 枚ずつを置いたフォルダ（kopicha_replay を見る）")
     args = parser.parse_args(argv)
     dev = pathlib.Path(args.developer)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -343,8 +493,13 @@ def main(argv=None) -> int:
         try:
             result = {"a": roundtrip(name, str(source), plan, place, decl)}
             reg = place / "register"
+            result["scope"] = scope_check(name, str(source), str(reg))
             if name == "kopicha":
-                result["b"] = kopicha_edits(reg)
+                if args.replay:
+                    result["b_replay"] = kopicha_replay(reg, pathlib.Path(args.replay))
+                else:
+                    result["b_replay"] = {"skipped": "--replay が無い（再演の 3 枚ずつが要る）"}
+                result["b_substitute"] = kopicha_edits(reg)  # 再演の代わりではない（表を読んで書き戻す道の確かめ）
                 result["d"] = kopicha_stop(reg)
             elif name == "kanto":
                 result["b"] = kanto_edit(reg)
