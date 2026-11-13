@@ -257,6 +257,18 @@ def find(rows: list, row_id: str) -> Row | None:
     return next((row for row in rows if row.id == row_id), None)
 
 
+def shown_kind(row: Row) -> str | None:
+    """出力に出してよい kind（欄の名前の形で、鍵らしくないときだけ）。"""
+    value = row.kind
+    return value if KIND.fullmatch(value) and not redact.looks_like_secret(value) else None
+
+
+def shown_confirmed(row: Row) -> str | None:
+    """出力に出してよい confirmed（決まった 3 つの語のときだけ）。"""
+    value = row.head.get("confirmed")
+    return value if value in CONFIRMS else None
+
+
 BODY_FIELD = "body"
 
 

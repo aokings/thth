@@ -199,6 +199,22 @@ def test_柵_認める操作が書くのは頭の決まった欄だけ(capsys, e
     assert pathlib.Path(ledger.confirmed_path("media-sample")).exists()
 
 
+@pytest.mark.parametrize("key", ["confirmed", "kind", "status", "source", "review_by", "public", "name"])
+def test_柵_秘密らしい値を頭のどの欄に書いてもshowに出ない(capsys, env, key):
+    """監査 5.19.0 直したほうがよい 4: 形の崩れた行の confirmed と kind の値を生で出していた。"""
+    path = add(capsys, env)
+    secret = "sk-ant-abcdefghijklmnop1234"
+    write(path / "思い" / "鍵.md", **dict(GOOD, id="voice-secret", **{key: secret}))
+    for argv in (("show", "media-sample"), ("show", "media-sample", "--json")):
+        _rc, out, err = run(capsys, "register", *argv)
+        assert secret not in out + err and "sk-ant" not in out + err, argv
+    rc_, value, _ = jrun(capsys, "register", "show", "media-sample")
+    [row] = [r for r in value["rows"] if r["id"] == "voice-secret"]
+    assert row["usable"] is False
+    if key in ("confirmed", "kind"):
+        assert row[key] is None
+
+
 def test_showは行ごとに使えるかと符丁を言う(capsys, env):
     add(capsys, env)
     rc_, value, _ = jrun(capsys, "register", "show", "media-sample")

@@ -168,7 +168,8 @@ def cmd_show(args) -> int:
     _cfg, _root, scanned = open_register(args.register)
     records = ledger.read_confirmed(args.register)
     today = _today()
-    rows = [{"id": row.id, "path": row.path, "kind": row.kind, "confirmed": row.head.get("confirmed"),
+    # 頭の値は決まった語のときだけ出す（形の崩れた行の kind・confirmed に鍵らしい値が書かれていても出さない・監査 5.19.0 の 4）。
+    rows = [{"id": row.id, "path": row.path, "kind": form.shown_kind(row), "confirmed": form.shown_confirmed(row),
              "usable": fence.state(row, records, today) is None, "code": fence.state(row, records, today)}
             for row in scanned["rows"]]
     if args.json:
@@ -176,7 +177,7 @@ def cmd_show(args) -> int:
         return 0
     for row in rows:
         mark = "使える" if row["usable"] else row["code"]
-        print(f"{row['id'] or '(番号なし)'}\t{row['kind']}\t{row['confirmed']}\t{mark}\t{row['path']}")
+        print(f"{row['id'] or '(番号なし)'}\t{row['kind'] or '(形が違う)'}\t{row['confirmed'] or '(形が違う)'}\t{mark}\t{row['path']}")
     return 0
 
 
