@@ -70,7 +70,7 @@ def _health(vessel: V.Vessel, graph: dict) -> dict:
     contradicted = {e["to"] for e in graph["edges"] if e["meaning"] == "contradicts"}
     count = 0
     for ref in contradicted:
-        rec = vessel.records.get(ref)
+        rec = vessel.unique(ref)  # 同じ番号の記録が 2 つ以上なら数えない（先頭を選ばない）
         if rec is None:
             continue
         for obs in V.observations(vessel.kinds[rec.kind], rec):

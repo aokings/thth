@@ -28,24 +28,37 @@ def load(text: str):
         import yaml
     except ImportError:
         return None, None, False
-    loader = yaml.BaseLoader(text)
+    loader = None
     events = []
     try:
+        # 読み手を作るときにも字を確かめる（NUL などは ReaderError）。作るのも try の中。
+        loader = yaml.BaseLoader(text)
         while loader.check_event():
             events.append(loader.get_event())
     except yaml.YAMLError as exc:
-        return None, f"syntax:{_line(exc)}", True
+        return None, f"syntax:{_line(exc, text)}", True
     except Exception:  # noqa: BLE001 — 字の逃がしが範囲の外（\U00110000 など）だと ValueError・OverflowError が出る
-        return None, f"syntax:{loader.line + 1}", True
+        return None, f"syntax:{(loader.line + 1) if loader is not None else 0}", True
     finally:
-        loader.dispose()
+        if loader is not None:
+            loader.dispose()
     documents = 0
+    depth = 0
     for event in events:
         line = getattr(getattr(event, "start_mark", None), "line", -1) + 1
         if isinstance(event, yaml.DocumentStartEvent):
             documents += 1
             if documents > 1:
                 return None, f"multi_document:{line}", True
+        if isinstance(event, (yaml.MappingStartEvent, yaml.SequenceStartEvent)):
+            depth += 1
+            if depth > DEPTH_MAX:
+                return None, f"too_deep:{line}", True  # 深い入れ子は組み立ての所で再帰の例外になる
+        elif isinstance(event, (yaml.MappingEndEvent, yaml.SequenceEndEvent)):
+            depth -= 1
+        if isinstance(event, yaml.ScalarEvent) and _surrogate(event.value):
+            # \uD800 などの逃がしは読めるが UTF-8 にできない（指紋を作れない）。読み口で断る。
+            return None, f"surrogate:{line}", True
         if isinstance(event, yaml.AliasEvent):
             return None, f"alias:{line}", True
         if getattr(event, "anchor", None) is not None:
@@ -56,7 +69,7 @@ def load(text: str):
     try:
         node = yaml.compose(text, Loader=yaml.BaseLoader)
     except yaml.YAMLError as exc:
-        return None, f"syntax:{_line(exc)}", True
+        return None, f"syntax:{_line(exc, text)}", True
     except Exception:  # noqa: BLE001 — 上で読めた物は、ここでも読める（念のため断りにする）
         return None, "syntax:0", True
     if node is not None:
@@ -66,15 +79,27 @@ def load(text: str):
     try:
         value = yaml.load(text, Loader=yaml.BaseLoader)
     except yaml.YAMLError as exc:
-        return None, f"syntax:{_line(exc)}", True
+        return None, f"syntax:{_line(exc, text)}", True
     except Exception:  # noqa: BLE001
         return None, "syntax:0", True
     return value, None, True
 
 
-def _line(exc) -> int:
+DEPTH_MAX = 64  # vessel.DEPTH_MAX と同じ（ここは vessel を読まない）
+
+
+def _surrogate(text) -> bool:
+    return isinstance(text, str) and any("\ud800" <= c <= "\udfff" for c in text)
+
+
+def _line(exc, text: str) -> int:
     mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
-    return (mark.line + 1) if mark is not None else 0
+    if mark is not None:
+        return mark.line + 1
+    position = getattr(exc, "position", None)  # 読み手の字の断り（ReaderError）は位置だけを持つ
+    if isinstance(position, int) and isinstance(text, str):
+        return text.count("\n", 0, position) + 1
+    return 0
 
 
 def _check_node(node, yaml):
