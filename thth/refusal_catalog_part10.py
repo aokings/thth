@@ -49,6 +49,14 @@ ENTRIES = {
                 "fix": "thth register draft には --row <行> か --trigger <種類> のどちらか 1 つだけを付けて打ち直してください。",
                 "command": _DRAFT,
                 "better": "まず thth register triggers <台帳> で今出す頃のきっかけを見て、その行を --row で選ぶと、出しすぎずに済みます。"},
+            "question": {
+                "fix": "問いの番号（q-YYYYMMDD- と 6 字の形）を、thth register ask の出力からそのまま写して打ち直してください。",
+                "command": "thth register questions <台帳>",
+                "better": "ask の --json の question の欄を写すと、番号の写し違いが起きません。"},
+            "answer_text": {
+                "fix": "--asked と --said は 1 行・200 字までにし、鍵やパスワードらしい値を入れずに打ち直してください。",
+                "command": "thth register answer <台帳> <問い> --result yes --by <名前>",
+                "better": "答えの中身は台帳の行に書き、--said には要約の 1 文だけを入れると、問いの記録が読みやすく残ります。"},
             "row": {
                 "fix": "行の番号（頭の id の欄）を英小文字・数字・_・.・- のまま写して打ち直してください。番号は thth register show <台帳> の左の列にあります。",
                 "command": _SHOW,
@@ -176,6 +184,23 @@ ENTRIES = {
         "台帳の控えがある機械（thth register add をした機械）で、同じ thth approve を打ってください。",
         _SHOW,
         "台帳を置く機械と承認する機械を同じにしておくと、承認のたびに読み直しが自動で済みます。"),
+    # ---------------------------------------------------------------- 段 3: 聞いて埋める
+    "register_question_log_invalid": _entry(
+        "台帳のフォルダの問いの記録（問いの記録.jsonl）が読めないか、形が違います（symlink・大きすぎる・JSON の行でない）。"
+        "聞いた数を数えられないので、新しく聞くことも答えを足すこともしません。",
+        "問いの記録.jsonl を git で前の版に戻すか、別の名前に移してから、同じ命令を打ち直してください（新しい記録から数え直します）。",
+        "thth register questions <台帳>",
+        "問いの記録は手で直さず、台帳の repo に commit しておくと、壊れたときに前の版へ戻せます。"),
+    "register_question_missing": _entry(
+        "その番号の問いが、問いの記録にありません（1 行目の（）が番号）。",
+        "thth register ask <台帳> --by <名前> の出力の問いの番号を写して、打ち直してください。",
+        "thth register questions <台帳>",
+        "聞いたらすぐ answer で記録すると、どの問いの答えかを取り違えません。"),
+    "register_question_answered": _entry(
+        "その問いには、もう答えが記録されています（1 行目の（）が番号）。答えは足すだけで書き換えません。",
+        "答えが変わったなら、台帳の行を直して認め直してください。もう一度聞くなら、次の ask で新しい問いの番号が出ます。",
+        "thth register ask <台帳> --by <名前>",
+        "答えを書き換えずに新しい問いとして残すと、いつ答えが変わったかが記録に残ります。"),
     "register_log_unavailable": _entry(
         "変更の記録（admin_log）に書けない置き場なので、何も変えませんでした。",
         "THTH の置き場（$THTH_ROOT）の権限と空きを確かめて、同じ命令を打ち直してください。",

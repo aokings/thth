@@ -18,6 +18,15 @@
                                        暦と台帳から、今出す頃のきっかけ（臨時の休み・催し・営業の時間の変わり・新しい品・季節の品）
     thth register draft <台帳> --to <口座> (--row <行> | --trigger <種類>) [--json]
                                        きっかけから queue の下書き（承認されていない形・出さない期限つき）を 1 本か上限 3 本
+    thth register holes <台帳> [--json]
+                                       穴の一覧（推測の行・見直し日を過ぎた行・欠けた行・季節の休み・品の思い）。読むだけ
+    thth register ask <台帳> --by <名前> [--json]
+                                       今聞く穴を上限まで選び、問いの記録に「聞いた」を足す（聞く言葉は持ち主の LLM が書く）
+    thth register answer <台帳> <問い> --result yes|no|other|skip --by <名前> [--asked 文] [--said 文] [--row 行] [--json]
+                                       答えを問いの記録に足す。推測の行に no なら「違うと言った」、yes なら認める
+                                       （営業の時間と臨時は答えだけでは認めない・二段の confirm を通す）
+    thth register questions <台帳> [--json]
+                                       問いの数・答えの数・答えから増えた行の数
 
 記録（`admin_log`）の動きの名前は `register_` で始める。名前・時刻・行の番号だけで、台帳の本文は入れない。
 **網に出ない。** 台帳には頭の決まった欄（`form.MANAGED`）しか書かない。
@@ -31,11 +40,12 @@ import sys
 
 from .. import admin_log, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
-from . import triggers as triggers_mod
+from . import holes as holes_mod, questions as questions_mod, triggers as triggers_mod
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
-DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger"))
+DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger", "question",
+                          "answer_text"))
 
 
 def _refuse(args, exc: RegisterRefused) -> int:
@@ -341,6 +351,108 @@ def cmd_draft(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ 聞いて埋める（段 3）
+
+def cmd_holes(args) -> int:
+    cfg, root, scanned = open_register(args.register)
+    found = holes_mod.find(cfg["kind"], scanned["rows"], _today())
+    if args.json:
+        _print({"register": args.register, "holes": found})
+        return 0
+    if not found:
+        print(f"台帳 {args.register}: 穴はありません")
+    for hole in found:
+        print(f"{hole['hole']}\t{hole['hint']}")
+    return 0
+
+
+def cmd_ask(args) -> int:
+    by = _by(args)
+    cfg, root, scanned = open_register(args.register)
+    now = jst.now_jst()
+    log = questions_mod.read(root)
+    found = holes_mod.find(cfg["kind"], scanned["rows"], now.date())
+    picked = questions_mod.pick(found, log, now.date(), per_day=holes_mod.ASK_MAX_PER_DAY,
+                                gap_days=holes_mod.ASK_GAP_DAYS)
+    asked = []
+    if picked:
+        _log_ready()
+        for hole in picked:
+            asked.append({"type": "asked", "id": questions_mod.new_id(now), "hole": hole["hole"], "row": hole["row"],
+                          "at": jst.iso(now), "by": by})
+        questions_mod.append(root, asked)
+        _record("asked", args.register, by, {"holes": [[], [a["hole"] for a in asked]]})
+    questions = [dict(hole, question=a["id"]) for hole, a in zip(picked, asked)]
+    value = {"register": args.register, "questions": questions, "holes": len(found),
+             "limit": {"per_day": holes_mod.ASK_MAX_PER_DAY, "gap_days": holes_mod.ASK_GAP_DAYS}}
+    if args.json:
+        _print(value)
+        return 0
+    if not questions:
+        print(f"台帳 {args.register}: 今聞くことはありません（穴 {len(found)} 件・1 日 {holes_mod.ASK_MAX_PER_DAY} 問まで・"
+              f"同じ穴は {holes_mod.ASK_GAP_DAYS} 日空けます）")
+        return 0
+    for one in questions:
+        print(f"{one['question']}\t{one['hole']}\t{one['hint']}")
+    print(f"  答えを聞いたら thth {COMMAND} answer {args.register} <問い> --result yes|no|other|skip --by {by} で記録します")
+    return 0
+
+
+def cmd_answer(args) -> int:
+    by = _by(args)
+    qid = questions_mod.check_id(args.question)
+    asked_text, said = questions_mod.check_text(args.asked), questions_mod.check_text(args.said)
+    _cfg, root, scanned = open_register(args.register)
+    log = questions_mod.read(root)
+    found = questions_mod.state(log).get(qid)
+    if found is None:
+        raise RegisterRefused("register_question_missing", qid)
+    if found["answered"] is not None:
+        raise RegisterRefused("register_question_answered", qid)
+    new_row = None
+    if args.row is not None:
+        new_row = find_row(scanned, args.row).id
+    hole, row_id = found["asked"].get("hole") or "", found["asked"].get("row")
+    _log_ready()
+    notes, effect = [], None
+    if hole.startswith("guess:") and row_id and args.result in ("yes", "no"):
+        row = find_row(scanned, row_id)
+        if args.result == "no":
+            confirm_mod.deny(args.register, root, row, by=by)
+            effect = "denied"
+        elif kinds.two_stage(row.kind):
+            # 営業の時間と臨時は、会話の一言だけでは認めない（計画 段 3 の柵）。
+            notes.append(f"行 {row.id}（{row.kind}）は二段で認める種類なので、答えだけでは認めていません。"
+                         f"全文を持ち主に見せて thth {COMMAND} confirm {args.register} {row.id} --by {by} で確定してください")
+            effect = "needs_confirm"
+        elif not row.problems:
+            confirm_mod.confirm(args.register, root, row, by=by)
+            effect = "confirmed"
+    questions_mod.append(root, [{"type": "answered", "id": qid, "result": args.result, "at": jst.iso(), "by": by,
+                                 "asked": asked_text, "said": said, "new_row": new_row}])
+    _record("answered", args.register, by, {"question": [None, qid], "result": [None, args.result],
+                                            "effect": [None, effect]})
+    value = {"register": args.register, "question": qid, "result": args.result, "effect": effect, "notes": notes}
+    if args.json:
+        _print(value)
+        return 0
+    print(f"問い {qid} の答え（{args.result}）を記録しました" + (f"（{effect}）" if effect else ""))
+    for line in notes:
+        print(f"  {line}")
+    return 0
+
+
+def cmd_questions(args) -> int:
+    _cfg, root, _scanned = open_register(args.register)
+    value = {"register": args.register, **questions_mod.counts(questions_mod.read(root))}
+    if args.json:
+        _print(value)
+        return 0
+    print(f"台帳 {args.register}: 聞いた {value['asked']}・答えた {value['answered']}・飛ばした {value['skipped']}・"
+          f"答えから増えた行 {value['rows_from_answers']}・まだ答えの無い問い {value['open']}")
+    return 0
+
+
 # ------------------------------------------------------------------ 退出
 
 def purge_for_leave(account: str, project, *, by: str) -> list:
@@ -435,3 +547,30 @@ def register(sub) -> None:
     p.add_argument("--by", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_draft))
+
+    p = verbs.add_parser("holes", help="穴の一覧（読むだけ）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_holes))
+
+    p = verbs.add_parser("ask", help="今聞く穴を上限まで選び、問いの記録に足す")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--by", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_ask))
+
+    p = verbs.add_parser("answer", help="答えを問いの記録に足す（推測の行に no なら違うと言った・yes なら認める）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("question", metavar="問い")
+    p.add_argument("--result", required=True, choices=questions_mod.RESULTS)
+    p.add_argument("--by", required=True)
+    p.add_argument("--asked", default=None, metavar="文", help="聞いた言葉（1 行・200 字まで・任意）")
+    p.add_argument("--said", default=None, metavar="文", help="答えの要約（1 行・200 字まで・任意）")
+    p.add_argument("--row", default=None, metavar="行", help="答えから足した行の番号（任意）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_answer))
+
+    p = verbs.add_parser("questions", help="問いの数・答えの数・答えから増えた行の数")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_questions))

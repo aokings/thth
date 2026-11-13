@@ -17,6 +17,8 @@ REASONS = frozenset((
     # 段 2: 実店舗の形・きっかけ・下書き・承認の時の読み直し。
     "register_draft_account", "register_draft_nothing", "register_draft_exists", "register_draft_rejected",
     "register_draft_expired", "register_row_changed", "register_recheck_unavailable",
+    # 段 3: 聞いて埋める（問いの記録）。
+    "register_question_log_invalid", "register_question_missing", "register_question_answered",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 
