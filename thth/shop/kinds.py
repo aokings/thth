@@ -25,6 +25,10 @@ BASE_FIELDS = ("store", "kind", "project", "token")
 SHOPIFY_FIELDS = BASE_FIELDS + ("shop",)
 # STORES は＋`public_url`（店の頁の URL・応答に無いので持ち主が入れる・THTH はここに何も送らない）。
 STORES_FIELDS = BASE_FIELDS + ("public_url",)
+# 実店舗のレジ（計画 実店舗 段 5）: ＋`public_url`（下書きに載せる店の頁・持ち主が入れる）・`location`（読む店舗の id・1 つ）・
+# `publish`（出してよい品と部門の表・既定は空＝1 つも材料にしない・`pos.py`）。スマレジは＋`contract`（契約 ID）。
+SQUARE_FIELDS = BASE_FIELDS + ("public_url", "location", "publish")
+SMAREGI_FIELDS = BASE_FIELDS + ("public_url", "contract", "location", "publish")
 
 
 def _int_id(value) -> int:
@@ -72,6 +76,26 @@ def _stores_cap() -> int:
     return stores.PAGE_LIMIT * stores.MAX_PAGES
 
 
+def _square_client(cfg, token, transport):
+    from . import square
+    return square.Client(cfg, token["access_token"], transport=transport)
+
+
+def _square_cap() -> int:
+    from . import square
+    return square.PAGE_LIMIT * square.MAX_PAGES
+
+
+def _smaregi_client(cfg, token, transport):
+    from . import smaregi
+    return smaregi.Client(cfg, token, transport=transport)
+
+
+def _smaregi_cap() -> int:
+    from . import smaregi
+    return smaregi.PAGE_LIMIT * smaregi.MAX_PAGES
+
+
 KINDS = {
     "base": {
         "label": "BASE",
@@ -113,8 +137,47 @@ KINDS = {
         "revoke_plan": "STORES の側のクレデンシャルは消えません。取り消しは STORES に頼んでください",
         "revoke_done": "STORES の側のクレデンシャルは消えていません。取り消しは STORES に頼んでください",
     },
+    # 実店舗のレジ（計画 実店舗 段 5・`square.py`）。鍵は個人のアクセストークンか、持ち主が自分の店に許した OAuth の鍵
+    # （どちらも Bearer の 1 行・`auth` は bearer）。個人の鍵は期限の日が無く、OAuth の鍵は 30 日【公式】なので --expires は任意。
+    "square": {
+        "label": "Square",
+        "key_name": "Square のアクセストークン",
+        "not_by": "この道具（THTH）は Square が提供するものではありません。",
+        "ledger_fields": SQUARE_FIELDS,
+        "auths": ("bearer",),
+        "client": _square_client,
+        "parse_item_id": _text_id,
+        "read_cap": _square_cap,
+        "pos": True,
+        "revoke_plan": "Square の側の鍵は消えません。Developer Console でアクセストークンを作り直すか、OAuth の鍵なら"
+                       "Square の管理画面でアプリの許可を取り消してください",
+        "revoke_done": "Square の側の鍵は消えていません。Developer Console でアクセストークンを作り直すか、OAuth の鍵なら"
+                       "Square の管理画面でアプリの許可を取り消してください",
+    },
+    # 実店舗のレジ（計画 実店舗 段 5・`smaregi.py`）。鍵はマイページのプラットフォーム API 設定の client id と secret
+    # （`auth` は smaregi_client・期限の日は無い）。
+    "smaregi": {
+        "label": "スマレジ",
+        "key_name": "スマレジの client id と secret",
+        "not_by": "この道具（THTH）はスマレジが提供するものではありません。",
+        "ledger_fields": SMAREGI_FIELDS,
+        "auths": ("smaregi_client",),
+        "client": _smaregi_client,
+        "parse_item_id": _text_id,
+        "read_cap": _smaregi_cap,
+        "pos": True,
+        "revoke_plan": "スマレジの側の鍵は消えません。マイページのプラットフォーム API 設定で secret を作り直すか、"
+                       "設定を止めてください",
+        "revoke_done": "スマレジの側の鍵は消えていません。マイページのプラットフォーム API 設定で secret を作り直すか、"
+                       "設定を止めてください",
+    },
 }
 NAMES = tuple(KINDS)
+
+
+def is_pos(kind) -> bool:
+    """実店舗のレジ（出してよい品の表を持つ種類）か。"""
+    return bool(KINDS.get(kind, {}).get("pos")) if isinstance(kind, str) else False
 
 
 def get(kind: str) -> dict:

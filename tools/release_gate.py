@@ -64,13 +64,17 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     "ads_write": ("thth/ads/graphwrite.py", "thth/ads/ops.py", "thth/ads/budget.py"),
     "oauth": ("thth/oauth.py", "thth/ads/auth.py"),
     # 店を読む口（11/12・設計 ショップとWordPressの口 §6）: 新しい読む口・鍵の受け取り・queue に下書きを書く口。
-    "store_read": ("thth/shop/*",),
+    # 下書きの出所の控え（`thth/draft_origin.py`・監査 5.19.0 の 1）は、承認の読み直しを掛けるかを決めるので両方に入れる。
+    "store_read": ("thth/shop/*", "thth/draft_origin.py"),
     # 全部の媒体の網の共通の守り（http と https だけ・proxy を断る・別ホストへのリダイレクトを追わない・opener の型）。
     # 5.17.0 で `via` を足したときに表に無かった（監査 5.17.0 直したほうがよい 2）。
     "net_guard": ("thth/httpsafe.py",),
     # WordPress に記事を出す口（5.16.0）: 鍵（アプリケーションパスワード）を送る adapter と、承認の指紋に入る
     # 本文の変換（規則が変われば承認が古くなる・生の HTML を通さない柵）。
     "wordpress_write": ("thth/adapters/wordpress.py", "thth/wp_html.py"),
+    # 台帳の機械（計画 実店舗 段 2）: queue に下書きを書く口・承認の確定の段の読み直し・持ち主の台帳の頭を書き換える
+    # 認める操作。間違った事実（営業の時間・休み）を出さない柵がここにある。
+    "register": ("thth/register/*", "thth/draft_origin.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

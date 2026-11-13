@@ -159,11 +159,15 @@ def test_店の下書きでない原稿は網に出ない(capsys, env, isolated_
     from tests.conftest import write_queue_file
     account = isolated_account_factory()
     path = write_queue_file(account["queue_dir"], "plain.md", fm_overrides={"status": "draft", "approved_sha": None})
-    from thth.shop import recheck
-    monkeypatch.setattr(recheck, "check", lambda *a, **k: pytest.fail("店の下書きでないのに読み直した"))
+    setup_store(capsys, env)
+    # 控えは見る（頭に from_store が無くても店の下書きか知るため・監査 5.19.0 の 1）が、店の口は開かない。
+    from thth.shop import kinds
+    monkeypatch.setattr(kinds, "client", lambda *a, **k: pytest.fail("店の下書きでないのに読み直した"))
+    reads = len(env["calls"])
     digest = _approve(capsys, path)
     rc_, _, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
     assert rc_ == 0, err
+    assert len(env["calls"]) == reads
 
 
 # ------------------------------------------------------------------ 3: 日をまたいでも同じ違いから 2 本目を作らない

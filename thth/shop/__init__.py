@@ -13,6 +13,9 @@ Shopify は 5.17.0・STORES は 5.18.0・設計 `docs/設計_ShopifyとSTORESの
 - `shopify.py`: Shopify の Admin GraphQL（店の名前と商品の 2 本の問い合わせ → 行）。
 - `stores.py`: STORES の retail API 202211（店と商品の一覧の 2 つの GET → 行・クレデンシャルを Bearer に載せるだけ）。
 - `access.py`: Shopify の短い鍵（約 24 時間）の置き場と取り直し（鎖つき）。
+- `square.py`・`smaregi.py`: 実店舗のレジ（計画 `docs/計画_実店舗_2026-11-13.md` 段 5）。Square は GET だけ（店舗・品・在庫の数）、
+  スマレジは鍵を取る POST 1 つと GET（店舗・商品・在庫）。`pos.py` は 2 つに共通の部品（出してよい品の表・断りの写し方・
+  鍵の広さとまだ確かめていない所の知らせ）。**レジの品は既定で 1 つも材料にしない**（`thth shop publish` で足した物だけ）。
 - `base.py`: BASE v2 の `GET /api/user`（店の名前と URL だけ取り出す）と `GET /api/items`（許した欄だけ）。
 - `diff.py`: 写しとの違い（読むだけ・写しを進めるのは `--accept` の一手）。
 - `draft.py`: 違いから queue の下書き（承認されていない形・1 回に 1 商品か上限 3 本）。

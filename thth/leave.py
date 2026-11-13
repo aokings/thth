@@ -507,6 +507,9 @@ def run(account,*,by,plaza_open='delete'):
             # 店を読む口（設計 ショップ §7）: その project の最後の account なら、店の台帳・写し・鍵も消す。
             # 地図と同じく止める前に消す。何度呼んでも同じ結果。
             _purge_stores(account,by)
+            # 台帳の機械（計画 実店舗 段 1）: その project の最後の account なら、台帳の控えと認めた記録を消す
+            # （台帳のフォルダは持ち主の物なので消さない）。何度呼んでも同じ結果。
+            _purge_registers(account,by)
             result=_run_locked(account,by=by)
             # 削除の段のあとに unit を止める（3.5.1 件 1）。止められなくても退出は完了のまま
             # ——台帳も秘密も消えていて、残った timer は空回りするだけ。記録に残して命令を渡す。
@@ -562,6 +565,19 @@ def _purge_stores(account,by):
         except accounts.AccountError:return []
     try:return store_remove.purge_for_leave(account,cfg.get('project'),by=by)
     except (StoreRefused,OSError,admin_log.AdminLogError):raise ValueError('store_cleanup_incomplete') from None
+
+
+def _purge_registers(account,by):
+    from .register import cli as register_cli
+    from .register.errors import RegisterRefused
+    row=read(account)
+    if row and row['phase']=='completed':return []
+    if row:cfg=row['cfg']
+    else:
+        try:cfg=accounts.load_account(account)
+        except accounts.AccountError:return []
+    try:return register_cli.purge_for_leave(account,cfg.get('project'),by=by)
+    except (RegisterRefused,OSError,admin_log.AdminLogError):raise ValueError('register_cleanup_incomplete') from None
 
 
 def _run_locked(account,*,by):

@@ -978,6 +978,34 @@ def _guard_store_keys(configs, now) -> list:
         return []
 
 
+def _register_paste_lines(projects, now) -> list:
+    """台帳（`thth/register/`）ごとに、外の場所にまだ貼っていない今の中身の数の 1 行（段 4）。網には出ない。"""
+    from .register import COMMAND, form, holes, ledger as register_ledger, places
+    from .register.errors import RegisterRefused
+    lines = []
+    for name in register_ledger.list_names():
+        try:
+            cfg = register_ledger.load(name)
+            if cfg["project"] not in projects:
+                continue
+            scanned = form.scan(register_ledger.root_of(cfg))
+            records = register_ledger.read_confirmed(name)
+        except (RegisterRefused, OSError, ValueError):
+            continue
+        found = places.unpasted(scanned["rows"], holes.paste_rows(scanned["rows"], records, now))
+        if found:
+            lines.append(f"台帳 {name}: 外の場所にまだ貼っていない変わりが {len(found)} 件"
+                         f"（thth {COMMAND} holes {name} で見て、thth {COMMAND} paste で貼る文を出す）")
+    return lines
+
+
+def _guard_register_paste(configs, now) -> list:
+    try:
+        return _register_paste_lines({cfg.get("project") for cfg in configs.values()}, now)
+    except Exception:  # noqa: BLE001 — 台帳で 1 枚を落とさない
+        return []
+
+
 def _ads_rows(names, now) -> list:
     """広告の口座ごとの状態（鍵の残り・最後の読み・動いている物・要対応）。**Meta は呼ばない。**"""
     from .ads import watch
@@ -1439,7 +1467,10 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                  **({"meta_watch": line} if allowed_names is None and (line := _meta_watch_line(now)) else {}),
                  # 店の鍵の期限（`thth/shop/`・14 日前から）。**管理者の 1 枚だけ**。無ければ鍵を足さない。
                  **({"store_keys": store_lines} if allowed_names is None and (store_lines := _guard_store_keys(configs, now))
-                    else {})})},
+                    else {}),
+                 # 台帳の外の場所にまだ貼っていない変わり（`thth/register/` 段 4）。**管理者の 1 枚だけ**。無ければ鍵を足さない。
+                 **({"register_paste": paste_lines}
+                    if allowed_names is None and (paste_lines := _guard_register_paste(configs, now)) else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
     ]
 
@@ -1636,6 +1667,8 @@ def _render_section(section, out) -> None:
         if value.get("meta_watch"):
             out(f"  {value['meta_watch']}")
         for line in value.get("store_keys") or []:
+            out(f"  {line}")
+        for line in value.get("register_paste") or []:
             out(f"  {line}")
         ads = value.get("ads")
         if ads is not None:

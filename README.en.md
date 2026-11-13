@@ -112,6 +112,7 @@ All subcommands `thth --help` lists, one line each:
 - `creators` — search the creator marketplace (`creators search`; read-only, ids only, nothing stored)
 - `wa` — WhatsApp (`wa add|auth`; `wa numbers|templates` read; `wa template create` and `wa send` are two-step, templates only, recipient number and text never stored)
 - `shop` — Instagram product tags (`shop eligibility|catalogs|products|tags` read; `shop tag` adds a product tag to an existing post and is two-step; nothing stored)
+- `register` — the owner's own register (a folder of text files on their computer): check rows, confirm them, list what is missing and pick a few questions, make unapproved post drafts from confirmed rows of a physical shop, and make text the owner pastes into Google Maps, Tabelog and similar places (`register add|check|show|use|confirm|deny|remove|triggers|draft|holes|ask|answer|questions|paste|pasted|compare`; no network access; THTH never reads or signs in to those places)
 - `quota` — read the platform usage headers, any rate-limit wait and (Instagram) the daily publishing limit for an account (read-only; Facebook and Instagram)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH

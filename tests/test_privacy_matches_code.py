@@ -21,6 +21,10 @@ from thth.shop import wire as shop_wire
 from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
+from thth.register import form as register_form
+from thth.register import kinds as register_kinds
+from thth.register import holes as register_holes
+from thth.register import questions as register_questions
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -71,6 +75,101 @@ def _stores_user_keeps_id_and_name() -> bool:
                               transport=lambda m, u, h: (200, payload)).user()
     return (shop == {"shop_id": "abc", "shop_name": "n", "shop_url": "https://ledger.example.invalid",
                      "able_to_business": None})
+
+
+def _register_private_defaults() -> bool:
+    return (register_kinds.private_by_default("store") == {"address", "phone"}
+            and register_kinds.private_by_default("special") == {"reason"})
+
+
+def _register_sample_draft() -> str:
+    import datetime
+    from thth import jst
+    from thth.register import draft as register_draft
+    row = register_form.parse("x.md", "---\nid: s\nkind: special\nstatus: 本採用\nsource: owner\nconfirmed: 本人が認めた\n"
+                              "review_by: 2099-01-01\npublic: true\ndate: 2099-01-02\nclosed: true\nreason: 理由の目印\n"
+                              "image: https://img.example.invalid/marker-image.jpg\n---\n本文\n")
+    now = datetime.datetime(2099, 1, 1, 9, 0, tzinfo=jst.JST)
+    until = datetime.datetime(2099, 1, 2, 23, 59, tzinfo=jst.JST)
+    return register_draft.text_for("r", "a", "threads", "special_soon", row, commit="none", now=now, not_after=until)
+
+
+def _register_draft_has_no_image() -> bool:
+    text = _register_sample_draft()
+    return "marker-image" not in text and "理由の目印" not in text
+
+
+def _register_draft_has_not_after() -> bool:
+    text = _register_sample_draft()
+    return "not_after: 2099-01-02T23:59:00+09:00" in text and "from_register: r/s" in text
+
+
+def _answer_respects_two_stage() -> bool:
+    import inspect
+    from thth.register import cli as register_cli
+    return "kinds.two_stage(row.kind)" in inspect.getsource(register_cli.cmd_answer)
+
+
+def _register_paste_offline() -> bool:
+    """外の場所に貼る束（段 4）: places と paste・pasted・compare の口が網の部品も書く部品も持たず、compare は写した文を残さない。"""
+    import inspect
+    from thth.register import cli as register_cli, places as register_places
+    source = inspect.getsource(register_places)
+    compare = inspect.getsource(register_cli.cmd_compare)
+    return (not any(word in source for word in ("urllib", "requests", "http.client", "socket"))
+            and "write" not in compare and "open(" not in compare
+            and register_kinds.private_by_default("place") == {"url", "admin_by"})
+
+
+def _register_fields_en() -> str:
+    names = [f"<code>{name}</code>" for name in register_form.MANAGED]
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+
+
+def _register_offline() -> bool:
+    from tests.test_register_base import REGISTER_DIR, net_imports
+    return net_imports(REGISTER_DIR) == []
+
+
+def _register_uses_no_shop() -> bool:
+    """台帳の機械が店の口（`thth.shop`）を使わない（監査 5.19.0 直したほうがよい 6）。
+
+    import は許した表の外なら赤（`tests/test_register_base.import_problems`）で、表に `thth.shop` が無く、表の部品も
+    `thth.shop` を import しない（関数の中の import も見る）。
+    """
+    from tests.test_register_base import REGISTER_ALLOWED_THTH, REGISTER_DIR, _absolute_imports, net_imports
+    if net_imports(REGISTER_DIR) or any(n == "thth.shop" or n.startswith("thth.shop.") for n in REGISTER_ALLOWED_THTH):
+        return False
+    for name in REGISTER_ALLOWED_THTH:
+        path = ROOT / (name.replace(".", "/") + ".py")
+        if any(n == "thth.shop" or n.startswith("thth.shop.") for n in _absolute_imports(path, "thth")):
+            return False
+    return True
+
+
+def _register_draft_record_keys() -> list:
+    """`register draft` が控えに書く頭の行の名前（`draft.text_for` の頭から作る・recheck が比べる並び）。"""
+    from thth.register import recheck as register_recheck
+    import inspect
+    from thth.register import cli as register_cli
+    source = inspect.getsource(register_cli.cmd_draft)
+    assert "draft_origin.record(" in source and '"not_after": jst.iso(until)' in source
+    return list(register_recheck.ORIGIN_KEYS) + ["not_after"]
+
+
+def _register_fence_codes() -> bool:
+    """柵が断る 5 つ（推測・違うと言った・見直し日・退役・出してよい印）が `fence.state` にある。"""
+    import inspect
+    from thth.register import fence
+    source = inspect.getsource(fence.state)
+    return all(code in source for code in ("register_row_guess", "register_row_denied", "register_row_review_passed",
+                                           "register_row_retired", "register_row_not_public"))
+
+
+def _leave_purges_registers() -> bool:
+    import inspect
+    from thth import leave
+    return "_purge_registers(account,by)" in inspect.getsource(leave.run)
 
 
 def facts() -> list[tuple[str, str]]:
@@ -202,6 +301,74 @@ def facts() -> list[tuple[str, str]]:
         ("店のリダイレクトを追わない・日本語",
          "ショップからのリダイレクトは追いません"
          if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
+        # 台帳の機械（計画 実店舗 段 1〜4）。台帳に書く欄・網に出ない・控えに残す物・退出で消える物。
+        ("台帳に THTH が書く欄（register/form.MANAGED）",
+         "In the register, THTH writes only the fixed head fields " + _register_fields_en()),
+        ("台帳に THTH が書く欄・日本語",
+         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " と、"),
+        ("台帳の機械は網に出ない（thth/register が網の部品を import しない）",
+         "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の機械は網に出ない・日本語",
+         "この部分の THTH は網に出ません" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の下書きには店の頁もレジも使わない（register の import の表に thth.shop が無い）",
+         "these drafts do not use the shop's web pages or its till" if _register_uses_no_shop()
+         else "台帳の機械が店の口を import している"),
+        ("台帳の下書きには店の頁もレジも使わない・日本語",
+         "この下書きには、店の頁もレジも使いません" if _register_uses_no_shop() else "台帳の機械が店の口を import している"),
+        ("台帳の下書きの控えの欄（register/recheck.ORIGIN_KEYS と not_after・監査 5.19.0 の 1）",
+         "the row, the fingerprint, the register's commit, the trigger and the deadline"
+         if _register_draft_record_keys() == ["from_register", "from_register_digest", "from_register_commit",
+                                              "from_register_trigger", "not_after"] else "下書きの控えの欄が違う"),
+        ("台帳の下書きの控えの欄・日本語", "頭に書いた元の行・中身の指紋・台帳の commit・きっかけ・出さない期限"
+         if _register_draft_record_keys() == ["from_register", "from_register_digest", "from_register_commit",
+                                              "from_register_trigger", "not_after"] else "下書きの控えの欄が違う"),
+        ("台帳の柵が断る行（register/fence）",
+         "THTH refuses to use a row that is a guess, that the owner said is wrong, that is past its review date, "
+         "that is retired or that is not marked as public" if _register_fence_codes() else "柵の断りが privacy と違う"),
+        ("台帳の退出（leave._purge_registers）",
+         "when the project's last account leaves, <code>thth leave</code> deletes them there. Neither deletes the "
+         "register folder" if _leave_purges_registers() else "leave が台帳の控えを消さない"),
+        # 段 2: 実店舗の形と下書き（既定で出さない欄・画像なし・出さない期限・二段で認める種類）。
+        ("店の住所と電話と休みの理由は既定で出さない（register/kinds.private_by_default）",
+         "The shop's address and phone number, and the reason for a closure, are not put into drafts unless the owner "
+         "marks that field as public" if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("店の住所と電話と休みの理由・日本語",
+         "店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+         if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("台帳の下書きに写真を入れない（register/draft.text_for）",
+         "THTH puts no photos into these drafts" if _register_draft_has_no_image() else "台帳の下書きに画像がある"),
+        ("台帳の下書きの出さない期限と読み直し（register/draft・recheck）",
+         "Each draft records the row it came from and a time after which it is not posted"
+         if _register_draft_has_not_after() else "台帳の下書きに出さない期限が無い"),
+        ("二段で認める種類（register/kinds.two_stage）",
+         "Opening hours and temporary closures are confirmed in two steps"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
+        ("二段で認める種類・日本語",
+         "営業の時間と臨時の休みは二段で認めます"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
+        # 段 3: 聞いて埋める（問いの記録の置き場・拍子の数・答えだけでは二段の種類を認めない）。
+        ("問いの記録の置き場（register/questions.LOG_FILE）",
+         f"adds lines to the question log (<code>{register_questions.LOG_FILE}</code>)"),
+        ("問いの記録の置き場・日本語", f"問いの記録（<code>{register_questions.LOG_FILE}</code>）に足す行だけ"),
+        ("聞く数の上限（register/holes.ASK_MAX_PER_DAY・ASK_GAP_DAYS）",
+         f"at most {register_holes.ASK_MAX_PER_DAY} a day, and does not ask about the same thing again within "
+         f"{register_holes.ASK_GAP_DAYS} days"),
+        ("聞く数の上限・日本語",
+         f"1 日 {register_holes.ASK_MAX_PER_DAY} 問までで、同じことは {register_holes.ASK_GAP_DAYS} 日"),
+        ("外の場所の頁を読まず貼る文だけ作る（register/places・cli.cmd_compare）",
+         "does not read those places' pages, does not sign in to their admin screens and sends them nothing"
+         if _register_paste_offline() else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("外の場所の頁を読まず貼る文だけ作る・日本語",
+         "THTH はそれらの場所の頁を読まず、管理画面に入らず、何も送りません" if _register_paste_offline()
+         else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("比べた文を残さない（register/cli.cmd_compare）",
+         "does not keep the copied text" if _register_paste_offline() else "写した文を残す"),
+        ("比べた文を残さない・日本語", "写した文は残しません" if _register_paste_offline() else "写した文を残す"),
+        ("答えだけでは二段の種類を認めない（register/cli.cmd_answer）",
+         "An answer alone does not confirm opening hours or a temporary closure"
+         if _answer_respects_two_stage() else "答えで営業の時間を認めてしまう"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
@@ -564,3 +731,112 @@ def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapte
     assert re.search(r"httpsafe\.urlopen\([^\n]*via=httpsafe\.public_opener\(\)\)", source)
     assert "connects only to an address" in _wp_section(page, "Blog articles on WordPress")
     assert "引いた先が外の網のアドレスのときだけつなぎます" in _wp_section(page, "WordPress の記事")
+
+
+# ------------------------------------------------------------------ 実店舗のレジ（Square・スマレジ・計画 実店舗 段 5）
+
+def _square_location_keeps() -> set:
+    """Square の店舗の応答から残す欄（住所・電話・メールを入れた応答で口を通して確かめる）。"""
+    import json as _json
+    from thth.shop import square as shop_square
+    loc = {"id": "L1", "name": "n", "status": "ACTIVE", "merchant_id": "M1", "address": {"x": "address-marker"},
+           "phone_number": "phone-marker", "business_email": "e@example.invalid",
+           "business_hours": {"periods": [{"day_of_week": "MON", "start_local_time": "9:00:00",
+                                           "end_local_time": "18:00:00"}]}}
+    client = shop_square.Client({"location": "L1", "public_url": "https://n.example.invalid", "publish": {}}, "t",
+                                transport=lambda *a: (200, _json.dumps({"locations": [loc]}).encode()))
+    user = client.user()
+    assert "marker" not in _json.dumps(user)
+    return set(user)
+
+
+def _pos_route_count(kind) -> int:
+    route = shop_wire.ROUTES[kind]
+    return len(route["paths"]) + len(route.get("patterns", ()))
+
+
+def _pos_methods(kind) -> set:
+    route = shop_wire.ROUTES[kind]
+    return {m for m, _p in route["paths"]} | {m for m, _p, _n in route.get("patterns", ())}
+
+
+def _smaregi_fields_required(name: str) -> bool:
+    """網の柵が、その道の `fields`（1 字も違わない値）の無い問い合わせを打たない（監査 5.19.0 の 5 の a）。"""
+    path = {"products": "/c1/pos/products", "store": "/c1/pos/stores/1", "stock": "/c1/pos/stock"}[name]
+    base = f"https://{shop_wire.SMAREGI_API_HOST}{path}"
+    extra = "&store_id=1&product_id=2" if name == "stock" else ""
+    try:
+        shop_wire.check_request("GET", base + "?" + extra.lstrip("&") if extra else base)
+        return False
+    except shop_wire.StoreRefused:
+        pass
+    shop_wire.check_request("GET", base + "?fields=" + shop_wire.SMAREGI_FIELDS[name] + extra)
+    return True
+
+
+def pos_facts():
+    from thth.shop import pos as shop_pos
+    from thth.shop import smaregi as shop_smaregi
+    from thth.shop import square as shop_square
+    words = {3: "three"}
+    sq_n, sm_n = _pos_route_count("square"), _pos_route_count("smaregi")
+    scopes = shop_wire.SMAREGI_SCOPE.split()
+    return [
+        ("レジの品は既定で使わない（pos.empty_publish・kinds の台帳の欄）",
+         "by default THTH uses none of the register's items"
+         if shop_pos.nothing_published(shop_pos.empty_publish())
+         and "publish" in shop_kinds.KINDS["square"]["ledger_fields"] else "既定で使う品がある"),
+        ("レジの品は既定で使わない・日本語", "THTH は既定でレジのどの品も使いません"
+         if shop_pos.nothing_published(shop_pos.empty_publish()) else "既定で使う品がある"),
+        ("在庫の数を読む上限（square/smaregi.INVENTORY_MAX）",
+         f"at most {shop_square.INVENTORY_MAX} counts in one read"
+         if shop_square.INVENTORY_MAX == shop_smaregi.INVENTORY_MAX else "2 つのレジで上限が違う"),
+        ("在庫の数を読む上限・日本語", f"1 回の読みで {shop_square.INVENTORY_MAX} までです"),
+        ("Square は GET だけ（shop/wire.ROUTES）",
+         f"THTH sends only GET requests to <code>{shop_wire.SQUARE_HOST}</code>, to {words.get(sq_n, '道の数が違う')} paths"
+         if _pos_methods("square") == {"GET"} else "Square の道に GET でないものがある"),
+        ("Square は GET だけ・日本語", f"<code>{shop_wire.SQUARE_HOST}</code> への GET だけで、道は {sq_n} つです"
+         if _pos_methods("square") == {"GET"} else "Square の道に GET でないものがある"),
+        ("Square の店舗で残す欄（square.Client.user）",
+         "keeps only the store's name, whether it is active, the merchant's ID and the weekly business hours"
+         if _square_location_keeps() == {"shop_id", "shop_name", "shop_url", "able_to_business", "location", "hours"}
+         else "店舗の欄が増えた"),
+        ("Square の絞った鍵の scope（pos.KEY_NOTES）",
+         "<code>ITEMS_READ</code>, <code>INVENTORY_READ</code> and <code>MERCHANT_PROFILE_READ</code>"
+         if all(s in shop_pos.KEY_NOTES["square"][1] for s in ("ITEMS_READ", "INVENTORY_READ", "MERCHANT_PROFILE_READ"))
+         else "絞った鍵の scope が privacy と違う"),
+        ("スマレジの鍵を取る POST（shop/wire.ROUTES の smaregi_id）",
+         f"one kind of POST request, to <code>{shop_wire.SMAREGI_ID_HOST}</code>"
+         if _pos_methods("smaregi_id") == {"POST"} and _pos_route_count("smaregi_id") == 1 else "鍵を取る口が違う"),
+        ("スマレジの頼む scope（shop/wire.SMAREGI_SCOPE）",
+         "for only " + ", ".join(f"<code>{x}</code>" for x in scopes[:-1]) + f" and <code>{scopes[-1]}</code>"),
+        ("スマレジの頼む scope・日本語", "・".join(f"<code>{x}</code>" for x in scopes) + " だけの"),
+        ("スマレジの GET（shop/wire.ROUTES の smaregi）",
+         f"only GET requests to <code>{shop_wire.SMAREGI_API_HOST}</code>, to {words.get(sm_n, '道の数が違う')} paths"
+         if _pos_methods("smaregi") == {"GET"} else "スマレジの道に GET でないものがある"),
+        ("スマレジの GET・日本語", f"<code>{shop_wire.SMAREGI_API_HOST}</code> への GET だけで、道は {sm_n} つです"),
+        ("スマレジの店舗は ID と名前だけ（shop/wire.SMAREGI_FIELDS）",
+         "the store (asking only for its ID and name)"
+         if shop_wire.SMAREGI_FIELDS["store"] == "storeId,storeName"
+         and _smaregi_fields_required("store") else "店舗の欄が増えた（か、fields の無い問い合わせを網の柵が通す）"),
+        ("スマレジの商品の欄（shop/wire.SMAREGI_FIELDS）",
+         "asking only for the ID, category, name, price and whether stock is counted"
+         if shop_wire.SMAREGI_FIELDS["products"] == "productId,categoryId,productName,price,stockControlDivision"
+         and _smaregi_fields_required("products") else "商品の欄が増えた（か、fields の無い問い合わせを網の柵が通す）"),
+        ("スマレジの取った鍵を残さない（smaregi.py は台帳と鍵のファイルに書かない）",
+         "it uses that token for the one command and does not keep it"
+         if "ledger" not in (Path(shop_smaregi.__file__).read_text(encoding="utf-8")) else "取った鍵を書く道がある"),
+        ("レジの売上と顧客を読まない（道の表に語が無い・tests/test_store_pos_wire.py）",
+         "THTH does not read sales, transactions, customers or members, staff, timecards or payments"),
+        ("レジの売上と顧客を読まない・日本語", "売上・取引・お客さんや会員・スタッフ・勤怠・支払いは読まず"),
+        ("Square の提供でない（kinds の not_by）", "THTH is not provided by Square."
+         if "Square が提供するものではありません" in shop_kinds.KINDS["square"]["not_by"] else "not_by が無い"),
+        ("スマレジの提供でない（kinds の not_by）", "THTH はスマレジが提供するもの"
+         if "スマレジが提供するものではありません" in shop_kinds.KINDS["smaregi"]["not_by"] else "not_by が無い"),
+    ]
+
+
+@pytest.mark.parametrize("what,phrase", pos_facts(), ids=[f[0] for f in pos_facts()])
+def test_privacyのレジの文はコードと同じ(what, phrase):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert phrase in page, f"privacy に「{phrase}」が無い（{what}）。コードと privacy（tools/build_site.py）のどちらかを直す"

@@ -30,6 +30,7 @@ GET のときは 3 つの引数で呼ぶ（BASE の今の偽の transport を直
 """
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import re
@@ -84,7 +85,45 @@ AFTER_MAX = 1024
 _TOKEN_FIELDS = ("grant_type", "client_id", "client_secret")
 _POST = "POST"
 
+# Square（実店舗のレジ・設計 実店舗 §5.1・計画 実店舗 段 5）: **GET だけ**。道は店舗の一覧・品の一覧・在庫の数（1 品の
+# 種類ずつ）の 3 つ。品の検索 `/v2/catalog/search` と在庫のまとめ読み `/v2/inventory/counts/batch-retrieve` は POST なので
+# 開けない（計画 §8 の 5「GET で足りるなら POST は開けない」）。注文・支払い・返金・顧客・スタッフ・勤怠の道は表に入れない。
+# 個人の鍵は scope の無い全部の権限の鍵【公式】なので、この表が「読むだけ」の柵のすべて。
+SQUARE_HOST = "connect.squareup.com"
+# API の版（`Square-Version`・2026-11-13 に変更履歴で「Latest」と読めた版）。版を上げるときは試験の材料も見直す。
+SQUARE_VERSION = "2026-09-16"
+SQUARE_LOCATIONS_PATH = "/v2/locations"
+SQUARE_CATALOG_PATH = "/v2/catalog/list"
+# 在庫の数の道 `/v2/inventory/{catalog_object_id}`。id は英大文字と数字だけ（`changes`・`physical-counts`・
+# `adjustments`・`transfers` など英小文字の道は形で外れる）。
+SQUARE_INVENTORY_PATH = re.compile(r"/v2/inventory/[A-Z0-9]{1,64}\Z")
+# 品の一覧で読む種類（`types` の値はこの 2 つの形だけ・CATEGORY は持ち主が出す品を選ぶときだけ）。
+SQUARE_TYPES = frozenset(("ITEM,IMAGE", "ITEM,IMAGE,CATEGORY"))
+SQUARE_ID = re.compile(r"[A-Z0-9]{1,64}\Z")
+SQUARE_CURSOR_MAX = 2048
+
+# スマレジ（プラットフォーム API・計画 実店舗 段 5）: 鍵を取る口（`id.smaregi.jp` に POST 1 つ・本文は決まった 2 つの欄）と、
+# 商品の一覧・店舗の 1 件・在庫の一覧の GET 3 つ。取引・会員・スタッフ・勤怠の道は表に入れない。scope も読む 3 つだけを頼む
+# （鍵を取るときに頼んだ scope しか鍵に付かない【公式: scope は要求する API スコープ】）。本番だけ（サンドボックスの
+# `.dev` のホストは入れない）。
+SMAREGI_ID_HOST = "id.smaregi.jp"
+SMAREGI_API_HOST = "api.smaregi.jp"
+SMAREGI_CONTRACT = re.compile(r"[A-Za-z0-9_]{1,40}\Z")
+SMAREGI_SCOPE = "pos.products:read pos.stores:read pos.stock:read"
+SMAREGI_TOKEN_PATH = re.compile(r"/app/[A-Za-z0-9_]{1,40}/token\Z")
+SMAREGI_PRODUCTS_PATH = re.compile(r"/[A-Za-z0-9_]{1,40}/pos/products\Z")
+SMAREGI_STORE_PATH = re.compile(r"/[A-Za-z0-9_]{1,40}/pos/stores/[0-9]{1,9}\Z")
+SMAREGI_STOCK_PATH = re.compile(r"/[A-Za-z0-9_]{1,40}/pos/stock\Z")
+# 応答で受ける欄（`fields`）。この文字列のどれかと 1 字も違わないものだけ（店舗の住所・電話・商品の原価などを受けない）。
+SMAREGI_FIELDS = {
+    "products": "productId,categoryId,productName,price,stockControlDivision",
+    "store": "storeId,storeName",
+    "stock": "productId,storeId,stockAmount",
+}
+_SMAREGI_TOKEN_FIELDS = ("grant_type", "scope")
+
 # 道の表（店の種類 → ホストの決め方・(メソッド, 道)・問い合わせの引数の名前）。
+# `patterns` は id を含む道（(メソッド, 形, 引数の名前)）。`values` は引数の値を縛る（名前 → 受ける値か形）。
 ROUTES = {
     "base": {"host": BASE_HOST, "paths": frozenset(("GET", p) for p in BASE_PATHS),
              "params": frozenset(("limit", "offset"))},
@@ -93,6 +132,35 @@ ROUTES = {
     "shopify": {"suffix": SHOPIFY_SUFFIX,
                 "paths": frozenset(((_POST, SHOPIFY_TOKEN_PATH), (_POST, SHOPIFY_GRAPHQL_PATH))),
                 "params": frozenset()},
+    "square": {"host": SQUARE_HOST,
+               "paths": frozenset((("GET", SQUARE_LOCATIONS_PATH), ("GET", SQUARE_CATALOG_PATH))),
+               "patterns": (("GET", SQUARE_INVENTORY_PATH, frozenset(("location_ids",))),),
+               "path_params": {SQUARE_LOCATIONS_PATH: frozenset(), SQUARE_CATALOG_PATH: frozenset(("types", "cursor"))},
+               "params": frozenset(("types", "cursor", "location_ids")),
+               "values": {"types": SQUARE_TYPES, "location_ids": SQUARE_ID,
+                          "cursor": re.compile(r"[!-~]{1,%d}\Z" % SQUARE_CURSOR_MAX)}},
+    "smaregi": {"host": SMAREGI_API_HOST, "paths": frozenset(),
+                "patterns": (("GET", SMAREGI_PRODUCTS_PATH, frozenset(("fields", "limit", "page"))),
+                             ("GET", SMAREGI_STORE_PATH, frozenset(("fields",))),
+                             ("GET", SMAREGI_STOCK_PATH, frozenset(("fields", "store_id", "product_id")))),
+                "params": frozenset(("fields", "limit", "page", "store_id", "product_id")),
+                "values": {"fields": frozenset(SMAREGI_FIELDS.values()), "store_id": re.compile(r"[0-9]{1,9}\Z"),
+                           "product_id": re.compile(r"[0-9]{1,15}\Z"), "limit": re.compile(r"[0-9]{1,4}\Z"),
+                           "page": re.compile(r"[0-9]{1,3}\Z")}},
+    "smaregi_id": {"host": SMAREGI_ID_HOST, "paths": frozenset(),
+                   "patterns": ((_POST, SMAREGI_TOKEN_PATH, frozenset()),),
+                   "params": frozenset()},
+}
+# 道ごとに**要る**引数（道 か 道の形 → 名前 → 受ける値か形）。無ければ打たない（監査 5.19.0 直したほうがよい 5 の a）。
+# スマレジは `fields` が無いと全部の欄（原価・店舗の住所と電話など）が返るので、3 つの道とも、その道の `fields` と
+# 1 字も違わない値が要る。在庫は 1 つの店舗の 1 つの商品だけ。Square の品の一覧は `types`、在庫は `location_ids` が要る。
+REQUIRED = {
+    "square": {SQUARE_CATALOG_PATH: {"types": SQUARE_TYPES},
+               SQUARE_INVENTORY_PATH: {"location_ids": SQUARE_ID}},
+    "smaregi": {SMAREGI_PRODUCTS_PATH: {"fields": frozenset((SMAREGI_FIELDS["products"],))},
+                SMAREGI_STORE_PATH: {"fields": frozenset((SMAREGI_FIELDS["store"],))},
+                SMAREGI_STOCK_PATH: {"fields": frozenset((SMAREGI_FIELDS["stock"],)),
+                                     "store_id": re.compile(r"[0-9]{1,9}\Z"), "product_id": re.compile(r"[0-9]{1,15}\Z")}},
 }
 TIMEOUT = 30
 MAX_BODY = 5_000_000
@@ -111,7 +179,12 @@ REASONS = frozenset((
     # Shopify（5.17.0・設計 Shopify と STORES §4.2・§4.3）。
     "store_org_mismatch", "store_refresh_rejected", "store_refresh_busy", "store_shop_unknown",
     "store_currency_unsupported",
+    # 実店舗のレジ（Square・スマレジ・計画 実店舗 段 5・目録は `thth/refusal_catalog_part_pos.py`）。
+    "pos_args_invalid", "pos_token_rejected", "pos_scope_missing", "pos_location_unknown", "pos_api_changed",
+    "pos_unavailable", "pos_currency_unsupported", "pos_publish_empty", "pos_read_limit",
 ))
+# POST を打ってよい種類（本文を表で縛る口がある種類だけ）。Square・BASE・STORES・スマレジの API のホストは入れない。
+POST_KINDS = frozenset(("shopify", "smaregi_id"))
 _DETAIL = re.compile(r"[A-Za-z0-9_./: -]{1,80}\Z")
 
 
@@ -149,7 +222,37 @@ def _kind_for(netloc: str) -> str | None:
         return "stores"
     if netloc.endswith(SHOPIFY_SUFFIX) and SHOPIFY_LABEL.fullmatch(netloc[:-len(SHOPIFY_SUFFIX)]):
         return "shopify"
+    if netloc == SQUARE_HOST:
+        return "square"
+    if netloc == SMAREGI_API_HOST:
+        return "smaregi"
+    if netloc == SMAREGI_ID_HOST:
+        return "smaregi_id"
     return None
+
+
+def _allowed_names(route: dict, method: str, path: str) -> frozenset | None:
+    """(メソッド, 道) が表にあれば、その道で受ける引数の名前。無ければ None（打たない）。"""
+    if (method, path) in route["paths"]:
+        return route.get("path_params", {}).get(path, route["params"])
+    for wanted, pattern, names in route.get("patterns", ()):
+        if method == wanted and pattern.fullmatch(path):
+            return names
+    return None
+
+
+def _required_for(kind: str, path: str) -> dict:
+    """その道に要る引数（名前 → 受ける値か形）。要る物が無い道は空。"""
+    for key, wanted in REQUIRED.get(kind, {}).items():
+        if (key == path) if isinstance(key, str) else bool(key.fullmatch(path)):
+            return wanted
+    return {}
+
+
+def _value_ok(rule, value: str) -> bool:
+    if isinstance(rule, frozenset):
+        return value in rule
+    return bool(rule.fullmatch(value))
 
 
 def _check_token_body(body: bytes) -> None:
@@ -159,6 +262,17 @@ def _check_token_body(body: bytes) -> None:
         raise _blocked() from None
     keys = [k for k, _v in pairs]
     if sorted(keys) != sorted(_TOKEN_FIELDS) or dict(pairs).get("grant_type") != "client_credentials":
+        raise _blocked()
+
+
+def _check_smaregi_token_body(body: bytes) -> None:
+    """スマレジの鍵を取る本文: `grant_type=client_credentials` と、読む 3 つの scope（`SMAREGI_SCOPE`）だけ。"""
+    try:
+        pairs = urllib.parse.parse_qsl(body.decode("ascii"), keep_blank_values=True, strict_parsing=True)
+    except (UnicodeDecodeError, ValueError):
+        raise _blocked() from None
+    if sorted(k for k, _v in pairs) != sorted(_SMAREGI_TOKEN_FIELDS) or dict(pairs) != {
+            "grant_type": "client_credentials", "scope": SMAREGI_SCOPE}:
         raise _blocked()
 
 
@@ -192,21 +306,31 @@ def check_request(method: str, url: str, body: bytes | None = None) -> None:
         raise _blocked()
     kind = _kind_for(parts.netloc)
     route = ROUTES.get(kind) if kind else None
-    if route is None or (method, parts.path) not in route["paths"]:
+    allowed = _allowed_names(route, method, parts.path) if route is not None else None
+    if allowed is None:
         raise _blocked()
     try:
-        names = {k for k, _v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)}
+        pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
     except ValueError:
         raise _blocked() from None
-    if not names <= route["params"]:
+    names = [k for k, _v in pairs]
+    if not set(names) <= allowed or len(names) != len(set(names)):
+        raise _blocked()
+    values = route.get("values", {})
+    if any(name in values and not _value_ok(values[name], value) for name, value in pairs):
+        raise _blocked()
+    given = dict(pairs)
+    if any(name not in given or not _value_ok(rule, given[name]) for name, rule in _required_for(kind, parts.path).items()):
         raise _blocked()
     if method == "GET":
         if body is not None:
             raise _blocked()
         return
-    if not isinstance(body, bytes) or parts.query:
+    if not isinstance(body, bytes) or parts.query or kind not in POST_KINDS:
         raise _blocked()
-    if parts.path == SHOPIFY_TOKEN_PATH:
+    if kind == "smaregi_id":
+        _check_smaregi_token_body(body)
+    elif parts.path == SHOPIFY_TOKEN_PATH:
         _check_token_body(body)
     else:
         _check_graphql_body(body)
@@ -251,19 +375,34 @@ def default_transport(method: str, url: str, headers: dict, body: bytes | None =
 
 # ------------------------------------------------------------------ 呼ぶ側に見せる 3 つの口（URL と本文はここで組む）
 
-# GET で読む店（`Authorization: Bearer`）。Shopify は POST の 2 つの口だけ。
-GET_KINDS = frozenset(("base", "stores"))
+# GET で読む店（`Authorization: Bearer`）。Shopify は POST の 2 つの口だけ。スマレジは鍵を取る POST 1 つ（`smaregi_token`）と GET。
+GET_KINDS = frozenset(("base", "stores", "square", "smaregi"))
+# 店の種類ごとに足すヘッダ（Square は API の版を決め打ちする）。
+_EXTRA_HEADERS = {"square": {"Square-Version": SQUARE_VERSION}}
 
 
 def get(kind: str, path: str, params: dict | None, token: str, *, transport=None):
-    """BASE と STORES の GET（`Authorization: Bearer`・STORES はクレデンシャルをそのまま載せる）。`(status, body)`。"""
+    """BASE・STORES・Square・スマレジの GET（`Authorization: Bearer`）。`(status, body)`。"""
     route = ROUTES.get(kind)
     if kind not in GET_KINDS or route is None:
         raise _blocked()
     url = "https://" + route["host"] + path + ("?" + urllib.parse.urlencode(params) if params else "")
     check_request("GET", url)
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", **_EXTRA_HEADERS.get(kind, {})}
     return (transport or default_transport)("GET", url, headers)
+
+
+def smaregi_token(contract: str, client_id: str, client_secret: str, *, transport=None):
+    """スマレジの client credentials で鍵を取る（本文は grant_type と読む 3 つの scope だけ・Basic）。`(status, body)`。"""
+    if not isinstance(contract, str) or not SMAREGI_CONTRACT.fullmatch(contract):
+        raise _blocked()
+    url = "https://" + SMAREGI_ID_HOST + f"/app/{contract}/token"
+    body = urllib.parse.urlencode({"grant_type": "client_credentials", "scope": SMAREGI_SCOPE}).encode("ascii")
+    check_request(_POST, url, body)
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    headers = {"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded",
+               "Accept": "application/json"}
+    return (transport or default_transport)(_POST, url, headers, body)
 
 
 def shopify_token(shop: str, client_id: str, client_secret: str, *, transport=None):

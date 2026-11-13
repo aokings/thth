@@ -139,7 +139,7 @@ def publish_at(now) -> str:
     return jst.iso(datetime.datetime.combine(day, datetime.time(12, 0), tzinfo=jst.JST))
 
 
-def _head(text: str) -> dict:
+def head(text: str) -> dict:
     """頭（front-matter）の `from_store*` の行だけを素朴に読む（queue の全部を解析しない）。"""
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
@@ -167,10 +167,10 @@ def same_change_exists(queue: Path, store: str, row_id, change: dict, since) -> 
             continue
         if marker not in text:
             continue
-        head = _head(text)
-        if (head.get("from_store") == want["from_store"] and head.get("from_store_change") == want["from_store_change"]
-                and head.get("from_store_since", "") == want["from_store_since"]
-                and head.get("from_store_material") == wanted_material):
+        found = head(text)
+        if (found.get("from_store") == want["from_store"] and found.get("from_store_change") == want["from_store_change"]
+                and found.get("from_store_since", "") == want["from_store_since"]
+                and found.get("from_store_material") == wanted_material):
             return path.name
     return None
 
