@@ -17,3 +17,5 @@ thth register show media-sample
 ```
 
 1 行 = 1 枚の .md。頭の 7 つの欄（id・kind・status・source・confirmed・review_by・public）が要る。この README のように頭の無い .md は読み物として数えるだけ。
+
+店の見本の `外の場所/` は、店の情報が載っている外の場所（Google マップ・食べログなど）ごとの 1 枚（kind `place`・段 4）。URL は架空。THTH はその頁を読まず、管理画面にも入らない。`thth register paste` で貼る文を出し、持ち主が貼ったら `thth register pasted` で記録する。
