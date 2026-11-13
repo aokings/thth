@@ -430,6 +430,22 @@ def test_柵_出す品が無ければdraftは網に出る前に断る(capsys, en
     assert "既定" in entry["why"] and "--candidates" in entry["fix"]["text"] and entry["better"]
 
 
+def test_店舗が無効ならdraftは下書きを作らずレジの店にも合う言い方で断る(capsys, env, isolated_account_factory):
+    account = isolated_account_factory()
+    setup_store(capsys, env)
+    publish(capsys, "--category", "CATBEANS")
+    assert run(capsys, "shop", "diff", STORE)[0] == 0
+    env["objects"].append(item_obj(8))
+    env["counts"]["VAR00080"] = "2"
+    env["locations"][0]["status"] = "INACTIVE"
+    rc_, value, _ = jrun(capsys, "shop", "draft", STORE, "--to", account["name"], "--kind", "new")
+    assert rc_ == 2 and value["code"] == "store_not_open"
+    assert not list(pathlib.Path(account["queue_dir"]).glob("*-store-*.md"))
+    entry = rc.CATALOG["store_not_open"]
+    assert "Square" in entry["why"] and "店舗" in entry["why"] and "Square" in entry["fix"]["text"]
+    assert "able_to_business" not in entry["why"]
+
+
 def test_出す品の新着と再入荷と値下げから下書きを作り承認で読み直す(capsys, env, isolated_account_factory):
     account = isolated_account_factory()
     setup_store(capsys, env)
