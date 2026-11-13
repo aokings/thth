@@ -22,6 +22,7 @@ from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
 from thth.register import form as register_form
+from thth.register import kinds as register_kinds
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -72,6 +73,33 @@ def _stores_user_keeps_id_and_name() -> bool:
                               transport=lambda m, u, h: (200, payload)).user()
     return (shop == {"shop_id": "abc", "shop_name": "n", "shop_url": "https://ledger.example.invalid",
                      "able_to_business": None})
+
+
+def _register_private_defaults() -> bool:
+    return (register_kinds.private_by_default("store") == {"address", "phone"}
+            and register_kinds.private_by_default("special") == {"reason"})
+
+
+def _register_sample_draft() -> str:
+    import datetime
+    from thth import jst
+    from thth.register import draft as register_draft
+    row = register_form.parse("x.md", "---\nid: s\nkind: special\nstatus: 本採用\nsource: owner\nconfirmed: 本人が認めた\n"
+                              "review_by: 2099-01-01\npublic: true\ndate: 2099-01-02\nclosed: true\nreason: 理由の目印\n"
+                              "image: https://img.example.invalid/marker-image.jpg\n---\n本文\n")
+    now = datetime.datetime(2099, 1, 1, 9, 0, tzinfo=jst.JST)
+    until = datetime.datetime(2099, 1, 2, 23, 59, tzinfo=jst.JST)
+    return register_draft.text_for("r", "a", "threads", "special_soon", row, commit="none", now=now, not_after=until)
+
+
+def _register_draft_has_no_image() -> bool:
+    text = _register_sample_draft()
+    return "marker-image" not in text and "理由の目印" not in text
+
+
+def _register_draft_has_not_after() -> bool:
+    text = _register_sample_draft()
+    return "not_after: 2099-01-02T23:59:00+09:00" in text and "from_register: r/s" in text
 
 
 def _register_fields_en() -> str:
@@ -243,6 +271,26 @@ def facts() -> list[tuple[str, str]]:
         ("台帳の退出（leave._purge_registers）",
          "when the project's last account leaves, <code>thth leave</code> deletes them there. Neither deletes the "
          "register folder" if _leave_purges_registers() else "leave が台帳の控えを消さない"),
+        # 段 2: 実店舗の形と下書き（既定で出さない欄・画像なし・出さない期限・二段で認める種類）。
+        ("店の住所と電話と休みの理由は既定で出さない（register/kinds.private_by_default）",
+         "The shop's address and phone number, and the reason for a closure, are not put into drafts unless the owner "
+         "marks that field as public" if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("店の住所と電話と休みの理由・日本語",
+         "店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+         if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("台帳の下書きに写真を入れない（register/draft.text_for）",
+         "THTH puts no photos into these drafts" if _register_draft_has_no_image() else "台帳の下書きに画像がある"),
+        ("台帳の下書きの出さない期限と読み直し（register/draft・recheck）",
+         "Each draft records the row it came from and a time after which it is not posted"
+         if _register_draft_has_not_after() else "台帳の下書きに出さない期限が無い"),
+        ("二段で認める種類（register/kinds.two_stage）",
+         "Opening hours and temporary closures are confirmed in two steps"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
+        ("二段で認める種類・日本語",
+         "営業の時間と臨時の休みは二段で認めます"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
