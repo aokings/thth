@@ -249,7 +249,8 @@ def scan(root: str) -> dict:
 
 
 def problem_text(word: str) -> str:
-    return PROBLEM_TEXT.get(word.split(":", 1)[0], "形を直してください")
+    key = word.split(":", 1)[0]
+    return PROBLEM_TEXT.get(key) or kinds_mod.PROBLEM_TEXT.get(key) or "形を直してください"
 
 
 def find(rows: list, row_id: str) -> Row | None:

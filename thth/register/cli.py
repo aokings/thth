@@ -14,6 +14,10 @@
                                        本人が違うと言った（行は消さない・同じ推測を二度聞かない）
     thth register remove <台帳> --by <名前> [--json]
                                        THTH の控えと認めた記録を消す（台帳のフォルダは消さない）
+    thth register triggers <台帳> [--json]
+                                       暦と台帳から、今出す頃のきっかけ（臨時の休み・催し・営業の時間の変わり・新しい品・季節の品）
+    thth register draft <台帳> --to <口座> (--row <行> | --trigger <種類>) [--json]
+                                       きっかけから queue の下書き（承認されていない形・出さない期限つき）を 1 本か上限 3 本
 
 記録（`admin_log`）の動きの名前は `register_` で始める。名前・時刻・行の番号だけで、台帳の本文は入れない。
 **網に出ない。** 台帳には頭の決まった欄（`form.MANAGED`）しか書かない。
@@ -25,12 +29,13 @@ import os
 import shutil
 import sys
 
-from .. import admin_log, jst, redact, refusal
-from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, fence, form, kinds, ledger
+from .. import admin_log, jst, redact, refusal, refusals
+from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
+from . import triggers as triggers_mod
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
-DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm"))
+DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger"))
 
 
 def _refuse(args, exc: RegisterRefused) -> int:
@@ -191,7 +196,7 @@ def cmd_confirm(args) -> int:
     if kinds.two_stage(row.kind) and args.confirm != digest:
         if args.confirm is not None:
             raise RegisterRefused("register_confirm_mismatch", "confirm", digest=digest)
-        refusal.mark_first_stage()
+        refusals.mark_first_stage()
         value = {"register": args.register, "row": row.id, "kind": row.kind, "stage": 1, "digest": digest,
                  "text": row.text}
         if args.json:
@@ -255,6 +260,84 @@ def cmd_remove(args) -> int:
         _print({"register": args.register, "deleted": done})
         return 0
     print(f"台帳 {args.register} の控えと認めた記録を消しました（台帳のフォルダには触っていません）")
+    return 0
+
+
+# ------------------------------------------------------------------ きっかけと下書き（段 2）
+
+def cmd_triggers(args) -> int:
+    _cfg, _root, scanned = open_register(args.register)
+    found = triggers_mod.find(scanned["rows"], ledger.read_confirmed(args.register), jst.now_jst())
+    if args.json:
+        _print({"register": args.register, "triggers": found})
+        return 0
+    if not found:
+        print(f"台帳 {args.register}: 今出す頃のきっかけはありません")
+        return 0
+    for one in found:
+        mark = "下書きにできる" if one["code"] is None else f"使えない（{one['code']}）"
+        print(f"{one['trigger']}\t{one['row']}\t出さない期限 {one['not_after']}\t{mark}")
+    return 0
+
+
+def _pick(args, scanned, records, now) -> list:
+    if (args.row is None) == (args.trigger is None):
+        raise RegisterRefused("register_args_invalid", "row_or_trigger")
+    if args.row is not None:
+        row = find_row(scanned, args.row)
+        fence.usable(row, records, now.date())
+        found = triggers_mod.window(row, now)
+        if found is None or found[2] == "early":
+            raise RegisterRefused("register_draft_nothing", row.id)
+        if found[2] == "past":
+            raise RegisterRefused("register_draft_expired", row.id)
+        return [(found[0], row, found[1])]
+    picked = []
+    for one in triggers_mod.find(scanned["rows"], records, now):
+        if one["trigger"] != args.trigger or one["code"] is not None:
+            continue
+        row = form.find(scanned["rows"], one["row"])
+        picked.append((one["trigger"], row, triggers_mod.window(row, now)[1]))
+    if not picked:
+        raise RegisterRefused("register_draft_nothing")
+    return picked[:draft_mod.MAX_DRAFTS]
+
+
+def cmd_draft(args) -> int:
+    by = admin_log.actor(getattr(args, "by", None) or os.environ.get("THTH_ACTOR") or f"thth {COMMAND} draft")
+    cfg, root, scanned = open_register(args.register)
+    now = jst.now_jst()
+    records = ledger.read_confirmed(args.register)
+    account = draft_mod.load_account(args.to)
+    queue = draft_mod.queue_dir(account)
+    picked = _pick(args, scanned, records, now)
+    for trigger, row, _until in picked:
+        if draft_mod.same_exists(queue, args.register, row, trigger):
+            raise RegisterRefused("register_draft_exists", row.id)
+    _log_ready()
+    commit = draft_mod.commit_of(root)
+    written = []
+    for trigger, row, until in picked:
+        text = draft_mod.text_for(args.register, args.to, account["media"], trigger, row, commit=commit, now=now,
+                                  not_after=until)
+        written.append({"row": row.id, "trigger": trigger, "not_after": jst.iso(until),
+                        "path": draft_mod.write(queue, draft_mod.file_name(args.register, row.id, trigger, now), text)})
+    _record("drafted", args.register, by, {"to": [None, args.to], "rows": [[], [w["row"] for w in written]],
+                                           "triggers": [[], [w["trigger"] for w in written]]})
+    notes = ["status は draft です（承認されていません）。本文は素の 1〜3 行なので、出す前に整えて thth approve に通してください",
+             "出さない期限（not_after）を頭に入れました。過ぎると承認も予約も通りません",
+             "住所・電話・休みの理由は、持ち主が public_fields に書いた物のほかは入れていません"]
+    if account.get("project") != cfg["project"]:
+        notes.append(f"注意: 口座 {args.to} の project（{account.get('project')}）が台帳の project（{cfg['project']}）と"
+                     "違います。出す先が合っているか確かめてください")
+    value = {"register": args.register, "account": args.to, "drafts": written, "commit": commit, "notes": notes}
+    if args.json:
+        _print(value)
+        return 0
+    for one in written:
+        print(f"下書きを書きました: {one['path']}（{one['trigger']}・行 {one['row']}・出さない期限 {one['not_after']}）")
+    for line in notes:
+        print(f"  {line}")
     return 0
 
 
@@ -338,3 +421,17 @@ def register(sub) -> None:
     p.add_argument("--by", required=True)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_remove))
+
+    p = verbs.add_parser("triggers", help="今出す頃のきっかけ（臨時・催し・営業の時間の変わり・新しい品・季節の品）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_triggers))
+
+    p = verbs.add_parser("draft", help="きっかけから queue の下書き（承認されていない形・出さない期限つき）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--to", required=True, metavar="口座")
+    p.add_argument("--row", default=None, metavar="行")
+    p.add_argument("--trigger", default=None, choices=triggers_mod.TRIGGERS)
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_run(cmd_draft))

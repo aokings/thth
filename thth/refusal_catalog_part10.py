@@ -12,6 +12,8 @@ _ADD = "thth register add <台帳> --path <フォルダ> --project <project> --k
 _CHECK = "thth register check <台帳>"
 _SHOW = "thth register show <台帳>"
 _CONFIRM = "thth register confirm <台帳> <行> --by <名前>"
+_TRIGGERS = "thth register triggers <台帳>"
+_DRAFT = "thth register draft <台帳> --to <口座> --row <行>"
 
 
 def _entry(why, fix, command, better, kind="refusal", by_detail=None):
@@ -43,6 +45,10 @@ ENTRIES = {
                 "fix": "--by に、頼んだ人の名前を入れて打ち直してください（変更の記録に残ります）。",
                 "command": _CONFIRM,
                 "better": "代わりに回すときは、店主の名前でなく打った人の名前を --by に入れ、誰が認めたかは台帳の本文に書くと、あとで読んでも取り違えません。"},
+            "row_or_trigger": {
+                "fix": "thth register draft には --row <行> か --trigger <種類> のどちらか 1 つだけを付けて打ち直してください。",
+                "command": _DRAFT,
+                "better": "まず thth register triggers <台帳> で今出す頃のきっかけを見て、その行を --row で選ぶと、出しすぎずに済みます。"},
             "row": {
                 "fix": "行の番号（頭の id の欄）を英小文字・数字・_・.・- のまま写して打ち直してください。番号は thth register show <台帳> の左の列にあります。",
                 "command": _SHOW,
@@ -134,6 +140,42 @@ ENTRIES = {
         "台帳のフォルダの持ち主と権限を確かめ、行を普通のファイルにしてから、同じ命令を打ち直してください。",
         _CHECK,
         "台帳のフォルダを THTH を動かす人の持ち物にしておくと、認める操作が頭の欄を書けます。"),
+    # ---------------------------------------------------------------- 段 2: 実店舗の形・きっかけ・下書き
+    "register_draft_account": _entry(
+        "--to の口座の台帳が読めないか、その口座の queue の置き場（repo_dir と queue_dir）が使えません（1 行目の（）が欄）。",
+        "thth list で口座の名前を確かめ、口座の台帳の repo_dir と queue_dir（repo の中の、. で始まらない道）を直してから打ち直してください。",
+        "thth list",
+        "台帳の project と同じ project の口座を --to に選ぶと、下書きが出す先の queue にそのまま入ります。"),
+    "register_draft_nothing": _entry(
+        "今は下書きにするきっかけがありません（行を選んだなら、その行のきっかけがまだ早いか、きっかけになる欄が無い）。",
+        "thth register triggers <台帳> で今出す頃のきっかけを確かめ、出ている行を --row で選んで打ち直してください。",
+        _TRIGGERS,
+        "臨時の休みは 1 週間前、催しは 2 週間前からきっかけになります。行を早めに台帳に書いておくと、告知が間に合います。"),
+    "register_draft_exists": _entry(
+        "同じ行・同じきっかけ・同じ中身の下書きが、もう queue にあります。2 本目は作りませんでした。",
+        "queue の下書きを整えて thth approve に通すか、要らなければその下書きを閉じてから、打ち直してください。",
+        "thth approve <file>",
+        "行の中身を直したなら、直した行を認め直してから作ると、別の下書きとして作れます。"),
+    "register_draft_rejected": _entry(
+        "作った下書きが queue の形の点検（thth lint）に通りませんでした（1 行目の（）が理由）。書いていません。",
+        "行の名前や本文の長さを直して（媒体の字数に収まるように）、打ち直してください。",
+        _DRAFT,
+        "品や催しの名前は短くし、詳しい説明は思いの行に分けると、どの媒体の字数にも収まります。"),
+    "register_draft_expired": _entry(
+        "出さない期限（not_after）を過ぎているか、期限が消されています。終わった催しや過ぎた休みを告げないため、下書きにも承認にもしません。",
+        "まだ出す意味があるなら、台帳の行の日を今の事実に直して認め直し、thth register draft で作り直してください。過ぎた物なら、下書きを閉じてください。",
+        _DRAFT,
+        "催しの行は、終わったら status を退役にすると、次の年に同じ催しを書くときの見本として残ります。"),
+    "register_row_changed": _entry(
+        "下書きを作ったあとに、台帳の行の中身が変わっています（1 行目の（）が行の番号）。古い事実のまま出さないため、承認しません。",
+        "thth register use <台帳> <行> で今の中身を確かめ、下書きを今の中身で作り直して（thth register draft）、承認し直してください。",
+        "thth register use <台帳> <行>",
+        "行を直したら、前の下書きは閉じてから作り直すと、queue に古い事実の下書きが残りません。"),
+    "register_recheck_unavailable": _entry(
+        "この下書きの元の台帳の控えが、この機械にありません（1 行目の（）が台帳の名前）。店の事実は間違えたときの害が大きいので、読み直せないまま承認しません。",
+        "台帳の控えがある機械（thth register add をした機械）で、同じ thth approve を打ってください。",
+        _SHOW,
+        "台帳を置く機械と承認する機械を同じにしておくと、承認のたびに読み直しが自動で済みます。"),
     "register_log_unavailable": _entry(
         "変更の記録（admin_log）に書けない置き場なので、何も変えませんでした。",
         "THTH の置き場（$THTH_ROOT）の権限と空きを確かめて、同じ命令を打ち直してください。",

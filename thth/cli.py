@@ -932,6 +932,12 @@ def _store_recheck(path: str) -> str | None:
         front_matter = queuefile.parse(path).front_matter
     except (OSError, ValueError):
         return None  # 読めない原稿は `_prepare_one` が先に断っている
+    if "from_register" in front_matter:
+        # 台帳から作った下書き（計画 実店舗 段 2）: 行を読み直し、出さない期限・柵・中身の指紋を見る（網に出ない）。
+        from .register import recheck as register_recheck
+        problem = register_recheck.check(path, front_matter)
+        if problem:
+            return problem
     if "from_store" not in front_matter:
         return None
     from .shop import recheck

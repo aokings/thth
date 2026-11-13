@@ -14,6 +14,9 @@ REASONS = frozenset((
     "register_row_guess", "register_row_denied", "register_row_unconfirmed", "register_row_review_passed",
     "register_row_not_public", "register_row_retired", "register_confirm_mismatch", "register_row_unwritable",
     "register_log_unavailable",
+    # 段 2: 実店舗の形・きっかけ・下書き・承認の時の読み直し。
+    "register_draft_account", "register_draft_nothing", "register_draft_exists", "register_draft_rejected",
+    "register_draft_expired", "register_row_changed", "register_recheck_unavailable",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 
