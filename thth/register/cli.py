@@ -391,8 +391,13 @@ def cmd_ask(args) -> int:
     if picked:
         _log_ready()
         for hole in picked:
-            asked.append({"type": "asked", "id": questions_mod.new_id(now), "hole": hole["hole"], "row": hole["row"],
-                          "at": jst.iso(now), "by": by})
+            entry = {"type": "asked", "id": questions_mod.new_id(now), "hole": hole["hole"], "row": hole["row"],
+                     "at": jst.iso(now), "by": by}
+            row = form.find(scanned["rows"], hole["row"]) if hole["row"] else None
+            if row is not None:
+                # 聞いたときの中身の指紋（答えの yes は、この中身にだけ効く・監査 5.19.0 直したほうがよい 2）。
+                entry["digest"] = form.fingerprint(row.text)
+            asked.append(entry)
         questions_mod.append(root, asked)
         _record("asked", args.register, by, {"holes": [[], [a["hole"] for a in asked]]})
     questions = [dict(hole, question=a["id"]) for hole, a in zip(picked, asked)]
@@ -438,6 +443,14 @@ def cmd_answer(args) -> int:
             notes.append(f"行 {row.id}（{row.kind}）は二段で認める種類なので、答えだけでは認めていません。"
                          f"全文を持ち主に見せて thth {COMMAND} confirm {args.register} {row.id} --by {by} で確定してください")
             effect = "needs_confirm"
+        elif found["asked"].get("digest") != form.fingerprint(row.text):
+            # 持ち主が「はい」と言ったのは聞かれたときの中身。そのあと書き足された中身は見せていないので認めない
+            # （聞いたときの指紋の無い問い＝ask を通さずに書いた問いも同じ・監査 5.19.0 直したほうがよい 2）。
+            notes.append(f"行 {row.id} の中身が、聞いたときから変わっています（または、この問いに聞いたときの中身の指紋が"
+                         "ありません）。持ち主が「はい」と言ったのは聞いたときの中身なので、答えだけでは認めていません。"
+                         f"今の全文を持ち主に見せて thth {COMMAND} confirm {args.register} {row.id} --by {by} で確定してください。"
+                         "聞く前に行を書き終えておくと、答えの一言で認められます")
+            effect = "changed_since_asked"
         elif not row.problems:
             confirm_mod.confirm(args.register, root, row, by=by)
             effect = "confirmed"

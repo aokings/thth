@@ -97,6 +97,44 @@ def test_品や店の推測はyesの答えで認めたになる(capsys, env, clo
     assert jrun(capsys, "register", "use", "cafe-sample", "cafe-store")[0] == 0
 
 
+def test_柵_聞いたあとに中身が変わった行は答えのyesでは認めない(capsys, env, clock):
+    """監査 5.19.0 直したほうがよい 2: 持ち主が「はい」と言ったのは聞かれたときの中身。"""
+    path = add(capsys, env, "cafe-sample", kind="store")
+    [question] = [q for q in ask(capsys) if q["hole"] == "guess:cafe-store"]
+    store = path / "店.md"
+    store.write_text(store.read_text(encoding="utf-8") + "見せていない 1 行\n", encoding="utf-8")
+    rc_, value, err = jrun(capsys, "register", "answer", "cafe-sample", question["question"], "--result", "yes",
+                           "--by", "m")
+    assert rc_ == 0, err
+    assert value["effect"] == "changed_since_asked"
+    assert "聞いたときから変わっています" in value["notes"][0] and "confirm" in value["notes"][0]
+    assert "confirmed: 推測" in store.read_text(encoding="utf-8")
+    assert jrun(capsys, "register", "use", "cafe-sample", "cafe-store")[1]["code"] == "register_row_guess"
+
+
+def test_柵_askを通さずに書いた問いへのyesでは認めない(capsys, env, clock):
+    path = add(capsys, env, "cafe-sample", kind="store")
+    log = path / questions.LOG_FILE
+    log.write_text(json.dumps({"type": "asked", "id": "q-20261208-abcdef", "hole": "guess:cafe-store",
+                               "row": "cafe-store", "at": jst.iso(NOW), "by": "m"}, ensure_ascii=False) + "\n",
+                   encoding="utf-8")
+    rc_, value, err = jrun(capsys, "register", "answer", "cafe-sample", "q-20261208-abcdef", "--result", "yes",
+                           "--by", "m")
+    assert rc_ == 0, err
+    assert value["effect"] == "changed_since_asked"
+    assert jrun(capsys, "register", "use", "cafe-sample", "cafe-store")[1]["code"] == "register_row_guess"
+
+
+def test_聞いた問いの記録は行の中身の指紋を持ち中身は持たない(capsys, env, clock):
+    from thth.register import form
+    path = add(capsys, env, "cafe-sample", kind="store")
+    [question] = [q for q in ask(capsys) if q["hole"] == "guess:cafe-store"]
+    [entry] = [json.loads(line) for line in (path / questions.LOG_FILE).read_text(encoding="utf-8").splitlines()
+               if json.loads(line)["id"] == question["question"]]
+    assert entry["digest"] == form.fingerprint((path / "店.md").read_text(encoding="utf-8"))
+    assert "喫茶" not in json.dumps(entry, ensure_ascii=False)
+
+
 def test_問いの記録は持ち主の台帳にあり数を数えられる(capsys, env, clock):
     path = add(capsys, env, "cafe-sample", kind="store")
     asked = ask(capsys)
@@ -152,5 +190,7 @@ def test_問いの記録の行の形(capsys, env, clock):
     path = add(capsys, env, "cafe-sample", kind="store")
     ask(capsys)
     rows = [json.loads(line) for line in (path / questions.LOG_FILE).read_text(encoding="utf-8").splitlines()]
-    assert {tuple(sorted(row)) for row in rows} == {("at", "by", "hole", "id", "row", "type")}
+    # 行のある穴は聞いたときの中身の指紋を持つ（監査 5.19.0 の 2）。行の無い穴（欠け・季節）は持たない。
+    assert {tuple(sorted(row)) for row in rows if row["row"]} == {("at", "by", "digest", "hole", "id", "row", "type")}
+    assert {tuple(sorted(row)) for row in rows if not row["row"]} <= {("at", "by", "hole", "id", "row", "type")}
     assert all(jst.parse(row["at"]) for row in rows)

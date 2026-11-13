@@ -2,7 +2,9 @@
 
 行の形（足すだけ・書き換えない）:
 
-- 聞いた: `{"type": "asked", "id": "q-…", "hole": 穴の番号, "row": 行 or null, "at": 時刻, "by": 名前}`
+- 聞いた: `{"type": "asked", "id": "q-…", "hole": 穴の番号, "row": 行 or null, "at": 時刻, "by": 名前,
+  "digest": 聞いたときの行の中身の指紋（行のある穴だけ）}`。答えの yes で認めるのは、今の中身の指紋がこれと同じときだけ
+  （聞いたあとに書き足された中身を、見せないまま認めない・監査 5.19.0 直したほうがよい 2）。
 - 答えた: `{"type": "answered", "id": 問いの番号, "result": yes|no|other|skip, "at", "by",
   "asked": 聞いた言葉 or null, "said": 答えの要約 or null, "new_row": 答えから足した行 or null}`
 
