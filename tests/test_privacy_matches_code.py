@@ -23,6 +23,8 @@ from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
 from thth.register import form as register_form
 from thth.register import kinds as register_kinds
+from thth.register import holes as register_holes
+from thth.register import questions as register_questions
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -100,6 +102,12 @@ def _register_draft_has_no_image() -> bool:
 def _register_draft_has_not_after() -> bool:
     text = _register_sample_draft()
     return "not_after: 2099-01-02T23:59:00+09:00" in text and "from_register: r/s" in text
+
+
+def _answer_respects_two_stage() -> bool:
+    import inspect
+    from thth.register import cli as register_cli
+    return "kinds.two_stage(row.kind)" in inspect.getsource(register_cli.cmd_answer)
 
 
 def _register_fields_en() -> str:
@@ -260,7 +268,7 @@ def facts() -> list[tuple[str, str]]:
         ("台帳に THTH が書く欄（register/form.MANAGED）",
          "In the register, THTH writes only the fixed head fields " + _register_fields_en()),
         ("台帳に THTH が書く欄・日本語",
-         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " だけ"),
+         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " と、"),
         ("台帳の機械は網に出ない（thth/register が網の部品を import しない）",
          "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
         ("台帳の機械は網に出ない・日本語",
@@ -291,6 +299,18 @@ def facts() -> list[tuple[str, str]]:
          "営業の時間と臨時の休みは二段で認めます"
          if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
          else "二段で認める種類が privacy と違う"),
+        # 段 3: 聞いて埋める（問いの記録の置き場・拍子の数・答えだけでは二段の種類を認めない）。
+        ("問いの記録の置き場（register/questions.LOG_FILE）",
+         f"adds lines to the question log (<code>{register_questions.LOG_FILE}</code>)"),
+        ("問いの記録の置き場・日本語", f"問いの記録（<code>{register_questions.LOG_FILE}</code>）に足す行だけ"),
+        ("聞く数の上限（register/holes.ASK_MAX_PER_DAY・ASK_GAP_DAYS）",
+         f"at most {register_holes.ASK_MAX_PER_DAY} a day, and does not ask about the same thing again within "
+         f"{register_holes.ASK_GAP_DAYS} days"),
+        ("聞く数の上限・日本語",
+         f"1 日 {register_holes.ASK_MAX_PER_DAY} 問までで、同じことは {register_holes.ASK_GAP_DAYS} 日"),
+        ("答えだけでは二段の種類を認めない（register/cli.cmd_answer）",
+         "An answer alone does not confirm opening hours or a temporary closure"
+         if _answer_respects_two_stage() else "答えで営業の時間を認めてしまう"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
