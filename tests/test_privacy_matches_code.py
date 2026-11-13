@@ -131,6 +131,22 @@ def _register_offline() -> bool:
     return net_imports(REGISTER_DIR) == []
 
 
+def _register_uses_no_shop() -> bool:
+    """台帳の機械が店の口（`thth.shop`）を使わない（監査 5.19.0 直したほうがよい 6）。
+
+    import は許した表の外なら赤（`tests/test_register_base.import_problems`）で、表に `thth.shop` が無く、表の部品も
+    `thth.shop` を import しない（関数の中の import も見る）。
+    """
+    from tests.test_register_base import REGISTER_ALLOWED_THTH, REGISTER_DIR, _absolute_imports, net_imports
+    if net_imports(REGISTER_DIR) or any(n == "thth.shop" or n.startswith("thth.shop.") for n in REGISTER_ALLOWED_THTH):
+        return False
+    for name in REGISTER_ALLOWED_THTH:
+        path = ROOT / (name.replace(".", "/") + ".py")
+        if any(n == "thth.shop" or n.startswith("thth.shop.") for n in _absolute_imports(path, "thth")):
+            return False
+    return True
+
+
 def _register_draft_record_keys() -> list:
     """`register draft` が控えに書く頭の行の名前（`draft.text_for` の頭から作る・recheck が比べる並び）。"""
     from thth.register import recheck as register_recheck
@@ -294,6 +310,11 @@ def facts() -> list[tuple[str, str]]:
          "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
         ("台帳の機械は網に出ない・日本語",
          "この部分の THTH は網に出ません" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の下書きには店の頁もレジも使わない（register の import の表に thth.shop が無い）",
+         "these drafts do not use the shop's web pages or its till" if _register_uses_no_shop()
+         else "台帳の機械が店の口を import している"),
+        ("台帳の下書きには店の頁もレジも使わない・日本語",
+         "この下書きには、店の頁もレジも使いません" if _register_uses_no_shop() else "台帳の機械が店の口を import している"),
         ("台帳の下書きの控えの欄（register/recheck.ORIGIN_KEYS と not_after・監査 5.19.0 の 1）",
          "the row, the fingerprint, the register's commit, the trigger and the deadline"
          if _register_draft_record_keys() == ["from_register", "from_register_digest", "from_register_commit",

@@ -264,15 +264,91 @@ def _imports(path: pathlib.Path) -> set:
     return found
 
 
-def net_imports(directory: pathlib.Path) -> list:
+# 台帳の機械が import してよい物の表（監査 5.19.0 直したほうがよい 6）。表に無い物は赤にする（網の部品の名前を
+# 並べて拾う形だと、`from ..shop import square`・`from .. import shop`・`from ..adapters import threads` を拾えなかった）。
+# privacy の「この部分の THTH は網に出ません」「この下書きには、店の頁もレジも使いません」はこの表と結ぶ
+# （tests/test_privacy_matches_code.py）。足すときは、その部品が網に出ず店もレジも読まないことを確かめてから足す。
+REGISTER_ALLOWED_THTH = frozenset((
+    "thth.accounts", "thth.jst", "thth.admin_log", "thth.redact", "thth.refusal", "thth.refusals", "thth.secrets_fs",
+    "thth.queuefile", "thth.lint", "thth.draft_origin",
+))
+# 標準の部品のうち、網に出る・外の命令を動かす・名前で部品を読み込む物（表の外）。`subprocess` は draft.py の
+# `git rev-parse` の 1 つだけ許す。
+STDLIB_DENIED = frozenset((
+    "urllib", "http", "socket", "ssl", "socketserver", "ftplib", "smtplib", "poplib", "imaplib", "nntplib",
+    "telnetlib", "xmlrpc", "asyncio", "webbrowser", "multiprocessing", "concurrent", "ctypes", "importlib",
+    "subprocess", "pty", "requests", "httpx",
+))
+SUBPROCESS_ALLOWED = frozenset(("draft.py",))
+# 台帳の機械が使う、台帳の外の THTH の部品のうち、台帳の機械と同じ柵で縛る物（表の 1 つ・下書きの出所の控え）。
+REGISTER_EXTRA_FILES = (pathlib.Path(__file__).resolve().parent.parent / "thth" / "draft_origin.py",)
+
+
+def _absolute_imports(path: pathlib.Path, package: str) -> set:
+    """`path` の import を絶対の名前にする（`from .. import shop` は `thth.shop`）。`__import__` の呼び出しも拾う。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    parts = package.split(".")
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base_parts = parts[:len(parts) - node.level + 1]
+                base = ".".join(base_parts + ([node.module] if node.module else []))
+            else:
+                base = node.module or ""
+            if node.module == "__future__":
+                continue
+            if node.module:
+                found.add(base)
+            # `from X import y` の y は部品か名前か分からない。`from .. import y` は部品、`from thth.X import y` は
+            # X.y が部品のときだけ部品として数える（X が表の外なら X で拾える）。
+            for alias in node.names:
+                full = f"{base}.{alias.name}"
+                if not node.module or (base.startswith("thth") and _is_module(full)):
+                    found.add(full)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "__import__":
+            found.add("__import__")
+    return found
+
+
+def _is_module(name: str) -> bool:
+    import importlib.util
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def import_problems(files, package: str) -> list:
+    """許した表の外の import（`<ファイル>: <名前>` の並び）。"""
+    import sys
     wrong = []
-    for path in sorted(directory.glob("*.py")):
-        for name in _imports(path):
-            bare = name.lstrip(".")
-            if any(bare == net or bare.startswith(net + ".") for net in NET) or bare in ("httpsafe", "shop.wire") \
-                    or bare.endswith(".httpsafe") or bare.endswith("shop.wire"):
+    for path in files:
+        for name in sorted(_absolute_imports(path, package)):
+            top = name.split(".")[0]
+            if name == "__import__":
+                wrong.append(f"{path.name}: {name}")
+            elif top == "thth":
+                if name == "thth" or name.startswith(package + ".") or name == package:
+                    continue
+                if name not in REGISTER_ALLOWED_THTH:
+                    wrong.append(f"{path.name}: {name}")
+            elif top in STDLIB_DENIED:
+                if not (top == "subprocess" and path.name in SUBPROCESS_ALLOWED):
+                    wrong.append(f"{path.name}: {name}")
+            elif top not in sys.stdlib_module_names:
                 wrong.append(f"{path.name}: {name}")
     return wrong
+
+
+def net_imports(directory: pathlib.Path) -> list:
+    """台帳の機械（`directory` の *.py と、同じ柵で縛る台帳の外の部品）の、許した表の外の import。"""
+    files = sorted(directory.glob("*.py"))
+    if directory.resolve() == REGISTER_DIR.resolve():
+        return import_problems(files, "thth.register") + import_problems(REGISTER_EXTRA_FILES, "thth")
+    return import_problems(files, "thth.register")
 
 
 def test_柵_台帳の機械は網の部品をimportしない():
@@ -282,3 +358,22 @@ def test_柵_台帳の機械は網の部品をimportしない():
 def test_壊れた例_網の柵はurllibのimportを拾う(tmp_path):
     (tmp_path / "bad.py").write_text("import urllib.request\nfrom .. import httpsafe\n", encoding="utf-8")
     assert len(net_imports(tmp_path)) == 2
+
+
+@pytest.mark.parametrize("line", [
+    "from ..shop import square", "from .. import shop", "from ..shop.kinds import client", "from ..adapters import threads",
+    "import subprocess", "from ..shop import wire", "import thth.shop.pos", "from thth import httpsafe",
+    "import importlib", "x = __import__('urllib.request')", "import requests", "from .. import meta_write",
+    "from ..shop.wire import StoreRefused",
+])
+def test_柵_台帳の機械のimportは許した表の外なら赤(tmp_path, line):
+    """監査 5.19.0 直したほうがよい 6: レジを読む口・投稿の口・外の命令を import したら拾う（1 行ずつ）。"""
+    (tmp_path / "bad.py").write_text(line + "\n", encoding="utf-8")
+    assert net_imports(tmp_path), line
+
+
+def test_台帳の機械のimportの表は標準の部品と許した部品だけ(tmp_path):
+    (tmp_path / "ok.py").write_text("from __future__ import annotations\nimport json\nfrom .. import jst, redact\n"
+                                    "from . import form\nfrom .errors import RegisterRefused\n", encoding="utf-8")
+    assert net_imports(tmp_path) == []
+    assert not any(name.startswith("thth.shop") or name.startswith("thth.adapters") for name in REGISTER_ALLOWED_THTH)
