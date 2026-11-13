@@ -131,7 +131,8 @@ def cmd_check(args, root: str) -> int:
         print(f"  鍵で決まらない単位 {len(value['ambiguous_units'])} 組（鍵と中身の指紋で分けて指しています。"
               "1 つにはしていません）")
     j = value["judgments"]
-    print(f"  判断: 効いている {j['effective']}・古い {j['stale']}・消えた指し先 {j['vanished']}")
+    print(f"  判断: 効いている {j['effective']}・古い {j['stale']}・消えた指し先 {j['vanished']}"
+          + (f"・よその台帳を指して確かめられない {j['unverifiable']}" if j["unverifiable"] else ""))
     if value["candidates"]:
         print(f"  結びの候補 {len(value['candidates'])} 件（器は結びません。結ぶなら人が名指しします）")
     if value["links"]["review"]:

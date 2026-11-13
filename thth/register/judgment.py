@@ -70,8 +70,10 @@ def append(root: str, items: list) -> None:
             f.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def _new_id(body: dict) -> str:
-    return "j-" + hashlib.sha256(V.canonical(body).encode("utf-8")).hexdigest()[:16]
+def new_id(body: dict) -> str:
+    """判断の番号: 判断の中身（番号の欄 `id` を除く全部の欄。足した欄も入る）の決まった書き方の sha256 の頭 16 字。
+    段 3 のように欄を足す判断も、この作り方で番号を付ける（`make` の `extra` で足せば、`make` が付ける）。"""
+    return "j-" + hashlib.sha256(V.canonical({k: v for k, v in body.items() if k != "id"}).encode("utf-8")).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------ 対象と依る所
@@ -146,9 +148,10 @@ def current_depend(vessel: V.Vessel, target: dict, question: str, said=None):
 
 def make(vessel: V.Vessel, target: dict, question: str, *, by: str, at: str, path: str = "inspection",
          word=None, conclusion=None, scope=None, reason_kind=None, reason_text=None, how=None, until=None,
-         content=None, carries=None, source=None) -> dict:
+         content=None, carries=None, source=None, extra: dict | None = None) -> dict:
     """今の台帳の版を見て、判断を 1 件つくる（書かない）。`content` を渡すと「確かめた中身そのもの」を持つ
-    検収の記録になり、指紋は持たない（効くかは、その中身の指紋が今の依る所と合うかで決まる）。"""
+    検収の記録になり、指紋は持たない（効くかは、その中身の指紋が今の依る所と合うかで決まる）。
+    `extra` は判断に足す欄（段 3 の `against` など）。番号の作り方に入る。決まった欄を上書きする名前は断る。"""
     if path not in PATHS:
         raise RegisterRefused("register_args_invalid", "path")
     scope = _scope_arg(scope)
@@ -173,7 +176,11 @@ def make(vessel: V.Vessel, target: dict, question: str, *, by: str, at: str, pat
     if unit is not None:
         prefix = unit.pointer.split(".")[0]
         body["siblings"] = sorted(u.pointer for u in rec.units if u.pointer.split(".")[0] == prefix)
-    body["id"] = _new_id(body)
+    if extra:
+        if not isinstance(extra, dict) or any(k in body or k == "id" for k in extra):
+            raise RegisterRefused("register_args_invalid", "extra")
+        body.update(extra)
+    body["id"] = new_id(body)
     return body
 
 
@@ -189,7 +196,10 @@ def _content_depend(vessel: V.Vessel, j: dict):
 
 
 def evaluate(vessel: V.Vessel, j: dict) -> str:
-    """`effective`（効いている）・`stale`（依る所が変わった）・`vanished`（指し先が無い）。"""
+    """`effective`（効いている）・`stale`（依る所が変わった）・`vanished`（指し先が無い）・`unverifiable`
+    （よその台帳を指す判断。この台帳の器では確かめられない。設計 §5.4。消えた指し先とは数えない）。"""
+    if (j.get("target") or {}).get("ledger"):
+        return "unverifiable"
     now = current_depend(vessel, j["target"], j["question"], scope_said(j))
     if now is None:
         return "vanished"
@@ -199,7 +209,7 @@ def evaluate(vessel: V.Vessel, j: dict) -> str:
 
 
 def summary(vessel: V.Vessel, judgments: list) -> dict:
-    counts = {"effective": 0, "stale": 0, "vanished": 0}
+    counts = {"effective": 0, "stale": 0, "vanished": 0, "unverifiable": 0}
     for j in judgments:
         counts[evaluate(vessel, j)] += 1
     return counts
@@ -207,7 +217,9 @@ def summary(vessel: V.Vessel, judgments: list) -> dict:
 
 # ------------------------------------------------------------------ 問いに答える
 
-def _conclusion(vessel: V.Vessel, j: dict):
+def conclusion_of(vessel: V.Vessel, j: dict):
+    """判断の結論と理由の種類 `(結論 or None, 理由の種類)`。結論を書いた判断はそれ。語だけの判断は憲法で問いごとに
+    結論へ当てる（当たらなければ `(None, "word_unmapped")`）。段 3 もこれを呼ぶ。"""
     answer = j.get("answer") or {}
     if answer.get("conclusion") in V.CONCLUSIONS:
         return answer["conclusion"], (j.get("reason") or {}).get("kind")
@@ -235,7 +247,7 @@ def answer_record(vessel: V.Vessel, judgments: list, ref: str, question: str) ->
         reason = "no_inspection_for_new_version" if mine else "no_judgment"
         return {**out, "conclusion": "pending", "reason_kind": reason, "word": None}
     last = sorted(effective, key=lambda j: (j.get("at") or "", j["id"]))[-1]
-    conclusion, reason = _conclusion(vessel, last)
+    conclusion, reason = conclusion_of(vessel, last)
     if conclusion is None:
         return {**out, "conclusion": "pending", "reason_kind": reason, "word": (last.get("answer") or {}).get("word")}
     return {**out, "conclusion": conclusion, "reason_kind": reason, "word": (last.get("answer") or {}).get("word"),
@@ -312,12 +324,12 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
         asked = [p for p in scoped if p[0] == as_scope]
         if not asked:
             scope, last = pick
-            conclusion, _reason = _conclusion(vessel, last)
+            conclusion, _reason = conclusion_of(vessel, last)
             return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "scope_mismatch",
                     "scope": scope}
         pick = latest(asked)
     scope, last = pick
-    conclusion, reason = _conclusion(vessel, last)
+    conclusion, reason = conclusion_of(vessel, last)
     if conclusion is None:
         return {**base, "usable": False, "conclusion": "pending", "reason_kind": reason, "scope": scope}
     if as_time is not None and not _same_time(value.time, as_time):

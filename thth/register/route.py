@@ -277,11 +277,6 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def new_id(body: dict) -> str:
-    """判断の番号（`judgment` と同じ作り方: 中身の決まった書き方の sha256 の頭 16 字）。"""
-    return "j-" + hashlib.sha256(V.canonical({k: v for k, v in body.items() if k != "id"}).encode("utf-8")).hexdigest()[:16]
-
-
 # ------------------------------------------------------------------ 共通の台帳
 
 @dataclass
@@ -349,7 +344,7 @@ def _against_ok(vessel: V.Vessel, j: dict) -> bool:
 
 def conclusion_of(vessel: V.Vessel, j: dict):
     """判断の結論と理由の種類（台帳の語は憲法で、問いごとに結論へ当てる。段 1 の当て方をそのまま使う）。"""
-    return J._conclusion(vessel, j)
+    return J.conclusion_of(vessel, j)
 
 
 def answer(ctx: Ctx, js: list, match, question: str) -> dict:
@@ -952,7 +947,7 @@ def _verdict(problems, warnings, **extra) -> dict:
 
 def _stamp(body: dict) -> dict:
     body.pop("id", None)
-    body["id"] = new_id(body)
+    body["id"] = J.new_id(body)
     return body
 
 
@@ -972,17 +967,16 @@ def judge(root: str, ref: str, question: str, *, by: str, at: str, unit=None, va
         target["unit"] = unit
     if value:
         target["value"] = value
+    pinned = []
+    for one in against or []:
+        rec = vessel.unique(one)
+        if rec is None:
+            raise RegisterRefused("register_record_missing", "against")
+        pinned.append({"record": rec.ref, "version": rec.version})
     body = J.make(vessel, target, question, by=by, at=at, word=word, conclusion=conclusion,
-                  reason_kind=reason_kind, reason_text=reason_text, how=how, until=check_until(until))
-    if against:
-        pinned = []
-        for one in against:
-            rec = vessel.unique(one)
-            if rec is None:
-                raise RegisterRefused("register_record_missing", "against")
-            pinned.append({"record": rec.ref, "version": rec.version})
-        body["against"] = pinned
-    J.append(root, [_stamp(body)])
+                  reason_kind=reason_kind, reason_text=reason_text, how=how, until=check_until(until),
+                  extra={"against": pinned} if pinned else None)
+    J.append(root, [body])
     return body
 
 

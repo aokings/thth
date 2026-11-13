@@ -1073,9 +1073,11 @@ class Vessel:
     records: dict              # ref → Record（同じ番号は最初の 1 つ。重なりは problems に。引くのは `unique`）
     all_records: list
     _counts: dict = field(default_factory=dict)
+    _by_ref: dict = field(default_factory=dict)   # 番号 → 同じ番号の記録の並び（索引。`get` は頭から見ない）
 
     def __post_init__(self):
         for rec in self.all_records:
+            self._by_ref.setdefault(rec.ref, []).append(rec)
             if rec.id is not None:
                 self._counts[rec.ref] = self._counts.get(rec.ref, 0) + 1
 
@@ -1085,7 +1087,7 @@ class Vessel:
     def get(self, ref: str) -> Record:
         if not isinstance(ref, str) or ":" not in ref:
             raise RegisterRefused("register_args_invalid", "record")
-        same = [r for r in self.all_records if r.ref == ref]
+        same = self._by_ref.get(ref, [])
         if not same:
             raise RegisterRefused("register_record_missing", "record")
         if len(same) > 1:
