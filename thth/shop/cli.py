@@ -18,6 +18,11 @@
                                        違いから queue の下書き（承認されていない形）を 1 本か上限 3 本
     thth shop remove <店> --by <名前> [--confirm D] [--json]
                                        店を外す（二段確認・鍵 → 写し → 台帳の順に消す）
+    thth shop add <店> --kind square|smaregi --project <project> --url <店の頁> --location <店舗> [--contract <契約>] --by <名前>
+    thth shop publish <店> (--item <id> | --category <id>) [--off] --by <名前>
+                                       実店舗のレジ: 出してよい品の表（既定は空・変えたら写しを捨てる）
+    thth shop items <店> --candidates  実店舗のレジ: 出す品を選ぶための名前の一覧（残さない）
+    thth shop doctor <店> [--json]    台帳・鍵・期限・店の読みと、鍵の広さ・まだ確かめていない所
 
 記録（`admin_log`）の動きの名前は `ACTION_PREFIX`（shopread_）で始める: add・token set・remove・draft。
 名前・店・時刻・欄の前後だけで、鍵は入れない。
