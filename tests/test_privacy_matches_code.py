@@ -21,6 +21,7 @@ from thth.shop import wire as shop_wire
 from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
+from thth.register import form as register_form
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -71,6 +72,31 @@ def _stores_user_keeps_id_and_name() -> bool:
                               transport=lambda m, u, h: (200, payload)).user()
     return (shop == {"shop_id": "abc", "shop_name": "n", "shop_url": "https://ledger.example.invalid",
                      "able_to_business": None})
+
+
+def _register_fields_en() -> str:
+    names = [f"<code>{name}</code>" for name in register_form.MANAGED]
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+
+
+def _register_offline() -> bool:
+    from tests.test_register_base import REGISTER_DIR, net_imports
+    return net_imports(REGISTER_DIR) == []
+
+
+def _register_fence_codes() -> bool:
+    """柵が断る 5 つ（推測・違うと言った・見直し日・退役・出してよい印）が `fence.state` にある。"""
+    import inspect
+    from thth.register import fence
+    source = inspect.getsource(fence.state)
+    return all(code in source for code in ("register_row_guess", "register_row_denied", "register_row_review_passed",
+                                           "register_row_retired", "register_row_not_public"))
+
+
+def _leave_purges_registers() -> bool:
+    import inspect
+    from thth import leave
+    return "_purge_registers(account,by)" in inspect.getsource(leave.run)
 
 
 def facts() -> list[tuple[str, str]]:
@@ -202,6 +228,21 @@ def facts() -> list[tuple[str, str]]:
         ("店のリダイレクトを追わない・日本語",
          "ショップからのリダイレクトは追いません"
          if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
+        # 台帳の機械（計画 実店舗 段 1〜4）。台帳に書く欄・網に出ない・控えに残す物・退出で消える物。
+        ("台帳に THTH が書く欄（register/form.MANAGED）",
+         "In the register, THTH writes only the fixed head fields " + _register_fields_en()),
+        ("台帳に THTH が書く欄・日本語",
+         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " だけ"),
+        ("台帳の機械は網に出ない（thth/register が網の部品を import しない）",
+         "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の機械は網に出ない・日本語",
+         "この部分の THTH は網に出ません" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の柵が断る行（register/fence）",
+         "THTH refuses to use a row that is a guess, that the owner said is wrong, that is past its review date, "
+         "that is retired or that is not marked as public" if _register_fence_codes() else "柵の断りが privacy と違う"),
+        ("台帳の退出（leave._purge_registers）",
+         "when the project's last account leaves, <code>thth leave</code> deletes them there. Neither deletes the "
+         "register folder" if _leave_purges_registers() else "leave が台帳の控えを消さない"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),
