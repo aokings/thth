@@ -173,7 +173,7 @@ def links_of(root: str, ref: str, *, unit=None, key=None, units=False) -> dict:
     if key:
         picked = V.find_units(rec, key)
     elif unit:
-        picked = V.units_by_pointer(rec).get(unit)
+        picked = V.unit_at(rec, unit)
         if picked is None:
             raise RegisterRefused("register_record_missing", "unit")
     if picked is not None:

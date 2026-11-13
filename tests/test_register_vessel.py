@@ -528,7 +528,7 @@ def test_YAMLの部品が無い機械では中は見ていないと言い版だ�
     assert page.version == hashlib.sha256((root / "src/content/origins/brazil.yaml").read_bytes()).hexdigest()
     add(capsys, root, "kopicha")
     rc_, value, _ = jrun(capsys, "register", "check", "kopicha")
-    assert rc_ == 0 and value["not_inspected"] == 2
+    assert rc_ == 0 and value["not_inspected"] == len(list((root / "src" / "content").rglob("*.yaml")))  # 枚の全部
     rc_, value, _ = jrun(capsys, "register", "kinds", "kopicha")
     assert value["yaml_reader"] is False
 

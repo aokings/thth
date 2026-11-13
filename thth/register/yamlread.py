@@ -28,10 +28,17 @@ def load(text: str):
         import yaml
     except ImportError:
         return None, None, False
+    loader = yaml.BaseLoader(text)
+    events = []
     try:
-        events = list(yaml.parse(text, Loader=yaml.BaseLoader))
+        while loader.check_event():
+            events.append(loader.get_event())
     except yaml.YAMLError as exc:
         return None, f"syntax:{_line(exc)}", True
+    except Exception:  # noqa: BLE001 — 字の逃がしが範囲の外（\U00110000 など）だと ValueError・OverflowError が出る
+        return None, f"syntax:{loader.line + 1}", True
+    finally:
+        loader.dispose()
     documents = 0
     for event in events:
         line = getattr(getattr(event, "start_mark", None), "line", -1) + 1
@@ -50,6 +57,8 @@ def load(text: str):
         node = yaml.compose(text, Loader=yaml.BaseLoader)
     except yaml.YAMLError as exc:
         return None, f"syntax:{_line(exc)}", True
+    except Exception:  # noqa: BLE001 — 上で読めた物は、ここでも読める（念のため断りにする）
+        return None, "syntax:0", True
     if node is not None:
         problem = _check_node(node, yaml)
         if problem:
@@ -58,6 +67,8 @@ def load(text: str):
         value = yaml.load(text, Loader=yaml.BaseLoader)
     except yaml.YAMLError as exc:
         return None, f"syntax:{_line(exc)}", True
+    except Exception:  # noqa: BLE001
+        return None, "syntax:0", True
     return value, None, True
 
 

@@ -171,17 +171,42 @@ class Kind:
     pointers: list
     units: dict | None
     path: str                  # 宣言のファイル（台帳の根からの道）
+    inspects: dict | None = None  # 検収の記録を持つ表の宣言（`_parse_inspects`）
 
 
 _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows_at", "id", "questions", "pointers",
-              "units", "note")
+              "units", "inspects", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
 _P_KEYS = ("field", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "note")
 _RV_KEYS = ("field", "of", "hash")
 _U_KEYS = ("groups", "items", "id", "key", "time", "scope", "sources", "not_values", "note")
+_I_KEYS = ("follow", "question", "by", "content", "note")
 
 
 def parse_kind(data, path: str) -> Kind:
+    """宣言を読む。どの欄にどの型を書かれても、例外を漏らさず `DeclarationError`（宣言の場所と語）にする。"""
+    try:
+        return _parse_kind(data, path)
+    except DeclarationError:
+        raise
+    except (TypeError, ValueError, AttributeError, KeyError, IndexError, re.error):
+        raise DeclarationError("kind_shape") from None
+
+
+def _parse_inspects(raw) -> dict:
+    """検収の記録を持つ表の宣言（こぴちゃの中央の判断）: 行から `follow` の指す欄を順にたどった先の記録へ、
+    `content`（先の欄 ← この行の欄）を「確かめた中身そのもの」として持つ検収の記録にする。"""
+    _only(raw, _I_KEYS, "inspects")
+    follow = _strs(raw.get("follow"), FIELD, "inspects")
+    content = raw.get("content")
+    if not isinstance(content, dict) or not content:
+        raise DeclarationError("inspects")
+    return {"follow": follow, "question": _name(raw.get("question"), "inspects"),
+            "by": _name(raw.get("by"), "inspects"),
+            "content": {_field(k, "inspects"): _field(v, "inspects") for k, v in content.items()}}
+
+
+def _parse_kind(data, path: str) -> Kind:
     _only(data, _KIND_KEYS, "kind_shape")
     if data.get("schema") != KIND_SCHEMA:
         raise DeclarationError("schema")
@@ -250,15 +275,20 @@ def parse_kind(data, path: str) -> Kind:
             rv = _only(raw["recorded_version"], _RV_KEYS, "pointers")
             _field(rv.get("field"), "pointers")
             _strs(rv.get("of"), FIELD, "pointers")
-            m = re.fullmatch(r"(sha1|sha256):([0-9]{1,2})", rv.get("hash") or "")
+            m = re.fullmatch(r"(sha1|sha256):([0-9]{1,2})", rv["hash"]) if isinstance(rv.get("hash"), str) else None
             if not m or not 1 <= int(m.group(2)) <= 64:
                 raise DeclarationError("pointers")
         pointers.append(dict(raw))
     units = None
     if data.get("units") is not None:
         units = _parse_units(data["units"])
+    inspects = None
+    if data.get("inspects") is not None:
+        inspects = _parse_inspects(data["inspects"])
+        if not all(any(p.get("field") == f for p in pointers) for f in inspects["follow"][:1]):
+            raise DeclarationError("inspects")
     return Kind(name=name, places=places, format=fmt, records=records, max_bytes=max_bytes, rows_at=rows_at,
-                id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path)
+                id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path, inspects=inspects)
 
 
 def _name(value, word):
@@ -643,8 +673,13 @@ def _mark_duplicates(records: list) -> None:
 
 
 def _key_of(units_decl: dict, group: dict, item: dict) -> dict:
+    """単位の鍵。まとまりの時点（`time.group`）は、宣言の鍵に無くても鍵に入れる（年度の違う同じ中身の行を
+    1 つの指し先に畳まない）。"""
     key = {}
-    for name in units_decl["key"]:
+    names = list(units_decl["key"])
+    if units_decl["time"].get("group") and "group." + units_decl["time"]["group"] not in names:
+        names.append("group." + units_decl["time"]["group"])
+    for name in names:
         if name.startswith("group."):
             key[name] = group.get(name[6:]) if isinstance(group, dict) else None
         else:
@@ -686,10 +721,25 @@ def _read_units(rec: Record, kind: Kind) -> None:
 
 
 def units_by_pointer(rec: Record) -> dict:
+    """指し先 → 単位。同じ指し先に中身の違う単位が 2 つ以上ある指し先（番号の重なり）は入れない（`unit_at` で断る）。"""
     out = {}
-    for unit in rec.units:
-        out.setdefault(unit.pointer, unit)
+    for pointer in {u.pointer for u in rec.units}:
+        try:
+            out[pointer] = unit_at(rec, pointer)
+        except RegisterRefused:
+            continue
     return out
+
+
+def unit_at(rec: Record, pointer: str) -> Unit | None:
+    """指し先の単位。無ければ None。同じ指し先に中身の違う単位が 2 つ以上あれば（同じ番号の別々の行）、
+    先頭を黙って選ばずに断る（`register_unit_ambiguous`）。中身まで同じ単位は区別しない（どれも同じ）。"""
+    same = [u for u in rec.units if u.pointer == pointer]
+    if not same:
+        return None
+    if len({canonical([u.group, u.item]) for u in same}) > 1:
+        raise RegisterRefused("register_unit_ambiguous", f"{len(same)} units", candidates=[pointer], record=rec.ref)
+    return same[0]
 
 
 def find_units(rec: Record, key: dict) -> Unit:
@@ -802,13 +852,21 @@ def values_of(rec: Record, kind: Kind, unit: Unit) -> list:
     return out
 
 
-def unit_depend(kind: Kind, unit: Unit, fields: list | None = None) -> str:
-    """単位（行）への判断の依る所: 範囲が行の鍵と同じ値だけ（範囲を別に持つ値は入れない・試験 1 (d)）と、その出典。"""
+def unit_depend(kind: Kind, unit: Unit, question: Question | None = None) -> str:
+    """単位（行）への判断の依る所（設計 §5.1 の指紋の作り方）。
+
+    欄の選び方: 問いが依る欄を宣言していれば、その欄と、状態の欄と理由の種類の欄（`Question.depend_fields`。
+    `not_values` でも外せない）。宣言していなければ、値の欄の全部のうち範囲が行の鍵と同じ物（範囲を別に持つ値は
+    入れない・試験 1 (d)）と、状態の欄と理由の種類の欄。欄ごとに `{"value", "time", "sources"}` で包む。"""
     decl = kind.units
     parts = {}
-    for name in (fields or value_fields(decl, unit)):
-        if name in decl["scope"]["separate"]:
-            continue
+    fields = question.depend_fields() if question is not None else None
+    if fields is None:
+        fields = [k for k in value_fields(decl, unit) if k not in decl["scope"]["separate"]]
+        for extra in ((question.state, question.reason_kind) if question is not None else ()):
+            if extra and extra not in fields:
+                fields.append(extra)
+    for name in fields:
         srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
         parts[name] = {"value": unit.item.get(name), "time": value_time(decl, unit, name), "sources": sorted(srcs)}
     return fp(parts)

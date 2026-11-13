@@ -71,16 +71,26 @@ def _new_id(body: dict) -> str:
 
 # ------------------------------------------------------------------ 対象と依る所
 
-def _locate(vessel: V.Vessel, target: dict):
-    """`(記録, 種類, 単位 or None, 値 or None)`。指し先が無ければ None を含む。"""
+def _locate(vessel: V.Vessel, target: dict, *, strict: bool = False):
+    """`(記録, 種類, 単位 or None, 値 or None)`。指し先が無ければ None を含む。
+
+    同じ指し先に中身の違う単位が 2 つ以上ある（番号の重なり）ときは、`strict` なら断り（`register_unit_ambiguous`）、
+    そうでなければ指し先が無いのと同じに扱う（そこへの判断は効かない）。"""
     try:
         rec = vessel.get(target["record"])
     except RegisterRefused:
+        if strict:
+            raise
         return None, None, None, None
     kind = vessel.kinds[rec.kind]
     unit = value = None
     if target.get("unit"):
-        unit = V.units_by_pointer(rec).get(target["unit"])
+        try:
+            unit = V.unit_at(rec, target["unit"])
+        except RegisterRefused:
+            if strict:
+                raise
+            unit = None
         if unit is None:
             return rec, kind, None, None
         if target.get("value"):
@@ -106,25 +116,27 @@ def current_depend(vessel: V.Vessel, target: dict, question: str, scope_written=
             if value is None:
                 return None
             return value.depend(scope_override=scope_written if value.scope is None else None)
-        return V.unit_depend(kind, unit)
+        return V.unit_depend(kind, unit, V.question_of(kind, question))
     q = V.question_of(kind, question)
     return V.record_depend(kind, rec, q)
 
 
 def make(vessel: V.Vessel, target: dict, question: str, *, by: str, at: str, path: str = "inspection",
          word=None, conclusion=None, scope=None, reason_kind=None, reason_text=None, how=None, until=None,
-         content=None, carries=None) -> dict:
+         content=None, carries=None, source=None) -> dict:
     """今の台帳の版を見て、判断を 1 件つくる（書かない）。`content` を渡すと「確かめた中身そのもの」を持つ
     検収の記録になり、指紋は持たない（効くかは、その中身の指紋が今の依る所と合うかで決まる）。"""
     if path not in PATHS:
         raise RegisterRefused("register_args_invalid", "path")
-    rec, kind, unit, value = _locate(vessel, target)
+    rec, kind, unit, value = _locate(vessel, target, strict=True)
     if rec is None or (target.get("unit") and unit is None) or (target.get("value") and value is None):
         raise RegisterRefused("register_record_missing", "target")
     body = {"schema": SCHEMA, "target": dict(target), "question": question,
             "answer": {"word": word, "conclusion": conclusion, "scope": scope},
             "reason": {"kind": reason_kind, "text": reason_text}, "by": by, "how": how, "at": at, "until": until,
             "path": path, "carries": carries}
+    if source is not None:
+        body["source"] = source
     if target.get("value") and "time" not in body["target"]:
         body["target"]["time"] = value.time
     if content is not None:
@@ -211,14 +223,16 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
     無ければ「範囲が未宣言」。時点は値ごと（取った日は時点の代わりにしない）。"""
     rec = vessel.get(ref)
     kind = vessel.kinds[rec.kind]
-    unit = V.units_by_pointer(rec).get(unit_pointer)
+    unit = V.unit_at(rec, unit_pointer)
     if unit is None:
         raise RegisterRefused("register_record_missing", "unit")
     values = [v for v in V.values_of(rec, kind, unit) if v.name == name]
     if not values:
         raise RegisterRefused("register_record_missing", "value")
     value = values[0]
-    base = {"record": ref, "unit": unit_pointer, "value": name, "time": value.time, "scope_kind": value.scope_kind}
+    missing = value.value is None or value.value == ""
+    base = {"record": ref, "unit": unit_pointer, "value": name, "time": value.time, "scope_kind": value.scope_kind,
+            "missing": missing}
 
     def on_value(t):
         return (t.get("record") == ref and t.get("unit") == unit_pointer and t.get("value") == name
@@ -229,26 +243,47 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
 
     value_js = [j for j in _matching(judgments, on_value, question) if evaluate(vessel, j) == "effective"]
     row_js = [j for j in _matching(judgments, on_unit, question) if evaluate(vessel, j) == "effective"]
-    unit_js = row_js if value.scope_kind == "key" else []
     stale = [j for j in _matching(judgments, lambda t: on_value(t) or on_unit(t), question)
              if evaluate(vessel, j) != "effective"]
-    scope = value.scope
-    if scope is None:
-        written = [(j.get("answer") or {}).get("scope") for j in value_js if (j.get("answer") or {}).get("scope")]
-        scope = written[-1] if written else None
-    effective = value_js + unit_js
-    if value.scope_kind == "separate" and scope is None and (value_js or row_js):
-        # 行への判断はあるが、範囲を別に持つ値には及ばない（範囲の欄も、人が書いた範囲も無い）。
-        return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_undeclared", "scope": None}
-    if not effective:
-        return {**base, "usable": False, "conclusion": "pending", "scope": scope,
+    # 判断ごとに、その判断が言う範囲を 1 つ決める（範囲と結論は同じ 1 つの判断から取る）。
+    #   値への判断: 範囲の欄があればその範囲。無ければ判断に人が書いた範囲。どちらも無ければ範囲が未宣言（使わない）。
+    #   行への判断: 範囲が行の鍵と同じ値にだけ及ぶ（範囲を別に持つ値には及ばない・試験 1 (d)）。
+    scoped = []
+    for j in value_js:
+        said = value.scope if value.scope is not None else (j.get("answer") or {}).get("scope")
+        if value.scope_kind == "separate" and said is None:
+            continue
+        scoped.append((said, j))
+    if value.scope_kind == "key":
+        scoped.extend((value.scope, j) for j in row_js)
+    if not scoped:
+        if value.scope_kind == "separate" and value.scope is None and (value_js or row_js):
+            # 判断はあるが、範囲を別に持つ値に範囲を言っていない（範囲の欄も、人が書いた範囲も無い）。
+            return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_undeclared",
+                    "scope": None}
+        return {**base, "usable": False, "conclusion": "pending", "scope": value.scope,
                 "reason_kind": "no_inspection_for_new_version" if stale else "no_judgment"}
-    last = sorted(effective, key=lambda j: (j.get("at") or "", j["id"]))[-1]
+
+    def latest(pairs):
+        return sorted(pairs, key=lambda p: (p[1].get("at") or "", p[1]["id"]))[-1]
+    pick = latest(scoped)
+    if as_scope is not None:
+        asked = [p for p in scoped if p[0] == as_scope]
+        if not asked:
+            scope, last = pick
+            conclusion, _reason = _conclusion(vessel, last)
+            return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "scope_mismatch",
+                    "scope": scope}
+        pick = latest(asked)
+    scope, last = pick
     conclusion, reason = _conclusion(vessel, last)
+    if conclusion is None:
+        return {**base, "usable": False, "conclusion": "pending", "reason_kind": reason, "scope": scope}
     if as_time is not None and not _same_time(value.time, as_time):
         return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "time_mismatch", "scope": scope}
-    if as_scope is not None and as_scope != scope:
-        return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "scope_mismatch", "scope": scope}
+    if missing:
+        # 欠けを読んだ判断（「ここは空で合っている」）は判断として残すが、値としては使えない。
+        return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "value_missing", "scope": scope}
     return {**base, "usable": conclusion == "good", "conclusion": conclusion, "reason_kind": reason, "scope": scope}
 
 
@@ -276,8 +311,11 @@ def candidates(vessel: V.Vessel, judgments: list) -> list:
 
 def carry(vessel: V.Vessel, j: dict, to_unit: str, *, by: str, at: str, changed_by: str | None) -> dict:
     """人が名指しして、前の判断の元の検収を、新しい指し先へ結ぶ**新しい判断**（前の判断は書き換えない）。
-    中身を変えた者と同じ者は結べない。"""
-    if changed_by is not None and by == changed_by:
+    中身を変えた者と同じ者は結べない。変えた者が分からないとき（`changed_by` が空）は、同じ者でないと確かめられない
+    ので結ばない（変えた者を名指しして呼ぶ）。"""
+    if not isinstance(changed_by, str) or not changed_by.strip():
+        raise RegisterRefused("register_carry_unnamed", "changed_by")
+    if by == changed_by:
         raise RegisterRefused("register_judgment_same_person", "by")
     target = dict(j["target"], unit=to_unit)
     target.pop("time", None)
@@ -302,4 +340,51 @@ def accept_baseline(vessel: V.Vessel, kind_name: str, question: str, *, by: str,
             target = {"record": rec.ref, "unit": obs["unit"]}
             out.append(make(vessel, target, question, by=by, at=at, path="acceptance", word=obs["word"],
                             reason_kind=obs["reason_kind"]))
+    return out
+
+
+# ------------------------------------------------------------------ 検収の記録を持つ表から判断を読む
+
+def inspections(vessel: V.Vessel) -> list:
+    """種類の宣言 `inspects` を持つ表（こぴちゃの中央の判断）の行ごとに、`follow` の指す欄を順にたどって
+    対象の記録を見つけ、行の中身を「確かめた中身そのもの」として持つ検収の記録にする（書かない）。
+
+    中身の欄のどれかが空の行は、版を示せないので判断にしない。たどった先が無い・2 つ以上に分かれる行も、
+    黙って選ばずに判断にしない（`links` の指す先の切れで見える）。効くかは `evaluate`（中身の指紋が今の依る所と
+    合うか）で決まる。"""
+    out = []
+    for rec in vessel.all_records:
+        kind = vessel.kinds[rec.kind]
+        spec = kind.inspects
+        if spec is None or rec.id is None or rec.values is None:
+            continue
+        content = {}
+        for to_field, from_field in spec["content"].items():
+            raw = rec.values.get(from_field)
+            if raw in (None, ""):
+                content = None
+                break
+            content[to_field] = raw
+        if content is None:
+            continue
+        here = [rec]
+        for step in spec["follow"]:
+            nxt = []
+            for one in here:
+                for pointer in vessel.kinds[one.kind].pointers:
+                    if pointer.get("field") != step:
+                        continue
+                    for target_id in V.pointer_targets(one, pointer):
+                        found = vessel.records.get(f"{pointer['to']}:{target_id}")
+                        if found is not None:
+                            nxt.append(found)
+            here = nxt
+        refs = sorted({r.ref for r in here})
+        if len(refs) != 1:
+            continue
+        target_kind = vessel.kinds[here[0].kind]
+        q = V.question_of(target_kind, spec["question"])
+        word = content.get(q.state) if q is not None and q.state else None
+        out.append(make(vessel, {"record": refs[0]}, spec["question"], by=spec["by"], at=None, word=word,
+                        content=content, source=rec.ref))
     return out
