@@ -157,6 +157,44 @@ def test_スマレジのGETは3つの道と決まったfieldsだけ():
         _refused("GET", url)
 
 
+def test_柵_要る引数の無い問い合わせは打たない():
+    """監査 5.19.0 直したほうがよい 5 の a: スマレジは fields が無いと全部の欄（原価・店舗の住所と電話）が返る。"""
+    pf = urllib.parse.quote(wire.SMAREGI_FIELDS["products"], safe="")
+    sf = urllib.parse.quote(wire.SMAREGI_FIELDS["store"], safe="")
+    kf = urllib.parse.quote(wire.SMAREGI_FIELDS["stock"], safe="")
+    for url in (SM + f"/{C}/pos/products", SM + f"/{C}/pos/products?limit=1000&page=1",
+                SM + f"/{C}/pos/products?fields={sf}", SM + f"/{C}/pos/products?fields={kf}&limit=1000",
+                SM + f"/{C}/pos/stores/1", SM + f"/{C}/pos/stores/1?fields={pf}",
+                SM + f"/{C}/pos/stock?store_id=1&product_id=2", SM + f"/{C}/pos/stock?fields={kf}&store_id=1",
+                SM + f"/{C}/pos/stock?fields={kf}&product_id=2", SM + f"/{C}/pos/stock?fields={sf}&store_id=1&product_id=2",
+                SQ + "/v2/catalog/list", SQ + "/v2/catalog/list?cursor=abc", SQ + "/v2/inventory/VAR1"):
+        _refused("GET", url)
+    wire.check_request("GET", SM + f"/{C}/pos/products?fields={pf}")
+    wire.check_request("GET", SQ + "/v2/inventory/VAR1?location_ids=L1")
+
+
+@pytest.mark.parametrize("host, path", [
+    ("connect.squareup.com", "/v2/locations"),
+    ("api.smaregi.jp", f"/{C}/pos/stores/1?fields=storeId%2CstoreName"),
+])
+def test_柵_レジのホストは表と1字も違わないものだけ(host, path):
+    """監査 5.19.0 直したほうがよい 5 の b: 鍵を載せる先を決める柵（後ろ一致・サンドボックス・.dev を通さない）。"""
+    wire.check_request("GET", f"https://{host}{path}")
+    label, _, rest = host.partition(".")
+    for bad in (f"x{host}", f"evil.{host}", f"{host}.evil.example", f"{host}.", host.upper(), f"{host}:443", f"{host}:8443",
+                f"u@{host}", f"{label}-x.{rest}", f"{label}.{rest.split('.')[0]}.dev",
+                f"{label}.{rest.split('.')[0]}sandbox.{rest.split('.', 1)[1]}", f"x.{rest}"):
+        _refused("GET", f"https://{bad}{path}")
+
+
+def test_柵_スマレジの鍵を取るホストは表と1字も違わないものだけ():
+    url = f"/app/{C}/token"
+    wire.check_request("POST", SMID + url, _token_body())
+    for bad in ("id.smaregi.dev", "xid.smaregi.jp", "evil.id.smaregi.jp", "id.smaregi.jp.evil.example", "ID.SMAREGI.JP",
+                "id.smaregi.jp:443", "u@id.smaregi.jp", "x.smaregi.jp", "api.smaregi.jp", "id-sandbox.smaregi.jp"):
+        _refused("POST", f"https://{bad}{url}", _token_body())
+
+
 def test_スマレジの鍵を取る口はBasicで本文を自分で組む():
     seen = []
     wire.smaregi_token(C, "cid", "sec", transport=lambda *a: seen.append(a) or (200, b"{}"))

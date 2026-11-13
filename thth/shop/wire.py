@@ -151,6 +151,17 @@ ROUTES = {
                    "patterns": ((_POST, SMAREGI_TOKEN_PATH, frozenset()),),
                    "params": frozenset()},
 }
+# 道ごとに**要る**引数（道 か 道の形 → 名前 → 受ける値か形）。無ければ打たない（監査 5.19.0 直したほうがよい 5 の a）。
+# スマレジは `fields` が無いと全部の欄（原価・店舗の住所と電話など）が返るので、3 つの道とも、その道の `fields` と
+# 1 字も違わない値が要る。在庫は 1 つの店舗の 1 つの商品だけ。Square の品の一覧は `types`、在庫は `location_ids` が要る。
+REQUIRED = {
+    "square": {SQUARE_CATALOG_PATH: {"types": SQUARE_TYPES},
+               SQUARE_INVENTORY_PATH: {"location_ids": SQUARE_ID}},
+    "smaregi": {SMAREGI_PRODUCTS_PATH: {"fields": frozenset((SMAREGI_FIELDS["products"],))},
+                SMAREGI_STORE_PATH: {"fields": frozenset((SMAREGI_FIELDS["store"],))},
+                SMAREGI_STOCK_PATH: {"fields": frozenset((SMAREGI_FIELDS["stock"],)),
+                                     "store_id": re.compile(r"[0-9]{1,9}\Z"), "product_id": re.compile(r"[0-9]{1,15}\Z")}},
+}
 TIMEOUT = 30
 MAX_BODY = 5_000_000
 
@@ -230,6 +241,14 @@ def _allowed_names(route: dict, method: str, path: str) -> frozenset | None:
     return None
 
 
+def _required_for(kind: str, path: str) -> dict:
+    """その道に要る引数（名前 → 受ける値か形）。要る物が無い道は空。"""
+    for key, wanted in REQUIRED.get(kind, {}).items():
+        if (key == path) if isinstance(key, str) else bool(key.fullmatch(path)):
+            return wanted
+    return {}
+
+
 def _value_ok(rule, value: str) -> bool:
     if isinstance(rule, frozenset):
         return value in rule
@@ -299,6 +318,9 @@ def check_request(method: str, url: str, body: bytes | None = None) -> None:
         raise _blocked()
     values = route.get("values", {})
     if any(name in values and not _value_ok(values[name], value) for name, value in pairs):
+        raise _blocked()
+    given = dict(pairs)
+    if any(name not in given or not _value_ok(rule, given[name]) for name, rule in _required_for(kind, parts.path).items()):
         raise _blocked()
     if method == "GET":
         if body is not None:

@@ -760,6 +760,20 @@ def _pos_methods(kind) -> set:
     return {m for m, _p in route["paths"]} | {m for m, _p, _n in route.get("patterns", ())}
 
 
+def _smaregi_fields_required(name: str) -> bool:
+    """網の柵が、その道の `fields`（1 字も違わない値）の無い問い合わせを打たない（監査 5.19.0 の 5 の a）。"""
+    path = {"products": "/c1/pos/products", "store": "/c1/pos/stores/1", "stock": "/c1/pos/stock"}[name]
+    base = f"https://{shop_wire.SMAREGI_API_HOST}{path}"
+    extra = "&store_id=1&product_id=2" if name == "stock" else ""
+    try:
+        shop_wire.check_request("GET", base + "?" + extra.lstrip("&") if extra else base)
+        return False
+    except shop_wire.StoreRefused:
+        pass
+    shop_wire.check_request("GET", base + "?fields=" + shop_wire.SMAREGI_FIELDS[name] + extra)
+    return True
+
+
 def pos_facts():
     from thth.shop import pos as shop_pos
     from thth.shop import smaregi as shop_smaregi
@@ -803,11 +817,12 @@ def pos_facts():
         ("スマレジの GET・日本語", f"<code>{shop_wire.SMAREGI_API_HOST}</code> への GET だけで、道は {sm_n} つです"),
         ("スマレジの店舗は ID と名前だけ（shop/wire.SMAREGI_FIELDS）",
          "the store (asking only for its ID and name)"
-         if shop_wire.SMAREGI_FIELDS["store"] == "storeId,storeName" else "店舗の欄が増えた"),
+         if shop_wire.SMAREGI_FIELDS["store"] == "storeId,storeName"
+         and _smaregi_fields_required("store") else "店舗の欄が増えた（か、fields の無い問い合わせを網の柵が通す）"),
         ("スマレジの商品の欄（shop/wire.SMAREGI_FIELDS）",
          "asking only for the ID, category, name, price and whether stock is counted"
          if shop_wire.SMAREGI_FIELDS["products"] == "productId,categoryId,productName,price,stockControlDivision"
-         else "商品の欄が増えた"),
+         and _smaregi_fields_required("products") else "商品の欄が増えた（か、fields の無い問い合わせを網の柵が通す）"),
         ("スマレジの取った鍵を残さない（smaregi.py は台帳と鍵のファイルに書かない）",
          "it uses that token for the one command and does not keep it"
          if "ledger" not in (Path(shop_smaregi.__file__).read_text(encoding="utf-8")) else "取った鍵を書く道がある"),
