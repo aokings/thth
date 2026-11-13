@@ -647,7 +647,8 @@ def test_試験2d_止まった入れ替えの間にほかの者が書いた枚�
     reg, bundle, before_fp, _after = setup_merge(capsys, env)
     assert stopped_merge(env, reg, bundle, after=1) == 9
     plan = K.pending(str(reg))
-    untouched = next(e["path"] for e in plan["entries"] if sha_of(reg / e["path"]) == e["old"])
+    untouched = next(e["path"] for e in plan["entries"]
+                     if (reg / e["path"]).exists() and sha_of(reg / e["path"]) == e["old"])
     write(reg / untouched, "id\nほかの者\n")
     rc_, value, _ = jrun(capsys, "register", "resume", str(reg), "--continue", "--by", "b")
     assert rc_ != 0 and value["code"] == "register_batch_conflict" and value["path"] == untouched

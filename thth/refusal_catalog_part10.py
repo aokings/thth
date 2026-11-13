@@ -328,10 +328,13 @@ ENTRIES = {
     "register_adopt_unusable": _entry(
         "取り込みか戻す出口か束の、フォルダの組み合わせが使えません（1 行目の（）の語: source は元が無い・"
         "inside は片方がもう片方の中・not_empty は書き先が空でない・other_source は台帳が別の元から取り込まれた・"
-        "symlink は範囲の中に symlink がある・thth_in_source は範囲が .thth/ を含む・plan は範囲の JSON の形）。"
-        "元には何も書いていません。",
+        "symlink は範囲の中か範囲の道の途中か、書き先とその .thth/ に symlink がある・thth_in_source は範囲が .thth/ を"
+        "含む・plan は範囲の JSON の形・spelling は範囲の道の綴りが実在の綴りと大文字小文字か Unicode の正規化で違う・"
+        "too_large は種類の宣言の上限（既定 64 KB）を超える枚がある）。元にも台帳にも何も書いていません。",
         "語に合わせて直してください: 書き先は新しい空のフォルダにする・元の repo の外に置く・symlink と .thth/ は"
-        "範囲の exclude に足す・範囲は {\"schema\": \"thth.adopt_plan/1\", \"include\": [...], \"exclude\": [...]} の形にする。",
+        "範囲の exclude に足す（書き先の symlink は本物のフォルダにする）・spelling は --json の actual の綴りで範囲を"
+        "書く・too_large は --json の files の種類の宣言に max_bytes を書く・範囲は {\"schema\": \"thth.adopt_plan/1\", "
+        "\"include\": [...], \"exclude\": [...]} の形にする。",
         "thth register adopt <元> --to <新しいフォルダ> --plan <範囲.json> --by <名前>",
         "影の台帳は ~/Documents/THTH/shadow/<メディア>/ のように repo の外の決まった置き場に作ると、元と取り違えません。"),
     "register_batch_pending": _entry(
@@ -344,9 +347,12 @@ ENTRIES = {
         "二重に進めずに済みます。"),
     "register_batch_conflict": _entry(
         "入れ替えの途中か前に、台帳のファイルが器の知らない中身に変わっていました（1 行目の（）: moved は前でも後でも"
-        "ない中身・base は束を作った時から台帳が動いた・symlink は置き換える先が symlink）。黙って上書きせずに止めました。",
-        "--json の path のファイルを誰が書いたかを確かめ、その書き込みを済ませてから、thth register keep で今を控え、"
-        "束を今の台帳から作り直して打ち直してください。",
+        "ない中身・base は束を作った時から台帳が動いた・symlink は書く先か読む先の途中の段（.thth/ の中も）が symlink で、"
+        "台帳の外を指しうる・busy は読んでいる間に入れ替えが何度も始まった）。黙って上書きせず、台帳の外にも書かずに"
+        "止めました。",
+        "moved と base は、--json の path のファイルを誰が書いたかを確かめ、その書き込みを済ませてから、thth register keep "
+        "で今を控え、束を今の台帳から作り直して打ち直してください。symlink は、--json の path の symlink を本物の"
+        "フォルダかファイルに置き換えてから打ち直してください。busy は、入れ替えが済んでから打ち直してください。",
         "thth register diff <台帳> last..now",
         "元の形式の道具と器の入れ替えを同じ時間に走らせないと、この断りは出ません。"),
     "register_kept_missing": _entry(

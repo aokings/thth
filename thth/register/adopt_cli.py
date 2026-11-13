@@ -132,8 +132,9 @@ def cmd_keep(args) -> int:
     by = _by(args)
     K.refuse_if_pending(root)
     entries = K.view(root)
-    fp = K.save_snapshot(root, entries, what="keep", by=by, at=_at())
-    value = {"fp": fp, "files": len(entries)}
+    kept = K.save_snapshot(root, entries, what="keep", by=by, at=_at())
+    fp = kept["fp"]
+    value = {**kept, "files": len(entries)}
     if args.json:
         _print(value)
     else:

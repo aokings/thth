@@ -2,7 +2,10 @@
 
 - `adopt`: 元のフォルダ（各メディアの repo）から、取り込む物の範囲（`thth.adopt_plan/1` の JSON）に入るファイルを、
   元の名前・元のバイトのまま台帳のフォルダに置く。**元には 1 バイトも書かない**（開くのは読むためだけ）。
-  2 回め（取り込み直し・片道）は、変わった物と消えた物だけを、まとめての入れ替えで入れ替える。
+  2 回め（取り込み直し・片道）は、変わった物と消えた物（実行の印だけの変化も）を、まとめての入れ替えで入れ替える。
+  止まった取り込み直しは、同じ命令で続きになる。次の物は、書く前に断る: 範囲に入りうる symlink（固定の道の途中の
+  段も、型の頭のフォルダも）・実在と綴りの違う範囲の道（大文字小文字・Unicode の正規化）・種類の宣言の上限
+  （既定 64 KB）を超える枚・書き先とその `.thth/` の中の symlink。
 - `restore`: 台帳の全部（か、控えた前の版）を、元の場所・名前・バイトで別のフォルダに書く。目録の指紋が取り込んだ
   時の元の目録の指紋と同じなら、数・名前・sha256 が全部同じ（進みの欄も含めて、バイトで比べるので）。
 - `diff`: 控えた 2 つの時点（か今）の、足した・変わった・退役した・消えた記録。番号が消えたら赤。台帳が git の外でも
@@ -23,6 +26,7 @@ import functools
 import json
 import os
 import tempfile
+import unicodedata
 
 from . import form
 from . import keep as K
@@ -121,7 +125,7 @@ def _adopt_path(root: str) -> str:
 
 
 def read_adopt(root: str) -> dict | None:
-    path = _adopt_path(root)
+    path = K.guard(root, _adopt_path(root))
     if not os.path.exists(path):
         return None
     try:
@@ -134,25 +138,81 @@ def read_adopt(root: str) -> dict | None:
     return value
 
 
-def _copy_decl(decl: str, to: str) -> list:
-    """種類の宣言・憲法・番号の表を、元の repo でなく台帳の `.thth/` に置く（宣言は先に読んで確かめる）。"""
-    V.load_declarations(to, decl)
-    copied = []
+def _decl_files(decl: str) -> list:
+    """宣言の置き場の `(名, 中身)`。種類の宣言・憲法・番号の表を、元の repo でなく台帳の `.thth/` に置くために読む。
+    symlink の枚は断る（置き場の外を読まない）。"""
+    out = []
     kinds_dir = os.path.join(decl, V.KINDS_DIR)
     names = [f"{V.KINDS_DIR}/{n}" for n in sorted(os.listdir(kinds_dir))
              if n.endswith(".json") and not n.startswith(".")] if os.path.isdir(kinds_dir) else []
-    names += [n for n in K.DECL_FILES if os.path.isfile(os.path.join(decl, n))]
+    names += [n for n in K.DECL_FILES if os.path.lexists(os.path.join(decl, n))]
     for name in names:
-        with open(os.path.join(decl, *name.split("/")), "rb") as f:
-            data = f.read()
-        K._atomic_write(os.path.join(K.thth_dir(to), *name.split("/")), data)
-        copied.append(name)
-    return copied
+        path = os.path.join(decl, *name.split("/"))
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise RegisterRefused("register_kind_invalid", "symlink", declaration=name)
+        with open(path, "rb") as f:
+            out.append((name, f.read()))
+    return out
 
 
 def source_catalog(source: str, plan: dict) -> list:
     """元の目録（読むだけ）。取り込む物の範囲に入る物だけ。"""
     return K.dir_catalog(source, select=selector(plan), tops=tops(plan))
+
+
+def reaches(plan: dict, rel: str) -> bool:
+    """フォルダ `rel` の下に、範囲に入りうる道があるか（symlink のフォルダを、黙って飛ばさないため）。"""
+    parts = rel.split("/")
+
+    def under(pattern: str) -> bool:
+        pat = pattern.split("/")
+
+        @functools.lru_cache(maxsize=None)
+        def m(i: int, j: int) -> bool:
+            if j == len(parts):
+                return i < len(pat)
+            if i == len(pat):
+                return False
+            if pat[i] == "**":
+                return m(i + 1, j) or m(i, j + 1)
+            return fnmatch.fnmatchcase(parts[j], pat[i]) and m(i + 1, j + 1)
+
+        return m(0, 0)
+
+    if not any(under(p) for p in plan["include"]):
+        return False
+    # 除く型が、そのフォルダの下の 1 段めにも 2 段めにも当たれば、フォルダごと除いたと見る（node_modules/** など）。
+    probes = (rel + "/\x00a", rel + "/\x00a/\x00b")
+    return not any(all(glob_match(p, probe) for probe in probes) for p in plan["exclude"])
+
+
+def _spelling(root: str, rel: str):
+    """道 `rel` の実在の綴り。どの段も同じ綴りで在れば（か、無ければ）None。綴りの違う物（大文字小文字・
+    Unicode の正規化）だけが在れば、その実在の綴り。"""
+    current, actual, differs = root, [], False
+    for part in rel.split("/"):
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return None
+        if part not in names:
+            want = unicodedata.normalize("NFC", part).casefold()
+            hits = [n for n in names if unicodedata.normalize("NFC", n).casefold() == want]
+            if len(hits) != 1:
+                return None
+            part, differs = hits[0], True
+        actual.append(part)
+        current = os.path.join(current, part)
+    return "/".join(actual) if differs else None
+
+
+def _too_large(kinds: dict, entries: list) -> list:
+    out = []
+    for e in entries:
+        for kind in kinds.values():
+            if V._matches(kind, e["path"]) and e["size"] > kind.max_bytes:
+                out.append({"path": e["path"], "size": e["size"], "kind": kind.name, "max_bytes": kind.max_bytes})
+    return out
 
 
 def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | None = None) -> dict:
@@ -162,74 +222,117 @@ def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | Non
         raise RegisterRefused("register_adopt_unusable", "source")
     if _inside(to, source) or _inside(source, to):
         raise RegisterRefused("register_adopt_unusable", "inside")
+    # 書き先とその器の置き場が symlink なら、書く前に断る（台帳の外、たとえば元の repo へ書かない）。
+    if os.path.islink(to):
+        raise RegisterRefused("register_adopt_unusable", "symlink", links=["."])
+    if os.path.islink(K.thth_dir(to)):
+        raise RegisterRefused("register_adopt_unusable", "symlink", links=[K.THTH])
+    if os.path.isdir(to):
+        K.check_thth(to)
     record = read_adopt(to) if os.path.isdir(to) else None
     if record is None and os.path.exists(to):
-        if os.path.islink(to) or not os.path.isdir(to) or os.listdir(to):
+        if not os.path.isdir(to) or os.listdir(to):
             raise RegisterRefused("register_adopt_unusable", "not_empty")
     if record is not None and os.path.realpath(record.get("source", "")) != os.path.realpath(source):
         raise RegisterRefused("register_adopt_unusable", "other_source")
     select = selector(plan)
-    # 先に道だけを見る（書く前に、置けない物と器の置き場を断る）。
+    starts = tops(plan)
+    # 綴りの違う道（大文字小文字・Unicode の正規化）で範囲を書くと、その綴りで置いてしまう: 実在の綴りを言って断る。
+    for top in starts:
+        actual = _spelling(source, top) if top else None
+        if actual is not None:
+            raise RegisterRefused("register_adopt_unusable", "spelling", asked=top, actual=actual)
+    # 先に道だけを見る（書く前に、置けない物と器の置き場を断る）。範囲に入りうる symlink は、固定の道の途中の段も、
+    # 型の頭のフォルダも断る（辿れば範囲の外を取り込み、辿らなければ黙って 0 になる）。
     links, reserved = [], []
-    for rel, _path, is_link in K.walk(source, tops(plan), skip_thth=False):
+    for rel, path, is_link in K.walk(source, starts, skip_thth=False):
+        if is_link:
+            # 枚を指す symlink は範囲に当たるときだけ、フォルダを指す（か行き先の無い）symlink は下に範囲が届くときも断る。
+            if select(rel) or (not os.path.isfile(path) and reaches(plan, rel)):
+                links.append(rel)
+            continue
         if not select(rel):
             continue
-        if is_link:
-            links.append(rel)
-        elif rel.split("/")[0] == K.THTH:
+        if rel.split("/")[0] == K.THTH:
             reserved.append(rel)
     if links:
         raise RegisterRefused("register_adopt_unusable", "symlink", links=links[:20], count=len(links))
     if reserved:
         raise RegisterRefused("register_adopt_unusable", "thth_in_source", paths=reserved[:5])
     if decl is not None:
-        V.load_declarations(source, decl)
-    os.makedirs(K.thth_dir(to), exist_ok=True)
-    if record is None:
-        record = {"schema": ADOPT_SCHEMA, "source": source, "plan": plan, "adopted": []}
-        K._write_json(_adopt_path(to), record)
-    copied = _copy_decl(decl, to) if decl is not None else []
+        kinds = V.load_declarations(source, decl)["kinds"]
+        decl_files = _decl_files(decl)
+    else:
+        kinds = V.load_declarations(to)["kinds"] if os.path.isdir(to) and V.has_declarations(to) else {}
+        decl_files = []
     # 元を 1 回だけ読み、読んだバイトをそのまま置く（読みながら元が動いても、置いた物と目録は同じ読みから）。
     desired, before, executable = {}, [], {}
-    for rel, path, _link in K.walk(source, tops(plan)):
-        if not select(rel):
+    for rel, path, is_link in K.walk(source, starts):
+        if is_link or not select(rel):
             continue
         entry, data = K.read_entry(path, rel)
         desired[rel] = data
         executable[rel] = entry["x"]
         before.append(entry)
-    for entry in K.dir_catalog(to):
-        if entry["path"] not in desired:
-            desired[entry["path"]] = None  # 元から消えた物（片道なので、台帳からも除く。前の中身は控えに残る）
+    large = _too_large(kinds, before)
+    if large:
+        # 黙って切らない: 取り込みの時点で断る（種類の宣言に max_bytes を書けば通る）。
+        raise RegisterRefused("register_adopt_unusable", "too_large", files=large[:20], count=len(large))
+    if os.path.isdir(to):
+        for entry in K.dir_catalog(to):
+            if entry["path"] not in desired:
+                desired[entry["path"]] = None  # 元から消えた物（片道なので、台帳からも除く。前の中身は控えに残る）
+        for e in (K.pending(to) or {}).get("entries", []):
+            if e["new"] is None and e["path"] not in desired:
+                desired[e["path"]] = None  # 止まった取り込み直しで、もう除いた物（同じ命令で続きにする）
     removed = sum(1 for v in desired.values() if v is None)
+    # ここから書く（書く先はどれも台帳の中で、symlink の段を通らない）。
+    os.makedirs(to, exist_ok=True)
+    K.makedirs(to, K.thth_dir(to))
+    if record is None:
+        record = {"schema": ADOPT_SCHEMA, "source": source, "plan": plan, "adopted": []}
+        K._write_json(to, _adopt_path(to), record)
+    copied = []
+    for name, data in decl_files:
+        K._atomic_write(to, os.path.join(K.thth_dir(to), *name.split("/")), data)
+        copied.append(name)
     first = not record["adopted"]
     result = K.run(to, desired, what="adopt" if first else "readopt", by=by, at=at,
                    executable=executable)
     after_view = K.view(to)
     fp = K.catalog_fp(after_view)
     if result["fp"] is None:
-        # 変わる物が無くても、取り込んだ時点として控える（取り込みのたびに版を控える・§5.5）。
-        result["fp"] = K.save_snapshot(to, after_view, what="readopt", by=by, at=at)
+        # 変わる物が無くても、取り込んだ時点として控える（取り込みのたびに版を控える・§5.5）。宣言だけを
+        # 足したときは、宣言の入った別の控えになる。
+        result.update(K.save_snapshot(to, after_view, what="readopt", by=by, at=at))
     source_fp = K.catalog_fp(before)
     source_after = K.catalog_fp(source_catalog(source, plan))
     record["plan"] = plan
-    record["adopted"].append({"at": at, "by": by, "fp": fp, "source_fp": source_fp, "files": len(before)})
-    K._write_json(_adopt_path(to), record)
+    record["adopted"].append({"at": at, "by": by, "fp": fp, "snapshot": result.get("snapshot"),
+                              "source_fp": source_fp, "files": len(before)})
+    K._write_json(to, _adopt_path(to), record)
     return {"register": to, "source": source, "files": len(before), "bytes": sum(e["size"] for e in before),
-            "fp": fp, "source_fp": source_fp, "source_fp_after": source_after, "source_moved": source_after != source_fp,
-            "same": fp == source_fp, "changed": result.get("applied", 0), "removed": removed,
-            "continued": result.get("continued", False), "batch": result.get("batch"), "decl": copied, "first": first}
+            "fp": fp, "snapshot": result.get("snapshot"), "source_fp": source_fp, "source_fp_after": source_after,
+            "source_moved": source_after != source_fp, "same": fp == source_fp, "changed": result.get("applied", 0),
+            "removed": removed, "continued": result.get("continued", False), "batch": result.get("batch"),
+            "decl": copied, "first": first}
 
 
 # ------------------------------------------------------------------ 戻す出口
 
+def _row(e: dict) -> tuple:
+    return e["path"], e["sha256"], e["size"], bool(e.get("x", False))
+
+
 def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
-    """台帳の全部（か控えた前の版）を、元の場所・名前・バイトで `to` に書く（手元に書くだけ）。
+    """台帳の全部（か控えた前の版）を、元の場所・名前・バイト・実行の印で `to` に書く（手元に書くだけ）。
     入れ替えの段取りが残っていれば、入れ替えの前の姿を書く（器の読み手は前か後のどちらかしか見せない）。"""
     to = os.path.abspath(os.path.expanduser(to))
     if _inside(to, root) or _inside(root, to):
         raise RegisterRefused("register_adopt_unusable", "inside")
-    if os.path.exists(to) and (os.path.islink(to) or not os.path.isdir(to) or os.listdir(to)):
+    if os.path.islink(to):
+        raise RegisterRefused("register_adopt_unusable", "symlink", links=["."])
+    if os.path.exists(to) and (not os.path.isdir(to) or os.listdir(to)):
         raise RegisterRefused("register_adopt_unusable", "not_empty")
     if at_snapshot is not None:
         snap = K.load_snapshot(root, at_snapshot)
@@ -238,10 +341,10 @@ def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
         entries = K.view(root)
     os.makedirs(to, exist_ok=True)
     for e in entries:
-        K._put_file(K.full(to, e["path"]), K.view_bytes(root, e), e.get("x", False))
+        K.put_file(to, e["path"], K.view_bytes(root, e), e.get("x", False))
     written = K.dir_catalog(to)
     fp = K.catalog_fp(entries)
-    if K.catalog_fp(written) != fp:
+    if sorted(map(_row, written)) != sorted(map(_row, entries)):
         raise RegisterRefused("register_batch_conflict", "restore_differs")
     return {"to": to, "files": len(entries), "bytes": sum(e["size"] for e in entries), "fp": fp,
             "pending": K.pending(root) is not None, "snapshot": at_snapshot}
@@ -252,25 +355,29 @@ def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
 def _side(root: str, name: str, tmp: str):
     """`(目録, 器として読んだ台帳)`。`now` は今（段取りが残っていれば前の姿）。ほかは控えた目録。"""
     if name == "now":
-        entries = K.view(root)
-        if K.pending(root) is None:
-            return entries, V.open_vessel(root)
-        into = os.path.join(tmp, "now")
-        os.makedirs(into)
-        for e in entries:
-            K._put_file(K.full(into, e["path"]), K.view_bytes(root, e), False)
-        for e in K.decl_entries(root, store=False):
-            K._put_file(os.path.join(into, K.THTH, *e["path"].split("/")), _read_decl(root, e["path"]), False)
-        return entries, V.open_vessel(into)
+        K.check_thth(root)
+
+        def read():
+            # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。
+            entries = K._view_once(root)
+            if K.pending(root) is None:
+                return entries, V.open_vessel(root)
+            into = tempfile.mkdtemp(prefix="now-", dir=tmp)
+            for e in entries:
+                K.put_file(into, e["path"], K.view_bytes(root, e), False)
+            for e in K.decl_entries(root, store=False):
+                K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
+            return entries, V.open_vessel(into)
+
+        return K.consistent(root, read)
     snap = K.load_snapshot(root, name)
-    into = os.path.join(tmp, snap["fp"][:16])
-    os.makedirs(into, exist_ok=True)
+    into = tempfile.mkdtemp(prefix="kept-", dir=tmp)
     K.materialize(root, snap, into)
     return snap["files"], V.open_vessel(into)
 
 
 def _read_decl(root: str, rel: str) -> bytes:
-    with open(os.path.join(K.thth_dir(root), *rel.split("/")), "rb") as f:
+    with open(K.guard(root, os.path.join(K.thth_dir(root), *rel.split("/"))), "rb") as f:
         return f.read()
 
 
