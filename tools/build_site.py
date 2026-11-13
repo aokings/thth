@@ -296,7 +296,7 @@ PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
-REGISTER_MANAGED = ("confirmed", "confirmed_at")
+REGISTER_MANAGED = ("confirmed", "confirmed_at", "synced_on", "synced_row")
 # 問いの記録のファイルの名前（`thth/register/questions.LOG_FILE`）と、聞く拍子の数（`thth/register/holes`）。
 REGISTER_QUESTION_LOG = "問いの記録.jsonl"
 REGISTER_ASK_PER_DAY = 3
@@ -651,6 +651,14 @@ def build_privacy() -> str:
         f"again within {REGISTER_ASK_GAP_DAYS} days or after the owner said no. THTH does not send the owner any "
         "message itself. The questions and answers are added to the question log in the owner's register; THTH's "
         "operator does not hold them. An answer alone does not confirm opening hours or a temporary closure.</p>")
+    add("<p>For the other places where the shop appears, such as Google Maps, Tabelog or Hot Pepper Gourmet, the "
+        "register keeps one row per place. <code>thth register paste</code> makes the text to paste there from a "
+        "confirmed closure, change of hours or event, and the owner pastes it into that place themselves. THTH does "
+        "not read those places' pages, does not sign in to their admin screens and sends them nothing. When the owner "
+        "says it is pasted, THTH writes which row and which contents were pasted into the place's row. The address of "
+        "the place's page and who manages it are kept out of the text. If the owner copies the place's current text "
+        "into <code>thth register compare</code>, THTH shows where its dates and times differ from the register and "
+        "does not keep the copied text.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
     add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
@@ -1164,6 +1172,12 @@ def build_privacy() -> str:
         f"アシスタントが会話の中で持ち主に聞きます。1 日 {REGISTER_ASK_PER_DAY} 問までで、同じことは {REGISTER_ASK_GAP_DAYS} 日"
         "空け、持ち主が違うと言ったことは聞き直しません。THTH が持ち主に直接知らせを送ることはありません。聞いた問いと答えは"
         "持ち主の台帳の問いの記録に足し、運営者は預かりません。答えだけでは、営業の時間と臨時の休みを認めたことにしません。</p>")
+    add("<p>店の情報が載っているほかの場所（Google マップ・食べログ・ホットペッパーグルメなど）は、場所ごとに台帳の 1 枚に"
+        "します。<code>thth register paste</code> は、認めた臨時の休み・営業の時間の変わり・催しから、その場所に貼る文を作り、"
+        "貼るのは持ち主です。THTH はそれらの場所の頁を読まず、管理画面に入らず、何も送りません。持ち主が貼ったと言えば、"
+        "どの行のどの中身を貼ったかを場所の行に書きます。場所の頁の URL と、誰が管理するかは、貼る文に入れません。持ち主が"
+        "その場所の今の文を写して <code>thth register compare</code> に渡せば、日付と時刻が台帳と違う所を見せ、写した文は"
+        "残しません。</p>")
 
     add("<h2>WordPress の記事</h2>")
     add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"

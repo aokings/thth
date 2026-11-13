@@ -110,6 +110,17 @@ def _answer_respects_two_stage() -> bool:
     return "kinds.two_stage(row.kind)" in inspect.getsource(register_cli.cmd_answer)
 
 
+def _register_paste_offline() -> bool:
+    """外の場所に貼る束（段 4）: places と paste・pasted・compare の口が網の部品も書く部品も持たず、compare は写した文を残さない。"""
+    import inspect
+    from thth.register import cli as register_cli, places as register_places
+    source = inspect.getsource(register_places)
+    compare = inspect.getsource(register_cli.cmd_compare)
+    return (not any(word in source for word in ("urllib", "requests", "http.client", "socket"))
+            and "write" not in compare and "open(" not in compare
+            and register_kinds.private_by_default("place") == {"url", "admin_by"})
+
+
 def _register_fields_en() -> str:
     names = [f"<code>{name}</code>" for name in register_form.MANAGED]
     return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
@@ -308,6 +319,15 @@ def facts() -> list[tuple[str, str]]:
          f"{register_holes.ASK_GAP_DAYS} days"),
         ("聞く数の上限・日本語",
          f"1 日 {register_holes.ASK_MAX_PER_DAY} 問までで、同じことは {register_holes.ASK_GAP_DAYS} 日"),
+        ("外の場所の頁を読まず貼る文だけ作る（register/places・cli.cmd_compare）",
+         "does not read those places' pages, does not sign in to their admin screens and sends them nothing"
+         if _register_paste_offline() else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("外の場所の頁を読まず貼る文だけ作る・日本語",
+         "THTH はそれらの場所の頁を読まず、管理画面に入らず、何も送りません" if _register_paste_offline()
+         else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("比べた文を残さない（register/cli.cmd_compare）",
+         "does not keep the copied text" if _register_paste_offline() else "写した文を残す"),
+        ("比べた文を残さない・日本語", "写した文は残しません" if _register_paste_offline() else "写した文を残す"),
         ("答えだけでは二段の種類を認めない（register/cli.cmd_answer）",
          "An answer alone does not confirm opening hours or a temporary closure"
          if _answer_respects_two_stage() else "答えで営業の時間を認めてしまう"),
