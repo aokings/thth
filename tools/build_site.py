@@ -295,6 +295,23 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5.14.5 の直しと 5.15.0 のネットショップの節と 5.16.0 の WordPress の節も同じ日（出す日がずれたら直す）。前: 2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
+# 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
+REGISTER_MANAGED = ("confirmed", "confirmed_at", "synced_on", "synced_row")
+# 問いの記録のファイルの名前（`thth/register/questions.LOG_FILE`）と、聞く拍子の数（`thth/register/holes`）。
+REGISTER_QUESTION_LOG = "問いの記録.jsonl"
+REGISTER_ASK_PER_DAY = 3
+REGISTER_ASK_GAP_DAYS = 7
+
+
+def _register_managed_en() -> str:
+    names = [f"<code>{name}</code>" for name in REGISTER_MANAGED]
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+
+
+def _register_managed_ja() -> str:
+    return "・".join(f"<code>{name}</code>" for name in REGISTER_MANAGED)
+
+
 def build_privacy() -> str:
     """Factual policy (2026-09-23 rewrite for Meta Platform Terms §4(b)・§7(a)).
 
@@ -602,6 +619,46 @@ def build_privacy() -> str:
         "the credential's expiry date, THTH keeps it, and <code>thth morning</code> on that computer can warn "
         "14 days ahead. THTH cannot revoke the credential on STORES itself; the owner arranges that with STORES. "
         "THTH is not provided by STORES.</p>")
+
+    # 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。数と欄の名前は tests/test_privacy_matches_code.py がコードと結ぶ。
+    add("<h2>Registers (the owner's own records)</h2>")
+    add("<p><code>thth register</code> reads a register: a folder of plain text files, one file per thing, that the "
+        "owner keeps on their own computer, so that drafts use only facts the owner has confirmed. The register stays "
+        "with the owner; THTH's operator does not hold it, and THTH does not send it anywhere (this part of THTH has "
+        "no network access). In the register, THTH writes only the fixed head fields "
+        + _register_managed_en() + " and adds lines to the question log (<code>" + REGISTER_QUESTION_LOG + "</code>), and it "
+        "does not change any other line. On the computer where it runs, THTH "
+        "keeps the register's name, project, folder path and kind, and a record of which rows the owner confirmed "
+        "(the row's ID, a fingerprint of its contents, when and by whom); with it THTH notices that a row changed "
+        "after it was confirmed. THTH refuses to use a row that is a guess, that the owner said is wrong, that is "
+        "past its review date, that is retired or that is not marked as public, and refuses a row that looks like it "
+        "contains a key or a password. <code>thth register remove</code> deletes THTH's files for the register on "
+        "the computer where it runs; when the project's last account leaves, <code>thth leave</code> deletes them "
+        "there. Neither deletes the register folder.</p>")
+    add("<p>For a physical shop, the register holds the shop, its opening hours, temporary closures or changed hours, "
+        "events, items in the shop and the owner's thoughts. <code>thth register draft</code> makes an unapproved "
+        "post draft from these rows when a closure, an event, a change of hours, a new item or a seasonal item comes "
+        "near. It uses only facts that the owner wrote in the register and confirmed; in this version THTH does not "
+        "read the shop's web pages or its till. The shop's address and phone number, and the reason for a closure, "
+        "are not put into drafts unless the owner marks that field as public, and THTH puts no photos into these "
+        "drafts. Each draft records the row it came from and a time after which it is not posted; when a person "
+        "approves it, THTH reads the row again and refuses if the row changed, is no longer confirmed or the time has "
+        "passed. Opening hours and temporary closures are confirmed in two steps.</p>")
+    add("<p><code>thth register holes</code> lists what is missing in the register: rows that are still guesses or past "
+        "their review date, a missing shop or opening hours row, the holidays of a coming season, and items without "
+        "the owner's thoughts. <code>thth register ask</code> picks a few of them for the owner's own AI assistant to "
+        f"ask the owner in conversation, at most {REGISTER_ASK_PER_DAY} a day, and does not ask about the same thing "
+        f"again within {REGISTER_ASK_GAP_DAYS} days or after the owner said no. THTH does not send the owner any "
+        "message itself. The questions and answers are added to the question log in the owner's register; THTH's "
+        "operator does not hold them. An answer alone does not confirm opening hours or a temporary closure.</p>")
+    add("<p>For the other places where the shop appears, such as Google Maps, Tabelog or Hot Pepper Gourmet, the "
+        "register keeps one row per place. <code>thth register paste</code> makes the text to paste there from a "
+        "confirmed closure, change of hours or event, and the owner pastes it into that place themselves. THTH does "
+        "not read those places' pages, does not sign in to their admin screens and sends them nothing. When the owner "
+        "says it is pasted, THTH writes which row and which contents were pasted into the place's row. The address of "
+        "the place's page and who manages it are kept out of the text. If the owner copies the place's current text "
+        "into <code>thth register compare</code>, THTH shows where its dates and times differ from the register and "
+        "does not keep the copied text.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
     add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
@@ -1096,6 +1153,35 @@ def build_privacy() -> str:
         "送りません。持ち主がクレデンシャルの期限の日を渡せば残し、その"
         "コンピューターの <code>thth morning</code> が 14 日前から知らせられます。STORES の側のクレデンシャルは THTH には"
         "取り消せないので、取り消しは持ち主が STORES と進めます。THTH は STORES が提供するものではありません。</p>")
+
+    add("<h2>台帳（持ち主の手元の記録）</h2>")
+    add("<p><code>thth register</code> は、持ち主が自分のコンピューターに置く台帳（1 つのものを 1 枚の文のファイルにした"
+        "フォルダ）を読み、持ち主が認めた事実だけを下書きの材料にします。台帳は持ち主の手元にあり、THTH の運営者は預かりません。"
+        "THTH は台帳をどこにも送りません（この部分の THTH は網に出ません）。台帳に THTH が書くのは頭の決まった欄 "
+        + _register_managed_ja() + " と、問いの記録（<code>" + REGISTER_QUESTION_LOG + "</code>）に足す行だけで、ほかの行には触りません。"
+        "動かしたコンピューターには、台帳の名前・プロジェクト・"
+        "フォルダの道・種類と、持ち主が認めた行の記録（行の番号・中身の指紋・いつ・誰が）を残し、認めたあとに行が変わったことを"
+        "これで見つけます。推測の行・持ち主が違うと言った行・見直し日を過ぎた行・退役した行・外に出してよい印の無い行は材料に"
+        "せず、鍵やパスワードらしい値のある行も断ります。<code>thth register remove</code> は、打ったコンピューターの THTH の"
+        "台帳のファイルを消し、プロジェクトの最後のアカウントが抜けるときは <code>thth leave</code> がそこで消します。"
+        "どちらも台帳のフォルダは消しません。</p>")
+    add("<p>実店舗の台帳には、店・営業の時間・臨時の休みや時間の変更・催し・店頭の品・持ち主の思いを置きます。"
+        "<code>thth register draft</code> は、臨時の休み・催し・営業の時間の変わり・新しい品・季節の品が近づいたときに、"
+        "これらの行から承認されていない投稿の下書きを作ります。材料は、持ち主が台帳に書いて認めた事実だけです。この版の THTH は、"
+        "店の頁もレジも読みません。店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+        "下書きに入れず、写真も下書きに入れません。下書きには元の行と出さない期限を書き、人が承認するときに行を読み直して、"
+        "行が変わった・認めたが外れた・期限を過ぎた、のどれかなら断ります。営業の時間と臨時の休みは二段で認めます。</p>")
+    add("<p><code>thth register holes</code> は台帳の穴（推測のままの行・見直し日を過ぎた行・店や営業の時間の行の欠け・"
+        "近づいた季節の休み・思いの無い品）を並べます。<code>thth register ask</code> はそのうちいくつかを選び、持ち主の AI の"
+        f"アシスタントが会話の中で持ち主に聞きます。1 日 {REGISTER_ASK_PER_DAY} 問までで、同じことは {REGISTER_ASK_GAP_DAYS} 日"
+        "空け、持ち主が違うと言ったことは聞き直しません。THTH が持ち主に直接知らせを送ることはありません。聞いた問いと答えは"
+        "持ち主の台帳の問いの記録に足し、運営者は預かりません。答えだけでは、営業の時間と臨時の休みを認めたことにしません。</p>")
+    add("<p>店の情報が載っているほかの場所（Google マップ・食べログ・ホットペッパーグルメなど）は、場所ごとに台帳の 1 枚に"
+        "します。<code>thth register paste</code> は、認めた臨時の休み・営業の時間の変わり・催しから、その場所に貼る文を作り、"
+        "貼るのは持ち主です。THTH はそれらの場所の頁を読まず、管理画面に入らず、何も送りません。持ち主が貼ったと言えば、"
+        "どの行のどの中身を貼ったかを場所の行に書きます。場所の頁の URL と、誰が管理するかは、貼る文に入れません。持ち主が"
+        "その場所の今の文を写して <code>thth register compare</code> に渡せば、日付と時刻が台帳と違う所を見せ、写した文は"
+        "残しません。</p>")
 
     add("<h2>WordPress の記事</h2>")
     add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"

@@ -21,6 +21,10 @@ from thth.shop import wire as shop_wire
 from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
+from thth.register import form as register_form
+from thth.register import kinds as register_kinds
+from thth.register import holes as register_holes
+from thth.register import questions as register_questions
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -71,6 +75,75 @@ def _stores_user_keeps_id_and_name() -> bool:
                               transport=lambda m, u, h: (200, payload)).user()
     return (shop == {"shop_id": "abc", "shop_name": "n", "shop_url": "https://ledger.example.invalid",
                      "able_to_business": None})
+
+
+def _register_private_defaults() -> bool:
+    return (register_kinds.private_by_default("store") == {"address", "phone"}
+            and register_kinds.private_by_default("special") == {"reason"})
+
+
+def _register_sample_draft() -> str:
+    import datetime
+    from thth import jst
+    from thth.register import draft as register_draft
+    row = register_form.parse("x.md", "---\nid: s\nkind: special\nstatus: 本採用\nsource: owner\nconfirmed: 本人が認めた\n"
+                              "review_by: 2099-01-01\npublic: true\ndate: 2099-01-02\nclosed: true\nreason: 理由の目印\n"
+                              "image: https://img.example.invalid/marker-image.jpg\n---\n本文\n")
+    now = datetime.datetime(2099, 1, 1, 9, 0, tzinfo=jst.JST)
+    until = datetime.datetime(2099, 1, 2, 23, 59, tzinfo=jst.JST)
+    return register_draft.text_for("r", "a", "threads", "special_soon", row, commit="none", now=now, not_after=until)
+
+
+def _register_draft_has_no_image() -> bool:
+    text = _register_sample_draft()
+    return "marker-image" not in text and "理由の目印" not in text
+
+
+def _register_draft_has_not_after() -> bool:
+    text = _register_sample_draft()
+    return "not_after: 2099-01-02T23:59:00+09:00" in text and "from_register: r/s" in text
+
+
+def _answer_respects_two_stage() -> bool:
+    import inspect
+    from thth.register import cli as register_cli
+    return "kinds.two_stage(row.kind)" in inspect.getsource(register_cli.cmd_answer)
+
+
+def _register_paste_offline() -> bool:
+    """外の場所に貼る束（段 4）: places と paste・pasted・compare の口が網の部品も書く部品も持たず、compare は写した文を残さない。"""
+    import inspect
+    from thth.register import cli as register_cli, places as register_places
+    source = inspect.getsource(register_places)
+    compare = inspect.getsource(register_cli.cmd_compare)
+    return (not any(word in source for word in ("urllib", "requests", "http.client", "socket"))
+            and "write" not in compare and "open(" not in compare
+            and register_kinds.private_by_default("place") == {"url", "admin_by"})
+
+
+def _register_fields_en() -> str:
+    names = [f"<code>{name}</code>" for name in register_form.MANAGED]
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0]
+
+
+def _register_offline() -> bool:
+    from tests.test_register_base import REGISTER_DIR, net_imports
+    return net_imports(REGISTER_DIR) == []
+
+
+def _register_fence_codes() -> bool:
+    """柵が断る 5 つ（推測・違うと言った・見直し日・退役・出してよい印）が `fence.state` にある。"""
+    import inspect
+    from thth.register import fence
+    source = inspect.getsource(fence.state)
+    return all(code in source for code in ("register_row_guess", "register_row_denied", "register_row_review_passed",
+                                           "register_row_retired", "register_row_not_public"))
+
+
+def _leave_purges_registers() -> bool:
+    import inspect
+    from thth import leave
+    return "_purge_registers(account,by)" in inspect.getsource(leave.run)
 
 
 def facts() -> list[tuple[str, str]]:
@@ -202,6 +275,62 @@ def facts() -> list[tuple[str, str]]:
         ("店のリダイレクトを追わない・日本語",
          "ショップからのリダイレクトは追いません"
          if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
+        # 台帳の機械（計画 実店舗 段 1〜4）。台帳に書く欄・網に出ない・控えに残す物・退出で消える物。
+        ("台帳に THTH が書く欄（register/form.MANAGED）",
+         "In the register, THTH writes only the fixed head fields " + _register_fields_en()),
+        ("台帳に THTH が書く欄・日本語",
+         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " と、"),
+        ("台帳の機械は網に出ない（thth/register が網の部品を import しない）",
+         "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の機械は網に出ない・日本語",
+         "この部分の THTH は網に出ません" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の柵が断る行（register/fence）",
+         "THTH refuses to use a row that is a guess, that the owner said is wrong, that is past its review date, "
+         "that is retired or that is not marked as public" if _register_fence_codes() else "柵の断りが privacy と違う"),
+        ("台帳の退出（leave._purge_registers）",
+         "when the project's last account leaves, <code>thth leave</code> deletes them there. Neither deletes the "
+         "register folder" if _leave_purges_registers() else "leave が台帳の控えを消さない"),
+        # 段 2: 実店舗の形と下書き（既定で出さない欄・画像なし・出さない期限・二段で認める種類）。
+        ("店の住所と電話と休みの理由は既定で出さない（register/kinds.private_by_default）",
+         "The shop's address and phone number, and the reason for a closure, are not put into drafts unless the owner "
+         "marks that field as public" if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("店の住所と電話と休みの理由・日本語",
+         "店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+         if _register_private_defaults() else "既定で出さない欄が privacy と違う"),
+        ("台帳の下書きに写真を入れない（register/draft.text_for）",
+         "THTH puts no photos into these drafts" if _register_draft_has_no_image() else "台帳の下書きに画像がある"),
+        ("台帳の下書きの出さない期限と読み直し（register/draft・recheck）",
+         "Each draft records the row it came from and a time after which it is not posted"
+         if _register_draft_has_not_after() else "台帳の下書きに出さない期限が無い"),
+        ("二段で認める種類（register/kinds.two_stage）",
+         "Opening hours and temporary closures are confirmed in two steps"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
+        ("二段で認める種類・日本語",
+         "営業の時間と臨時の休みは二段で認めます"
+         if [k for k in register_kinds.RULES if register_kinds.two_stage(k)] == ["hours", "special"]
+         else "二段で認める種類が privacy と違う"),
+        # 段 3: 聞いて埋める（問いの記録の置き場・拍子の数・答えだけでは二段の種類を認めない）。
+        ("問いの記録の置き場（register/questions.LOG_FILE）",
+         f"adds lines to the question log (<code>{register_questions.LOG_FILE}</code>)"),
+        ("問いの記録の置き場・日本語", f"問いの記録（<code>{register_questions.LOG_FILE}</code>）に足す行だけ"),
+        ("聞く数の上限（register/holes.ASK_MAX_PER_DAY・ASK_GAP_DAYS）",
+         f"at most {register_holes.ASK_MAX_PER_DAY} a day, and does not ask about the same thing again within "
+         f"{register_holes.ASK_GAP_DAYS} days"),
+        ("聞く数の上限・日本語",
+         f"1 日 {register_holes.ASK_MAX_PER_DAY} 問までで、同じことは {register_holes.ASK_GAP_DAYS} 日"),
+        ("外の場所の頁を読まず貼る文だけ作る（register/places・cli.cmd_compare）",
+         "does not read those places' pages, does not sign in to their admin screens and sends them nothing"
+         if _register_paste_offline() else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("外の場所の頁を読まず貼る文だけ作る・日本語",
+         "THTH はそれらの場所の頁を読まず、管理画面に入らず、何も送りません" if _register_paste_offline()
+         else "外の場所に貼る束が網に出るか、写した文を残す"),
+        ("比べた文を残さない（register/cli.cmd_compare）",
+         "does not keep the copied text" if _register_paste_offline() else "写した文を残す"),
+        ("比べた文を残さない・日本語", "写した文は残しません" if _register_paste_offline() else "写した文を残す"),
+        ("答えだけでは二段の種類を認めない（register/cli.cmd_answer）",
+         "An answer alone does not confirm opening hours or a temporary closure"
+         if _answer_respects_two_stage() else "答えで営業の時間を認めてしまう"),
         ("最小の読みの日（permission_watch.KEEP_DAYS）", f"has not been used for {permission_watch.KEEP_DAYS} days"),
         ("最小の読みの日・日本語", f"{permission_watch.KEEP_DAYS} 日使われていない"),
         ("権限の不使用の上限（permission_watch.LIMIT_DAYS）", f"not used for {permission_watch.LIMIT_DAYS} days"),

@@ -142,6 +142,10 @@ COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
 COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
 # 監査 5.15.0 の 1: 店を外す（二段確認・--json は 1 つの値）。
 COMMANDS += ['shop remove']
+# 台帳の機械（`thth/register/`・計画 実店舗 段 1〜4・網に出ない・--json は 1 つの値）。
+COMMANDS += ['register add', 'register check', 'register show', 'register use', 'register confirm', 'register deny',
+             'register remove', 'register triggers', 'register draft', 'register holes', 'register ask',
+             'register answer', 'register questions', 'register paste', 'register pasted', 'register compare']
 
 
 def test_json_table_covers_every_parser():
