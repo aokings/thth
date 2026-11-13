@@ -1,0 +1,46 @@
+{
+ "public": true,
+ "public_song": true,
+ "entity_id": "ap-alex-gopher",
+ "role": "mastered_by",
+ "rows": [
+  {
+   "seed": "seed-liked-0161",
+   "title": "曲 A",
+   "status": "shown"
+  },
+  {
+   "seed": "seed-liked-0383",
+   "title": "曲 B",
+   "status": "shown"
+  },
+  {
+   "seed": "seed-liked-0443",
+   "title": "曲 C",
+   "status": "held",
+   "held_kind": "other_version",
+   "held_reason_ja": "別の版の記載（見本の説明）"
+  },
+  {
+   "seed": "seed-liked-0665",
+   "title": "曲 D",
+   "status": "held",
+   "held_kind": "unresolved",
+   "held_reason_ja": "同定が未決（見本の説明）"
+  },
+  {
+   "seed": "seed-liked-0831",
+   "title": "曲 E",
+   "status": "held",
+   "held_kind": "release_credits",
+   "held_reason_ja": "盤全体の記載（見本の説明）"
+  },
+  {
+   "seed": "seed-liked-1094",
+   "title": "曲 F",
+   "status": "held",
+   "held_kind": "conflict",
+   "held_reason_ja": "資料で食い違う（見本の説明）"
+  }
+ ]
+}

@@ -26,6 +26,11 @@
   - `adopt.py`: `adopt`（取り込む物の範囲・元のバイトのまま置く・取り込み直しは片道）・`restore`・`diff`・`merge`・
     表の 1 行の `row_set`・`row_add`（触っていない行のバイトが変わるなら書かずに断る）。
   - `adopt_cli.py`: `register adopt`・`restore`・`diff`・`keep`・`merge`・`resume`・`row set|add`。
+- 台帳の器 段 3（設計 §5.3・§5.6・§7.2・§9 の 5・§10 の段 3）。台帳に書くのは判断の記録（足すだけ）と封だけ:
+  - `route.py`: 出し口の宣言（`.thth/outlets.json`）・使えるか（事実として・留保として。広げる判断は封の中だけ、
+    狭める物は封を待たない）・止める・採る（共通の台帳）・材料と材料の控え・受け入れと封・公開の直前の確かめ。
+  - `seal.py`: 持ち主の鍵（秘密の鍵は `~/.config/thth/`・台帳にも repo にも置かない）と、openssl での署名と確かめ。
+  - `route_cli.py`: `register judge`・`take`・`export`・`accept`・`verify`・`key`（`use --outlet` は `cli.py`）。
 
 **網に出ない**（どのファイルも網の部品を import しない・柵 `tests/test_register_base.py`）。
 """

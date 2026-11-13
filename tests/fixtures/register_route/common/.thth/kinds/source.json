@@ -1,0 +1,11 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "source",
+  "place": "sources/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {
+    "name": true
+  },
+  "note": "共通の台帳の出典。共通にするのは書誌だけ（設計 §7.2）"
+}

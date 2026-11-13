@@ -1,0 +1,14 @@
+{
+ "public": false,
+ "entity_id": "ap-nofield",
+ "role": "produced_by",
+ "rows": [
+  {
+   "seed": "seed-liked-0900",
+   "title": "曲 H",
+   "status": "held",
+   "held_kind": "conflict",
+   "held_reason_ja": "資料で食い違う（見本の説明）"
+  }
+ ]
+}

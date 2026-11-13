@@ -26,6 +26,11 @@
                                        行ごとに「中身の材料に使えるか」と、使えないならその符丁
     thth register use <台帳> <行> [--json]
                                        柵: その行を材料に使えるか。使えれば外に出してよい欄と本文、使えなければ断る
+    thth register use <台帳> <種類:番号> --outlet <出し口> [--as fact|reservation] [--unit 指し先] [--as-of 日時] [--json]
+                                       器の台帳: その出し口に、事実として・留保として使えるか（封の中の判断で・CI と同じ計算）
+    thth register judge|take|export|accept|verify|key …
+                                       器の台帳 段 3: 判断を足す・共通を採る・材料・受け入れと封・公開の直前の確かめ・鍵
+                                       （`route_cli.py` の頭の注）
     thth register confirm <台帳> <行> --by <名前> [--confirm D] [--json]
                                        本人が認めた（営業の時間と臨時は二段確認）
     thth register deny <台帳> <行> --by <名前> [--json]
@@ -65,7 +70,7 @@ import sys
 from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
-from . import adopt_cli, keep, vessel, vessel_cli
+from . import adopt_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -206,7 +211,25 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_use_outlet(args) -> int:
+    """台帳の器 段 3: 出し口と「何として」を付けた use（封の中の判断で、CI と同じ計算）。"""
+    root = adopt_cli.root_of(args.register)
+    value = route_mod.use(root, args.row, args.outlet, args.as_ or "fact", args.as_of or jst.now_jst().isoformat(),
+                          unit=args.unit, common_root=args.common)
+    if not value["usable"]:
+        raise RegisterRefused("register_use_not_usable", value["why"], **value)
+    if args.json:
+        _print(value)
+        return 0
+    what = "事実として" if value["as"] == "fact" else "留保として"
+    print(f"{value['record']}{'#' + value['unit'] if value['unit'] else ''} は {value['outlet']} に{what}使えます"
+          f"（世代 {value['generation']}）" + (f"。理由の種類 {value['reason_kind']}" if value.get("reason_kind") else ""))
+    return 0
+
+
 def cmd_use(args) -> int:
+    if getattr(args, "outlet", None):
+        return cmd_use_outlet(args)
     _cfg, _root, scanned = open_register(args.register)
     row = fence.usable(find_row(scanned, args.row), ledger.read_confirmed(args.register), _today())
     body = form.outward_body(row)
@@ -706,9 +729,14 @@ def register(sub) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_links))
 
-    p = verbs.add_parser("use", help="柵: その行を材料に使えるか")
+    p = verbs.add_parser("use", help="柵: その行を材料に使えるか（--outlet で器の台帳の出し口と何として）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("row", metavar="行")
+    p.add_argument("--outlet", default=None, help="器の台帳: 出し口（.thth/outlets.json）")
+    p.add_argument("--as", dest="as_", default=None, choices=("fact", "reservation"), help="事実として・留保として")
+    p.add_argument("--unit", default=None, metavar="指し先")
+    p.add_argument("--as-of", default=None, metavar="日時")
+    p.add_argument("--common", default=None, metavar="共通の台帳")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_use))
 
@@ -797,3 +825,5 @@ def register(sub) -> None:
 
     # 台帳の器 段 2: 取り込み・戻す・変えた跡・控え・束・止まった入れ替え・表の 1 行（`adopt_cli.py`）。
     adopt_cli.register_parsers(verbs, _run)
+    # 台帳の器 段 3: 判断・採る・材料・受け入れと封・確かめ・持ち主の鍵（`route_cli.py`）。
+    route_cli.register_parsers(verbs, _run)
