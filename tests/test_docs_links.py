@@ -39,6 +39,15 @@ EXCLUDED_PREFIXES = (
     "docs/記録/",
 )
 
+# ほかの repo の中身を説明する文書。地の文の `docs/....md` は、その repo の docs を指すので
+# 書き方 2（repo ルートからの相対という約束）を当てない。Markdown のリンク（書き方 1）は確かめる。
+# 台帳の器の段 0（2026-11-13）の目録 7 枚・期待する答え・設計書。
+OTHER_REPO_DOC_PREFIXES = (
+    "目録_台帳の器_",
+    "期待する答え_台帳の器_",
+    "設計_台帳の器_",
+)
+
 # まだ存在しない前方参照・過去の文書構成案。文書の中身は書き換えない方針のため
 # ここで明示的に除外する（本文の主張・提案は書かれた当時のまま残す）。
 EXCLUDED_PATHS = {
@@ -118,6 +127,9 @@ def _collect_references(path: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
         refs.append((target, resolved))
 
     # 2. 地の文の "docs/....md" 表記: repo ルートからの相対という約束。
+    # ほかの repo を説明する文書は、この約束に当たらない（OTHER_REPO_DOC_PREFIXES）。
+    if path.name.startswith(OTHER_REPO_DOC_PREFIXES):
+        return refs
     # 外の URL の中（例 github.com/…-docs/blob/master/x.md）は repo のパスではないので先に外す。
     for m in _BARE_DOCS_RE.finditer(_URL_RE.sub(" ", text)):
         target = m.group(0)
