@@ -468,13 +468,19 @@ def test_穴10_再演の台本は2つのcommitの3枚ずつを置き換えて変
           "id,entity_type,canonical_name\norigin-a,origin,あ\norigin-sikkim,origin,シッキム\n")
     write(replay / "3398d6d28/after/data/knowledge/article-claims.csv",
           after8["data/knowledge/article-claims.csv"] + "sikkim.md,c-2,h2,supported,2026-10-03\n")
-    out = module.kopicha_replay(reg, replay)
+    # 親の木（範囲の中の全部）: 8ead0fc の親は元の木、3398d6d28 の親は 8ead0fc の後の木。
+    for p in src.rglob("*"):
+        if p.is_file():
+            rel = str(p.relative_to(src))
+            write(replay / "8ead0fc/parent" / rel, p.read_bytes())
+            write(replay / "3398d6d28/parent" / rel, after8.get(rel, p.read_bytes()))
+    out = module.kopicha_replay(env / "shadow", replay)
     first = out["8ead0fc"]
     assert first["files_changed"] == sorted(module.REPLAY["8ead0fc"])
     assert {r.split(":")[0] for r in first["records_moved"]} == {"article_claim", "claim", "evidence"}
     assert len(first["records_moved"]) == 3 and "claim:c-1" in first["records_moved"]
-    assert first["stale_only_moved"] and "claim:c-1" in first["stale"] and "claim:c-2" not in first["stale"]
+    assert first["stale_as_expected"] and first["stale"] == first["records_moved"] and "claim:c-2" not in first["stale"]
     second = out["3398d6d28"]
     assert second["files_changed"] == sorted(module.REPLAY["3398d6d28"])
-    assert second["records_moved"] == ["page:sikkim"] and second["stale"] == ["page:sikkim"]
+    assert second["records_moved"] == second["stale"] == second["expected_stale"] == ["page:sikkim"]
     assert len(second["records_added"]) == 2  # 点 1・控え 1

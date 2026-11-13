@@ -179,11 +179,32 @@ def reaches(plan: dict, rel: str) -> bool:
 
         return m(0, 0)
 
-    if not any(under(p) for p in plan["include"]):
+    return any(under(p) for p in plan["include"])
+
+
+def link_selects(plan: dict, rel: str, path: str) -> bool:
+    """フォルダを指す symlink `rel` の先の、実在の枚のどれかが範囲に入るか（除く型も当てて）。先が無いか読めなければ、
+    入りうるとみる。先の中の symlink のフォルダは、下に範囲が届くなら入りうるとみる。"""
+    if not reaches(plan, rel):
         return False
-    # 除く型が、そのフォルダの下の 1 段めにも 2 段めにも当たれば、フォルダごと除いたと見る（node_modules/** など）。
-    probes = (rel + "/\x00a", rel + "/\x00a/\x00b")
-    return not any(all(glob_match(p, probe) for probe in probes) for p in plan["exclude"])
+    if not os.path.isdir(path):
+        return True
+    select = selector(plan)
+    for directory, dirs, files in os.walk(path, followlinks=False):
+        sub = os.path.relpath(directory, path).replace(os.sep, "/")
+        prefix = rel if sub == "." else f"{rel}/{sub}"
+        if any(select(f"{prefix}/{name}") for name in files):
+            return True
+        keep = []
+        for d in dirs:
+            inner = f"{prefix}/{d}"
+            if not reaches(plan, inner):
+                continue
+            if os.path.islink(os.path.join(directory, d)):
+                return True
+            keep.append(d)
+        dirs[:] = keep
+    return False
 
 
 def _spelling(root: str, rel: str):
@@ -248,7 +269,7 @@ def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | Non
     for rel, path, is_link in K.walk(source, starts, skip_thth=False):
         if is_link:
             # 枚を指す symlink は範囲に当たるときだけ、フォルダを指す（か行き先の無い）symlink は下に範囲が届くときも断る。
-            if select(rel) or (not os.path.isfile(path) and reaches(plan, rel)):
+            if select(rel) or (not os.path.isfile(path) and link_selects(plan, rel, path)):
                 links.append(rel)
             continue
         if not select(rel):
@@ -405,7 +426,7 @@ def diff(root: str, spec: str) -> dict:
         ra, rb = _records(a), _records(b)
         added = sorted(set(rb) - set(ra))
         vanished = sorted(set(ra) - set(rb))
-        changed, retired = [], []
+        changed, retired, units_gone = [], [], []
         for ref in sorted(set(ra) & set(rb)):
             before, after = ra[ref], rb[ref]
             if sorted(r.version for r in before) != sorted(r.version for r in after):
@@ -414,6 +435,9 @@ def diff(root: str, spec: str) -> dict:
                 item = {"record": ref, "path": after[0].path}
                 if units_a or units_b:
                     item["units"] = {"added": len(units_b - units_a), "vanished": len(units_a - units_b)}
+                # 内側の行の明示の番号（units.id。指し先は i:）が消えたら赤（設計 §5.5）。鍵の指し先（k:・kc:）は
+                # 中身で動くので、消えても赤にしない（変わった記録として出す）。
+                units_gone += [{"record": ref, "unit": p} for p in sorted(units_a - units_b) if p.startswith("i:")]
                 changed.append(item)
             if not any(_retired(r) for r in before) and any(_retired(r) for r in after):
                 retired.append(ref)
@@ -423,7 +447,8 @@ def diff(root: str, spec: str) -> dict:
              "changed": sorted(p for p in set(fa) & set(fb) if fa[p] != fb[p])}
     return {"from": K.catalog_fp(a_files), "to": K.catalog_fp(b_files),
             "records": {"added": added, "changed": changed, "retired": retired, "vanished": vanished},
-            "files": files, "red": bool(vanished or files["removed"])}
+            "units": {"vanished": units_gone},
+            "files": files, "red": bool(vanished or files["removed"] or units_gone)}
 
 
 # ------------------------------------------------------------------ 束をまとめて入れる
