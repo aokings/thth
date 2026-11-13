@@ -1,0 +1,6 @@
+id,subject_entity_id,predicate,object_entity_id,object_text_ja,statement_ja,claim_type,scope_ja,claim_status,as_of,valid_until,notes,updated_at
+c-term-tea-grade-ctc-res-milktea1-24,term-ctc,has_value,,水浸出物 17.3%,CTC 茶葉の水浸出物は 17.3% とされる,quantity,,supported,,,,
+c-origin-brazil-024,origin-brazil,has_property,,ナッツの香り,ブラジルの豆はナッツの香りがするとされる,sensory,,contested,,,,
+c-origin-brazil-cerrado-003,origin-brazil-cerrado,has_value,,標高 800〜1300m,セラードの農園は標高 800〜1300m にある,quantity,,supported,,,,
+c-origin-brazil-bourbon-01,origin-brazil,grows,variety-bourbon,,ブラジルではブルボン種が育てられている,relation,,supported,,,,
+c-variety-bourbon-brazil-01,variety-bourbon,grown_in,origin-brazil,,ブルボン種はブラジルに渡った,relation,,supported,,,,

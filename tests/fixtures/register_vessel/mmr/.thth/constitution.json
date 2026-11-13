@@ -1,0 +1,29 @@
+{
+  "schema": "thth.constitution/1",
+  "words": {
+    "may_publish@artist_page": {
+      "true": {
+        "conclusion": "good"
+      },
+      "false": {
+        "conclusion": "bad"
+      }
+    },
+    "may_publish@song_page": {
+      "true": {
+        "conclusion": "good"
+      },
+      "false": {
+        "conclusion": "bad"
+      }
+    },
+    "credit_holds": {
+      "shown": {
+        "conclusion": "good"
+      },
+      "held": {
+        "conclusion": "pending"
+      }
+    }
+  }
+}

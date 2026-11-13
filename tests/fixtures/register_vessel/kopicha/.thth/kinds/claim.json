@@ -1,0 +1,31 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "claim",
+  "place": "data/knowledge/claims.csv",
+  "format": "csv",
+  "id": {
+    "field": "id"
+  },
+  "questions": [
+    {
+      "name": "says_so",
+      "state": "claim_status",
+      "depends": [
+        "statement_ja",
+        "object_text_ja"
+      ]
+    }
+  ],
+  "pointers": [
+    {
+      "field": "subject_entity_id",
+      "meaning": "about",
+      "to": "point"
+    },
+    {
+      "field": "object_entity_id",
+      "meaning": "related",
+      "to": "point"
+    }
+  ]
+}

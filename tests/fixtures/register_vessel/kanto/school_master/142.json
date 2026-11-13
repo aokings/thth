@@ -1,0 +1,22 @@
+{
+ "school_id": "142",
+ "name": "昭和学院秀英（見本）",
+ "admissions": {
+  "year": 2026,
+  "rounds": [
+   {
+    "round": "午後特別入学試験",
+    "subject_options": "2科（国語・算数）",
+    "capacity": 30
+   }
+  ],
+  "sources": [
+   {
+    "field": "rounds",
+    "url": "https://example.invalid/142/2026",
+    "quote": "午後特別 30名",
+    "retrieved": "2026-09-01"
+   }
+  ]
+ }
+}

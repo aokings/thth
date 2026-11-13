@@ -1,0 +1,9 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "tea_page",
+  "place": "src/content/teas/*.yaml",
+  "format": "yaml",
+  "id": {
+    "name": true
+  }
+}

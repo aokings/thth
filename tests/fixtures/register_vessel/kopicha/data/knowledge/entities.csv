@@ -1,0 +1,5 @@
+id,entity_type,subtype,canonical_name,page_path,domain,parent,notes
+origin-brazil,origin,country,ブラジル,/origins/brazil/,coffee,,
+origin-brazil-cerrado,origin,region,セラード,,coffee,origin-brazil,
+variety-bourbon,variety,,ブルボン,,coffee,,
+term-ctc,term,,CTC,,tea,,

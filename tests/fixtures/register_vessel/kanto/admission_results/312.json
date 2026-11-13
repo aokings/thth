@@ -1,0 +1,79 @@
+{
+ "school_id": "312",
+ "name": "志学館（見本）",
+ "years": [
+  {
+   "year": 2025,
+   "rounds": [
+    {
+     "round": "Ａ",
+     "date": "2025-01-20",
+     "time_of_day": null,
+     "gender": "男子",
+     "subject_type": "4科・2科選択",
+     "capacity": null,
+     "applicants": 1,
+     "examinees": 1,
+     "admitted": 1,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "出所の表に内訳の区別が無い 2 行（見本）"
+    },
+    {
+     "round": "Ａ",
+     "date": "2025-01-20",
+     "time_of_day": null,
+     "gender": "男子",
+     "subject_type": "4科・2科選択",
+     "capacity": null,
+     "applicants": 4,
+     "examinees": 4,
+     "admitted": 3,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "出所の表に内訳の区別が無い 2 行（見本）"
+    },
+    {
+     "round": "Ａ",
+     "date": "2025-01-20",
+     "time_of_day": null,
+     "gender": "女子",
+     "subject_type": "4科・2科選択",
+     "capacity": null,
+     "applicants": 2,
+     "examinees": 2,
+     "admitted": 2,
+     "enrolled": null,
+     "ratio_actual": null,
+     "ratio_computed": false,
+     "min_score": null,
+     "full_score": null,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "出所の表に内訳の区別が無い 2 行（見本）"
+    }
+   ],
+   "sources": [
+    {
+     "field": "rounds",
+     "url": "https://example.invalid/312",
+     "quote": "A 日程",
+     "retrieved": "2026-08-20"
+    }
+   ]
+  }
+ ]
+}

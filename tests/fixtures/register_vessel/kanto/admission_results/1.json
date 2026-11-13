@@ -1,0 +1,101 @@
+{
+ "school_id": "1",
+ "pref": "東京都",
+ "name": "青山学院中等部（見本）",
+ "years": [
+  {
+   "year": 2026,
+   "source_tier": "1",
+   "rounds": [
+    {
+     "round": "一般",
+     "date": "2026-02-02",
+     "time_of_day": "午前",
+     "gender": "男子",
+     "subject_type": "4科",
+     "capacity": 140,
+     "applicants": 349,
+     "examinees": 296,
+     "admitted": 109,
+     "enrolled": null,
+     "ratio_actual": 2.7,
+     "ratio_computed": false,
+     "min_score": 172,
+     "full_score": 300,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "定員 約140 名は男女の合計（男女別の内訳は非公表）。"
+    },
+    {
+     "round": "一般",
+     "date": "2026-02-02",
+     "time_of_day": "午前",
+     "gender": "女子",
+     "subject_type": "4科",
+     "capacity": null,
+     "applicants": 493,
+     "examinees": 429,
+     "admitted": 97,
+     "enrolled": null,
+     "ratio_actual": 4.4,
+     "ratio_computed": false,
+     "min_score": 183,
+     "full_score": 300,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "定員 約140 名は男女の合計（男女別の内訳は非公表）。"
+    }
+   ],
+   "sources": [
+    {
+     "field": "rounds",
+     "url": "https://example.invalid/aoyama/data.html",
+     "quote": "志願者349 受験者296 合格者109 実質倍率2.7",
+     "retrieved": "2026-08-17"
+    },
+    {
+     "field": "capacity/full_score/date",
+     "url": "https://example.invalid/aoyama/guideline.html",
+     "quote": "募集人員 男女合わせて約140名／国語・算数各100点・社会・理科各50点",
+     "retrieved": "2026-10-04"
+    }
+   ]
+  },
+  {
+   "year": 2025,
+   "source_tier": "1",
+   "rounds": [
+    {
+     "round": "一般",
+     "date": "2025-02-03",
+     "time_of_day": "午前",
+     "gender": "男子",
+     "subject_type": "4科",
+     "capacity": 140,
+     "applicants": 568,
+     "examinees": 440,
+     "admitted": 109,
+     "enrolled": null,
+     "ratio_actual": 4.0,
+     "ratio_computed": false,
+     "min_score": 174,
+     "full_score": 300,
+     "mean_admitted": null,
+     "mean_examinees": null,
+     "subject_means": null,
+     "notes": "定員 約140 名は男女の合計（男女別の内訳は非公表）。"
+    }
+   ],
+   "sources": [
+    {
+     "field": "rounds",
+     "url": "https://example.invalid/aoyama/data2025.html",
+     "quote": "志願者568",
+     "retrieved": "2026-08-17"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+name: ブラジル
+nameEn: Brazil
+domain: coffee
+level: country
+parent: null
+aliases: [Brazil]
+calendar: [4, 5, 6]
+updated: 2026-08-27
+draft: false
+summary: |
+  ブラジルの見本の頁。
+  長い文は | で書く。

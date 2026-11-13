@@ -41,6 +41,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-xdist>=3"]
+# 台帳の器（設計_台帳の器 §5.2）: YAML の記録の中を読む部品。標準ライブラリに YAML の読み手が無いので、入れた機械
+# だけが中を見る。入れていない機械では YAML の記録は「置く・戻す・版を取る」までで、「中は見ていない」と言う。
+# 本体の依存は 0 のまま（import は thth/register/yamlread.py の 1 枚だけ・柵 tests/test_register_base.py）。
+yaml = ["PyYAML>=6"]
 
 [project.urls]
 Homepage = "https://thth.me"

@@ -1,0 +1,29 @@
+{
+ "public": true,
+ "public_song": true,
+ "entity_id": "ap-sample",
+ "role": "mastered_by",
+ "name": "見本の人",
+ "rows": [
+  {
+   "seed": "seed-liked-0161",
+   "title": "曲 A",
+   "status": "shown",
+   "mark": "研究所の記録だけ"
+  },
+  {
+   "seed": "seed-liked-0443",
+   "title": "曲 B",
+   "status": "held",
+   "held_kind": "other_version",
+   "held_reason_ja": "他人のリミックスの版に付いた担当"
+  },
+  {
+   "seed": "seed-liked-0665",
+   "title": "曲 C",
+   "status": "held",
+   "held_kind": "unresolved",
+   "held_reason_ja": "同定が未決"
+  }
+ ]
+}

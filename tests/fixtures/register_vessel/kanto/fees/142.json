@@ -1,0 +1,27 @@
+{
+ "school_id": "142",
+ "admissions_extra": {
+  "year": 2027,
+  "rounds": [
+   {
+    "round": "午後特別入学試験",
+    "date": "2027-01-20",
+    "capacity": 30
+   },
+   {
+    "round": "帰国生入学試験",
+    "date": "2027-01-22",
+    "capacity": null,
+    "capacity_shared": true
+   }
+  ],
+  "sources": [
+   {
+    "field": "rounds",
+    "url": "https://example.invalid/142/2027",
+    "quote": "募集人員30名",
+    "retrieved": "2026-10-20"
+   }
+  ]
+ }
+}

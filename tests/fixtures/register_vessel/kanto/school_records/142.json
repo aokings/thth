@@ -1,0 +1,17 @@
+{
+ "school_id": "142",
+ "admissions": {
+  "rounds": [
+   {
+    "round": "午後特別入学試験",
+    "capacity": 30,
+    "subject_options": "2科（国語・算数）",
+    "prev": null,
+    "field_years": {
+     "capacity": 2027,
+     "subject_options": 2026
+    }
+   }
+  ]
+ }
+}

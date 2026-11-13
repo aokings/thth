@@ -1,0 +1,32 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "school_master",
+  "place": "school_master/[0-9]*.json",
+  "format": "json",
+  "records": "file",
+  "id": {
+    "field": "school_id"
+  },
+  "units": {
+    "groups": [
+      "admissions"
+    ],
+    "items": [
+      "rounds",
+      "*"
+    ],
+    "key": [
+      "group.year",
+      "round"
+    ],
+    "time": {
+      "group": "year"
+    },
+    "sources": {
+      "list": "sources",
+      "field": "field",
+      "split": "/,",
+      "rest": "rounds"
+    }
+  }
+}
