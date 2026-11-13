@@ -493,6 +493,7 @@ class Record:
     inspected: bool
     problems: list = field(default_factory=list)
     units: list = field(default_factory=list)
+    unread: tuple = ()         # 表の幅が足りない行の、読めなかったセル（欄の名前）。値として読まない（null と別）
 
     @property
     def ref(self) -> str:
@@ -697,13 +698,15 @@ def _read_csv(rel: str, text: str, kind: Kind) -> list:
         if cells is None:
             out.append(Record(kind.name, None, rel, bytes_version(raw.encode("utf-8")), None, False, ["csv"]))
             continue
-        values = {name: (cells[i] if i < len(cells) else None) for i, name in enumerate(header)}
+        # 幅の足りない行の欠けたセルは値として読まない（読んだ null と取り違えない。依る所でも区別する）。
+        values = {name: cells[i] for i, name in enumerate(header) if i < len(cells)}
+        unread = tuple(name for i, name in enumerate(header) if i >= len(cells))
         problems = [] if len(cells) == len(header) else ["row_width"]
         if "field" in kind.id_rule:
             rid = _id_ok(values.get(kind.id_rule["field"]))
         else:
             rid = "k-" + short(fp([values.get(k) for k in kind.id_rule["key"]]))
-        rec = Record(kind.name, rid, rel, bytes_version(raw.encode("utf-8")), values, True, problems)
+        rec = Record(kind.name, rid, rel, bytes_version(raw.encode("utf-8")), values, True, problems, unread=unread)
         if rid is None:
             rec.problems.append("id_form")
         out.append(rec)
@@ -785,7 +788,8 @@ def _read_units(rec: Record, kind: Kind) -> None:
                 # 同じ番号でも中身の指紋まで同じなら区別しない。違えば番号の重なり。
                 pointer = "i:" + str(keytext)
                 ambiguous = len(set(contents)) > 1
-            elif len(members) == 1:
+            elif len(members) == 1 or len(set(contents)) == 1:
+                # 同じ鍵の行が 1 つ、または中身まで同じ行だけ（区別しない。設計 §5.1）: 鍵で指す。
                 pointer, ambiguous = "k:" + short(fp(key)), False
             else:
                 # 鍵で決まらない: 鍵と行の姿で指す（姿は読んだ値と値の時点。親の出典は入らない）。
@@ -1015,6 +1019,11 @@ def record_depend(kind: Kind, rec: Record, question: Question | None) -> str:
     fields = question.depend_fields() if question else None
     if fields is None or rec.values is None:
         return "bytes:" + rec.version
+    unread = sorted(k for k in fields if k in rec.unread)
+    if unread:
+        # 依る欄に読めなかったセルがある: 読んだ null の指紋と決して合わない形にする（欠けたセルと null を区別する）。
+        return "unread:" + fp({"read": {k: rec.values.get(k) for k in fields if k not in rec.unread},
+                               "unread": unread})
     return fp({k: rec.values.get(k) for k in fields})
 
 
@@ -1210,22 +1219,24 @@ def _cycles(edges: list) -> list:
         for e in edges:
             if e["meaning"] == meaning:
                 graph.setdefault(e["from"], set()).add(e["to"])
-        state, stack = {}, []
-
-        def visit(node):
-            state[node] = 1
-            stack.append(node)
-            for nxt in sorted(graph.get(node, ())):
-                if state.get(nxt) == 1:
+        state = {}
+        for start in sorted(graph):
+            if state.get(start) is not None:
+                continue
+            # 再帰でなく繰り返しでたどる（長い参照の鎖でも深さの上限に当たらない）。
+            state[start] = 1
+            stack, todo = [start], [iter(sorted(graph.get(start, ())))]
+            while todo:
+                nxt = next(todo[-1], None)
+                if nxt is None:
+                    state[stack.pop()] = 2
+                    todo.pop()
+                elif state.get(nxt) == 1:
                     found.append({"meaning": meaning, "records": stack[stack.index(nxt):] + [nxt]})
                 elif state.get(nxt) is None:
-                    visit(nxt)
-            stack.pop()
-            state[node] = 2
-
-        for node in sorted(graph):
-            if state.get(node) is None:
-                visit(node)
+                    state[nxt] = 1
+                    stack.append(nxt)
+                    todo.append(iter(sorted(graph.get(nxt, ()))))
     return found
 
 

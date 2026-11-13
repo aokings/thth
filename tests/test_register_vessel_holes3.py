@@ -299,7 +299,8 @@ def test_三5_値でない欄に付いた年度の違いでは断らない(env):
     v = V.open_vessel(str(root))
     rec = v.get("t:a")
     [pointer] = {u.pointer for u in rec.units}
-    assert pointer.startswith("kc:") and [u.same_content for u in rec.units] == [2, 2] and rec.problems == []
+    # 中身まで同じ 2 行は区別しない（五回めの検収の 2 で決まりを直した: 鍵で指す `k:`。設計 §5.1）
+    assert pointer.startswith("k:") and [u.same_content for u in rec.units] == [2, 2] and rec.problems == []
     vj, rj = _val_j(v, pointer, "value"), _row_j(v, pointer)
     assert J.evaluate(v, vj) == J.evaluate(v, rj) == "effective"
     assert J.answer_value(v, [vj], "t:a", pointer, "value", as_time=2026)["usable"] is True
@@ -356,9 +357,11 @@ def test_三7_親の出典だけが違う同じ姿の行は健康に出る(env):
 def test_三8_行の姿と中身の指紋を実装を使わずに組んで比べる(env):
     from tests.test_register_vessel_holes import _paragraph_fp
     row = {"key": "a", "value": 10, "field_years": {"value": 2026}}
-    root = _tiny3(env, [{"year": 2026, "rows": [row]}, {"year": 2027, "rows": [row]}], time=PER_FIELD,
+    other = {"key": "a", "value": 11, "field_years": {"value": 2026}}  # 中身の違う同じ鍵の行（鍵で決まらない）
+    root = _tiny3(env, [{"year": 2026, "rows": [row]}, {"year": 2027, "rows": [other]}], time=PER_FIELD,
                   not_values=["key"])
     unit = V.open_vessel(str(root)).get("t:a").units[0]
+    assert unit.pointer.startswith("kc:") and unit.item == row
     shape = _paragraph_fp({"key": {"value": "a", "time": None}, "value": {"value": 10, "time": 2026},
                            "field_years": {"value": {"value": 2026}, "time": None}})
     assert unit.pointer.split(".")[1] == shape[:16]
