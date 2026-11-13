@@ -286,7 +286,8 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
             scoped.append((value.scope, j))
         elif said is not None:
             scoped.append((said, j))
-    if value.scope_kind == "key" and name in V.unit_fields(kind, unit, V.question_of(kind, question)):
+    if value.scope_kind == "key" and value.scope_form is not None and \
+            name in V.unit_fields(kind, unit, V.question_of(kind, question)):
         # 行への判断は、その問いが依る欄の値にだけ当たる（依らない値は、変わっても判断が古くならないので）。
         for j in row_js:
             if scope_said(j) is not None:
@@ -297,8 +298,8 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
         if conflict:
             return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_conflict",
                     "scope": value.scope}
-        if value.scope_kind == "separate" and value.scope is None and (value_js or row_js):
-            # 判断はあるが、範囲を別に持つ値に範囲を言っていない（範囲の欄も、人が書いた範囲も無い）。
+        if value.scope_form is None and (value_js or row_js):
+            # 判断はあるが、範囲の決まらない値に範囲を言っていない（範囲の欄・範囲の軸の値も、人が書いた範囲も無い）。
             return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_undeclared",
                     "scope": None}
         return {**base, "usable": False, "conclusion": "pending", "scope": value.scope,
@@ -426,10 +427,12 @@ def inspection_report(vessel: V.Vessel) -> dict:
         for step in spec["follow"]:
             nxt = []
             for one in here:
+                found_here = 0
                 for pointer in vessel.kinds[one.kind].pointers:
                     if pointer.get("field") != step:
                         continue
                     targets, blanks = V.pointer_pieces(one, pointer)
+                    found_here += len(targets) + blanks
                     if blanks:
                         reason = "target_blank"
                     for target_id in targets:
@@ -441,6 +444,8 @@ def inspection_report(vessel: V.Vessel) -> dict:
                             reason = reason or "target_missing"
                         else:
                             nxt.append(found)
+                if not found_here:
+                    reason = reason or "target_missing"  # この枝は 0 件（空のセル・欄が無い）。ほかの枝で埋めない
             here = nxt
             if reason:
                 break
