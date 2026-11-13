@@ -5470,6 +5470,9 @@ def build_parser() -> argparse.ArgumentParser:
     shop_sub = store_cli.parent(sub)
     meta_shop.register(shop_sub)
     store_cli.register(shop_sub)
+    # `thth register`: 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。網に出ない。
+    from .register import cli as register_cli
+    register_cli.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)
