@@ -149,7 +149,8 @@ def kopicha(root: str, tmp: pathlib.Path) -> dict:
     pages = [r for r in v.all_records if r.kind.startswith("page_")]
     central_probs = [p for p in probs if "/central.csv" in p["path"]]
     other_probs = [p for p in probs if p not in central_probs and p not in yaml_refused]
-    found = J.inspections(v)
+    report = J.inspection_report(v)
+    found = report["judgments"]
     inspection_states = collections.Counter(J.evaluate(v, j) for j in found)
     contradicted = {e["to"] for e in graph["edges"] if e["meaning"] == "contradicts"}
     supports = {e["to"] for e in graph["edges"] if e["meaning"] == "supports"}
@@ -164,6 +165,8 @@ def kopicha(root: str, tmp: pathlib.Path) -> dict:
                 e["to"].split(":")[0] for e in graph["dangling"])),
             "claims_with_both": len(both), "both_by_status": dict(words),
             "central_inspections": len(found), "central_inspection_states": dict(inspection_states),
+            "central_skipped": dict(collections.Counter(x["reason"] for x in report["skipped"])),
+            "blank_pointers": len(graph["blank"]),
             # 中央の判断の表は、束ごとに同じ根拠の番号を書き直し、番号の無い行もある（今の台帳の形）。目録の問題とは
             # 分けて数える（行は判断の材料で、記録の番号として指されない）。
             "central_problems": dict(collections.Counter(w.split(":")[0] for p in central_probs for w in p["words"])),

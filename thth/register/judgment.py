@@ -349,58 +349,82 @@ def accept_baseline(vessel: V.Vessel, kind_name: str, question: str, *, by: str,
 # ------------------------------------------------------------------ 検収の記録を持つ表から判断を読む
 
 def inspections(vessel: V.Vessel) -> list:
+    """検収の記録を持つ表から作った判断（`inspection_report` の `judgments`）。"""
+    return inspection_report(vessel)["judgments"]
+
+
+def inspection_report(vessel: V.Vessel) -> dict:
     """種類の宣言 `inspects` を持つ表（こぴちゃの中央の判断）の行ごとに、`follow` の指す欄を順にたどって
     対象の記録を見つけ、行の中身を「確かめた中身そのもの」として持つ検収の記録にする（書かない）。
+    `{"judgments": [...], "skipped": [{"source", "reason"}]}`。
 
-    中身は読んだ値のまま（空のセル "" も値。対象の空のセルと合えば効く）。ただし `required` の欄（既定は問いの
-    状態の欄）が空の行と、中身の欄が無い行は、版を示せないので判断にしない。たどった先が無い・2 つ以上に分かれる・
-    同じ番号の記録が 2 つ以上ある行も、黙って選ばずに判断にしない。状態の語は観測と同じ直し方（`word_of`）。
-    効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。"""
-    out = []
+    中身は読んだ値のまま（空のセル "" も、JSON の明示の null も値。対象と合えば効く）。判断にしない行と理由:
+    - `source_problem`: 行そのものに読みの問題がある（表の幅が違う行の欠けたセルは値でなく欠け。行の番号の
+      重なりは、行の中身にも、たどる先にも効かないので除く）
+    - `content_missing`: 中身の欄が行に無い（欄の欠落。明示の null とは別）
+    - `target_blank`: たどる欄の並び・区切りの中に空の要素がある（指す先の一部の欠け）
+    - `target_duplicated`: たどる先に同じ番号の記録が 2 つ以上ある
+    - `target_missing`: たどる先が 1 つでも無い（残った先だけで判断にしない）・1 つも無い
+    - `target_split`: たどった先が 2 つ以上の記録に分かれる
+    - `required_empty`: `required` の欄（既定は問いの状態の欄）が空か null
+    状態の語は観測と同じ直し方（`word_of`）。効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。"""
+    out, skipped = [], []
     for rec in vessel.all_records:
         kind = vessel.kinds[rec.kind]
         spec = kind.inspects
         if spec is None or rec.id is None or rec.values is None:
             continue
-        content = {}
-        for to_field, from_field in spec["content"].items():
-            raw = rec.values.get(from_field)
-            if raw is None:
-                content = None
-                break
-            content[to_field] = raw
-        if content is None:
+
+        def skip(reason):
+            skipped.append({"source": rec.ref, "reason": reason})
+        if any(word != "id_duplicate" for word in rec.problems):
+            # 読みの問題のある行（幅の違う行の欠けたセルは値でなく欠け）。番号の重なりは行の中身に効かないので除く。
+            skip("source_problem")
             continue
-        here = [rec]
+        if any(from_field not in rec.values for from_field in spec["content"].values()):
+            skip("content_missing")
+            continue
+        content = {to_field: rec.values[from_field] for to_field, from_field in spec["content"].items()}
+        here, reason = [rec], None
         for step in spec["follow"]:
             nxt = []
             for one in here:
                 for pointer in vessel.kinds[one.kind].pointers:
                     if pointer.get("field") != step:
                         continue
-                    for target_id in V.pointer_targets(one, pointer):
+                    targets, blanks = V.pointer_pieces(one, pointer)
+                    if blanks:
+                        reason = "target_blank"
+                    for target_id in targets:
                         ref = f"{pointer['to']}:{target_id}"
-                        if vessel.is_duplicated(ref):
-                            nxt.append(None)  # 同じ番号の記録が 2 つ以上: どちらとも決めない
-                            continue
                         found = vessel.unique(ref)
-                        if found is not None:
+                        if vessel.is_duplicated(ref):
+                            reason = reason or "target_duplicated"
+                        elif found is None:
+                            reason = reason or "target_missing"
+                        else:
                             nxt.append(found)
             here = nxt
-            if any(r is None for r in here):
+            if reason:
                 break
-        if any(r is None for r in here):
+            if not here:
+                reason = "target_missing"
+                break
+        if reason:
+            skip(reason)
             continue
         refs = sorted({r.ref for r in here})
         if len(refs) != 1:
+            skip("target_split")
             continue
         target_kind = vessel.kinds[here[0].kind]
         q = V.question_of(target_kind, spec["question"])
         required = spec["required"] if spec["required"] is not None else (
             [q.state] if q is not None and q.state in content else [])
         if any(content.get(name) in (None, "") for name in required):
+            skip("required_empty")
             continue
         word = V.word_of(content.get(q.state)) if q is not None and q.state in content else None
         out.append(make(vessel, {"record": refs[0]}, spec["question"], by=spec["by"], at=None, word=word,
                         content=content, source=rec.ref))
-    return out
+    return {"judgments": out, "skipped": skipped}
