@@ -222,6 +222,12 @@ def test_showは行ごとに使えるかと符丁を言う(capsys, env):
     codes = {row["id"]: row["code"] for row in value["rows"]}
     assert codes == {"fact-term-start": "register_row_guess", "voice-editorial": "register_row_guess",
                      "voice-not-covered": "register_row_guess"}
+    # 人の読む形も、使えない行には符丁を出し「使える」と言わない。
+    rc_, out, _ = run(capsys, "register", "show", "media-sample")
+    assert rc_ == 0 and "使える" not in out and out.count("register_row_guess") == 3
+    assert run(capsys, "register", "confirm", "media-sample", "voice-editorial", "--by", "m")[0] == 0
+    line = next(x for x in run(capsys, "register", "show", "media-sample")[1].splitlines() if x.startswith("voice-editorial"))
+    assert "\t使える\t" in line
 
 
 def test_無い行と形の違う番号は断る(capsys, env):

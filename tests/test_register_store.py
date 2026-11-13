@@ -512,3 +512,12 @@ def test_draftのbyの形が違えばほかの命令と同じに断る(capsys, e
                          "cafe-special-2026-12-12", "--by", "a\tb")
     assert rc_ == 2 and value["code"] == "register_args_invalid" and value["detail"] == "by"
     assert drafts(account) == []
+
+
+def test_柵_not_afterの行を消した台帳の下書きは承認しない(capsys, env, clock, isolated_account_factory):
+    """監査 5.19.0 の「緑のまま残った」1 つ: 出さない期限を消した下書きを通す壊しで赤にする。"""
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account, row="cafe-event-2026-12-14")
+    digest = _restrip(capsys, path, keys=("not_after",))
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_draft_expired" in err and "not_after_missing" in err and "承認しました" not in out
