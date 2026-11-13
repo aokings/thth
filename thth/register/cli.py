@@ -8,6 +8,20 @@
                                        種類の宣言・憲法・備え付けの種類（台帳の器 段 1・読むだけ）
     thth register links <台帳> <種類:番号> [--units] [--unit 指し先] [--key 欄=値 ...] [--json]
                                        指す・指される・判断・観測。鍵で 2 つ以上に当たれば 1 つにせず断る（読むだけ）
+    thth register adopt <元> --to <台帳のフォルダ> --by <名前> [--plan 範囲.json] [--decl 宣言] [--json]
+                                       元のファイルから台帳を作る（元には 1 バイトも書かない・2 回めは取り込み直し）
+    thth register restore <台帳> --to <先> [--at 控え] [--json]
+                                       元どおり戻す（数・名前・sha256 が全部同じ。手元に書くだけ）
+    thth register diff <台帳> <前>..<後> [--json]
+                                       足した・変わった・退役した・消えた記録（番号が消えたら赤）。git の外でも器の控えから
+    thth register keep <台帳> --by <名前> [--list] [--json]
+                                       今の姿を控える（元の形式の道具が直に書いたあと）
+    thth register merge <台帳> <束> --by <名前> [--base 指紋] [--json]
+                                       束をまとめて入れ替える（止まっても前か後のどちらかに見え、混ざらない）
+    thth register resume <台帳> --continue|--rollback --by <名前> [--json]
+                                       止まった入れ替えを続ける・戻す（別の者が打ってよい）
+    thth register row set|add <台帳> <種類:番号|種類> --set 欄=値 ... --by <名前> [--json]
+                                       表の 1 行を直す・足す（触っていない行のバイトが変わるなら書かずに断る）
     thth register show <台帳> [--json]
                                        行ごとに「中身の材料に使えるか」と、使えないならその符丁
     thth register use <台帳> <行> [--json]
@@ -51,7 +65,7 @@ import sys
 from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
-from . import vessel, vessel_cli
+from . import adopt_cli, keep, vessel, vessel_cli
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -152,6 +166,7 @@ def cmd_add(args) -> int:
 def cmd_check(args) -> int:
     cfg = ledger.load(args.register)
     root = ledger.root_of(cfg)
+    keep.refuse_if_pending(root)  # 止まった入れ替えの間は、混ざった姿を読まない（段 2）
     if vessel.has_declarations(root):
         # 台帳の器 段 1: .thth/kinds/ がある台帳は、器として読む（無い台帳は今の check のまま）。
         return vessel_cli.cmd_check(args, root)
@@ -611,11 +626,13 @@ def cmd_compare(args) -> int:
 
 def cmd_kinds(args) -> int:
     cfg = ledger.load(args.register)
+    keep.refuse_if_pending(ledger.root_of(cfg))
     return vessel_cli.cmd_kinds(args, ledger.root_of(cfg))
 
 
 def cmd_links(args) -> int:
     cfg = ledger.load(args.register)
+    keep.refuse_if_pending(ledger.root_of(cfg))
     return vessel_cli.cmd_links(args, ledger.root_of(cfg))
 
 
@@ -777,3 +794,6 @@ def register(sub) -> None:
     p.add_argument("--for", dest="for_row", required=True, metavar="行")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_compare))
+
+    # 台帳の器 段 2: 取り込み・戻す・変えた跡・控え・束・止まった入れ替え・表の 1 行（`adopt_cli.py`）。
+    adopt_cli.register_parsers(verbs, _run)

@@ -20,6 +20,12 @@
   - `yamlread.py`: YAML を字として読み、範囲の外の書き方を断る（PyYAML を入れた機械だけ・`thth[yaml]`）。
   - `judgment.py`: 判断の記録の最小の形と、効いているか（効いている・古い・消えた指し先）・結びの候補。
   - `vessel_cli.py`: `register kinds`・`register links`・器の `register check`。
+- 台帳の器 段 2（設計 §5.5・§5.6 の (1)・§5.7・§10 の段 2・§13）。元のフォルダには書かない:
+  - `keep.py`: 目録と目録の指紋・器の側の控え（`.thth/kept/`。git の外の台帳でも前の版を取り出す）・まとめての
+    入れ替え（`.thth/batch/`。止まっても器の読み手には前か後のどちらかだけを見せ、続けるか戻すかが決まる）。
+  - `adopt.py`: `adopt`（取り込む物の範囲・元のバイトのまま置く・取り込み直しは片道）・`restore`・`diff`・`merge`・
+    表の 1 行の `row_set`・`row_add`（触っていない行のバイトが変わるなら書かずに断る）。
+  - `adopt_cli.py`: `register adopt`・`restore`・`diff`・`keep`・`merge`・`resume`・`row set|add`。
 
 **網に出ない**（どのファイルも網の部品を import しない・柵 `tests/test_register_base.py`）。
 """
