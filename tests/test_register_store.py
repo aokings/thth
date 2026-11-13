@@ -486,3 +486,29 @@ def test_既定で出さない欄の無い種類はuseが本文を返しprivate_
     confirm(capsys, "cafe-sample", "cafe-event-2026-12-14")
     rc_, value, _ = jrun(capsys, "register", "use", "cafe-sample", "cafe-event-2026-12-14")
     assert rc_ == 0 and value["body"] is None
+
+
+# ------------------------------------------------------------------ 例外で落ちない（監査 5.19.0 の気づき 5）
+
+def test_組むのに要る欄をprivate_fieldsに入れた行は例外でなく前向きに断る(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    path = add(capsys, env, "cafe-sample", kind="store")
+    edit(path / "臨時" / "2026-12-12_設備の点検.md", "public: true", "public: true\nprivate_fields: date")
+    confirm(capsys, "cafe-sample", "cafe-special-2026-12-12")
+    for argv in (("draft", "cafe-sample", "--to", account["name"], "--row", "cafe-special-2026-12-12"),
+                 ("paste", "cafe-sample", "cafe-special-2026-12-12")):
+        rc_, value, _ = jrun(capsys, "register", *argv)
+        assert rc_ == 2 and value["code"] == "register_row_invalid" and value["detail"] == "private_needed", argv
+        rc_, out, err = run(capsys, "register", *argv)
+        assert rc_ == 2 and "private_fields から外して" in err and "Traceback" not in err, argv
+    assert drafts(account) == []
+
+
+def test_draftのbyの形が違えばほかの命令と同じに断る(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    add(capsys, env, "cafe-sample", kind="store")
+    confirm(capsys, "cafe-sample", "cafe-special-2026-12-12")
+    rc_, value, _ = jrun(capsys, "register", "draft", "cafe-sample", "--to", account["name"], "--row",
+                         "cafe-special-2026-12-12", "--by", "a\tb")
+    assert rc_ == 2 and value["code"] == "register_args_invalid" and value["detail"] == "by"
+    assert drafts(account) == []

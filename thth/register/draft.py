@@ -72,9 +72,23 @@ def day_text(day: datetime.date) -> str:
     return f"{day.month}月{day.day}日（{_WEEK[day.weekday()]}）"
 
 
+# きっかけごとに、本文を組むのに要る欄（持ち主が private_fields に入れていたら、組めないので前向きに断る・気づき 5 の a）。
+NEEDED = {"special_soon": ("date", "closed"), "event_soon": ("name", "starts", "ends"),
+          "hours_change": ("effective_from",), "item_new": ("name",), "season_start": ("name",)}
+
+
+def _check_needed(trigger: str, row: form.Row, f: dict) -> None:
+    needed = list(NEEDED.get(trigger, ()))
+    if trigger == "special_soon" and row.head.get("closed") != "true":
+        needed += ["open", "close"]
+    if any(key in row.head and key not in f for key in needed):
+        raise RegisterRefused("register_row_invalid", "private_needed")
+
+
 def body_lines(trigger: str, row: form.Row) -> list:
     """本文の素の行（外に出してよい欄だけから作る）。"""
     f = form.outward(row)
+    _check_needed(trigger, row, f)
     if trigger == "special_soon":
         start = kinds.parse_day(f.get("date"))
         end = kinds.parse_day(f.get("end_date")) or start

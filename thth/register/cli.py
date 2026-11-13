@@ -51,7 +51,7 @@ from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
 DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger", "question",
-                          "answer_text"))
+                          "answer_text", "private_needed"))
 
 
 def _refuse(args, exc: RegisterRefused) -> int:
@@ -330,7 +330,11 @@ def _pick(args, scanned, records, now) -> list:
 
 
 def cmd_draft(args) -> int:
-    by = admin_log.actor(getattr(args, "by", None) or os.environ.get("THTH_ACTOR") or f"thth {COMMAND} draft")
+    try:
+        by = admin_log.actor(getattr(args, "by", None) or os.environ.get("THTH_ACTOR") or f"thth {COMMAND} draft")
+    except ValueError:
+        # ほかの命令と同じ断りにする（Python の例外を出さない・監査 5.19.0 の気づき 5 の c）。
+        raise RegisterRefused("register_args_invalid", "by") from None
     cfg, root, scanned = open_register(args.register)
     now = jst.now_jst()
     records = ledger.read_confirmed(args.register)

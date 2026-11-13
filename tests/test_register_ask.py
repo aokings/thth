@@ -14,6 +14,8 @@ import datetime
 import json
 import pathlib
 
+import pytest
+
 from tests.test_register_base import add, env, jrun, run  # noqa: F401
 from tests.test_register_store import NOW, clock, confirm  # noqa: F401
 from thth import jst
@@ -194,3 +196,20 @@ def test_問いの記録の行の形(capsys, env, clock):
     assert {tuple(sorted(row)) for row in rows if row["row"]} == {("at", "by", "digest", "hole", "id", "row", "type")}
     assert {tuple(sorted(row)) for row in rows if not row["row"]} <= {("at", "by", "hole", "id", "row", "type")}
     assert all(jst.parse(row["at"]) for row in rows)
+
+
+@pytest.mark.parametrize("line", [
+    {"type": "asked", "hole": "guess:cafe-store", "row": "cafe-store", "at": "2026-12-08T10:00:00+09:00", "by": "m"},
+    {"type": "answered", "result": "yes", "at": "2026-12-08T10:00:00+09:00", "by": "m"},
+    {"type": "asked", "id": 3, "hole": "guess:cafe-store"},
+    {"type": "asked", "id": "q-20261208-abcdef"},
+    {"type": "answered", "id": "q-20261208-abcdef", "result": "maybe"},
+])
+def test_問いの記録の壊れた行は例外でなく前向きに断る(capsys, env, clock, line):
+    """監査 5.19.0 の気づき 5 の b: id の無い行で KeyError にしない。"""
+    path = add(capsys, env, "cafe-sample", kind="store")
+    (path / questions.LOG_FILE).write_text(json.dumps(line, ensure_ascii=False) + "\n", encoding="utf-8")
+    for argv in (("ask", "cafe-sample", "--by", "m"), ("questions", "cafe-sample"),
+                 ("answer", "cafe-sample", "q-20261208-abcdef", "--result", "yes", "--by", "m")):
+        rc_, value, _ = jrun(capsys, "register", *argv)
+        assert rc_ == 2 and value["code"] == "register_question_log_invalid", argv

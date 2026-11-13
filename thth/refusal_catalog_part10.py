@@ -100,7 +100,14 @@ ENTRIES = {
         "台帳の行の形が決まりに合っていません（頭の 7 つの欄・印の語・日付の形・種類ごとの形のどれか）。",
         "表示された行ごとの直し方のとおりに .md を直して、thth register check <台帳> で点検し直してください。",
         _CHECK,
-        "台帳の repo の CI で thth register check を回すと、形の崩れた行が commit の時点で分かります。"),
+        "台帳の repo の CI で thth register check を回すと、形の崩れた行が commit の時点で分かります。",
+        by_detail={
+            "private_needed": {
+                "fix": "下書きや貼る文を組むのに要る欄（臨時は日と休みか・時刻、催しは名前と始まりと終わり、営業の時間の変わりは"
+                       "変わる日、品は名前）が、その行の private_fields に入っています。その欄を private_fields から外して"
+                       "認め直してから、打ち直してください。",
+                "command": _CONFIRM,
+                "better": "外に出したくないのが理由や住所なら、その欄だけを private_fields に入れると、告知は出しつつ中身を守れます。"}}),
     "register_row_secret": _entry(
         "台帳の行に、鍵やパスワードらしい値があります。台帳は git の repo で、写しが残りやすいので、材料にもしません。",
         "その値を行から消して（鍵は thth の token set の命令で THTH の鍵の置き場へ）、thth register check <台帳> で点検し直してください。",

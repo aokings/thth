@@ -48,12 +48,24 @@ def read(root: str) -> list:
             for line in f:
                 if line.strip():
                     value = json.loads(line)
-                    if not isinstance(value, dict) or value.get("type") not in ("asked", "answered"):
+                    if not _row_ok(value):
                         raise ValueError
                     out.append(value)
     except (OSError, ValueError, UnicodeDecodeError):
         raise RegisterRefused("register_question_log_invalid") from None
     return out
+
+
+def _row_ok(value) -> bool:
+    """問いの記録の 1 行の形（番号は決まった形の字・聞いた行は穴の番号を持つ）。壊れた行は記録ごと断る
+    （`id` の無い行で `KeyError` にしない・監査 5.19.0 の気づき 5 の b）。"""
+    if not isinstance(value, dict) or value.get("type") not in ("asked", "answered"):
+        return False
+    if not isinstance(value.get("id"), str) or not _QUESTION.fullmatch(value["id"]):
+        return False
+    if value["type"] == "asked":
+        return isinstance(value.get("hole"), str) and (value.get("row") is None or isinstance(value["row"], str))
+    return value.get("result") in RESULTS
 
 
 def append(root: str, rows: list) -> None:
