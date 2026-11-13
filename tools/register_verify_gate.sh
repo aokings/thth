@@ -10,7 +10,8 @@
 #   配ろうとしている変更の中の処理は使わない。版が違えば止まる。
 # - 前に配った世代の封は、公開の場所に材料と一緒に配った `thth-seal.<出し口>.json` を、この台本が取ってくる
 #   （THTH は網に出ないので、取るのは台本の役目）。初めて配るときだけ `first`。取れなければ止まる。
-# - 確かめが緑なら、今の封を `<材料の先>/thth-seal.<出し口>.json` に置く（次の回が「前に配った世代」として読む）。
+# - 確かめが緑なら、配る物（今の封と、配った時の判断の記録の頭）を `<材料の先>/thth-seal.<出し口>.json` に置く
+#   （次の回が「前に配った物」として読む。封をし直さずに止めるで外して配った回も、次の回は戻りを赤にできる）。
 #
 # 正直な残り（設計 §5.6）: main に書ける者がこの台本や workflow を書き換える・履歴ごと書き換える、は防げない。
 set -eu
@@ -52,6 +53,6 @@ fi
 if [ -n "$common" ]; then
   set -- "$@" --common "$common"
 fi
+set -- "$@" --publish "$material/thth-seal.$outlet.json"
 $THTH "$@"
-cp "$ledger/.thth/seals/$outlet.json" "$material/thth-seal.$outlet.json"
-echo "封を材料の先に置きました: ${material}/thth-seal.${outlet}.json（配ると、次の回の「前に配った世代」になる）"
+echo "配る物を材料の先に置きました: ${material}/thth-seal.${outlet}.json（配ると、次の回の「前に配った物」になる）"
