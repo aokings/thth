@@ -181,12 +181,17 @@ def status(name) -> dict:
     now = jst.now_jst()
     counts = guard.principal_summary(name, p, now=now)
     halted = principals.stopped(name)
+    # 名乗りの欄は主体の種類の表から引く（はてなは hatena_id・WordPress は wp_user）。5.18.2 の前は hatena_id を
+    # 決め打ちで読み、WordPress の主体で KeyError になった（監査 次の版・2026-11-13 の直したほうがよい 4）。
+    spec = principals.ARTICLE_KINDS[p["kind"]]
+    id_field = spec["id_field"]
     return {
         "principal": name,
         "kind": p["kind"],
-        "hatena_id": p["hatena_id"],
+        id_field: p[id_field],
+        "id_field": id_field,
         "owner": principals.owner_of(name, p),
-        "auth": p.get("auth", "oauth"),
+        "auth": p.get("auth", spec["auths"][0]),
         "token": "present" if os.path.exists(p["token"]) else "absent",
         "consumer": ("present" if p.get("consumer") and os.path.exists(p["consumer"]) else "absent"),
         "blogs": [{k: v for k, v in row.items()} for row in p["blogs"]],
@@ -203,6 +208,10 @@ def status(name) -> dict:
     }
 
 
+# `principal show` の 1 行めで名乗りの欄に付ける名（主体の種類の表の `id_field` → 画面の名）。
+_ID_LABELS = {"hatena_id": "はてな ID", "wp_user": "WordPress の利用者"}
+
+
 def cmd_show(args) -> int:
     try:
         row = status(args.name)
@@ -214,13 +223,20 @@ def cmd_show(args) -> int:
         print(json.dumps(row, ensure_ascii=False))
         return 0
     lim = row["limits"]
-    print(f"{row['principal']}（{row['kind']}・はてな ID {row['hatena_id']}・owner {row['owner']}・auth {row['auth']}）")
-    print(f"  token: {'ある' if row['token'] == 'present' else 'ない'}・consumer: "
-          f"{'ある' if row['consumer'] == 'present' else 'ない'}")
+    id_field = row["id_field"]
+    id_label = _ID_LABELS.get(id_field, id_field)
+    print(f"{row['principal']}（{row['kind']}・{id_label} {row[id_field]}・owner {row['owner']}・auth {row['auth']}）")
+    if row["kind"] == "hatena":
+        print(f"  token: {'ある' if row['token'] == 'present' else 'ない'}・consumer: "
+              f"{'ある' if row['consumer'] == 'present' else 'ない'}")
+    else:
+        print(f"  token: {'ある' if row['token'] == 'present' else 'ない'}")
     for blog in row["blogs"]:
         extra = "・".join(f"{k} {blog[k]}" for k in principals.BLOG_LIMIT_KEYS if k in blog)
-        print(f"  ブログ {blog['blog_id']}: レーン {'・'.join(blog['lanes'])}" + (f"（{extra}）" if extra else ""))
-    print(f"  ブックマークを打てるレーン: {'・'.join(row['bookmark_lanes']) or 'なし'}")
+        site = f"・入口 {blog['site_url']}" if blog.get("site_url") else ""
+        print(f"  ブログ {blog['blog_id']}{site}: レーン {'・'.join(blog['lanes'])}" + (f"（{extra}）" if extra else ""))
+    if row["kind"] == "hatena":
+        print(f"  ブックマークを打てるレーン: {'・'.join(row['bookmark_lanes']) or 'なし'}")
     print(f"  上限: 公開 {lim['daily_max_posts']}・削除 {lim['daily_max_retracts']}・"
           f"ブックマーク {lim['daily_max_bookmarks']}・急な連投 {lim['burst']['minutes']} 分に "
           f"{lim['burst']['count']} 件を超えたら止める（記事だけ）")
