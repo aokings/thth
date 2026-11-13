@@ -75,7 +75,7 @@ def edit(path: pathlib.Path, old: str, new: str) -> None:
 def test_見本の2店の台帳は形の点検を通る(capsys, env, clock):
     add(capsys, env, "cafe-sample", kind="store")
     add(capsys, env, "goods-sample", kind="store")
-    for name, count in (("cafe-sample", 9), ("goods-sample", 6)):
+    for name, count in (("cafe-sample", 11), ("goods-sample", 7)):
         rc_, value, err = jrun(capsys, "register", "check", name)
         assert rc_ == 0, err
         assert value["rows"] == count and value["problems"] == []

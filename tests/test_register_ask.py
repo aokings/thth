@@ -113,7 +113,7 @@ def test_問いの記録は持ち主の台帳にあり数を数えられる(caps
     assert value == {"register": "cafe-sample", "asked": 3, "answered": 1, "skipped": 1, "rows_from_answers": 1,
                      "open": 1}
     # 問いの記録は台帳の行として数えない（.md でない）。
-    assert jrun(capsys, "register", "check", "cafe-sample")[1]["rows"] == 10
+    assert jrun(capsys, "register", "check", "cafe-sample")[1]["rows"] == 12
     # 思いの 1 枚を足した品は、思いの穴から外れる。
     found = {h["hole"] for h in jrun(capsys, "register", "holes", "cafe-sample")[1]["holes"]}
     assert "voice:cafe-item-winter-blend" not in found
