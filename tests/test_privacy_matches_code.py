@@ -511,3 +511,97 @@ def test_5181_WordPressは外の網のアドレスにだけつなぐ文とadapte
     assert re.search(r"httpsafe\.urlopen\([^\n]*via=httpsafe\.public_opener\(\)\)", source)
     assert "connects only to an address" in _wp_section(page, "Blog articles on WordPress")
     assert "引いた先が外の網のアドレスのときだけつなぎます" in _wp_section(page, "WordPress の記事")
+
+
+# ------------------------------------------------------------------ 実店舗のレジ（Square・スマレジ・計画 実店舗 段 5）
+
+def _square_location_keeps() -> set:
+    """Square の店舗の応答から残す欄（住所・電話・メールを入れた応答で口を通して確かめる）。"""
+    import json as _json
+    from thth.shop import square as shop_square
+    loc = {"id": "L1", "name": "n", "status": "ACTIVE", "merchant_id": "M1", "address": {"x": "address-marker"},
+           "phone_number": "phone-marker", "business_email": "e@example.invalid",
+           "business_hours": {"periods": [{"day_of_week": "MON", "start_local_time": "9:00:00",
+                                           "end_local_time": "18:00:00"}]}}
+    client = shop_square.Client({"location": "L1", "public_url": "https://n.example.invalid", "publish": {}}, "t",
+                                transport=lambda *a: (200, _json.dumps({"locations": [loc]}).encode()))
+    user = client.user()
+    assert "marker" not in _json.dumps(user)
+    return set(user)
+
+
+def _pos_route_count(kind) -> int:
+    route = shop_wire.ROUTES[kind]
+    return len(route["paths"]) + len(route.get("patterns", ()))
+
+
+def _pos_methods(kind) -> set:
+    route = shop_wire.ROUTES[kind]
+    return {m for m, _p in route["paths"]} | {m for m, _p, _n in route.get("patterns", ())}
+
+
+def pos_facts():
+    from thth.shop import pos as shop_pos
+    from thth.shop import smaregi as shop_smaregi
+    from thth.shop import square as shop_square
+    words = {3: "three"}
+    sq_n, sm_n = _pos_route_count("square"), _pos_route_count("smaregi")
+    scopes = shop_wire.SMAREGI_SCOPE.split()
+    return [
+        ("レジの品は既定で使わない（pos.empty_publish・kinds の台帳の欄）",
+         "by default THTH uses none of the register's items"
+         if shop_pos.nothing_published(shop_pos.empty_publish())
+         and "publish" in shop_kinds.KINDS["square"]["ledger_fields"] else "既定で使う品がある"),
+        ("レジの品は既定で使わない・日本語", "THTH は既定でレジのどの品も使いません"
+         if shop_pos.nothing_published(shop_pos.empty_publish()) else "既定で使う品がある"),
+        ("在庫の数を読む上限（square/smaregi.INVENTORY_MAX）",
+         f"at most {shop_square.INVENTORY_MAX} counts in one read"
+         if shop_square.INVENTORY_MAX == shop_smaregi.INVENTORY_MAX else "2 つのレジで上限が違う"),
+        ("在庫の数を読む上限・日本語", f"1 回の読みで {shop_square.INVENTORY_MAX} までです"),
+        ("Square は GET だけ（shop/wire.ROUTES）",
+         f"THTH sends only GET requests to <code>{shop_wire.SQUARE_HOST}</code>, to {words.get(sq_n, '道の数が違う')} paths"
+         if _pos_methods("square") == {"GET"} else "Square の道に GET でないものがある"),
+        ("Square は GET だけ・日本語", f"<code>{shop_wire.SQUARE_HOST}</code> への GET だけで、道は {sq_n} つです"
+         if _pos_methods("square") == {"GET"} else "Square の道に GET でないものがある"),
+        ("Square の店舗で残す欄（square.Client.user）",
+         "keeps only the store's name, whether it is active, the merchant's ID and the weekly business hours"
+         if _square_location_keeps() == {"shop_id", "shop_name", "shop_url", "able_to_business", "location", "hours"}
+         else "店舗の欄が増えた"),
+        ("Square の絞った鍵の scope（pos.KEY_NOTES）",
+         "<code>ITEMS_READ</code>, <code>INVENTORY_READ</code> and <code>MERCHANT_PROFILE_READ</code>"
+         if all(s in shop_pos.KEY_NOTES["square"][1] for s in ("ITEMS_READ", "INVENTORY_READ", "MERCHANT_PROFILE_READ"))
+         else "絞った鍵の scope が privacy と違う"),
+        ("スマレジの鍵を取る POST（shop/wire.ROUTES の smaregi_id）",
+         f"one kind of POST request, to <code>{shop_wire.SMAREGI_ID_HOST}</code>"
+         if _pos_methods("smaregi_id") == {"POST"} and _pos_route_count("smaregi_id") == 1 else "鍵を取る口が違う"),
+        ("スマレジの頼む scope（shop/wire.SMAREGI_SCOPE）",
+         "for only " + ", ".join(f"<code>{x}</code>" for x in scopes[:-1]) + f" and <code>{scopes[-1]}</code>"),
+        ("スマレジの頼む scope・日本語", "・".join(f"<code>{x}</code>" for x in scopes) + " だけの"),
+        ("スマレジの GET（shop/wire.ROUTES の smaregi）",
+         f"only GET requests to <code>{shop_wire.SMAREGI_API_HOST}</code>, to {words.get(sm_n, '道の数が違う')} paths"
+         if _pos_methods("smaregi") == {"GET"} else "スマレジの道に GET でないものがある"),
+        ("スマレジの GET・日本語", f"<code>{shop_wire.SMAREGI_API_HOST}</code> への GET だけで、道は {sm_n} つです"),
+        ("スマレジの店舗は ID と名前だけ（shop/wire.SMAREGI_FIELDS）",
+         "the store (asking only for its ID and name)"
+         if shop_wire.SMAREGI_FIELDS["store"] == "storeId,storeName" else "店舗の欄が増えた"),
+        ("スマレジの商品の欄（shop/wire.SMAREGI_FIELDS）",
+         "asking only for the ID, category, name, price and whether stock is counted"
+         if shop_wire.SMAREGI_FIELDS["products"] == "productId,categoryId,productName,price,stockControlDivision"
+         else "商品の欄が増えた"),
+        ("スマレジの取った鍵を残さない（smaregi.py は台帳と鍵のファイルに書かない）",
+         "it uses that token for the one command and does not keep it"
+         if "ledger" not in (Path(shop_smaregi.__file__).read_text(encoding="utf-8")) else "取った鍵を書く道がある"),
+        ("レジの売上と顧客を読まない（道の表に語が無い・tests/test_store_pos_wire.py）",
+         "THTH does not read sales, transactions, customers or members, staff, timecards or payments"),
+        ("レジの売上と顧客を読まない・日本語", "売上・取引・お客さんや会員・スタッフ・勤怠・支払いは読まず"),
+        ("Square の提供でない（kinds の not_by）", "THTH is not provided by Square."
+         if "Square が提供するものではありません" in shop_kinds.KINDS["square"]["not_by"] else "not_by が無い"),
+        ("スマレジの提供でない（kinds の not_by）", "THTH はスマレジが提供するもの"
+         if "スマレジが提供するものではありません" in shop_kinds.KINDS["smaregi"]["not_by"] else "not_by が無い"),
+    ]
+
+
+@pytest.mark.parametrize("what,phrase", pos_facts(), ids=[f[0] for f in pos_facts()])
+def test_privacyのレジの文はコードと同じ(what, phrase):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert phrase in page, f"privacy に「{phrase}」が無い（{what}）。コードと privacy（tools/build_site.py）のどちらかを直す"
