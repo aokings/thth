@@ -139,6 +139,13 @@ def test_柵_営業の時間と臨時は二段で認める(capsys, env, clock):
     assert rc_ == 0 and value["confirmed"] == "本人が認めた"
 
 
+def test_柵_営業の時間も二段で認める(capsys, env, clock):
+    add(capsys, env, "cafe-sample", kind="store")
+    rc_, first, _ = jrun(capsys, "register", "confirm", "cafe-sample", "cafe-hours", "--by", "m")
+    assert rc_ == 1 and first["stage"] == 1 and "水 休み" in first["text"]
+    assert jrun(capsys, "register", "use", "cafe-sample", "cafe-hours")[1]["code"] == "register_row_guess"
+
+
 # ------------------------------------------------------------------ 下書き
 
 def test_臨時の休みの下書きは出所と出さない期限を持ち理由を書かない(capsys, env, clock, isolated_account_factory):
