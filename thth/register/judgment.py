@@ -8,6 +8,9 @@
 - **書いてあるだけの状態は観測で、判断ではない**（`vessel.observations`）。判断になるのは、検収の記録（対象の版を
   示す: 指紋か、確かめた中身そのもの）か、明示の受け入れだけ。
 - 結論（よい・だめ・まだ）は問いに答えるときに返す。保存するのは台帳の語と条件。語と結論の対応は憲法。
+- **及ぶ範囲**（設計 §5.1 の内側の単位の 3）: 値への判断はその値に、行への判断は依る欄のうち範囲が行の鍵と同じ
+  値にだけ及ぶ。範囲と結論は同じ 1 つの判断から取る。人が範囲を書けるのは、範囲が未宣言の値への判断だけ
+  （空・空白だけは未宣言。ほかに書かれたら断り、保存された物にあれば答えに使わない）。
 - **鍵で決まらない単位の訂正は結ばない。** 結びの候補（同じ鍵で、消えた指し先と現れた指し先）を見せるだけ。
   結ぶのは人が名指ししたときだけ（`carry`。直した者と同じ者は結べない）。
 
@@ -106,8 +109,26 @@ def _same_time(a, b) -> bool:
     return (a is None and b is None) or (a is not None and b is not None and str(a) == str(b))
 
 
-def current_depend(vessel: V.Vessel, target: dict, question: str, scope_written=None):
-    """今の依る所の指紋。指し先が無ければ None。"""
+def scope_said(j) -> str | None:
+    """判断に人が書いた範囲。字で、前後の空白を落として 1 字以上なら落とした字。それ以外（None・空・空白だけ・
+    字でない物）は None（未宣言）。人が書いた範囲を読む所は、全部これを通す。"""
+    raw = (j.get("answer") or {}).get("scope") if isinstance(j, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _scope_arg(raw):
+    """命令に渡された範囲（判断に書く・尋ねる）。None はそのまま。字で 1 字以上でなければ断る。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise RegisterRefused("register_args_invalid", "scope_blank")
+    return raw.strip()
+
+
+def current_depend(vessel: V.Vessel, target: dict, question: str, said=None):
+    """今の依る所の指紋。指し先が無ければ None。`said` は判断に人が書いた範囲（`scope_said` を通した字）。"""
     rec, kind, unit, value = _locate(vessel, target)
     if rec is None:
         return None
@@ -117,7 +138,7 @@ def current_depend(vessel: V.Vessel, target: dict, question: str, scope_written=
         if target.get("value"):
             if value is None:
                 return None
-            return value.depend(scope_override=scope_written if value.scope is None else None)
+            return value.depend(said=said if value.scope_form is None else None)
         return V.unit_depend(kind, unit, V.question_of(kind, question))
     q = V.question_of(kind, question)
     return V.record_depend(kind, rec, q)
@@ -130,9 +151,13 @@ def make(vessel: V.Vessel, target: dict, question: str, *, by: str, at: str, pat
     検収の記録になり、指紋は持たない（効くかは、その中身の指紋が今の依る所と合うかで決まる）。"""
     if path not in PATHS:
         raise RegisterRefused("register_args_invalid", "path")
+    scope = _scope_arg(scope)
     rec, kind, unit, value = _locate(vessel, target, strict=True)
     if rec is None or (target.get("unit") and unit is None) or (target.get("value") and value is None):
         raise RegisterRefused("register_record_missing", "target")
+    if scope is not None and target.get("unit") and (value is None or value.scope_form is not None):
+        # 行への判断は範囲を書けない。範囲が台帳の欄（鍵・範囲の欄）で決まっている値にも書けない。
+        raise RegisterRefused("register_args_invalid", "scope_not_allowed")
     body = {"schema": SCHEMA, "target": dict(target), "question": question,
             "answer": {"word": word, "conclusion": conclusion, "scope": scope},
             "reason": {"kind": reason_kind, "text": reason_text}, "by": by, "how": how, "at": at, "until": until,
@@ -165,7 +190,7 @@ def _content_depend(vessel: V.Vessel, j: dict):
 
 def evaluate(vessel: V.Vessel, j: dict) -> str:
     """`effective`（効いている）・`stale`（依る所が変わった）・`vanished`（指し先が無い）。"""
-    now = current_depend(vessel, j["target"], j["question"], (j.get("answer") or {}).get("scope"))
+    now = current_depend(vessel, j["target"], j["question"], scope_said(j))
     if now is None:
         return "vanished"
     if "content" in j:
@@ -223,6 +248,7 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
 
     行（単位）への判断は、範囲が行の鍵と同じ値にだけ及ぶ。範囲を別に持つ値は、範囲の欄か、判断に人が書いた範囲が
     無ければ「範囲が未宣言」。時点は値ごと（取った日は時点の代わりにしない）。"""
+    as_scope = _scope_arg(as_scope)
     rec = vessel.get(ref)
     kind = vessel.kinds[rec.kind]
     unit = V.unit_at(rec, unit_pointer)
@@ -250,16 +276,27 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
     # 判断ごとに、その判断が言う範囲を 1 つ決める（範囲と結論は同じ 1 つの判断から取る）。
     #   値への判断: 範囲の欄があればその範囲。無ければ判断に人が書いた範囲。どちらも無ければ範囲が未宣言（使わない）。
     #   行への判断: 範囲が行の鍵と同じ値にだけ及ぶ（範囲を別に持つ値には及ばない・試験 1 (d)）。
-    scoped = []
+    scoped, conflict = [], False
     for j in value_js:
-        said = value.scope if value.scope is not None else (j.get("answer") or {}).get("scope")
-        if value.scope_kind == "separate" and said is None:
-            continue
-        scoped.append((said, j))
+        said = scope_said(j)
+        if value.scope_form is not None:
+            if said is not None:
+                conflict = True  # 範囲が台帳で決まっている値に、人が範囲を書いた判断（食い違い）は使わない
+                continue
+            scoped.append((value.scope, j))
+        elif said is not None:
+            scoped.append((said, j))
     if value.scope_kind == "key" and name in V.unit_fields(kind, unit, V.question_of(kind, question)):
         # 行への判断は、その問いが依る欄の値にだけ当たる（依らない値は、変わっても判断が古くならないので）。
-        scoped.extend((value.scope, j) for j in row_js)
+        for j in row_js:
+            if scope_said(j) is not None:
+                conflict = True  # 行への判断は範囲を書けない
+                continue
+            scoped.append((value.scope, j))
     if not scoped:
+        if conflict:
+            return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_conflict",
+                    "scope": value.scope}
         if value.scope_kind == "separate" and value.scope is None and (value_js or row_js):
             # 判断はあるが、範囲を別に持つ値に範囲を言っていない（範囲の欄も、人が書いた範囲も無い）。
             return {**base, "usable": False, "conclusion": "pending", "reason_kind": "scope_undeclared",

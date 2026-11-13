@@ -137,11 +137,12 @@ def test_再3_値ごとの時点があれば親の年度だけ変えても判断
     assert J.answer_value(v1, [j], "t:a", unit.pointer, "subject_options", as_time=2026)["usable"] is True
 
 
-def test_再3_値ごとの時点が無い値があれば親の年度は指し先に入る(env):
+def test_再3_値ごとの時点が無い値があれば行の姿で別の指し先になる(env):
     row = {"key": "a", "value": 10, "field_years": {}}
     root = _tiny(env, [{"year": 2026, "rows": [row]}, {"year": 2027, "rows": [row]}], time=PER_FIELD)
     rec = V.open_vessel(str(root)).get("t:a")
     assert len({u.pointer for u in rec.units}) == 2 and rec.problems == []
+    assert all(u.pointer.startswith("kc:") for u in rec.units)
 
 
 def test_再5_依らない親の注だけが違う同じ単位は断らずどちらにも当たる(env):
