@@ -142,6 +142,8 @@ COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
 COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
 # 監査 5.15.0 の 1: 店を外す（二段確認・--json は 1 つの値）。
 COMMANDS += ['shop remove']
+# 実店舗のレジ（計画 実店舗 段 5）: 鍵の広さと THTH が打つものを言う口（網に出ない・--json は 1 つの値）。
+COMMANDS += ['shop doctor']
 
 
 def test_json_table_covers_every_parser():
