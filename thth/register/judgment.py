@@ -331,7 +331,9 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
 # ------------------------------------------------------------------ 結びの候補と、名指しの結び
 
 def candidates(vessel: V.Vessel, judgments: list) -> list:
-    """消えた単位（の値）への判断ごとに、同じ鍵で今現れている指し先を候補として並べる。結ばない。"""
+    """消えた単位（の値）への判断ごとに、同じ鍵で今現れている指し先を候補として並べる。結ばない。
+    鍵の指し先 `k:` と、鍵で決まらない行の指し先 `kc:` は同じ鍵どうしで並べる（同じ鍵の行が足されて `k:` が `kc:` に
+    替わっても候補に出る）。`same_depend` は、候補のうち今の依る所が判断の見た依る所と同じ物。"""
     out = []
     for j in judgments:
         target = j["target"]
@@ -341,13 +343,22 @@ def candidates(vessel: V.Vessel, judgments: list) -> list:
             rec = vessel.get(target["record"])
         except RegisterRefused:
             continue
-        prefix = target["unit"].split(".")[0]
+        family = _family(target["unit"])
         before = set(j.get("siblings") or [])
-        now = sorted({u.pointer for u in rec.units if u.pointer.split(".")[0] == prefix})
+        now = sorted({u.pointer for u in rec.units if _family(u.pointer) == family})
         appeared = [p for p in now if p not in before]
+        seen = (j.get("seen") or {}).get("depend")
+        same = [p for p in appeared
+                if seen is not None and current_depend(vessel, dict(target, unit=p), j["question"], scope_said(j)) == seen]
         out.append({"judgment": j["id"], "record": target["record"], "vanished": target["unit"],
-                    "value": target.get("value"), "appeared": appeared})
+                    "value": target.get("value"), "appeared": appeared, "same_depend": same})
     return out
+
+
+def _family(pointer: str) -> str:
+    """同じ鍵の指し先の組（`k:<鍵>` と `kc:<鍵>.<姿>` は同じ組。ほかは点の前まで）。"""
+    head = pointer.split(".")[0]
+    return "k:" + head[3:] if head.startswith("kc:") else head
 
 
 def carry(vessel: V.Vessel, j: dict, to_unit: str, *, by: str, at: str, changed_by: str | None) -> dict:
@@ -403,6 +414,8 @@ def inspection_report(vessel: V.Vessel) -> dict:
     - `target_blank`: たどる欄の並び・区切りの中に空の要素がある（指す先の一部の欠け）
     - `target_duplicated`: たどる先に同じ番号の記録が 2 つ以上ある
     - `target_missing`: たどる先が 1 つでも無い（残った先だけで判断にしない）・1 つも無い
+    - `target_problem`: たどった先（途中の段も最後も）の記録に読みの問題がある（欠けたセルを読んだ null と
+      取り違えない）
     - `target_split`: たどった先が 2 つ以上の記録に分かれる
     - `required_empty`: `required` の欄（既定は問いの状態の欄）が空か null
     状態の語は観測と同じ直し方（`word_of`）。効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。"""
@@ -442,6 +455,9 @@ def inspection_report(vessel: V.Vessel) -> dict:
                             reason = reason or "target_duplicated"
                         elif found is None:
                             reason = reason or "target_missing"
+                        elif found.problems:
+                            # たどった先（途中も最後も）に読みの問題: 欠けたセルを中身と比べない。
+                            reason = reason or "target_problem"
                         else:
                             nxt.append(found)
                 if not found_here:
