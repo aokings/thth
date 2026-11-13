@@ -42,7 +42,7 @@ import json
 import os
 import sys
 
-from .. import admin_log, jst, redact, refusal
+from .. import admin_log, draft_origin, jst, redact, refusal
 from . import ACTION_PREFIX, COMMAND, diff as diff_mod, draft as draft_mod, kinds, ledger
 from . import pos as pos_mod
 from . import remove as remove_mod
@@ -748,6 +748,10 @@ def cmd_draft(args) -> int:
         text = draft_mod.text_for(args.store, args.to, account["media"], change, row, shop_url=shop["shop_url"],
                                   read_at=read_at, publish_at=draft_mod.publish_at(now), since=since)
         name = draft_mod.file_name(args.store, row["id"], change["draft_kind"], now)
+        if (queue / name).exists():
+            raise StoreRefused("store_draft_exists")  # 控えを書く前に（あるファイルの控えを書き換えない）
+        # 書く前に THTH の側に出所を控える（頭の行が落とされても、承認の確定の段が控えから読み直す・監査 5.19.0 の 1）。
+        draft_origin.record(ledger.state_dir_for(args.store), queue / name, draft_mod.head(text))
         written.append({"id": row["id"], "kind": change["draft_kind"],
                         "path": draft_mod.write(queue, name, text)})
     _record("drafted", args.store, by, {"to": [None, args.to], "items": [[], [row["id"] for row in written]],

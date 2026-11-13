@@ -923,7 +923,7 @@ def _record_approvals(prepared: list, repo_dir: str, by: str, at: str, gate) -> 
 
 
 def _store_recheck(path: str) -> str | None:
-    """店の下書き（頭に `from_store:`）なら、確定の前にその商品を 1 回読み直す（設計 ショップ §4.3）。
+    """店の下書き（頭に `from_store:` か、THTH の側の控えにある）なら、確定の前にその商品を 1 回読み直す（設計 ショップ §4.3）。
 
     変わっていれば断る理由を返す。読み直せない機械（店の台帳が無い）では知らせを stderr に 1 行出して通す。
     店の下書きでなければ網に出ない（`thth/shop/recheck.py`）。
@@ -932,14 +932,13 @@ def _store_recheck(path: str) -> str | None:
         front_matter = queuefile.parse(path).front_matter
     except (OSError, ValueError):
         return None  # 読めない原稿は `_prepare_one` が先に断っている
-    if "from_register" in front_matter:
-        # 台帳から作った下書き（計画 実店舗 段 2）: 行を読み直し、出さない期限・柵・中身の指紋を見る（網に出ない）。
-        from .register import recheck as register_recheck
-        problem = register_recheck.check(path, front_matter)
-        if problem:
-            return problem
-    if "from_store" not in front_matter:
-        return None
+    # 台帳から作った下書き（計画 実店舗 段 2）: 行を読み直し、出さない期限・柵・中身の指紋を見る（網に出ない）。
+    # 台帳の下書きかどうかは頭でなく THTH の側の控えで見るので、頭に `from_register` が無くても呼ぶ（監査 5.19.0 の 1）。
+    from .register import recheck as register_recheck
+    problem = register_recheck.check(path, front_matter)
+    if problem:
+        return problem
+    # 店の下書きも同じ（頭に `from_store` が無くても控えを見る）。店の下書きでなければ網に出ない。
     from .shop import recheck
     problem, note = recheck.check(path, front_matter)
     if note:

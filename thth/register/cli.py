@@ -44,7 +44,7 @@ import os
 import shutil
 import sys
 
-from .. import admin_log, jst, redact, refusal, refusals
+from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
 from .errors import RegisterRefused
@@ -336,8 +336,14 @@ def cmd_draft(args) -> int:
     for trigger, row, until in picked:
         text = draft_mod.text_for(args.register, args.to, account["media"], trigger, row, commit=commit, now=now,
                                   not_after=until)
+        name = draft_mod.file_name(args.register, row.id, trigger, now)
+        if (queue / name).exists():
+            raise RegisterRefused("register_draft_exists", row.id)  # 控えを書く前に（あるファイルの控えを書き換えない）
+        # 書く前に THTH の側に出所を控える（頭の行が落とされても、承認の確定の段が控えから読み直す・監査 5.19.0 の 1）。
+        draft_origin.record(ledger.state_dir_for(args.register), queue / name,
+                            {**draft_mod.head(text), "not_after": jst.iso(until)})
         written.append({"row": row.id, "trigger": trigger, "not_after": jst.iso(until),
-                        "path": draft_mod.write(queue, draft_mod.file_name(args.register, row.id, trigger, now), text)})
+                        "path": draft_mod.write(queue, name, text)})
     _record("drafted", args.register, by, {"to": [None, args.to], "rows": [[], [w["row"] for w in written]],
                                            "triggers": [[], [w["trigger"] for w in written]]})
     notes = ["status は draft です（承認されていません）。本文は素の 1〜3 行なので、出す前に整えて thth approve に通してください",

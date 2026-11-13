@@ -13,12 +13,17 @@
   知らせを返す（承認の道を止めない・人が `thth shop items` で確かめる）。
 - 台帳はあるのに読めない（鍵の期限切れ・BASE に届かない・読み切れずに見つからない）ときは、確かめられない
   ので断る（店の断りの符丁をそのまま言う）。
+- **店の下書きかどうかは、頭でなく THTH の側の控えでも知る**（`thth/draft_origin.py`・監査 5.19.0 直したほうがよい 1）。
+  頭の `from_store*` の行が落とされていたら、控えの値で補って読み直す（値段の行は「今に合わせて直す」と案内するので、
+  頭にある値は頭を使う）。頭の出所（`from_store`）が控えと違えば断る。控えにも頭にも無いのに、名前が `shop draft` の
+  付ける形でこの機械の店の名前を持つなら、読み直せないので断る（5.19.0 より前に作った下書きで頭を落とした物）。
 """
 from __future__ import annotations
 
+import os
 import re
 
-from .. import jst, redact, refusal
+from .. import draft_origin, jst, redact, refusal
 from . import COMMAND, kinds, ledger, rows
 from .wire import StoreRefused
 
@@ -30,6 +35,35 @@ _MATERIAL = re.compile(r"price (-?[0-9]{1,12}) -> (-?[0-9]{1,12})\Z")
 
 
 _DETAIL_WORD = re.compile(r"[a-z_]{1,40}\Z")
+# `draft.file_name` の付ける形（`<日>-store-<店>-<id>-<種類>.md`）。店の名前は - を含みうるので、店ごとに頭で見る。
+_FILE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-store-(.+)-[A-Za-z0-9]{1,64}-(?:new|restock|price_down)\.md\Z")
+
+
+def _named_store(path: str, names: list) -> bool:
+    """名前が `shop draft` の付ける形で、この機械の店のどれかの名前を持つか。"""
+    matched = _FILE_NAME.fullmatch(os.path.basename(str(path)))
+    return bool(matched) and any(matched.group(1).startswith(n + "-") or matched.group(1) == n for n in names)
+
+
+def _with_record(path: str, front_matter: dict):
+    """控えと頭を合わせる。`(使う頭, 断る理由)`。店の下書きでなければ `(None, None)`。"""
+    names = ledger.list_names()
+    try:
+        dirs = [ledger.state_dir_for(n) for n in names]
+    except StoreRefused:
+        dirs = []
+    record, broken = draft_origin.find(dirs, path)
+    if record is None:
+        if front_matter.get("from_store") is not None:
+            return front_matter, None  # 控えの無い機械か、控えを書く前の下書き（今までどおり頭で読み直す）
+        if _named_store(path, names) or (broken and _FILE_NAME.fullmatch(os.path.basename(str(path)))):
+            return None, _line(path, "store_item_changed", "from_store_missing")
+        return None, None
+    if "from_store" in front_matter and str(front_matter["from_store"]).strip() != record.get("from_store"):
+        return None, _line(path, "store_item_changed", "from_store_mismatch")
+    merged = dict(front_matter)
+    merged.update({k: v for k, v in record.items() if k.startswith("from_store") and k not in front_matter})
+    return merged, None
 
 
 def _line(path: str, code: str, detail: str | None) -> str:
@@ -91,9 +125,12 @@ def _variant_check(path: str, store: str, item_id: str, front_matter: dict, expe
 
 def check(path: str, front_matter: dict, *, transport=None) -> tuple[str | None, str | None]:
     """`(断る理由, 知らせ)`。店の下書きでなければ `(None, None)`。"""
-    value = front_matter.get("from_store")
-    if value is None:
+    front_matter, problem = _with_record(path, front_matter or {})
+    if problem:
+        return problem, None
+    if front_matter is None:
         return None, None
+    value = front_matter.get("from_store")
     matched = _ORIGIN.fullmatch(str(value).strip())
     if not matched:
         return _line(path, "store_item_changed", "from_store_unreadable"), None

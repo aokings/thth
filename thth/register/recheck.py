@@ -10,22 +10,35 @@
   認めたあとに中身が変わった）。柵の符丁をそのまま言う。
 - 行の中身の指紋が、下書きを作ったときの指紋と違う（`register_row_changed`）。
 
+**台帳の下書きかどうかは、頭でなく THTH の側の控えで知る**（`thth/draft_origin.py`・監査 5.19.0 直したほうがよい 1）。
+持ち主の LLM が本文を整えるときに頭の `from_register` の行を落としても、控えにある出所で読み直す。頭の出所が控えと
+違う・出さない期限が控えより後に動かされた、なら断る。控えに無く、頭にも無いのに、名前が `register draft` の付ける形
+（`…-register-<台帳>-<行>-<きっかけ>.md`）なら、読み直せないので断る。
+
 網には出ない（台帳は手元のフォルダ）。
 """
 from __future__ import annotations
 
+import os
 import re
 
-from .. import jst, queuefile, redact, refusal
+from .. import draft_origin, jst, queuefile, redact, refusal
 from . import fence, form, ledger
 from .errors import RegisterRefused
+from .triggers import TRIGGERS
 
 _ORIGIN = re.compile(r"([A-Za-z0-9_.-]{1,64})/([a-z0-9][a-z0-9_.-]{0,79})\Z")
 _DIGEST = re.compile(r"[0-9a-f]{16}\Z")
+# `draft.file_name` の付ける形（台帳の名前と行の番号は - を含みうるので、きっかけの語で終わることだけ見る）。
+_FILE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-register-.+-(?:" + "|".join(TRIGGERS) + r")\.md\Z")
+# 控えと比べる頭の行（`draft.text_for` が書く出所の 4 行）。
+ORIGIN_KEYS = ("from_register", "from_register_digest", "from_register_commit", "from_register_trigger")
+_DETAIL_WORD = re.compile(r"[a-z_]{1,40}\Z")
 
 
 def _line(path: str, code: str, detail: str | None = None) -> str:
-    found = refusal.parts(code) or {}
+    word = {"reason": detail} if isinstance(detail, str) and _DETAIL_WORD.fullmatch(detail) else {}
+    found = refusal.parts(code, **word) or {}
     text = f"{path}: {code}: {found.get('why') or code}" + (f"（{detail}）" if detail else "")
     fix = found.get("fix")
     if isinstance(fix, dict):
@@ -37,11 +50,49 @@ def _line(path: str, code: str, detail: str | None = None) -> str:
     return redact.redact(text)
 
 
+def recorded(path: str) -> tuple:
+    """THTH の側の控えにある、この下書きの頭の行（`(頭 か None, 壊れた控えがあったか)`）。"""
+    return draft_origin.find([ledger.state_dir_for(name) for name in ledger.list_names()], path)
+
+
+def looks_like_draft(path: str) -> bool:
+    """名前が `register draft` の付ける形か。"""
+    return bool(_FILE_NAME.fullmatch(os.path.basename(str(path))))
+
+
+def _with_record(path: str, front_matter: dict):
+    """控えと頭を合わせる。`(使う頭, 断る理由)`。台帳の下書きでなければ `(None, None)`。"""
+    record, broken = recorded(path)
+    if record is None:
+        if front_matter.get("from_register") is not None:
+            return front_matter, None  # 控えの無い機械か、控えを書く前の下書き（今までどおり頭で読み直す）
+        if broken and looks_like_draft(path):
+            return None, _line(path, "register_ledger_invalid", "drafts")
+        if looks_like_draft(path):
+            return None, _line(path, "register_recheck_unavailable", "from_register_missing")
+        return None, None
+    for key in ORIGIN_KEYS:
+        if key in front_matter and str(front_matter[key]).strip() != record.get(key, ""):
+            return None, _line(path, "register_row_changed", "from_register_mismatch")
+    merged = dict(front_matter)
+    merged.update({key: record[key] for key in ORIGIN_KEYS if key not in front_matter and key in record})
+    try:
+        until, kept = queuefile.parse_not_after(front_matter), queuefile.parse_not_after(record)
+    except ValueError:
+        until, kept = None, None
+    if until is not None and kept is not None and until > kept:
+        return None, _line(path, "register_draft_expired", "not_after_moved")
+    return merged, None
+
+
 def check(path: str, front_matter: dict) -> str | None:
     """断る理由（1 行）か None。台帳の下書きでなければ None。"""
-    value = front_matter.get("from_register")
-    if value is None:
+    front_matter, problem = _with_record(path, front_matter or {})
+    if problem:
+        return problem
+    if front_matter is None:
         return None
+    value = front_matter.get("from_register")
     matched = _ORIGIN.fullmatch(str(value).strip())
     digest = str(front_matter.get("from_register_digest") or "").strip()
     if not matched or not _DIGEST.fullmatch(digest):

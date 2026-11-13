@@ -478,6 +478,36 @@ def test_出す品の新着と再入荷と値下げから下書きを作り承�
     assert reason and "unpublished" in reason
 
 
+def test_柵_from_storeの行を消した店の下書きも承認の時に読み直す(capsys, env, isolated_account_factory):
+    """監査 5.19.0 直したほうがよい 1 の 5.15.0 からの同じ作り: 頭の from_store の行を落としても、THTH の側の控えで読み直す。"""
+    account = isolated_account_factory()
+    setup_store(capsys, env)
+    publish(capsys, "--category", "CATBEANS")
+    assert run(capsys, "shop", "diff", STORE)[0] == 0
+    env["objects"].append(item_obj(8))
+    env["counts"]["VAR00080"] = "2"
+    assert jrun(capsys, "shop", "draft", STORE, "--to", account["name"], "--kind", "new")[0] == 0
+    [path] = sorted(pathlib.Path(account["queue_dir"]).glob("*-store-*.md"))
+    path.write_text("\n".join(line for line in path.read_text().split("\n") if not line.startswith("from_store")))
+    stripped = dict(queuefile.parse(str(path)).front_matter)
+    assert not any(k.startswith("from_store") for k in stripped)
+    from thth.shop import recheck
+    assert recheck.check(str(path), stripped) == (None, None)
+    env["counts"]["VAR00080"] = "0"
+    reason, _ = recheck.check(str(path), stripped)
+    assert reason and "store_item_changed" in reason and "not_buyable" in reason
+    # 頭の出所を別の品に書き換えれば、控えと違うので断る。
+    reason, _ = recheck.check(str(path), dict(stripped, from_store=f"store/{STORE}/item/ITEM0001"))
+    assert reason and "from_store_mismatch" in reason
+    # 控えが無く頭にも無いのに、この機械の店の名前の形なら、読み直せないので断る。
+    from thth import draft_origin
+    pathlib.Path(ledger.state_dir_for(STORE), draft_origin.FILE).unlink()
+    reason, _ = recheck.check(str(path), stripped)
+    assert reason and "from_store_missing" in reason
+    # 店の下書きの形でない名前の原稿は、店を読まない。
+    assert recheck.check(str(path.with_name("plain.md")), stripped) == (None, None)
+
+
 # ------------------------------------------------------------------ 外す・退出
 
 def test_removeは鍵と写しと台帳を消しSquareの側の鍵を案内する(capsys, env):

@@ -306,12 +306,14 @@ def test_柵_台帳の控えの無い機械では承認しない(capsys, env, cl
 
 def test_台帳の下書きでない原稿は台帳を読まない(capsys, env, clock, isolated_account_factory, monkeypatch):
     from tests.conftest import write_queue_file
-    from thth.register import recheck
+    from thth.register import ledger
     account = isolated_account_factory()
+    add(capsys, env, "cafe-sample", kind="store")
     path = write_queue_file(account["queue_dir"], "plain.md", fm_overrides={"status": "draft", "approved_sha": None})
     called = []
-    real = recheck.check
-    monkeypatch.setattr(recheck, "check", lambda p, fm: called.append(p) or real(p, fm))
+    real = ledger.load
+    # 控えは見る（頭に出所が無くても台帳の下書きか知るため）が、台帳の控え（行を読む元）は開かない。
+    monkeypatch.setattr(ledger, "load", lambda name: called.append(name) or real(name))
     digest = approve_first(capsys, path)
     assert run(capsys, "approve", path, "--confirm", digest, "--by", "m")[0] == 0
     assert called == []
@@ -324,6 +326,8 @@ def test_台帳の機械は危ない領域に入っている():
     for path in ("thth/register/draft.py", "thth/register/recheck.py", "thth/register/confirm.py",
                  "thth/register/fence.py"):
         assert "register" in gate.areas_of(path), path
+    # 下書きの出所の控え（承認の読み直しを掛けるかを決める・監査 5.19.0 の 1）も台帳と店の両方の領域。
+    assert {"register", "store_read"} <= set(gate.areas_of("thth/draft_origin.py"))
 
 
 def test_下書きの頭はJSONに出しても本文の値を持たない(capsys, env, clock, isolated_account_factory):
@@ -333,3 +337,102 @@ def test_下書きの頭はJSONに出しても本文の値を持たない(capsys
     rc_, value, _ = jrun(capsys, "register", "draft", "cafe-sample", "--to", account["name"], "--row",
                          "cafe-special-2026-12-12")
     assert "設備の点検" not in json.dumps(value, ensure_ascii=False)
+
+
+# ------------------------------------------------------------------ 頭の出所の行が落とされても（監査 5.19.0 直したほうがよい 1）
+
+def _strip_head(path, keys=("from_register",)) -> None:
+    """頭の行のうち、名前が keys のどれかで始まる行を落とす（LLM が知らない欄を落として書き直した形）。"""
+    p = pathlib.Path(path)
+    lines = p.read_text(encoding="utf-8").split("\n")
+    p.write_text("\n".join(line for line in lines if not line.startswith(keys)), encoding="utf-8")
+
+
+def _restrip(capsys, path, keys=("from_register",)):
+    _strip_head(path, keys)
+    assert not any(k.startswith(keys) for k in queuefile.parse(path).front_matter)
+    commit_and_push_path(path, message="test: strip head")
+    return approve_first(capsys, path)
+
+
+def test_柵_from_registerの行を消した台帳の下書きも承認の時に読み直す(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account, row="cafe-event-2026-12-14")
+    digest = _restrip(capsys, path)
+    # 監査の探りと同じ: 行を「違うと言った」にする。頭の行が無くても THTH の側の控えから読み直して断る。
+    assert run(capsys, "register", "deny", "cafe-sample", "cafe-event-2026-12-14", "--by", "m")[0] == 0
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_row_denied" in err and "承認しました" not in out
+
+
+def test_from_registerの行を消しても行が変わっていなければ控えから読み直して承認できる(capsys, env, clock,
+                                                                    isolated_account_factory):
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account)
+    digest = _restrip(capsys, path)
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 0, err
+    assert "承認しました" in out
+
+
+def test_柵_from_registerの行を消したあとに行が変わったら承認しない(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account)
+    digest = _restrip(capsys, path)
+    edit(env["tmp"] / "cafe-sample" / "臨時" / "2026-12-12_設備の点検.md", "close: 18:00", "close: 19:00")
+    confirm(capsys, "cafe-sample", "cafe-special-2026-12-12")
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_row_changed" in err and "承認しました" not in out
+
+
+def test_柵_頭の出所を別の行に書き換えた下書きは承認しない(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account)
+    edit(pathlib.Path(path), "from_register: cafe-sample/cafe-special-2026-12-12",
+         "from_register: cafe-sample/cafe-event-2026-12-14")
+    commit_and_push_path(path, message="test: other origin")
+    digest = approve_first(capsys, path)
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_row_changed" in err and "from_register_mismatch" in err
+    assert "頭の行はそのまま残して" in err
+
+
+def test_柵_出さない期限を作ったときより後に動かした下書きは承認しない(capsys, env, clock, isolated_account_factory):
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account, row="cafe-event-2026-12-14")
+    before = queuefile.parse(path).front_matter["not_after"]
+    text = pathlib.Path(path).read_text(encoding="utf-8")
+    old = next(line for line in text.split("\n") if line.startswith("not_after:"))
+    edit(pathlib.Path(path), old, "not_after: 2026-12-31T23:59:00+09:00")
+    assert before
+    commit_and_push_path(path, message="test: move not_after")
+    digest = approve_first(capsys, path)
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_draft_expired" in err and "not_after_moved" in err
+
+
+def test_柵_控えにも頭にも出所の無い台帳の名前の下書きは承認しない(capsys, env, clock, isolated_account_factory):
+    from thth import draft_origin
+    from thth.register import ledger
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account)
+    pathlib.Path(ledger.state_dir_for("cafe-sample"), draft_origin.FILE).unlink()
+    digest = _restrip(capsys, path)
+    rc_, out, err = run(capsys, "approve", path, "--confirm", digest, "--by", "m")
+    assert rc_ == 1 and "register_recheck_unavailable" in err and "from_register_missing" in err
+
+
+def test_台帳の下書きの控えは道と頭の出所の行だけで本文を持たない(capsys, env, clock, isolated_account_factory):
+    from thth import draft_origin
+    from thth.register import ledger
+    account = isolated_account_factory()
+    path, _digest = _approved_draft(capsys, env, clock, account)
+    state = ledger.state_dir_for("cafe-sample")
+    found = draft_origin.read(state)
+    [(key, head)] = found.items()
+    assert key == draft_origin.key_of(path)
+    assert set(head) == {"from_register", "from_register_digest", "from_register_commit", "from_register_trigger",
+                         "not_after"}
+    raw = pathlib.Path(state, draft_origin.FILE).read_text(encoding="utf-8")
+    assert "お休み" not in raw and "設備の点検" not in raw
+    assert oct(pathlib.Path(state, draft_origin.FILE).stat().st_mode & 0o777) == "0o600"

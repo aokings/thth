@@ -131,6 +131,16 @@ def _register_offline() -> bool:
     return net_imports(REGISTER_DIR) == []
 
 
+def _register_draft_record_keys() -> list:
+    """`register draft` が控えに書く頭の行の名前（`draft.text_for` の頭から作る・recheck が比べる並び）。"""
+    from thth.register import recheck as register_recheck
+    import inspect
+    from thth.register import cli as register_cli
+    source = inspect.getsource(register_cli.cmd_draft)
+    assert "draft_origin.record(" in source and '"not_after": jst.iso(until)' in source
+    return list(register_recheck.ORIGIN_KEYS) + ["not_after"]
+
+
 def _register_fence_codes() -> bool:
     """柵が断る 5 つ（推測・違うと言った・見直し日・退役・出してよい印）が `fence.state` にある。"""
     import inspect
@@ -284,6 +294,13 @@ def facts() -> list[tuple[str, str]]:
          "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
         ("台帳の機械は網に出ない・日本語",
          "この部分の THTH は網に出ません" if _register_offline() else "台帳の機械が網の部品を import している"),
+        ("台帳の下書きの控えの欄（register/recheck.ORIGIN_KEYS と not_after・監査 5.19.0 の 1）",
+         "the row, the fingerprint, the register's commit, the trigger and the deadline"
+         if _register_draft_record_keys() == ["from_register", "from_register_digest", "from_register_commit",
+                                              "from_register_trigger", "not_after"] else "下書きの控えの欄が違う"),
+        ("台帳の下書きの控えの欄・日本語", "頭に書いた元の行・中身の指紋・台帳の commit・きっかけ・出さない期限"
+         if _register_draft_record_keys() == ["from_register", "from_register_digest", "from_register_commit",
+                                              "from_register_trigger", "not_after"] else "下書きの控えの欄が違う"),
         ("台帳の柵が断る行（register/fence）",
          "THTH refuses to use a row that is a guess, that the owner said is wrong, that is past its review date, "
          "that is retired or that is not marked as public" if _register_fence_codes() else "柵の断りが privacy と違う"),

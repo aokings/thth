@@ -19,6 +19,7 @@ _WHOAMI = "thth shop whoami <店>"
 _DIFF = "thth shop diff <店>"
 _ITEMS = "thth shop items <店>"
 _REMOVE = "thth shop remove <店> --by <名前>"
+_DRAFT = "thth shop draft <店> --to <口座>"
 _PAT = "BASE Developers（https://developers.thebase.com/）で、読むだけの権限（items.read・user.read）の PAT を発行し"
 _SHOPIFY_TOKEN = "thth shop token set <店> --auth client --by <名前>"
 _SHOPIFY_KEY = ("Shopify なら、Dev Dashboard のアプリの版で scope を read_products だけにして店に入れ、Settings の Client ID と"
@@ -229,7 +230,19 @@ ENTRIES = {
         "下書きを作ったあとに、その商品の値段・公開・在庫・種類が変わっていました（1 行目の（）が変わった所。variant は種類ごとの値段、variants_changed は値下げの下書きの種類が減ったこと）。今のまま出すと中身が店と食い違うので、承認しませんでした。",
         "thth shop items <店> で今の商品を確かめ、下書きの本文と頭（from_store_price・from_store_variant_prices）を今に合わせて直すか、出さないなら下書きを閉じてください。",
         _ITEMS,
-        "売り切れなら、再入荷のあとの thth shop draft --kind restock で作り直すと、見た人がそのまま買えるお知らせになります。"),
+        "売り切れなら、再入荷のあとの thth shop draft --kind restock で作り直すと、見た人がそのまま買えるお知らせになります。",
+        by_detail={
+            "from_store_mismatch": {
+                "fix": "下書きの頭の from_store の行が、THTH がこの下書きを作ったときの控えと違います。頭の from_store の行を作ったときのまま"
+                       "戻すか、thth shop draft <店> --to <口座> で作り直してください。",
+                "command": _DRAFT,
+                "better": "LLM に本文を整えてもらうときは「頭の行はそのまま残して」と添えると、承認のときの読み直しが自動で済みます。"},
+            "from_store_missing": {
+                "fix": "名前は thth shop draft の下書きの形でこの機械の店の名前を持つのに、頭に from_store の行が無く、控えにもありません。"
+                       "どの商品から作ったか分からないので読み直せません。thth shop draft <店> --to <口座> で作り直してください。"
+                       "店から作った物でなければ、ファイルの名前から -store- を外してから打ち直します。",
+                "command": _DRAFT,
+                "better": "LLM に本文を整えてもらうときは「頭の行はそのまま残して」と添えると、承認のときの読み直しが自動で済みます。"}}),
     "store_draft_exists": _entry(
         "同じ店・同じ商品・同じ違いの下書きが、もう queue にあります（日をまたいでも、写しを進めていない間の同じ違いは 1 本だけ）。上書きはしません。",
         "queue にある下書きを開いて整えてください。作り直したいときは、その下書きを消してから打ち直します。",
