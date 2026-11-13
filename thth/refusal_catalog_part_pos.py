@@ -9,7 +9,7 @@ thth/refusal_catalog.py が読む。
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.18.1"
+_SINCE = "5.19.0"
 _DOCTOR = "thth shop doctor <店>"
 _TOKEN = "thth shop token set <店> --by <名前>"
 _SQUARE_SCOPES = "ITEMS_READ・INVENTORY_READ・MERCHANT_PROFILE_READ"

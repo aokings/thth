@@ -7,7 +7,7 @@ since は版上げのときに直す（今の版を越えない柵があるの�
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.18.1"
+_SINCE = "5.19.0"
 _ADD = "thth register add <台帳> --path <フォルダ> --project <project> --kind media --by <名前>"
 _CHECK = "thth register check <台帳>"
 _SHOW = "thth register show <台帳>"
