@@ -8,9 +8,12 @@
 - **版**は全バイトの sha256。表の行は、その行の元のバイト（行の終わりの改行も含む）の sha256。
 - **依る所の指紋**（`depend_fp`）は、**読んだ値**から取る（バイトでなく）。作り方は `canonical` と `fp` の注、
   設計 §5.1 の内側の単位の 3 に 1 段落で書いた。
-- **内側の単位**（関東の回の行・照合台帳の行）は、元の番号 → 鍵 → 鍵と中身の指紋 の順で指す。位置では指さない。
-  鍵で決まらない単位を黙って 1 つにしない（`find_units` は 2 つ以上なら断る）。
+- **内側の単位**（関東の回の行・照合台帳の行）は、元の番号 → 宣言の鍵そのまま → 鍵と行の姿 の順で指す。
+  位置では指さない。行の指し先に器は何も足さない。鍵で決まらない単位を黙って 1 つにしない。
 - **値**は「単位の指し先 ＋ 欄の名前 ＋ 時点」で指し、範囲・時点・親の出典を持つ。
+- **指し先・依る所・及ぶ範囲は別の 3 つ**（設計 §5.1 の内側の単位の 3）。どれも**欄の 4 つ組**
+  `{"value", "scope", "time", "sources"}`（`cell`）1 つから作る: 行の姿（`unit_shape`）・中身の指紋
+  （`unit_content`）・行と値の依る所（`unit_depend`・`Value.depend`）。
 - **観測**: 状態の欄に書いてある語は、版つきで控えるだけ。判断ではない（判断は `judgment.py`）。
 
 網に出ない（標準の部品と、台帳の機械の部品だけ）。
@@ -471,13 +474,13 @@ def load_declarations(root: str, base: str | None = None) -> dict:
 
 @dataclass
 class Unit:
-    pointer: str               # 単位の指し先（`k:` 鍵 / `kc:` 鍵と中身の指紋 / `i:` 元の番号）
+    pointer: str               # 単位の指し先（`k:` 鍵 / `kc:` 鍵と行の姿 / `i:` 元の番号）
     key: dict
     item: dict
     group: dict
-    ambiguous: bool            # 鍵で決まらない（鍵と中身の指紋で指した）
+    ambiguous: bool            # 鍵で決まらない（鍵と行の姿で指した）か、同じ番号で中身が違う
     same_content: int = 1      # 中身まで同じ単位の数（区別しない。判断はどれにも当たる）
-    content: str = ""          # 中身の指紋（`unit_content`。親の注など依らない物は入れない）
+    content: str = ""          # 中身の指紋（`unit_content`。全部の欄の 4 つ組。親の注など依らない物は入らない）
 
 
 @dataclass
@@ -721,14 +724,10 @@ def _mark_duplicates(records: list) -> None:
 
 
 def _key_of(units_decl: dict, group: dict, item: dict) -> dict:
-    """単位の鍵。まとまりの時点（`time.group`）は、宣言の鍵に無くても鍵に入れる（年度の違う同じ中身の行を
-    1 つの指し先に畳まない）。"""
+    """単位の鍵: **宣言の `key` の名前だけ**で作る（器は何も足さない。親の年度が入るのは、宣言が `group.year`
+    と書いたときだけ。時点は値の指し先に入る）。"""
     key = {}
-    names = list(units_decl["key"])
-    group_time = units_decl["time"].get("group")
-    if group_time and "group." + group_time not in names and _needs_group_time(units_decl, item):
-        names.append("group." + group_time)
-    for name in names:
+    for name in units_decl["key"]:
         if name.startswith("group."):
             key[name] = group.get(name[6:]) if isinstance(group, dict) else None
         else:
@@ -736,25 +735,19 @@ def _key_of(units_decl: dict, group: dict, item: dict) -> dict:
     return key
 
 
-def _needs_group_time(units_decl: dict, item: dict) -> bool:
-    """値の欄のどれかが、まとまりの時点を自分の時点にするか（値ごとの時点の表に無い）。値の時点が優先なので、
-    全部の値が自分の時点を持つ行では、まとまりの年度は指し先に入れない（設計 §5.1「時点は値ごと」）。"""
-    table_name = units_decl["time"].get("per_field")
-    table = item.get(table_name) if table_name else None
-    if not isinstance(table, dict):
-        return True
-    skip = set(units_decl["key"]) | set(units_decl["not_values"]) | {table_name, units_decl["id"]}
-    return any(name not in table for name in item if name not in skip)
+def unit_shape(decl: dict, unit: Unit) -> str:
+    """行の姿（鍵で決まらない行を見分ける指紋）: 行の全部の欄の `{"value", "time"}`（4 つ組から範囲と親の出典を
+    除いた物）。親の出典だけが変わっても姿は変わらない。"""
+    parts = {}
+    for name in unit.item:
+        c = cell(decl, unit, name)
+        parts[name] = {"value": c["value"], "time": c["time"]}
+    return fp(parts)
 
 
 def unit_content(decl: dict, unit: Unit) -> str:
-    """単位の中身の指紋: 単位の全部の欄を `{"value", "time", "sources"}` で包んだ物（依る所と同じ包み方）。
-    親のまとまりの欄は、時点と出典として値に効く分だけ入る（依らない注は入らない）。"""
-    parts = {}
-    for name in unit.item:
-        srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
-        parts[name] = {"value": unit.item.get(name), "time": value_time(decl, unit, name), "sources": sorted(srcs)}
-    return fp(parts)
+    """中身の指紋: 行の全部の欄の 4 つ組をまとめた物（同じ指し先の単位を比べる物はこれ 1 つ）。"""
+    return fp({name: cell(decl, unit, name) for name in unit.item})
 
 
 def _read_units(rec: Record, kind: Kind) -> None:
@@ -774,22 +767,30 @@ def _read_units(rec: Record, kind: Kind) -> None:
             pointer_key = ("k", canonical(_key_of(decl, group, item)))
         by_key.setdefault(pointer_key, []).append((group, item))
     for (how, keytext), members in by_key.items():
-        contents = [unit_content(decl, Unit("", {}, item, group, False)) for group, item in members]
-        for (group, item), content in zip(members, contents):
+        bare = [Unit("", {}, item, group, False) for group, item in members]
+        contents = [unit_content(decl, u) for u in bare]
+        for (group, item), plain, content in zip(members, bare, contents):
             key = {"id": keytext} if how == "i" else _key_of(decl, group, item)
             if how == "i":
-                # 同じ番号でも中身（依る所の包み方で）まで同じなら区別しない。違えば番号の重なり。
+                # 同じ番号でも中身の指紋まで同じなら区別しない。違えば番号の重なり。
                 pointer = "i:" + str(keytext)
                 ambiguous = len(set(contents)) > 1
             elif len(members) == 1:
                 pointer, ambiguous = "k:" + short(fp(key)), False
             else:
-                # 鍵で決まらない: 鍵と中身の指紋で指す。中身の指紋は読んだ値から（バイトでなく）。
-                pointer, ambiguous = "kc:" + short(fp(key)) + "." + short(fp(item)), True
+                # 鍵で決まらない: 鍵と行の姿で指す（姿は読んだ値と値の時点。親の出典は入らない）。
+                pointer, ambiguous = "kc:" + short(fp(key)) + "." + short(unit_shape(decl, plain)), True
             same = contents.count(content)
             rec.units.append(Unit(pointer, key, item, group, ambiguous, same, content))
     if any(u.pointer.startswith("i:") and u.ambiguous for u in rec.units):
         rec.problems.append("unit_id_duplicate")
+    by_pointer = {}
+    for unit in rec.units:
+        if unit.pointer.startswith("kc:"):
+            by_pointer.setdefault(unit.pointer, set()).add(unit.content)
+    if any(len(contents) > 1 for contents in by_pointer.values()):
+        # 姿は同じで中身が違う（親の出典だけが違う）: 同じ指し先の別々の行。`unit_at` は断る。健康に出す。
+        rec.problems.append("unit_parent_differs")
 
 
 def units_by_pointer(rec: Record) -> dict:
@@ -848,28 +849,34 @@ def sources_for(decl: dict, group: dict, name: str) -> list:
     if not isinstance(listing, list):
         return []
     sources = [s for s in listing if isinstance(s, dict)]
+    # 辞書でない要素（手で書いた字など）は、どの欄の出典か読めない: 黙って落とさず、どの値も依る（安全な側）。
+    loose = [s for s in listing if not isinstance(s, dict)]
     named = [s for s in sources if name in _source_fields(spec, s)]
     if named:
-        return named
+        return named + loose
     if spec["rest"]:
         rest = [s for s in sources if spec["rest"] in _source_fields(spec, s)]
         if rest:
-            return rest
-    return sources
+            return rest + loose
+    return sources + loose
 
 
-def source_fp(decl: dict, source: dict) -> str:
+def source_fp(decl: dict, source) -> str:
     spec = decl["sources"]
+    if not isinstance(source, dict):
+        return fp(source)  # 辞書でない出典は、読んだ値そのもの
     if spec["depends"]:
         return fp({k: source.get(k) for k in spec["depends"]})
     return fp(source)
 
 
+def is_value_field(decl: dict, name: str) -> bool:
+    """宣言から決まる: `not_values` に無く、値ごとの時点の表の名前でもない欄が値の欄。"""
+    return name not in decl["not_values"] and name != decl["time"].get("per_field")
+
+
 def value_fields(decl: dict, unit: Unit) -> list:
-    skip = set(decl["not_values"])
-    if decl["time"].get("per_field"):
-        skip.add(decl["time"]["per_field"])
-    return [k for k in unit.item if k not in skip]
+    return [k for k in unit.item if is_value_field(decl, k)]
 
 
 def value_time(decl: dict, unit: Unit, name: str):
@@ -881,16 +888,42 @@ def value_time(decl: dict, unit: Unit, name: str):
     return None
 
 
-def value_scope(decl: dict, unit: Unit, name: str):
-    """`(範囲の種類, 範囲の札)`。種類は key（行の鍵と同じ）か separate（別に持つ）。札が None なら範囲が未宣言。"""
+def _label_word(value) -> str:
+    word = word_of(value)
+    return "" if word is None else word
+
+
+def scope_of(decl: dict, unit: Unit, name: str):
+    """`(範囲の種類, 範囲の物, 札)`。設計 §5.1「範囲の形」。
+
+    - 範囲が行の鍵と同じ（`scope.separate` に無い）: 種類 `key`、物 `{"key": {軸: 読んだ値}}`（軸は
+      `scope.key_fields`。無ければ `{"key": {}}`）、札は軸を名前の順に `軸=語` とコンマでつないだ字（軸が無ければ `key`）。
+    - 範囲を別に持ち、範囲の欄の読んだ値が null・空・空白だけでない: 種類 `separate`、物 `{"field": {欄: 値}}`、
+      札 `欄=語`。
+    - それ以外（範囲の欄が無い・空・空白だけ）: 未宣言（物も札も None）。札が "" になる道は無い。
+    指紋には札でなく物を入れる（札は区切りの字を隣の欄へ動かすと同じ字になりうる）。"""
     scope = decl["scope"]
     if name in scope["separate"]:
         holder = scope["fields"].get(name)
-        if holder and unit.item.get(holder) not in (None, ""):
-            return "separate", f"{holder}={unit.item.get(holder)}"
-        return "separate", None
-    parts = [f"{k}={unit.key.get(k, unit.item.get(k))}" for k in sorted(scope["key_fields"])]
-    return "key", ",".join(parts)
+        raw = unit.item.get(holder) if holder else None
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return "separate", None, None
+        return "separate", {"field": {holder: raw}}, f"{holder}={_label_word(raw)}"
+    axes = sorted(scope["key_fields"])
+    form = {"key": {k: unit.item.get(k) for k in axes}}
+    label = ",".join(f"{k}={_label_word(unit.item.get(k))}" for k in axes) or "key"
+    return "key", form, label
+
+
+def cell(decl: dict, unit: Unit, name: str) -> dict:
+    """欄の 4 つ組 `{"value", "scope", "time", "sources"}`。値でない欄は `value` だけ（`scope`・`time` は None、
+    `sources` は []。親の年度や出典を付けない）。"""
+    value = unit.item.get(name)
+    if not is_value_field(decl, name):
+        return {"value": value, "scope": None, "time": None, "sources": []}
+    _kind, form, _label = scope_of(decl, unit, name)
+    srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
+    return {"value": value, "scope": form, "time": value_time(decl, unit, name), "sources": sorted(srcs)}
 
 
 @dataclass
@@ -901,26 +934,33 @@ class Value:
     value: object
     time: object
     scope_kind: str
-    scope: str | None
+    scope: str | None          # 範囲の札（人に見せ、尋ねる側と比べる）。None は未宣言
     sources: list
+    scope_form: dict | None = None  # 範囲の物（指紋に入る）。None は未宣言
 
     @property
     def pointer(self) -> str:
         return f"{self.unit}/{self.name}@{self.time if self.time is not None else '-'}"
 
-    def depend(self, scope_override=None) -> str:
-        return fp({"value": self.value, "scope": scope_override if scope_override is not None else self.scope,
-                   "time": self.time, "sources": sorted(self.sources)})
+    def depend(self, said=None) -> str:
+        """値への判断の依る所: その値の 4 つ組 1 つ。範囲は、範囲の物があればそれ、無くて人が書いた範囲
+        （`said`）があれば `{"said": said}`、どちらも無ければ None。"""
+        if self.scope_form is not None:
+            scope = self.scope_form
+        elif said is not None:
+            scope = {"said": said}
+        else:
+            scope = None
+        return fp({"value": self.value, "scope": scope, "time": self.time, "sources": sorted(self.sources)})
 
 
 def values_of(rec: Record, kind: Kind, unit: Unit) -> list:
     decl = kind.units
     out = []
     for name in value_fields(decl, unit):
-        scope_kind, scope = value_scope(decl, unit, name)
-        srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
-        out.append(Value(rec.ref, unit.pointer, name, unit.item.get(name), value_time(decl, unit, name), scope_kind,
-                         scope, srcs))
+        scope_kind, form, label = scope_of(decl, unit, name)
+        c = cell(decl, unit, name)
+        out.append(Value(rec.ref, unit.pointer, name, c["value"], c["time"], scope_kind, label, c["sources"], form))
     return out
 
 
@@ -937,17 +977,10 @@ def unit_fields(kind: Kind, unit: Unit, question: Question | None = None) -> lis
 
 
 def unit_depend(kind: Kind, unit: Unit, question: Question | None = None) -> str:
-    """単位（行）への判断の依る所（設計 §5.1 の指紋の作り方）。
-
-    欄の選び方: 問いが依る欄を宣言していれば、その欄と、状態の欄と理由の種類の欄（`Question.depend_fields`。
-    `not_values` でも外せない）。宣言していなければ、値の欄の全部のうち範囲が行の鍵と同じ物（範囲を別に持つ値は
-    入れない・試験 1 (d)）と、状態の欄と理由の種類の欄。欄ごとに `{"value", "time", "sources"}` で包む。"""
+    """単位（行）への判断の依る所: 依る欄（`unit_fields`）それぞれの 4 つ組の束（範囲も入る。行の性別が変われば
+    古い判断になる）。設計 §5.1 の内側の単位の 3。"""
     decl = kind.units
-    parts = {}
-    for name in unit_fields(kind, unit, question):
-        srcs = [source_fp(decl, s) for s in sources_for(decl, unit.group, name)] if decl.get("sources") else []
-        parts[name] = {"value": unit.item.get(name), "time": value_time(decl, unit, name), "sources": sorted(srcs)}
-    return fp(parts)
+    return fp({name: cell(decl, unit, name) for name in unit_fields(kind, unit, question)})
 
 
 # ------------------------------------------------------------------ 依る所・観測

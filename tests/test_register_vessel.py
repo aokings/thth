@@ -246,7 +246,7 @@ def test_試験1d_範囲の欄があれば範囲はその欄から読む(env):
     v = V.open_vessel(str(root))
     shared = unit_of(v, "fees:142", round="帰国生入学試験")
     [value] = [x for x in V.values_of(v.get("fees:142"), v.kinds["fees"], shared) if x.name == "capacity"]
-    assert value.scope_kind == "separate" and value.scope == "capacity_shared=True"
+    assert value.scope_kind == "separate" and value.scope == "capacity_shared=true"
     plain = unit_of(v, "fees:142", round="午後特別入学試験")
     [value] = [x for x in V.values_of(v.get("fees:142"), v.kinds["fees"], plain) if x.name == "capacity"]
     assert value.scope is None  # 欄が無い回は未宣言（推測で埋めない）

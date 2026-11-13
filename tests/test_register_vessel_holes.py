@@ -116,12 +116,20 @@ def test_穴2_指紋の段落どおりの計算とcurrent_dependが記録と単�
     row = v.get(CLAIM).values
     want = _paragraph_fp({k: row[k] for k in ("statement_ja", "object_text_ja", "claim_status")})
     assert J.current_depend(v, {"record": CLAIM}, "says_so") == want
-    # 単位: 同じ欄の選び方で、値を {"value", "time", "sources"} で包む（時点・出典が無ければ null と []）
-    m = V.open_vessel(str(_mmr_with(env)))
+    # 単位: 同じ欄の選び方で、欄ごとの 4 つ組 {"value", "scope", "time", "sources"} の束。範囲が行の鍵と同じ値の
+    # 範囲は {"key": {軸: 値}}（軸の宣言が無ければ {"key": {}}）。値でない欄（not_values）は value だけ
+    m = V.open_vessel(str(_mmr_with(env).rename(env["tmp"] / "mmr1")))
     unit = V.find_units(m.get(CREDIT), {"seed": "seed-liked-0443"})
-    want = _paragraph_fp({k: {"value": unit.item.get(k), "time": None, "sources": []}
+    want = _paragraph_fp({k: {"value": unit.item.get(k), "scope": {"key": {}}, "time": None, "sources": []}
                           for k in ("title", "status", "held_kind")})
     assert J.current_depend(m, {"record": CREDIT, "unit": unit.pointer}, "credit_holds") == want
+    m2 = V.open_vessel(str(_mmr_with(env, not_values=["status", "held_kind"])))
+    unit = V.find_units(m2.get(CREDIT), {"seed": "seed-liked-0443"})
+    want = _paragraph_fp({"title": {"value": unit.item.get("title"), "scope": {"key": {}}, "time": None,
+                                    "sources": []},
+                          **{k: {"value": unit.item.get(k), "scope": None, "time": None, "sources": []}
+                             for k in ("status", "held_kind")}})
+    assert J.current_depend(m2, {"record": CREDIT, "unit": unit.pointer}, "credit_holds") == want
     # 値: {"value", "scope", "time", "sources"}。出典は、出典の欄の全部の読んだ値の指紋を並べた物
     k = V.open_vessel(str(copy(env, "kanto")))
     male = unit_of(k, A1, **MALE_2026)
@@ -129,8 +137,13 @@ def test_穴2_指紋の段落どおりの計算とcurrent_dependが記録と単�
     src2 = sources["years"][0]["sources"][1]
     want = _paragraph_fp({"value": 140, "scope": None, "time": 2026, "sources": [_paragraph_fp(src2)]})
     assert J.current_depend(k, {"record": A1, "unit": male.pointer, "value": "capacity"}, "reads_right") == want
+    # 範囲が行の鍵と同じ値（志願者）: 範囲は {"key": {"gender": "男子"}}。出典は rounds の 1 つ
+    src1 = sources["years"][0]["sources"][0]
+    want = _paragraph_fp({"value": 349, "scope": {"key": {"gender": "男子"}}, "time": 2026,
+                          "sources": [_paragraph_fp(src1)]})
+    assert J.current_depend(k, {"record": A1, "unit": male.pointer, "value": "applicants"}, "reads_right") == want
     design = (ROOT / "docs" / "設計_台帳の器_2026-11-13.md").read_text(encoding="utf-8")
-    assert '{"value", "time", "sources"}' in design and '{"value", "scope", "time", "sources"}' in design
+    assert '{"value", "scope", "time", "sources"}' in design
 
 
 # ================================================================== 穴 3
