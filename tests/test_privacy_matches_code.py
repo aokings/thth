@@ -370,6 +370,59 @@ def test_WordPressの鍵を消す道は今ある旗():
     assert "thth principal auth &lt;主体&gt; --forget" in _wp_section(page, "WordPress の記事")
 
 
+# 5.18.2（監査 次の版・2026-11-13 の直したほうがよい 2）: users/me の応答の `link`（著者の頁）のホストを入口の
+# ホストと比べ、違うときは doctor が両方のホストを診断の記録（doctor.json の detail）に残す。privacy の文はこの
+# 事実と結ぶ。コードが比べるのをやめる・記録に残すのをやめたら、文も直さないと赤になる（逆も同じ）。
+_WP_HOST_SENTENCES = {
+    "reads": ("reads the address of that user's author page and compares its host name with the host name it "
+              "sends requests to",
+              "その利用者の著者の頁のアドレスも読み、そのホスト名を THTH が要求を送るホスト名と比べます"),
+    "keeps": ("THTH shows both host names on the terminal and keeps them in the account's check record",
+              "2 つのホスト名を端末に出し、口座の診断の記録に残します"),
+    "route": ("users/me (to check which user the password belongs to, its roles, and whether the site builds its "
+              "page addresses on the host name THTH sends requests to)",
+              "users/me（パスワードがどの利用者のものか、その役割は何か、サイトが頁のアドレスを THTH の送り先と同じ"
+              "ホスト名で組んでいるか）"),
+}
+
+
+def _wp_host_facts(monkeypatch) -> dict:
+    """網に出ずに、whoami が `link` のホストを入口と比べるか・doctor が両方のホストを記録の欄に入れるかを見る。"""
+    from thth import doctor, principals as principals_mod
+    from thth.adapters import wordpress
+
+    principal = {"principal": "wp-x", "kind": "wordpress", "wp_user": "editor1",
+                 "blogs": [{"blog_id": "example.com", "lanes": ["lane-x"]}]}
+    adapter = wordpress.WordPressAdapter({"blog_id": "example.com"}, principal,
+                                         token={"application_password": "abcd efgh ijkl mnop"})
+    body = {"id": 2, "username": "editor1", "roles": ["editor"], "link": "https://www.example.com/author/editor1/"}
+
+    def fake_get(self, url, *, op="get"):
+        assert url.endswith("/wp/v2/users/me?context=edit"), url
+        return body
+    monkeypatch.setattr(wordpress.WordPressAdapter, "_get", fake_get)
+    who = adapter.whoami()
+    reads = who.get("home_host") == "www.example.com" and adapter.site_host == "example.com"
+    monkeypatch.setattr(principals_mod, "load_principal", lambda name: principal)
+    monkeypatch.setattr(wordpress, "factory", lambda account_cfg, principal_cfg: adapter)
+    got = doctor._diagnose_wordpress("wp-x-acct", {"principal": "wp-x", "blog_id": "example.com"})
+    [probe] = got["probes"]
+    keeps = ("www.example.com" in probe["detail"] and "example.com" in probe["detail"].replace("www.example.com", "")
+             and "detail" in doctor.OBSERVATION_FIELDS)
+    return {"reads": reads, "keeps": keeps, "route": reads}
+
+
+def test_WordPressの記事のURLのホストを比べて記録に残すことをprivacyが書く(monkeypatch):
+    facts = _wp_host_facts(monkeypatch)
+    assert facts["reads"] and facts["keeps"], facts               # 今のコードの事実（変えたら下の文も変える）
+    page = PRIVACY.read_text(encoding="utf-8")
+    en = _wp_section(page, "Blog articles on WordPress")
+    ja = _wp_section(page, "WordPress の記事")
+    for key, (en_text, ja_text) in _WP_HOST_SENTENCES.items():
+        assert (en_text in en) is facts[key], key
+        assert (ja_text in ja) is facts[key], key
+
+
 # 文字列だけの柵（コードの定数と結んでいない・字面がある・無いだけを見る）。WordPress の節の事実のうち、
 # 定数に寄せられないもの（https・転送・上書きしない・題と本文と分類）。
 WORDPRESS_WORDS_ONLY = (
