@@ -1,0 +1,45 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "credit",
+  "place": "site/src/credits/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {
+    "name": true
+  },
+  "questions": [
+    {
+      "name": "credit_holds",
+      "level": "unit",
+      "state": "status",
+      "reason_kind": "held_kind",
+      "reason_text": "held_reason_ja",
+      "depends": [
+        "seed",
+        "title"
+      ]
+    },
+    {
+      "name": "may_publish",
+      "outlet": "artist_page",
+      "state": "public",
+      "depends": []
+    },
+    {
+      "name": "may_publish",
+      "outlet": "song_page",
+      "state": "public_song",
+      "depends": []
+    }
+  ],
+  "units": {
+    "groups": [],
+    "items": [
+      "rows",
+      "*"
+    ],
+    "key": [
+      "seed"
+    ]
+  }
+}

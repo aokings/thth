@@ -1,0 +1,10 @@
+{
+  "schema": "thth.outlets/1",
+  "outlets": {
+    "bib": {
+      "audience": "reader",
+      "common": "source",
+      "note": "共通の台帳の書誌（採った版）"
+    }
+  }
+}

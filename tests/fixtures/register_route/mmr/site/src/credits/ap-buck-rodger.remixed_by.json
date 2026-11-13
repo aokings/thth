@@ -1,0 +1,15 @@
+{
+ "public": false,
+ "public_song": false,
+ "entity_id": "ap-buck-rodger",
+ "role": "remixed_by",
+ "rows": [
+  {
+   "seed": "seed-liked-1103",
+   "title": "曲 G",
+   "status": "held",
+   "held_kind": "conflict",
+   "held_reason_ja": "資料で食い違う（見本の説明）"
+  }
+ ]
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "thth.outlets/1",
+  "outlets": {
+    "artist_page": {
+      "audience": "reader",
+      "kinds": [
+        "credit"
+      ],
+      "level": "unit",
+      "requires": [
+        {
+          "question": "may_publish@artist_page",
+          "conclusion": "good"
+        }
+      ],
+      "fact": [
+        {
+          "question": "credit_holds",
+          "conclusion": "good"
+        }
+      ],
+      "note": "人の頁の経路（shown の行。2 曲以上で経路にするのはサイトの側）"
+    },
+    "song_page": {
+      "audience": "reader",
+      "kinds": [
+        "credit"
+      ],
+      "level": "unit",
+      "requires": [
+        {
+          "question": "may_publish@song_page",
+          "conclusion": "good"
+        }
+      ],
+      "fact": [
+        {
+          "question": "credit_holds",
+          "conclusion": "good"
+        }
+      ],
+      "reservation": {
+        "question": "credit_holds",
+        "conclusion": "pending",
+        "reason_kinds": [
+          "other_version",
+          "other_release",
+          "release_credits",
+          "conflict",
+          "role_differs"
+        ],
+        "note": "注にしてよい種類（credit-paths.ts の HELD_NOTE）。unresolved は入らない"
+      },
+      "note": "曲の頁の照合の印（shown）と、held の注"
+    }
+  }
+}

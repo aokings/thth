@@ -1,0 +1,9 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "source",
+  "place": "data/knowledge/sources.csv",
+  "format": "csv",
+  "id": {
+    "field": "id"
+  }
+}

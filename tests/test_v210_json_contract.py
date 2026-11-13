@@ -150,6 +150,9 @@ COMMANDS += ['register add', 'register check', 'register show', 'register use', 
 # 台帳の器 段 2: 取り込み・戻す・変えた跡・控え・束・止まった入れ替え・表の 1 行（網に出ない・--json は 1 つの値）。
 COMMANDS += ['register adopt', 'register restore', 'register diff', 'register keep', 'register merge',
              'register resume', 'register row set', 'register row add']
+# 台帳の器 段 3: 判断・採る・材料・受け入れと封・公開の直前の確かめ・持ち主の鍵（`thth/register/route_cli.py`）。
+COMMANDS += ['register judge', 'register take', 'register export', 'register accept', 'register verify',
+             'register key init', 'register key show']
 # 実店舗のレジ（計画 実店舗 段 5）: 鍵の広さと THTH が打つものを言う口（網に出ない・--json は 1 つの値）。
 COMMANDS += ['shop doctor']
 

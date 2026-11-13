@@ -1,0 +1,43 @@
+{
+  "schema": "thth.outlets/1",
+  "outlets": {
+    "facts": {
+      "audience": "reader",
+      "kinds": [
+        "claim"
+      ],
+      "fact": [
+        {
+          "question": "may_publish@facts",
+          "conclusion": "good"
+        }
+      ],
+      "note": "頁の事実欄の材料。今の決まり（点に主張があれば状態で除かずに全部出す・ledgerFactsFor）を写す"
+    },
+    "tools": {
+      "audience": "internal",
+      "kinds": [
+        "evidence"
+      ],
+      "note": "内の道具が読む出し口。選ばずに書く"
+    },
+    "bib": {
+      "audience": "reader",
+      "common": "source",
+      "note": "共通の台帳の書誌（採った版）"
+    },
+    "strict": {
+      "audience": "reader",
+      "kinds": [
+        "claim"
+      ],
+      "fact": [
+        {
+          "question": "says_so",
+          "conclusion": "good"
+        }
+      ],
+      "note": "見本: 本人か別の者の判断で「言える」になった主張だけ（根拠の版を照らした判断の試し）"
+    }
+  }
+}

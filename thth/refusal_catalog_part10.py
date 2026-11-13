@@ -377,4 +377,62 @@ ENTRIES = {
         "番号の欄は直さずに新しい行として足す・番号が重なるなら別の番号で。",
         "thth register links <台帳> <種類:番号>",
         "1 行ずつ直すより、束をまとめて入れる（thth register merge）ほうが、止まっても前か後のどちらかに決まります。"),
+    # ---------------------------------------------------------------- 台帳の器 段 3
+    "register_outlet_unknown": _entry(
+        "その出し口が、台帳の .thth/outlets.json に宣言されていないか、宣言の形が崩れています（1 行目の（）の語: "
+        "outlet は名前が無い・outlets: に続く語は宣言の崩れた所）。材料は書いていません。",
+        "thth register kinds <台帳> で種類の名前を確かめ、.thth/outlets.json の outlets に出し口を足すか直してから、"
+        "打ち直してください（出し口ごとに audience・kinds・requires・fact・reservation を書きます）。",
+        "thth register kinds <台帳>",
+        "読者に出る出し口と内の道具が読む出し口を分けて宣言すると、出さない層が公開の材料へ混ざりません。"),
+    "register_use_not_usable": _entry(
+        "その記録は、この出し口に、頼んだ「何として」では使えません（1 行目の（）の語: stopped は止めている・"
+        "not_accepted は判断はあるが受け入れていない・no_judgment は判断が無い・no_inspection_for_new_version は"
+        "中身が変わって新しい版への検収が無い・against_changed は照らした根拠が変わった・expired は期限が切れた・"
+        "not_permitted は出してよいの判断が無い・reason_kind_not_allowed は留保にしてよい理由の種類でない・"
+        "only_reservation は留保としてだけ使える・no_seal はまだ封が無い）。手元でも CI でも同じ答えです。",
+        "語に合わせて進めてください: 判断が無い・古いなら thth register judge で新しい版へ判断を足し（直した者と別の者なら"
+        " --carry で結び直せます）、thth register accept で受け入れて封をし直す。留保としてだけ使えるなら --as reservation で。",
+        "thth register judge <台帳> <種類:番号> --question <問い> --conclusion good --by <名前>",
+        "直しと検収を同じ便に入れると、頁から外れる間を作らずに済みます。"),
+    "register_material_stale": _entry(
+        "書き出し先に、この出し口の一覧に無い旧い材料のファイルがあります（--json の stale）。読まれ続けると、"
+        "外したはずの記録が頁に残るので、書くのをやめました。THTH はファイルを消しません。",
+        "一覧に無いファイルを、持ち主の手で書き出し先から外して（git の repo なら git rm）、打ち直してください。",
+        "thth register export <台帳> --outlet <出し口> --to <先> --as-of <日時> --check",
+        "書き出し先を出し口ごとのフォルダに分けると、旧い材料がほかのファイルと混ざりません。"),
+    "register_seal_missing": _entry(
+        "この出し口は、まだ受け入れて封をしていません。封の中の判断だけで材料を作るので、封が無いと材料を作れません。",
+        "thth register accept で、今の判断を持ち主に見せて受け入れ、封をしてください（二段）。",
+        "thth register accept <台帳> --outlet <出し口> --to <先> --as-of <日時> --by <名前>",
+        "初めての出し口は、thth register judge --baseline で今の版を基準として受けてから accept すると、頁を変えずに始められます。"),
+    "register_seal_unverified": _entry(
+        "公開の直前の確かめが赤です（1 行目の（）の語が最初の赤。全部は --json の problems）。受け入れていない判断・"
+        "封のあとの止める・期限・中身の変わり・世代の戻り・判断の記録の消え・別の鍵の封・宣言の変わりのどれかがあります。",
+        "語に合わせて直してください: 新しい判断や止めるを足したなら thth register accept で封をし直す・世代を戻したなら"
+        "最後の世代の封と材料に戻す・判断の記録の行を消したなら git の前の版から戻す・公開鍵は CI の変数"
+        " THTH_REGISTER_SEAL_PUBLIC_KEY に持ち主の公開鍵を置く（repo の中の鍵のファイルは読みません）。",
+        "thth register verify <台帳> --outlet <出し口> --material <先> --previous <前の封>",
+        "配る前に手元で同じ verify を回すと、CI で止まる前に気づけます。夜に期限が切れて朝の配信が止まるのを避けたい出し口は、"
+        "出し口の宣言で on_narrow を drop にすると、CI が外して配ります。"),
+    "register_seal_key_missing": _entry(
+        "封の鍵か、封に使う openssl（3 か 4）がありません（1 行目の（）の語: key は持ち主の秘密の鍵が無い・"
+        "public_key は確かめに使う公開鍵が無い・openssl は決まった場所に OpenSSL 3・4 が無い・public_key_form は公開鍵の形が違う）。",
+        "持ち主の機械で thth register key init を 1 回打ち、出た公開鍵を CI の変数 THTH_REGISTER_SEAL_PUBLIC_KEY に"
+        "置いてください（置くのは持ち主の手か承認で）。openssl が無い機械では、Homebrew などで OpenSSL 3 以上を入れてください。",
+        "thth register key init",
+        "公開鍵の指紋（thth register key show）を控えておくと、CI に置いた鍵が持ち主の物かを見分けられます。"),
+    "register_seal_key_unsafe": _entry(
+        "持ち主の秘密の鍵の置き場が使えません（1 行目の（）の語: inside_register は台帳か台帳を含む repo の中にある・"
+        "key_mode は持ち主のほかにも読める権限か symlink・key_exists はもう鍵がある）。鍵の値は出していません。",
+        "秘密の鍵は ~/.config/thth/ に置き、権限は 0600 にしてください。台帳や repo の中に置かないでください。"
+        "もう鍵があるなら、作り直さずにそのまま使ってください（替えると CI の公開鍵も替えることになります）。",
+        "thth register key show",
+        "XDG_CONFIG_HOME を台帳の repo の中に向けないでおくと、鍵が commit に紛れ込みません。"),
+    "register_common_unusable": _entry(
+        "共通の台帳が使えません（1 行目の（）の語: path はフォルダが無い・common は --common が無い・rows は表の行の"
+        "記録で、版ごとに取り出せない）。採っていません。",
+        "--common に共通の台帳のフォルダを渡してください。共通に置く記録は、1 つのファイル = 1 つの記録の種類にしてください。",
+        "thth register take <台帳> --common <共通の台帳> --record <種類:番号> --by <名前>",
+        "共通の台帳を git に置き、直すたびに thth register keep で控えると、前の版を採っているメディアも材料を作り直せます。"),
 }

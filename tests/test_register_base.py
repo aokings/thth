@@ -321,13 +321,13 @@ REGISTER_ALLOWED_THTH = frozenset((
     "thth.queuefile", "thth.lint", "thth.draft_origin",
 ))
 # 標準の部品のうち、網に出る・外の命令を動かす・名前で部品を読み込む物（表の外）。`subprocess` は draft.py の
-# `git rev-parse` の 1 つだけ許す。
+# `git rev-parse` と、seal.py の決まった場所の openssl（封の署名と確かめ・設計_台帳の器 §5.6。網に出ない）だけ許す。
 STDLIB_DENIED = frozenset((
     "urllib", "http", "socket", "ssl", "socketserver", "ftplib", "smtplib", "poplib", "imaplib", "nntplib",
     "telnetlib", "xmlrpc", "asyncio", "webbrowser", "multiprocessing", "concurrent", "ctypes", "importlib",
     "subprocess", "pty", "requests", "httpx",
 ))
-SUBPROCESS_ALLOWED = frozenset(("draft.py",))
+SUBPROCESS_ALLOWED = frozenset(("draft.py", "seal.py"))
 # 標準の外の部品で、許すのは YAML を字として読む PyYAML だけ（台帳の器 段 1・設計 §5.2「追加の部品を入れた機械だけ」）。
 # 許すのは yamlread.py の 1 枚だけ。PyYAML は網にも外の命令にも触れない。入れていない機械では import が失敗し、
 # YAML の記録は「中は見ていない」になる（依存 0 は変えない・`pip install 'thth[yaml]'`）。
