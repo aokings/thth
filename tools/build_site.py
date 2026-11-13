@@ -630,6 +630,15 @@ def build_privacy() -> str:
         "contains a key or a password. <code>thth register remove</code> deletes THTH's files for the register on "
         "the computer where it runs; when the project's last account leaves, <code>thth leave</code> deletes them "
         "there. Neither deletes the register folder.</p>")
+    add("<p>For a physical shop, the register holds the shop, its opening hours, temporary closures or changed hours, "
+        "events, items in the shop and the owner's thoughts. <code>thth register draft</code> makes an unapproved "
+        "post draft from these rows when a closure, an event, a change of hours, a new item or a seasonal item comes "
+        "near. It uses only facts that the owner wrote in the register and confirmed; in this version THTH does not "
+        "read the shop's web pages or its till. The shop's address and phone number, and the reason for a closure, "
+        "are not put into drafts unless the owner marks that field as public, and THTH puts no photos into these "
+        "drafts. Each draft records the row it came from and a time after which it is not posted; when a person "
+        "approves it, THTH reads the row again and refuses if the row changed, is no longer confirmed or the time has "
+        "passed. Opening hours and temporary closures are confirmed in two steps.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
     add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
@@ -1131,6 +1140,12 @@ def build_privacy() -> str:
         "せず、鍵やパスワードらしい値のある行も断ります。<code>thth register remove</code> は、打ったコンピューターの THTH の"
         "台帳のファイルを消し、プロジェクトの最後のアカウントが抜けるときは <code>thth leave</code> がそこで消します。"
         "どちらも台帳のフォルダは消しません。</p>")
+    add("<p>実店舗の台帳には、店・営業の時間・臨時の休みや時間の変更・催し・店頭の品・持ち主の思いを置きます。"
+        "<code>thth register draft</code> は、臨時の休み・催し・営業の時間の変わり・新しい品・季節の品が近づいたときに、"
+        "これらの行から承認されていない投稿の下書きを作ります。材料は、持ち主が台帳に書いて認めた事実だけです。この版の THTH は、"
+        "店の頁もレジも読みません。店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
+        "下書きに入れず、写真も下書きに入れません。下書きには元の行と出さない期限を書き、人が承認するときに行を読み直して、"
+        "行が変わった・認めたが外れた・期限を過ぎた、のどれかなら断ります。営業の時間と臨時の休みは二段で認めます。</p>")
 
     add("<h2>WordPress の記事</h2>")
     add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"
