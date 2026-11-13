@@ -255,6 +255,32 @@ def test_removeは控えと記録を消し台帳のフォルダは残す(capsys,
     assert jrun(capsys, "register", "show", "media-sample")[1]["code"] == "register_missing"
 
 
+@pytest.mark.parametrize("where", ["register_state/media-sample", "register_state", "registers/x"])
+def test_柵_THTHの置き場の中の台帳のフォルダは控えない(capsys, env, where):
+    """監査 5.19.0 の気づき 8: register_state/<名前>/ の中に置くと、register remove と leave が台帳ごと消していた。"""
+    inside = env["root"] / where / "台帳"
+    shutil.copytree(sample(env, "media-sample"), inside)
+    rc_, value, _ = jrun(capsys, "register", "add", "media-sample", "--path", str(inside), "--project", "sample",
+                         "--kind", "media", "--by", "m")
+    assert rc_ == 2 and value["code"] == "register_path_unusable" and value["detail"] == "inside_thth_state"
+    rc_, _out, err = run(capsys, "register", "add", "media-sample", "--path", str(inside), "--project", "sample",
+                         "--kind", "media", "--by", "m")
+    assert rc_ == 2 and "THTH の置き場の外" in err
+    assert not pathlib.Path(ledger.path_for("media-sample")).exists()
+
+
+def test_前に控えた台帳のフォルダが認めた記録の置き場の中でもremoveは台帳を消さない(capsys, env):
+    inside = pathlib.Path(ledger.state_dir_for("media-sample")) / "台帳"
+    shutil.copytree(sample(env, "media-sample"), inside)
+    # 5.19.0 の add の断りより前に控えた物（控えを直に書く）。
+    ledger.write_new("media-sample", ledger.build("media-sample", project="sample", path=str(inside), kind="media"))
+    assert run(capsys, "register", "confirm", "media-sample", "voice-editorial", "--by", "m")[0] == 0
+    rc_, value, _ = jrun(capsys, "register", "remove", "media-sample", "--by", "m")
+    assert rc_ == 0 and value["deleted"] == ["state_files", "ledger"]
+    assert (inside / "思い" / "編集の考え.md").exists()
+    assert not pathlib.Path(ledger.confirmed_path("media-sample")).exists()
+
+
 # ------------------------------------------------------------------ 断りの目録と網
 
 def test_断りの符丁はどれも目録に3つがそろう():

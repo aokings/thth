@@ -51,7 +51,7 @@ from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
 DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger", "question",
-                          "answer_text", "private_needed"))
+                          "answer_text", "private_needed", "inside_thth_state"))
 
 
 def _refuse(args, exc: RegisterRefused) -> int:
@@ -130,7 +130,7 @@ def cmd_add(args) -> int:
     name = ledger.check_name(args.register)
     if not isinstance(args.project, str) or not ledger.accounts.name_is_safe(args.project):
         raise RegisterRefused("register_args_invalid", "project")
-    path = ledger.check_path(args.path)
+    path = ledger.check_outside_thth(ledger.check_path(args.path))
     _log_ready()
     written = ledger.write_new(name, ledger.build(name, project=args.project, path=path, kind=args.kind))
     _record("added", name, by, {"project": [None, args.project], "kind": [None, args.kind]})
@@ -265,7 +265,21 @@ def remove_state(name: str) -> list:
     """控えと認めた記録を消す（台帳のフォルダは消さない）。消した物の並び。"""
     done = []
     state = ledger.state_dir_for(name)
-    if os.path.isdir(state) and not os.path.islink(state):
+    try:
+        folder = ledger.load(name)["path"]
+    except RegisterRefused:
+        folder = None
+    if folder and ledger._inside(folder, state):
+        # 台帳のフォルダが認めた記録の置き場の中にある（5.19.0 の add の断りより前に控えた物）。丸ごと消すと台帳も
+        # 消えるので、THTH が書いた 2 つのファイルだけを消す（気づき 8）。
+        for leaf in (ledger.CONFIRMED_FILE, draft_origin.FILE):
+            try:
+                os.unlink(os.path.join(state, leaf))
+                done.append("state_files")
+            except (FileNotFoundError, IsADirectoryError):
+                pass
+        done = sorted(set(done), key=done.index)
+    elif os.path.isdir(state) and not os.path.islink(state):
         shutil.rmtree(state)
         done.append("state")
     try:

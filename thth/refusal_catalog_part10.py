@@ -90,7 +90,14 @@ ENTRIES = {
         "台帳のフォルダの本当の道（絶対の道か ~ から）を --path に入れて、thth register add を打ち直してください。"
         "控えた台帳のフォルダを動かしたなら、thth register remove で控えを消してから add し直します。",
         _ADD,
-        "台帳のフォルダは git の repo にしておくと、変えた跡が残り、下書きの頭に出所の commit が書けます。"),
+        "台帳のフォルダは git の repo にしておくと、変えた跡が残り、下書きの頭に出所の commit が書けます。",
+        by_detail={
+            "inside_thth_state": {
+                "fix": "台帳のフォルダが THTH の置き場（register_state/ か registers/ の中）にあります。そこは thth register remove と"
+                       "thth leave が丸ごと消す所なので、台帳が消えてしまいます。台帳のフォルダを THTH の置き場の外"
+                       "（持ち主の repo の中など）に移してから、--path にその道を入れて打ち直してください。",
+                "command": _ADD,
+                "better": "台帳のフォルダは git の repo にしておくと、変えた跡が残り、下書きの頭に出所の commit が書けます。"}}),
     "register_row_missing": _entry(
         "その番号の行が台帳にありません（1 行目の（）が番号）。",
         "thth register show <台帳> で行の番号を確かめて、打ち直してください。新しい行なら、台帳のフォルダに .md を 1 枚足します。",

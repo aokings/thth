@@ -61,6 +61,26 @@ def check_path(value) -> str:
     return path
 
 
+def _inside(path: str, directory: str) -> bool:
+    path, directory = os.path.realpath(path), os.path.realpath(directory)
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:
+        return False
+
+
+def thth_owned_dirs() -> list:
+    """THTH が `register remove`・`leave` で丸ごと消しうる置き場（台帳のフォルダを置いてはいけない所）。"""
+    return [os.path.join(accounts.thth_root(), "register_state"), registers_dir()]
+
+
+def check_outside_thth(path: str) -> str:
+    """台帳のフォルダが THTH の置き場（認めた記録の置き場・控えの置き場）の中なら断る（消えるので・気づき 8）。"""
+    if any(_inside(path, d) for d in thth_owned_dirs()):
+        raise RegisterRefused("register_path_unusable", "inside_thth_state")
+    return path
+
+
 def validate(name: str, data) -> None:
     if (not isinstance(data, dict) or set(data) != set(FIELDS) or data.get("register") != name
             or data.get("kind") not in KINDS
