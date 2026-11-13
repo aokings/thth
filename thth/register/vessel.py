@@ -1072,17 +1072,24 @@ def open_vessel(root: str, decl_base: str | None = None) -> Vessel:
 # ------------------------------------------------------------------ 指す欄
 
 def pointer_targets(rec: Record, spec: dict) -> list:
+    return pointer_pieces(rec, spec)[0]
+
+
+def pointer_pieces(rec: Record, spec: dict) -> tuple:
+    """`(指す先の番号の並び, 空の要素の数)`。欄そのものが空なら指していない（0 件・空 0）。並びや区切りの中の
+    空の要素（`["e", ""]`・`c||d`）は、指す先の一部の欠けなので数えて返す（黙って落とさない）。"""
     if "template" in spec:
-        return [spec["template"].replace("{id}", rec.id or "")]
+        return [spec["template"].replace("{id}", rec.id or "")], 0
     raw = rec.values.get(spec["field"]) if rec.values else None
     if raw in (None, ""):
-        return []
+        return [], 0
     if isinstance(raw, list):
-        return [str(v) for v in raw if v not in (None, "")]
+        return [str(v) for v in raw if v not in (None, "")], sum(1 for v in raw if v in (None, ""))
     raw = str(raw)
     if spec.get("split"):
-        return [p.strip() for p in raw.split(spec["split"]) if p.strip()]
-    return [raw]
+        parts = [p.strip() for p in raw.split(spec["split"])]
+        return [p for p in parts if p], sum(1 for p in parts if not p)
+    return [raw], 0
 
 
 def recorded_hash(spec: dict, target: Record) -> str | None:
@@ -1102,13 +1109,17 @@ def recorded_hash(spec: dict, target: Record) -> str | None:
 
 def links(vessel: Vessel) -> dict:
     """指す欄を全部たどる: `{"edges": [...], "dangling": [...], "cycles": [...], "review": [...]}`。"""
-    edges, dangling, review, ambiguous = [], [], [], []
+    edges, dangling, review, ambiguous, blank = [], [], [], [], []
     for rec in vessel.all_records:
         if rec.id is None or rec.values is None:
             continue
         kind = vessel.kinds[rec.kind]
         for spec in kind.pointers:
-            for target_id in pointer_targets(rec, spec):
+            targets, blanks = pointer_pieces(rec, spec)
+            if blanks:
+                # 並び・区切りの中の空の要素: 指す先の一部が欠けている（黙って落とさず見せる）。
+                blank.append({"from": rec.ref, "to_kind": spec["to"], "field": spec.get("field"), "blanks": blanks})
+            for target_id in targets:
                 ref = f"{spec['to']}:{target_id}"
                 target = vessel.unique(ref)
                 meaning = spec["meaning"]
@@ -1132,7 +1143,8 @@ def links(vessel: Vessel) -> dict:
                     if recorded != now:
                         review.append({**edge, "recorded": recorded, "now": now})
     cycles = _cycles(edges)
-    return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review, "ambiguous": ambiguous}
+    return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review, "ambiguous": ambiguous,
+            "blank": blank}
 
 
 def _cycles(edges: list) -> list:
