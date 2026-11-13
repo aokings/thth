@@ -297,6 +297,10 @@ PRIVACY_EFFECTIVE = "2026-11-12"  # 5.14.4（原則の書 11/12 の承認）・5
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
 REGISTER_MANAGED = ("confirmed", "confirmed_at")
+# 問いの記録のファイルの名前（`thth/register/questions.LOG_FILE`）と、聞く拍子の数（`thth/register/holes`）。
+REGISTER_QUESTION_LOG = "問いの記録.jsonl"
+REGISTER_ASK_PER_DAY = 3
+REGISTER_ASK_GAP_DAYS = 7
 
 
 def _register_managed_en() -> str:
@@ -622,7 +626,8 @@ def build_privacy() -> str:
         "owner keeps on their own computer, so that drafts use only facts the owner has confirmed. The register stays "
         "with the owner; THTH's operator does not hold it, and THTH does not send it anywhere (this part of THTH has "
         "no network access). In the register, THTH writes only the fixed head fields "
-        + _register_managed_en() + ", and it does not change any other line. On the computer where it runs, THTH "
+        + _register_managed_en() + " and adds lines to the question log (<code>" + REGISTER_QUESTION_LOG + "</code>), and it "
+        "does not change any other line. On the computer where it runs, THTH "
         "keeps the register's name, project, folder path and kind, and a record of which rows the owner confirmed "
         "(the row's ID, a fingerprint of its contents, when and by whom); with it THTH notices that a row changed "
         "after it was confirmed. THTH refuses to use a row that is a guess, that the owner said is wrong, that is "
@@ -639,6 +644,13 @@ def build_privacy() -> str:
         "drafts. Each draft records the row it came from and a time after which it is not posted; when a person "
         "approves it, THTH reads the row again and refuses if the row changed, is no longer confirmed or the time has "
         "passed. Opening hours and temporary closures are confirmed in two steps.</p>")
+    add("<p><code>thth register holes</code> lists what is missing in the register: rows that are still guesses or past "
+        "their review date, a missing shop or opening hours row, the holidays of a coming season, and items without "
+        "the owner's thoughts. <code>thth register ask</code> picks a few of them for the owner's own AI assistant to "
+        f"ask the owner in conversation, at most {REGISTER_ASK_PER_DAY} a day, and does not ask about the same thing "
+        f"again within {REGISTER_ASK_GAP_DAYS} days or after the owner said no. THTH does not send the owner any "
+        "message itself. The questions and answers are added to the question log in the owner's register; THTH's "
+        "operator does not hold them. An answer alone does not confirm opening hours or a temporary closure.</p>")
 
     add("<h2>Blog articles on WordPress</h2>")
     add("<p>THTH can publish an article from the owner's repository to the owner's self-hosted WordPress site after "
@@ -1134,7 +1146,8 @@ def build_privacy() -> str:
     add("<p><code>thth register</code> は、持ち主が自分のコンピューターに置く台帳（1 つのものを 1 枚の文のファイルにした"
         "フォルダ）を読み、持ち主が認めた事実だけを下書きの材料にします。台帳は持ち主の手元にあり、THTH の運営者は預かりません。"
         "THTH は台帳をどこにも送りません（この部分の THTH は網に出ません）。台帳に THTH が書くのは頭の決まった欄 "
-        + _register_managed_ja() + " だけで、ほかの行には触りません。動かしたコンピューターには、台帳の名前・プロジェクト・"
+        + _register_managed_ja() + " と、問いの記録（<code>" + REGISTER_QUESTION_LOG + "</code>）に足す行だけで、ほかの行には触りません。"
+        "動かしたコンピューターには、台帳の名前・プロジェクト・"
         "フォルダの道・種類と、持ち主が認めた行の記録（行の番号・中身の指紋・いつ・誰が）を残し、認めたあとに行が変わったことを"
         "これで見つけます。推測の行・持ち主が違うと言った行・見直し日を過ぎた行・退役した行・外に出してよい印の無い行は材料に"
         "せず、鍵やパスワードらしい値のある行も断ります。<code>thth register remove</code> は、打ったコンピューターの THTH の"
@@ -1146,6 +1159,11 @@ def build_privacy() -> str:
         "店の頁もレジも読みません。店の住所と電話、臨時の休みの理由は、持ち主がその欄を外に出してよいと書いたときのほかは"
         "下書きに入れず、写真も下書きに入れません。下書きには元の行と出さない期限を書き、人が承認するときに行を読み直して、"
         "行が変わった・認めたが外れた・期限を過ぎた、のどれかなら断ります。営業の時間と臨時の休みは二段で認めます。</p>")
+    add("<p><code>thth register holes</code> は台帳の穴（推測のままの行・見直し日を過ぎた行・店や営業の時間の行の欠け・"
+        "近づいた季節の休み・思いの無い品）を並べます。<code>thth register ask</code> はそのうちいくつかを選び、持ち主の AI の"
+        f"アシスタントが会話の中で持ち主に聞きます。1 日 {REGISTER_ASK_PER_DAY} 問までで、同じことは {REGISTER_ASK_GAP_DAYS} 日"
+        "空け、持ち主が違うと言ったことは聞き直しません。THTH が持ち主に直接知らせを送ることはありません。聞いた問いと答えは"
+        "持ち主の台帳の問いの記録に足し、運営者は預かりません。答えだけでは、営業の時間と臨時の休みを認めたことにしません。</p>")
 
     add("<h2>WordPress の記事</h2>")
     add("<p>THTH は、人が承認したあとで、持ち主の repo の記事を、持ち主が自分で置いている WordPress のサイトに出せます。"
