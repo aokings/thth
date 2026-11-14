@@ -312,9 +312,12 @@ ENTRIES = {
         "台帳の判断の記録（.thth/judgments.jsonl）の 1 行が、決まった形に合いません（1 行目の（）が行の番号と、"
         "合わない欄の名前）。判断の 1 行には、id・question・target.record（どれも 1 字以上の字）が要り、"
         "target.unit と target.value は字、answer・reason・seen・content は辞書、at は字、siblings は字の並びです。"
+        "段 3 の命令（verify・export・accept・use）は加えて、id が中身から作った番号と合わない行（id_not_from_content）・"
+        "中身の違う前の行と同じ id の行（id_same_as_line と前の行の番号）・at が日時として読めない行（at）も断ります。"
+        "番号を借りた行は、受け入れていない判断を封の中の判断に見せかけられるためです。"
         "形の合わない行が 1 つでもあると、どの判断が効いているかを数え違えるので、全体を読みません。",
         "その行を、git の前の版から戻してください（判断の記録は足すだけで、手で書き換えない物です）。"
-        "前の版が無ければ、その行を外して、同じ判断を thth の命令で出し直してください。",
+        "前の版が無ければ、その行を外して、同じ判断を thth の命令で出し直してください（命令が番号と日時を正しく付けます）。",
         _CHECK,
         "判断の記録を台帳の repo に commit しておくと、壊れたときに前の版へ戻せます。"),
     "register_judgment_same_person": _entry(

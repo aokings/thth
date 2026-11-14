@@ -20,7 +20,9 @@
   器の控え（`.thth/kept/objects/`）から取り出す。写しはメディアに作らない。
 - **材料の控えと封**（`.thth/seals/<出し口>.json`）: 受け入れた判断の集まり（バイトの数と指紋）・入力の版の組
   （記録と共通の版）・宣言の指紋・判定の器の版・出し口・判定の日時・書いたファイルの sha256・載せた物の一覧・
-  **世代の番号**（増えるだけ）。持ち主の鍵（`seal.py`）で署名する。
+  **世代の番号**（増えるだけ）・**指紋**（`fingerprints`: 載せた項目ごとの中身の指紋 `items` と、表ごとの書いた行の
+  sha256 の並び `tables`。頭は見出し。`on_narrow: drop` で外して配るとき、残りが封のときの物と同じかを見る。11/14 の
+  検収の重い 2 で足した。版は上げない。指紋の無い封では外して配らず、受け入れ直す）。持ち主の鍵（`seal.py`）で署名する。
 - **確かめ**（`verify`）: 封を、repo の外の公開鍵で確かめる → 判断の記録が封の続きか → 前に配った世代の封
   （`--previous`。公開の場所から CI の手順が取ってくる）の続きか・世代が戻っていないか → 宣言が封のときのままか →
   封の中の判断だけ（と、封を待たない狭める物）で今の日時に計算し直す → 置いてある材料と、封の出力と比べる。
@@ -28,7 +30,11 @@
   赤（封をし直さずに止めるで外して配った回も、行を消して戻せない）。封の出し口と確かめる出し口も照らす。
 - **手元でも封は確かめてから使う**（`use`・`export`・`accept`）: 署名が合わない・公開鍵が無い・別の出し口の封は、
   封なしとして扱う（広げない。狭める物は効く）。
-- 同じ日時の判断の新しさは、判断の記録の中で後に足した物（番号の文字の順にはしない）。
+- **封の中か外かは、判断の記録の中の位置で決める**（封が言うバイトまでの行が封の中。番号の集まりでは決めない）。
+  判断の記録は、番号が中身から作った物と合わない行・中身の違う行と番号が重なる行・日時の読めない行を、読む入口で断る。
+- 判断の新しさ: **封の外の判断は、`at` に何が書いてあっても封の中の判断より新しい**（次の受け入れまで。封の外の
+  止める・だめが、日時の書き方で封の中の止めない・よいに負けない）。その中では日時を時刻として比べ（字で比べない）、
+  同じ時刻なら判断の記録の中で後に足した物（番号の文字の順にはしない）。止めないにも期限を見る（切れたら止めるが効く）。
 
 網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
 """
@@ -39,7 +45,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from thth import __version__
 from . import judgment as J
@@ -261,8 +267,12 @@ def judgments_raw(root: str) -> bytes:
 
 
 def parse_judgments(raw: bytes) -> list:
-    """`judgment.read` と同じ点検で、バイトから読む（封の中の頭だけを読むため）。"""
+    """`judgment.read` と同じ点検（形は `J.shape_problem`）で、バイトから読む（封の中の頭だけを読むため）。
+    段 3 は加えて、番号の重なり（`id_same_as_line N`）・中身から作り直した番号との食い違い（`id_not_from_content`）・
+    読めない日時（`at`）の行を断る。封の中か外かは記録の中の位置で決めるが、番号で判断を名指しする所
+    （結び直す口など）が別の行を指さないように、番号は中身から決まる物だけを受ける（同じ中身の行の重なりは受ける）。"""
     out = []
+    seen = {}
     for number, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), start=1):
         if not line.strip():
             continue
@@ -274,8 +284,38 @@ def parse_judgments(raw: bytes) -> list:
             raise RegisterRefused("register_judgment_invalid", f"line {number}")
         if V.value_problem(item):
             raise RegisterRefused("register_judgment_invalid", f"line {number}")
+        problem = J.shape_problem(item)
+        if problem:
+            raise RegisterRefused("register_judgment_invalid", f"line {number} {problem}")
+        first = seen.get(item["id"])
+        if first is not None and V.canonical(first[1]) != V.canonical(item):
+            # 同じ中身の行が 2 つ（同じ秒に同じ命令を 2 回）は、番号も同じで害が無い。中身の違う行が番号を借りたら断る。
+            raise RegisterRefused("register_judgment_invalid", f"line {number} id_same_as_line {first[0]}")
+        if item["id"] != J.new_id(item):
+            raise RegisterRefused("register_judgment_invalid", f"line {number} id_not_from_content")
+        if item.get("at") not in (None, "") and _when_or_none(item["at"]) is None:
+            raise RegisterRefused("register_judgment_invalid", f"line {number} at")
+        seen.setdefault(item["id"], (number, item))
         out.append(item)
     return out
+
+
+def _when_or_none(raw):
+    try:
+        return parse_time(raw, word="at")
+    except RegisterRefused:
+        return None
+
+
+_EARLIEST = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+def _when(j: dict) -> datetime.datetime:
+    """判断の日時を時刻として（字の比べにしない。UTC の書き方と日本の時刻が混ざっても正しい）。無ければいちばん前。"""
+    raw = j.get("at")
+    if raw in (None, ""):
+        return _EARLIEST
+    return _when_or_none(raw) or _EARLIEST
 
 
 def sha(data: bytes) -> str:
@@ -297,7 +337,7 @@ def open_common(path) -> Common | None:
     if not isinstance(path, str) or not os.path.isdir(path) or os.path.islink(path):
         raise RegisterRefused("register_common_unusable", "path")
     root = os.path.abspath(path)
-    return Common(root, V.open_vessel(root), J.read(root))
+    return Common(root, V.open_vessel(root), parse_judgments(judgments_raw(root)))
 
 
 def common_bytes(common: Common, ref: str, version: str) -> bytes:
@@ -328,16 +368,19 @@ class Ctx:
     every: list                # 全部の判断（狭める物はここから）
     as_of: datetime.datetime
     common: Common | None = None
-    sealed_ids: set = field(default_factory=set)
+    n_sealed: int = 0          # 封の中の判断の数（判断の記録の頭から何件めまでが封の中か）
 
     def __post_init__(self):
-        self.sealed_ids = {j.get("id") for j in self.sealed}
+        self.n_sealed = len(self.sealed)
 
 
-def _key(pair):
-    """`(位置, 判断)` の新しさ: 日時、同じ日時なら記録の中で後に足した物（番号の文字の順にはしない）。
-    封の中の判断は判断の記録の頭なので、位置は封の中でも全部でも同じ。"""
-    return (pair[1].get("at") or "", pair[0])
+def _key(pair, n_sealed: int | None = None):
+    """`(位置, 判断)` の新しさ。封の外（位置が封の件数より後ろ）の判断は、`at` に何が書いてあっても封の中の判断より
+    新しい（次の受け入れまで。封の外の狭める判断が、日時の書き方で封の中の広げる判断に負けないため）。
+    その中では日時（時刻として比べる）、同じ日時なら記録の中で後に足した物（番号の文字の順にはしない）。
+    封の中の判断は判断の記録の頭なので、位置は封の中でも全部でも同じ。`n_sealed` が無ければ全部を封の中とみる。"""
+    outside = n_sealed is not None and pair[0] >= n_sealed
+    return (outside, _when(pair[1]), pair[0])
 
 
 def _against_ok(vessel: V.Vessel, j: dict) -> bool:
@@ -364,7 +407,7 @@ def answer(ctx: Ctx, js: list, match, question: str) -> dict:
         return {"conclusion": None, "why": "no_inspection_for_new_version"}
     # 今の版に効く最後の判断が答え。それが期限切れ・根拠の変わりで効かないとき、前の判断へ戻らない
     # （前の判断を蘇らせると、期限を付け直した判断が切れた途端に、期限の無い古い判断で使えてしまう）。
-    last = max(effective, key=_key)[1]
+    last = max(effective, key=lambda p: _key(p, ctx.n_sealed))[1]
     if not _against_ok(ctx.vessel, last):
         return {"conclusion": None, "why": "against_changed", "judgment": last}
     if _passed(last, ctx.as_of):
@@ -413,9 +456,10 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     return "none", why, None
 
 
-def _stop_state(js_every: list, sealed_ids: set, vessel: V.Vessel | None, ref: str, pointer, outlet: str,
+def _stop_state(js_every: list, n_sealed: int, vessel: V.Vessel | None, ref: str, pointer, outlet: str,
                 as_of) -> dict | None:
-    """止めているなら、その判断。止めるは封を待たない。止めないは封の中だけ。"""
+    """止めているなら、その判断。止めるは封を待たない。止めないは封の中（判断の記録の頭から `n_sealed` 件め
+    まで。番号でなく位置で決める）だけで、期限が切れていない物。封の外の止めるは、`at` によらず封の中の止めないに勝つ。"""
     questions = {STOP, f"{STOP}@{outlet}"}
     mine = [(n, j) for n, j in enumerate(js_every) if j.get("question") in questions
             and (j.get("target") or {}).get("record") == ref
@@ -425,19 +469,19 @@ def _stop_state(js_every: list, sealed_ids: set, vessel: V.Vessel | None, ref: s
         word = ((j.get("answer") or {}).get("conclusion"))
         if word == "bad" and not _passed(j, as_of):
             stops.append((n, j))
-        elif word == "good" and j.get("id") in sealed_ids:
+        elif word == "good" and n < n_sealed and not _passed(j, as_of):
             lifts.append((n, j))
     if not stops:
         return None
-    last = max(stops, key=_key)
-    if any(_key(l) > _key(last) for l in lifts):
+    last = max(stops, key=lambda p: _key(p, n_sealed))
+    if any(_key(l, n_sealed) > _key(last, n_sealed) for l in lifts):
         return None
     return last[1]
 
 
 def decide(ctx: Ctx, outlet: Outlet, ref: str, pointer=None) -> dict:
     """1 つの記録（か内側の単位）を、この出し口に、何として使えるか。"""
-    stop = _stop_state(ctx.every, ctx.sealed_ids, ctx.vessel, ref, pointer, outlet.name, ctx.as_of)
+    stop = _stop_state(ctx.every, ctx.n_sealed, ctx.vessel, ref, pointer, outlet.name, ctx.as_of)
     if stop is not None:
         return {"as": None, "why": "stopped"}
     if outlet.audience == "internal":
@@ -485,14 +529,14 @@ def _common_stopped(ctx: Ctx, ref: str, outlet: str):
     （止めたあとの封には載っていないので、受け入れまでは「封の外で広がった」として赤）。"""
     if ctx.common is None:
         return None
-    return _stop_state(ctx.common.judgments, {j.get("id") for j in ctx.common.judgments}, None, ref, None, outlet,
+    return _stop_state(ctx.common.judgments, len(ctx.common.judgments), None, ref, None, outlet,
                        ctx.as_of)
 
 
 def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> dict:
     """`{"items": [...], "files": {道: bytes}, "inputs": [...], "excluded": [...], "pending_takes": [...]}`。"""
     items, excluded, inputs = [], [], []
-    files = {}
+    files, tables = {}, {}
     vessel = ctx.vessel
     by_path = {}
     for rec in vessel.all_records:
@@ -537,7 +581,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             with open(os.path.join(ctx.root, *path.split("/")), "rb") as f:
                 data = f.read()
             if kind.records == "rows" and kind.format == "csv":
-                files[path] = _table_bytes(data, keep)
+                files[path], tables[path] = _table_bytes(data, keep)
             elif keep:
                 files[path] = data
         facts = [i for i in items if i["as"] == "reservation"]
@@ -566,7 +610,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                 if now is not None and now.version != version:
                     pending.append({"record": f"{COMMON}:{ref}", "taken": version, "now": now.version})
             if _common_stopped(ctx, ref, outlet.name) is not None or _stop_state(
-                    ctx.every, ctx.sealed_ids, None, f"{COMMON}:{ref}", None, outlet.name, ctx.as_of) is not None:
+                    ctx.every, ctx.n_sealed, None, f"{COMMON}:{ref}", None, outlet.name, ctx.as_of) is not None:
                 excluded.append({"record": f"{COMMON}:{ref}", "why": "stopped"})
                 continue
             path = f"{COMMON}/{common_path(ctx.common, ref, common_known or {})}"
@@ -577,25 +621,59 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             files[path] = common_bytes(ctx.common, ref, version)
             items.append({"record": f"{COMMON}:{ref}", "as": "fact", "version": version, "path": path})
     inputs.sort(key=lambda i: i["record"])
-    return {"items": items, "files": files, "inputs": inputs, "excluded": excluded, "pending_takes": pending}
+    return {"items": items, "files": files, "inputs": inputs, "excluded": excluded, "pending_takes": pending,
+            "tables": tables}
 
 
 def _json_bytes(value) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
 
 
-def _table_bytes(data: bytes, keep: set) -> bytes:
-    """表から、使える行だけを元のバイトのまま残す（見出しと空の行はそのまま）。全部使えるなら元と同じバイト。"""
+def _table_bytes(data: bytes, keep: set) -> tuple:
+    """表から、使える行だけを元のバイトのまま残す（見出しと空の行はそのまま）。全部使えるなら元と同じバイト。
+    `(バイト, 書いた行ごとの sha256 の並び)`。並びの頭は見出し（BOM を含む）。封の指紋（`fingerprints.tables`）に使う。"""
     bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
     text = data[len(bom):].decode("utf-8")
     rows = V.split_csv_rows(text)
     if not rows:
-        return data
+        return data, [sha(data)]
     out = [rows[0]]
     for raw in rows[1:]:
         if not raw.strip("\r\n") or V.bytes_version(raw.encode("utf-8")) in keep:
             out.append(raw)
-    return bom + "".join(out).encode("utf-8")
+    shas = [sha(bom + out[0].encode("utf-8"))] + [sha(r.encode("utf-8")) for r in out[1:]]
+    return bom + "".join(out).encode("utf-8"), shas
+
+
+def item_fp(item: dict) -> str:
+    """載せた項目の中身の指紋（版・値・理由の種類・注）。置き場の道（ファイルの道は出力の指紋で見る。共通の台帳を
+    読めない CI では道を当てで作る）と、共通の台帳を読めなかった印は入れない。"""
+    return sha(V.canonical({k: v for k, v in item.items() if k not in ("unchecked", "path")}).encode("utf-8"))
+
+
+def _only_dropped(body: dict, result: dict, expected: dict) -> bool:
+    """`on_narrow: drop` で外して配るとき、今の材料が「封の出力から、外した項目を抜いた物」か。
+    残った項目の中身が封の指紋と同じ・表は見出しと残った行が封のときのバイトと並び・ほかのファイルは封の出力と同じ。
+    指紋の無い封（この直しの前の封）は確かめられないので、外して配らない（受け入れ直す）。"""
+    fp = body.get("fingerprints")
+    if not isinstance(fp, dict) or not isinstance(fp.get("items"), dict) or not isinstance(fp.get("tables"), dict):
+        return False
+    for item in result["items"]:
+        if fp["items"].get(item_key(item)) != item_fp(item):
+            return False
+    for path, digest_ in expected.items():
+        if path in result["tables"]:
+            now, then = result["tables"][path], fp["tables"].get(path)
+            if not isinstance(then, list) or not now or not then or now[0] != then[0]:
+                return False
+            kept = set(now)
+            if not kept <= set(then) or now != [r for r in then if r in kept]:
+                return False
+        elif path.startswith(MATERIALS_DIR + "/"):
+            continue            # 項目から作るファイル（中身は項目の指紋で見た）
+        elif body["outputs"].get(path) != digest_:
+            return False
+    return True
 
 
 def item_key(item: dict) -> str:
@@ -692,6 +770,8 @@ def seal_body(root: str, outlet: Outlet, ctx: Ctx, result: dict, raw: bytes, pre
             "decl": decl_fp(root), "thth": __version__, "inputs": result["inputs"],
             "outputs": _outputs(result["files"]),
             "items": sorted(item_key(i) for i in result["items"]),
+            "fingerprints": {"items": {item_key(i): item_fp(i) for i in result["items"]},
+                             "tables": result["tables"]},
             "common_unchecked": any(i.get("unchecked") for i in result["items"]),
             "previous": ({"generation": previous["body"]["generation"],
                           "judgments": previous["body"]["judgments"]} if previous else None)}
@@ -1008,7 +1088,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     if widened:
         red("widened_after_seal", items=widened[:50])
     if narrowed or expected != sealed_outputs:
-        if outlet.on_narrow == "drop" and not widened and placed_expected:
+        if outlet.on_narrow == "drop" and not widened and placed_expected and _only_dropped(body, result, expected):
             warnings.append({"word": "dropped", "items": narrowed_detail[:50]})
         else:
             red("narrowed_after_seal", items=narrowed_detail[:50])
