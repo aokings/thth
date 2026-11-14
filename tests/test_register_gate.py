@@ -27,6 +27,8 @@ from thth.register import seal as S
 from thth.register import vessel as V
 from thth.register.errors import RegisterRefused
 
+yaml_needed = pytest.mark.skipif(not V.yamlread.available(), reason="PyYAML が無い機械（pip install 'thth[yaml]'）")
+
 AT = "2027-03-20T10:00:00+09:00"
 AT2 = "2027-03-25T10:00:00+09:00"
 NOW = "2027-03-26T09:00:00+09:00"
@@ -175,6 +177,7 @@ def _row(value, outlet):
     return got[0]
 
 
+@yaml_needed
 def test_7_5_二つの出し口と差し込みと来歴の控えを引ける(keyed):
     led = _sealed_two(keyed)
     before = tree_sha(led)
@@ -216,6 +219,7 @@ def test_7_5_二つめの世代と材料が古い(keyed):
     assert v["stale"] == ["site2"]
 
 
+@yaml_needed
 def test_7_5_差し込んだ側が封のあとに変わると差し込みは確かめられないと出す(keyed):
     led = _sealed_two(keyed)
     shops = led / "data/shops.csv"
@@ -493,6 +497,7 @@ def test_7_7_内部の語を1つ足すと赤_読者に見えない欄なら赤�
     assert c["violations"] == 1 and c["records"][0]["unit"] and c["records"][0]["field"] == "role"
 
 
+@yaml_needed
 def test_7_7_載らない種類の番号を1つ足すと赤_境目と短い番号(env):
     led = _ledger(env, note=NOTE.replace("Note One", "Note (hyp-0001)"))
     c = red_of(led)[("site", "note", "reader_hidden_ids")]

@@ -41,6 +41,8 @@ from thth.register import seal as S
 from thth.register import vessel as V
 from thth.register.errors import RegisterRefused
 
+yaml_needed = pytest.mark.skipif(not V.yamlread.available(), reason="PyYAML が無い機械（pip install 'thth[yaml]'）")
+
 AT = "2027-03-20T10:00:00+09:00"
 NOW = "2027-03-21"
 
@@ -204,6 +206,7 @@ def test_7_1_書き出し先の形が崩れていれば断る(env, dest):
         R.load_outlets(str(led), V.open_vessel(str(led)))
 
 
+@yaml_needed
 def test_7_1_内の出し口を読者の書き出し先に書くと旧い材料の柵で止まる(env):
     led = _ledger(env)
     site = env / "site"
@@ -227,6 +230,7 @@ def test_7_1_内の出し口を読者の書き出し先に書くと旧い材料�
 
 # ------------------------------------------------------------------ 7.2 出さない欄
 
+@yaml_needed
 def test_7_2_読者の材料では表は列を空に枚は鍵を除きほかのバイトは変えない(env):
     led = _ledger(env)
     site = env / "site"
@@ -250,6 +254,7 @@ def test_7_2_読者の材料では表は列を空に枚は鍵を除きほかの�
     assert len(mat) == 2 and all("memo" not in i["values"] and i["values"]["role"] for i in mat)
 
 
+@yaml_needed
 def test_重い穴_出さない欄の値は材料にも封にも配る物にも出力にも無い(env):
     led = _ledger(env)
     site, cards = env / "site", env / "cards"
@@ -271,6 +276,7 @@ def test_重い穴_出さない欄の値は材料にも封にも配る物にも�
         assert secret.encode() not in seen, secret
 
 
+@yaml_needed
 def test_7_2_鍵を除けない書き方の枚は記録ごと外し理由を言う(env):
     led = _ledger(env, note="{title: Note One, secret: SECRET-NOTE-x1, body: plain}\n")
     site = env / "site"
@@ -302,6 +308,7 @@ def test_7_2_設定の形が崩れていれば断る(env):
 
 # ------------------------------------------------------------------ 7.3 差し込み
 
+@yaml_needed
 def test_7_3_差し込みは事実として使える記録の値に置き換え先の版を入力の組に入れる(env):
     led = _ledger(env)
     site = env / "site"
@@ -372,6 +379,7 @@ def test_重い穴_使えない先からの差し込みは値を書かず記録�
         assert b"s2," in got    # 先の記録そのものは、使えるなら載る（外すのは差し込みを持つ側）
 
 
+@yaml_needed
 def test_7_3_入れ子は読まず記録ごと外す_1つの欄に64か所まで(env):
     """検収 11/14: 置き換えたあとの値に `{{` が残れば（先の値の中の差し込み）、番号を字のまま出さずに記録ごと外す。"""
     nested = SHOPS.replace("s2,\"Beta, Ltd\"", "s2,\"Beta {{shop:s1.secret}}\"")
@@ -396,6 +404,7 @@ def test_7_3_入れ子は読まず記録ごと外す_1つの欄に64か所まで
 
 # ------------------------------------------------------------------ 7.4 期限と伏せ方
 
+@yaml_needed
 def test_7_4_伏せ方が欄なら期限の切れた記録はその欄だけを空にしほかのバイトは変えない(env):
     led = _ledger(env, note=NOTE.replace("see {{shop:s2.name}}", "plain"))
     site = env / "site"
@@ -437,6 +446,7 @@ def test_7_4_伏せ方の既定は記録ごと(env):
     assert b"Beta" not in got
 
 
+@yaml_needed
 def test_7_4_判断のいつまでは効き見直す日の欄は材料に効かない(env):
     led = _ledger(env)
     site = env / "site"
@@ -530,6 +540,7 @@ def test_柵_記録を消すと封のあとに狭まったとして赤(env):
     assert not v["ok"] and "narrowed_after_seal" in words(v)
 
 
+@yaml_needed
 def test_柵_材料の表の1行を手で変えると赤(env):
     led = _ledger(env)
     site = env / "site"

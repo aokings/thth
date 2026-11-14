@@ -27,6 +27,8 @@ from thth.register import seal as S
 from thth.register import vessel as V
 from thth.register.errors import RegisterRefused
 
+yaml_needed = pytest.mark.skipif(not V.yamlread.available(), reason="PyYAML が無い機械（pip install 'thth[yaml]'）")
+
 AT = W.AT
 
 
@@ -365,6 +367,7 @@ def _rc_ledger(env, words=("台帳", "統合担当"), body="統合担当の台�
     return led
 
 
+@yaml_needed
 def test_7_3_差し込みで材料に入る内部の語と番号を点検が拾う(keyed):
     env = keyed
     led = _rc_ledger(env)

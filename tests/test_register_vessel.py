@@ -590,6 +590,7 @@ def test_JSONの書き方だけが変わっても依る所は変わらず版は�
     assert states(v1, js) == ["effective"]
 
 
+@yaml_needed
 def test_枚と点は同じ物でも2つの記録で枚が点についてを指す(capsys, env):
     root = copy(env, "kopicha")
     v = V.open_vessel(str(root))
