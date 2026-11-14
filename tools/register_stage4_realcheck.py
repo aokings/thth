@@ -12,13 +12,15 @@
 
     {"name": "...", "source": "<--developer の下の道>",
      "expected": {"records": {種類: 数}, "dangling": {"<種類>.<指す欄>": 数}, "checks": {検査の id: 今の数},
-                  "problems": 数（無ければ 0）},
+                  "problems": 数（無ければ 0）, "unrouted": {"<種類>.<指す欄>": 数}（G15 の to_by で先の種類が決まらない指し。
+                  書かない呼び名は 0）},
      "ask_lane": ["今の台本と決まりの文が食い違う所（1 行ずつ）"],
      "vessel_gaps": ["器の不足（宣言で言えず、読める所までにした所。1 行ずつ）"]}
 
 指す欄の呼び名は `<種類>.<欄>`（決まった形の指し `template` は `<種類>.{template}`、欄の組 `fields` は
 `<種類>.<欄>+<欄>`）。1 つの種類に、同じ先を指す `template` と `fields` を両方書くと、先の無い数を分けられない。宣言した指す欄は全部
-`expected.dangling` に書く（書き漏らしは「合わない」）。検査の id はメディアの中で重ならないように付ける
+`expected.dangling` に書く（書き漏らしは「合わない」）。`to_by`（G15）の指す欄も呼び名は `<種類>.<欄>` で、先の無い数は先の種類を
+足して比べる。検査の id はメディアの中で重ならないように付ける
 （同じ id が 2 つの種類にあれば数を足して比べる）。
 
 出す物（メディアごと）: 読めた記録の数（種類ごと）・例外・読みの問題・指す欄の「先が無い」の数・輪・来歴の控えの
@@ -89,6 +91,14 @@ def pointer_name(kind: str, spec: dict) -> str:
     return f"{kind}.{{{spec['template']}}}"
 
 
+def pointer_targets(spec: dict) -> list:
+    """指す欄の先の種類（`to` か、G15 の `to_by` の頭・map の値の全部）。"""
+    if "to" in spec:
+        return [spec["to"]]
+    route = spec.get("to_by") or {}
+    return sorted(set((route.get("prefix") or route.get("map") or {}).values()))
+
+
 def measure(V, C, root: str, base: str) -> dict:
     v = V.open_vessel(root, base)
     graph = V.links(v)
@@ -97,7 +107,16 @@ def measure(V, C, root: str, base: str) -> dict:
     by_field = {}
     for k in v.kinds.values():
         for p in k.pointers:
-            by_field[(k.name, p.get("field"), p["to"])] = pointer_name(k.name, p)
+            for to in pointer_targets(p):
+                by_field[(k.name, p.get("field"), to)] = pointer_name(k.name, p)
+    unrouted = collections.Counter()
+    unrouted_examples = collections.defaultdict(list)
+    for u in graph.get("unrouted", []):
+        kind = u["from"].split(":", 1)[0]
+        name = f"{kind}.{u['field']}" if u.get("field") else f"{kind}.?"
+        unrouted[name] += 1
+        if len(unrouted_examples[name]) < 3:
+            unrouted_examples[name].append(f"{u['from']} → {u['target']}")
     examples = collections.defaultdict(list)
     for e in graph["dangling"]:
         kind = e["from"].split(":", 1)[0]
@@ -113,6 +132,7 @@ def measure(V, C, root: str, base: str) -> dict:
            "problem_words": dict(collections.Counter(w.split(":")[0] for p in probs for w in p["words"])),
            "problem_examples": [f"{p['path']}: {','.join(p['words'])}" for p in probs[:5]],
            "dangling": dict(sorted(dangling.items())), "dangling_examples": dict(examples),
+           "unrouted": dict(sorted(unrouted.items())), "unrouted_examples": dict(unrouted_examples),
            "blank_in_lists": len(graph["blank"]), "cycles": len(graph["cycles"]),
            "provenance_review": len(graph["review"]), "ambiguous": len(graph["ambiguous"])}
     if C is not None:
@@ -140,6 +160,10 @@ def compare(expected: dict, got: dict, checks_run: bool) -> list:
         want, now = expected.get("dangling", {}).get(name), got["dangling"].get(name)
         if want != now:
             bad.append(["dangling", name, want, now])
+    for name in sorted(set(expected.get("unrouted", {})) | set(got.get("unrouted", {}))):
+        want, now = expected.get("unrouted", {}).get(name, 0), got.get("unrouted", {}).get(name, 0)
+        if want != now:  # 先の種類が決まらない指し（G15）。書かなければ 0
+            bad.append(["unrouted", name, want, now])
     if expected.get("problems", 0) != got["problems"]:
         bad.append(["problems", "-", expected.get("problems", 0), got["problems"]])
     if got["cycles"]:
@@ -191,7 +215,8 @@ def say(one: dict) -> None:
     print(f"  例外 0・読みの問題 {one['problems']}" + (f" {one['problem_words']}" if one["problems"] else "")
           + f"・中を見ていない {one['not_inspected']}・輪 {one['cycles']}・来歴の見直し {one['provenance_review']}")
     hit = {k: n for k, n in one["dangling"].items() if n}
-    print(f"  指す欄 {len(one['dangling'])} 本・先が無い: " + ("・".join(f"{k} {n}" for k, n in hit.items()) or "0"))
+    print(f"  指す欄 {len(one['dangling'])} 本・先が無い: " + ("・".join(f"{k} {n}" for k, n in hit.items()) or "0")
+          + "・先の種類が決まらない: " + ("・".join(f"{k} {n}" for k, n in one.get("unrouted", {}).items()) or "0"))
     if one["checks_part"]:
         hit = {k: n for k, n in one["checks"].items() if n}
         print(f"  検査 {len(one['checks'])} 件・違反のある物: " + ("・".join(f"{k} {n}" for k, n in hit.items()) or "0"))

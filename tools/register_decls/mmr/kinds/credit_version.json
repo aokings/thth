@@ -26,6 +26,11 @@
    "to": "song"
   },
   {
+   "field": "seed",
+   "meaning": "about",
+   "to": "shelf_song"
+  },
+  {
    "field": "subject",
    "meaning": "about",
    "to": "entity"
@@ -42,6 +47,27 @@
   }
  ],
  "checks": [
+  {
+   "check": "forbid_pair",
+   "id": "m_w2",
+   "when": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    }
+   },
+   "via": "seed",
+   "via_to": "shelf_song",
+   "target": {
+    "identity_status": {
+     "in": [
+      "unresolved"
+     ]
+    }
+   },
+   "note": "V4: shown なら shelf.json の曲が unresolved でない（803〜805 行）。seed の 2 本の指す欄のうち shelf_song を選ぶ"
+  },
   {
    "check": "empty",
    "id": "m_w6",

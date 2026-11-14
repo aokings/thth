@@ -72,7 +72,6 @@
  ],
  "vessel_gaps": [
   "K-A1・K-A2（年の段）・K-A3〜K-A5: まとまり（years の 1 年）の欄を見る検査が無い。count の単位は回の行だけで、年の欄（year・source_tier・sources・data_conflict・reason）を数えられない",
-  "K-A2・K-A6 の「空を許す語の外」: G9 の or_blank は空を「合う」にするので、違反を数える count の where には向かない。not_in に空の語 \"\" を入れて言った（器が空の語を受け取るのを頼りにしている）",
   "K-M4・K-A5・K-P4・K-F12・K-F13 など: 点の道が並び（sources[]・items[]・stations[]）を読まない（G8 の決まり）",
   "K-A7・K-F8・K-F14・K-F18 など: 値の型（整数か・数か）と範囲を見る部品が無い。shape の positive_int は字の \"2026\" も通す",
   "K-F1 後半: ファイル名の番号と中の school_id が同じかを見る部品が無い",

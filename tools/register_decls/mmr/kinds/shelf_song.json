@@ -11,5 +11,32 @@
   "from": "key"
  },
  "max_bytes": 4000000,
- "note": "seeds の鍵の辞書を行として読む（G13）"
+ "note": "seeds の鍵の辞書を行として読む（G13）",
+ "checks": [
+  {
+   "check": "count",
+   "id": "m_c8",
+   "when": {
+    "identity_status": {
+     "in": [
+      "unresolved"
+     ]
+    }
+   },
+   "from": {
+    "kind": "credit",
+    "via": "seed",
+    "via_to": "shelf_song"
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    }
+   },
+   "max": 0,
+   "note": "R9: 照合台帳の shown の行の曲が shelf.json で unresolved でない（credit_paths.py 437 行）。行（内側の単位）の状態を見るので、曲の側から指してくる shown の行を数える"
+  }
+ ]
 }

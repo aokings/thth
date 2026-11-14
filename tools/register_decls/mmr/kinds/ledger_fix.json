@@ -22,5 +22,35 @@
    "why"
   ]
  },
- "note": "訂正の id は表をまたぐ（先の種類が行ごとに違う）ので指す欄にしない"
+ "pointers": [
+  {
+   "field": "id",
+   "meaning": "about",
+   "to_by": {
+    "field": "file",
+    "map": {
+     "data/claims.csv": "claim",
+     "data/mood.csv": "mood",
+     "data/evidence.csv": "evidence",
+     "data/entities.csv": "entity",
+     "data/digs.csv": "dig",
+     "data/sources.csv": "source",
+     "data/names.csv": "name",
+     "data/leads.csv": "lead"
+    }
+   }
+  }
+ ],
+ "inspects": {
+  "follow": [
+   "id"
+  ],
+  "question": "fixed",
+  "by": "ledger",
+  "content_by": {
+   "field": "field",
+   "value": "corrected_value"
+  }
+ },
+ "note": "訂正の跡（G15・G16）。先の種類は行の file の値で決める（番号の頭では決めない）。理由: file は訂正した表を行が自分で言う欄で、頭で決めると点（entities.csv）の番号 36 行（pfs-…・w080-ap-… など頭の決まりが無い）が決まらない。頭と file の両方で決まる 268 行では、先の種類が全部同じ（自分で数えた）。file の無い 44 行（古い形の by・why の行）と ledger.json を直した 2 行は先の種類が決まらない（unrouted 46）。検収の記録は直した欄 field と新しい中身 corrected_value（36 行が持つ。ledger.json の 2 行を除く 34 行が結ぶ）。問い fixed はどの種類にも無い（訂正は 1 欄の中身、問いの依る欄は複数）ので、版は「示していない」になる"
 }
