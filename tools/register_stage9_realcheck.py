@@ -66,6 +66,7 @@ STAGE1_KANTO = {"result_rows": 7460, "ambiguous_groups": 37,
 GIT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"}
 LETTERS = "abcdef"
+EVENTS = ["e1", "e2", "e3", "e4", "e5", "e6", "e7"]
 
 
 def sha(data: bytes) -> str:
@@ -369,7 +370,7 @@ class Events:
         """出し口の宣言を影の `.thth/` に置き（札の宣言のフォルダに無ければ試しの読者の出し口を作る）、基準で受ける。"""
         v = self.vessel()
         given = self.folder / "outlets.json"
-        if given.exists():
+        if given.exists() and not self.cfg.get("e_test_outlet"):
             data = json.loads(given.read_text(encoding="utf-8"))
             self.out["outlets_from"] = str(given.relative_to(REPO))
         else:
@@ -378,7 +379,8 @@ class Events:
                     "outlets": {"s9_reader": {"audience": "reader", "kinds": kinds,
                                               "fact": [{"question": "may_publish@s9_reader", "conclusion": "good"}],
                                               "note": "表の種類を 1〜2 つ・基準で受け入れ"}}}
-            self.out["outlets_from"] = "台本が作った試しの読者の出し口 s9_reader（種類: " + "・".join(kinds) + "）"
+            self.out["outlets_from"] = "台本が作った試しの読者の出し口 s9_reader（種類: " + "・".join(kinds) + "）" + (
+                f"。札の e_test_outlet: {self.cfg['e_test_outlet']}" if self.cfg.get("e_test_outlet") else "")
         data["outlets"]["s9_common"] = {"audience": "reader", "common": "source", "note": "e3 の見本の共通の台帳"}
         (self.reg / ".thth" / "outlets.json").write_text(json.dumps(data, ensure_ascii=False, indent=1),
                                                           encoding="utf-8")
@@ -615,17 +617,21 @@ class Events:
             self.K._replace = real
         on_disk = self.K.catalog_fp(self.K.dir_catalog(str(self.reg)))
         seen = self.K.catalog_fp(self.K.view(str(self.reg)))
-        v_mid = self.vessel()
-        mid_versions = {r.path for r in v_mid.all_records}
+        try:  # 段取りが残る間、器の読み手は断る（11/14 の検収の直し）か、前の姿を見せる
+            self.vessel()
+            reader_mid = "前の姿を読んだ"
+        except Exception as exc:  # noqa: BLE001
+            reader_mid = f"断った {getattr(exc, 'code', type(exc).__name__)}"
         result = self.K.run(str(self.reg), desired, what="merge", by=BY, at=AT)
         after = self.K.catalog_fp(self.K.view(str(self.reg)))
         checks = {"1 枚目のあとで止まった": stopped and count[0] == 1,
-                  "止まっている間、読み手には前の姿": seen == before and on_disk not in (before, after),
+                  "止まっている間、読み手には前の姿（器の読み手は断るか前の姿）": seen == before and on_disk not in (before, after)
+                  and (reader_mid.startswith("断った register_batch_pending") or reader_mid == "前の姿を読んだ"),
                   "続けると後の姿（半分ずつ混ざらない）": bool(result.get("continued"))
                   and all((self.reg / rel).read_bytes() == desired[rel] for rel in files) and after != before,
                   "元の repo は同じ": self.guard_ok("e5")}
         return checks, {"files": files, "before": before[:16], "on_disk_while_stopped": on_disk[:16],
-                        "after": after[:16], "reader_paths_while_stopped": len(mid_versions)}
+                        "after": after[:16], "vessel_reader_while_stopped": reader_mid}
 
     def e6(self):
         into = self.place / "restored-e6"
@@ -668,8 +674,8 @@ class Events:
         needle = value.encode()
         before = self.scan(needle)
         req = self.E.request(str(self.reg), ref, by=BY, at=AT, why="mistake")["request"]
-        first = self.E.scope(str(self.reg), req, "all", by=BY, at=AT)
-        self.E.scope(str(self.reg), req, "all", by=BY, at=AT, confirm=first.get("digest"))
+        first = self.E.scope(str(self.reg), req, ["all"], by=BY, at=AT)
+        self.E.scope(str(self.reg), req, ["all"], by=BY, at=AT, confirm=first.get("digest"))
         result = self.E.run(str(self.reg), req, by=BY, at=AT)
         after = self.scan(needle)
         status = self.E.status(str(self.reg), req)
@@ -704,7 +710,7 @@ class Events:
                                           cause="script")
             return self.out
         fails = []
-        for name in ("e1", "e2", "e3", "e4", "e5", "e6", "e7"):
+        for name in EVENTS:
             started = time.monotonic()
             try:
                 checks, detail = getattr(self, name)()
@@ -720,8 +726,13 @@ class Events:
                 bad = [k for k, v in self.out["events"][name].get("checks", {}).items() if not v]
                 fails.append(f"{name} {bad or self.out['events'][name].get('error')}")
         self.out["guard"] = self.guard.log
-        self.out["verdict"] = (verdict("fail", "・".join(fails)[:400], cause="?") if fails
-                               else verdict("pass", "e1〜e7 がどれも期待のとおり・元の repo は事ごとに同じ"))
+        skipped = [x for x in ("e1", "e2", "e3", "e4", "e5", "e6", "e7") if x not in EVENTS]
+        if fails:
+            self.out["verdict"] = verdict("fail", "・".join(fails)[:400], cause="?")
+        elif skipped:
+            self.out["verdict"] = verdict("unconfirmed", f"{'・'.join(EVENTS)} は期待のとおり。{'・'.join(skipped)} は打っていない")
+        else:
+            self.out["verdict"] = verdict("pass", "e1〜e7 がどれも期待のとおり・元の repo は事ごとに同じ")
         return self.out
 
 
@@ -847,8 +858,10 @@ def main(argv=None) -> int:
     ap.add_argument("--replay", default=None, help="段 2 の確かめに渡す、こぴちゃの再演の置き場")
     ap.add_argument("--previous-adopt", default=None, help="段 2 の確かめの前の result.json（真偽を比べる）")
     ap.add_argument("--no-stage13", action="store_true", help="(c) で段 1〜3 の確かめを打たない（未確認になる）")
+    ap.add_argument("--events", default=",".join(EVENTS), help="(e) で起こす事（既定は e1〜e7 の全部）")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+    EVENTS[:] = [x for x in EVENTS if x in args.events.split(",")]
     only = set(args.only.split(","))
     work = pathlib.Path(args.work) / ("run-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     work.mkdir(parents=True)
