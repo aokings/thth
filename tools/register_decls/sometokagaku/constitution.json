@@ -1,0 +1,48 @@
+{
+ "schema": "thth.constitution/1",
+ "note": "語の意味（叩き台。レーンの確認前）",
+ "words": {
+  "says_so": {
+   "established": {
+    "conclusion": "good"
+   },
+   "supported": {
+    "conclusion": "good"
+   },
+   "contested": {
+    "conclusion": "pending",
+    "reason": "both_sides"
+   },
+   "preliminary": {
+    "conclusion": "pending",
+    "reason": "preliminary"
+   },
+   "unverified": {
+    "conclusion": "pending",
+    "reason": "unverified"
+   }
+  },
+  "reads_right": {
+   "human_checked": {
+    "conclusion": "good"
+   },
+   "needs_verification": {
+    "conclusion": "pending",
+    "reason": "needs_verification"
+   }
+  },
+  "answered": {
+   "documented": {
+    "conclusion": "good"
+   },
+   "checked_unconfirmed": {
+    "conclusion": "pending",
+    "reason": "not_found_yet"
+   },
+   "unverified": {
+    "conclusion": "pending",
+    "reason": "unverified"
+   }
+  }
+ }
+}

@@ -120,7 +120,7 @@ def lint(decls: dict, fields_seen: dict) -> list:
                         for f in list(chk.get("where") or {}) + ([chk["distinct"]] if chk.get("distinct") else []):
                             field_ok(f, f"{cid}.where", src["kind"])
         if known is None and decl.get("checks"):
-            out.append(f"{kname}: 中を読めない種類に検査がある")
+            out.append(f"{kname}: 読めた行が 0 か中を読めない種類で、検査の欄を実物と比べられない（知らせだけ）")
     return out
 
 

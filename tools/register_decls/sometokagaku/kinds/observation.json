@@ -1,0 +1,76 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "observation",
+ "place": "data/observations.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "question_lead_id",
+   "meaning": "about",
+   "to": "lead"
+  }
+ ],
+ "note": "指す欄は台本が見ない（0 行）。宣言では先が在るかを器が見る",
+ "checks": [
+  {
+   "check": "shape",
+   "id": "s_v1_observation",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 100〜107 行"
+  },
+  {
+   "check": "unique",
+   "id": "s_v2_observation",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "s_v3_observation_confidence_tag",
+   "field": "confidence_tag",
+   "in": [
+    "single_run",
+    "with_control",
+    "replicated",
+    "third_party_replicated"
+   ],
+   "allow_blank": true
+  },
+  {
+   "check": "required",
+   "id": "s_v4_observation_result_en",
+   "fields": [
+    "result_en"
+   ],
+   "when": {
+    "result_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（122〜126 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "s_v4_observation_result_ja",
+   "fields": [
+    "result_ja"
+   ],
+   "when": {
+    "result_en": {
+     "blank": false
+    }
+   }
+  }
+ ]
+}
