@@ -16,11 +16,15 @@ import re
 
 from .errors import RegisterRefused
 
-PARTS = ("unique", "required", "empty", "one_of", "words", "shape", "forbid_pair", "count", "judged")
+PARTS = ("unique", "required", "empty", "one_of", "words", "shape", "forbid_pair", "count", "judged", "columns",
+         "prefixed_words")
 LEVELS = ("error", "warn", "review")
 CHECKS_MAX = 64          # 1 つの種類の検査の数
 FIELDS_MAX = 16          # `fields` の欄の数
-WORDS_MAX = 256          # 条件・`words` の語の数
+WORDS_MAX = 1024         # 条件・`words` の語の数（段 4 G5 で 256 → 1,024）
+COLUMNS_MAX = 1024       # `columns` の欄の数
+PREFIXES_MAX = 64        # `prefixed_words` の頭の数
+PATH_STEPS_MAX = 4       # 点でつないだ欄の道の段（段 4 G8）
 WORD_LEN_MAX = 256       # 1 つの語の字数
 COND_MAX = 16            # 1 つの条件の欄の数
 NOTE_MAX = 2000          # 注の字数
@@ -54,6 +58,8 @@ _ARGS = {
     "forbid_pair": ("via", "target"),
     "count": ("from", "where", "distinct", "min", "max"),
     "judged": ("question", "min", "how"),
+    "columns": ("required", "allowed", "forbidden"),
+    "prefixed_words": ("field", "sep", "prefixes", "allow_blank"),
 }
 _QUESTION = re.compile(r"[a-z][a-z0-9_]{0,31}(@[a-z][a-z0-9_]{0,31})?\Z")
 
@@ -86,10 +92,19 @@ def _fieldname(value):
     return value
 
 
-def _fields(value, *, at_least=1):
-    if not isinstance(value, list) or not at_least <= len(value) <= FIELDS_MAX:
+def _path(value):
+    """検査と条件の欄: 欄の名前か、点でつないだ道（`mb.verdict`。4 段まで。並びの中は読まない）。"""
+    if not isinstance(value, str) or value.count(".") >= PATH_STEPS_MAX:
         raise _err()
-    out = [_fieldname(v) for v in value]
+    for step in value.split("."):
+        _fieldname(step)
+    return value
+
+
+def _fields(value, *, at_least=1, limit=FIELDS_MAX, name=None):
+    if not isinstance(value, list) or not at_least <= len(value) <= limit:
+        raise _err()
+    out = [(name or _path)(v) for v in value]
     if len(set(out)) != len(out):
         raise _err()
     return out
@@ -112,16 +127,23 @@ def parse_condition(raw) -> dict:
         raise _err()
     out = {}
     for name, test in raw.items():
-        _fieldname(name)
-        if not isinstance(test, dict) or len(test) != 1:
+        _path(name)
+        if not isinstance(test, dict):
             raise _err()
-        (op, arg), = test.items()
+        has_or_blank = "or_blank" in test
+        or_blank = test.get("or_blank")
+        rest = {k: v for k, v in test.items() if k != "or_blank"}
+        if len(rest) != 1:
+            raise _err()
+        (op, arg), = rest.items()
+        if has_or_blank and (or_blank is not True or op not in ("in", "not_in")):
+            raise _err()  # `or_blank`（この語か、空。段 4 G9）は in・not_in と一緒にだけ
         if op in ("in", "not_in"):
-            out[name] = (op, _words(arg))
+            out[name] = (op, _words(arg), bool(or_blank))
         elif op == "blank":
             if not isinstance(arg, bool):
                 raise _err()
-            out[name] = (op, arg)
+            out[name] = (op, arg, False)
         else:
             raise _err()
     return out
@@ -165,11 +187,11 @@ def _parse_one(raw, pointers: list) -> dict:
             raise _err()
         out["mode"] = mode
     elif part == "words":
-        out["field"] = _fieldname(raw.get("field"))
+        out["field"] = _path(raw.get("field"))
         out["in"] = _words(raw.get("in"))
         out["allow_blank"] = _bool(raw.get("allow_blank"), False)
     elif part == "shape":
-        out["field"] = _fieldname(raw.get("field"))
+        out["field"] = _path(raw.get("field"))
         shape = raw.get("shape")
         if shape is not None and shape not in _SHAPES:
             raise _err()
@@ -199,13 +221,40 @@ def _parse_one(raw, pointers: list) -> dict:
                 raise _err()
             out["from"] = {"kind": src["kind"], "via": _fieldname(src["via"])}
         out["where"] = parse_condition(raw["where"]) if raw.get("where") is not None else None
-        out["distinct"] = _fieldname(raw["distinct"]) if raw.get("distinct") is not None else None
+        out["distinct"] = _path(raw["distinct"]) if raw.get("distinct") is not None else None
         out["min"] = _int(raw["min"]) if raw.get("min") is not None else None
         out["max"] = _int(raw["max"]) if raw.get("max") is not None else None
         if out["min"] is None and out["max"] is None:
             raise _err()
         if out["min"] is not None and out["max"] is not None and out["min"] > out["max"]:
             raise _err()
+    elif part == "columns":
+        # 欄の一覧を閉じる（段 4 G10）: 頭の段の欄の名前だけ（道は書けない）。
+        for key in ("required", "allowed", "forbidden"):
+            out[key] = (frozenset(_fields(raw[key], limit=COLUMNS_MAX, name=_fieldname))
+                        if raw.get(key) is not None else None)
+        if all(out[k] is None for k in ("required", "allowed", "forbidden")):
+            raise _err()
+        if out["forbidden"] and ((out["required"] or set()) | (out["allowed"] or set())) & out["forbidden"]:
+            raise _err()
+        if out["required"] and out["allowed"] is not None and not out["required"] <= out["allowed"]:
+            raise _err()
+    elif part == "prefixed_words":
+        # 1 欄を割って、頭ごとに語を替える（段 4 G11）。語の並びが null の頭は、残りの slug の形だけ見る。
+        out["field"] = _path(raw.get("field"))
+        sep = raw.get("sep")
+        if not isinstance(sep, str) or len(sep) != 1 or not sep.isprintable() or sep.isspace():
+            raise _err()
+        prefixes = raw.get("prefixes")
+        if not isinstance(prefixes, dict) or not 1 <= len(prefixes) <= PREFIXES_MAX:
+            raise _err()
+        out["sep"], out["prefixes"] = sep, {}
+        for head, words in prefixes.items():
+            if not isinstance(head, str) or not 0 < len(head) <= 64 or sep in head or head != head.strip() \
+                    or not head.isprintable():
+                raise _err()
+            out["prefixes"][head] = None if words is None else _words(words)
+        out["allow_blank"] = _bool(raw.get("allow_blank"), True)
     elif part == "judged":
         q = raw.get("question")
         if not isinstance(q, str) or not _QUESTION.fullmatch(q):
@@ -285,8 +334,10 @@ def _text(value):
 def match(cond: dict | None, values: dict) -> bool:
     if not cond:
         return True
-    for name, (op, arg) in cond.items():
-        value = values.get(name)
+    for name, (op, arg, or_blank) in cond.items():
+        value = get(values, name)
+        if or_blank and _blank(value):
+            continue
         if op == "blank":
             if _blank(value) != arg:
                 return False
@@ -299,6 +350,18 @@ def match(cond: dict | None, values: dict) -> bool:
         if op == "not_in" and word in arg:
             return False
     return True
+
+
+def get(values, path: str):
+    """欄の値。点でつないだ道は辞書だけをたどる（並びの中は読まない。途中が辞書でなければ欠け）。"""
+    if "." not in path:
+        return values.get(path) if isinstance(values, dict) else None
+    value = values
+    for step in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(step)
+    return value
 
 
 def _key_word(value, fold):
@@ -359,6 +422,22 @@ def _targets(vessel, rec, via: str):
     return out, blanks
 
 
+def _pointing(vessel, row, via: str):
+    """`via` の指す欄で、この行が指す先 `(種類, 番号, 数える行の値)`。内側の単位の指す欄（`in_units`）は、
+    単位ごとに 1 行として返す（`count` が指してくる単位を数える）。"""
+    from . import vessel as V
+    for spec in vessel.kinds[row.kind].pointers:
+        if spec.get("field") != via:
+            continue
+        holders = [(u.item, V._pieces(u.item, spec)[0]) for u in row.units] if spec.get("in_units") else \
+            [(row.values, V.pointer_pieces(row, spec)[0])]
+        for values, got in holders:
+            if spec.get("in_units"):
+                got = V._in_folder(row, spec, got)
+            for target_id in dict.fromkeys(got):
+                yield spec["to"], target_id, values
+
+
 def _good_judgments(vessel, judgments: list, c: dict) -> dict:
     """記録 → 今効いている「よい」の判断の数（問いと照らし方が合う物）。判断ごとに 1 度だけ評価する。"""
     from . import judgment as J
@@ -397,7 +476,7 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
     if part == "unique":
         groups = {}
         for rec in live:
-            vals = [rec.values.get(f) for f in c["fields"]]
+            vals = [get(rec.values, f) for f in c["fields"]]
             if c["skip_blank"] and all(_blank(v) for v in vals):
                 continue
             groups.setdefault(tuple(_key_word(v, c["fold"]) for v in vals), []).append(rec)
@@ -407,24 +486,24 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
                     res.bad(rec, "duplicate", same=len(members))
     elif part == "required":
         for rec in live:
-            missing = [f for f in c["fields"] if _blank(rec.values.get(f))]
+            missing = [f for f in c["fields"] if _blank(get(rec.values, f))]
             if missing:
                 res.bad(rec, "blank", fields=missing)
     elif part == "empty":
         for rec in live:
-            filled = [f for f in c["fields"] if not _blank(rec.values.get(f))]
+            filled = [f for f in c["fields"] if not _blank(get(rec.values, f))]
             if filled:
                 res.bad(rec, "not_blank", fields=filled)
     elif part == "one_of":
         for rec in live:
-            n = sum(1 for f in c["fields"] if not _blank(rec.values.get(f)))
+            n = sum(1 for f in c["fields"] if not _blank(get(rec.values, f)))
             if n == 0:
                 res.bad(rec, "none_filled")
             elif c["mode"] == "exactly_one" and n > 1:
                 res.bad(rec, "more_than_one", filled=n)
     elif part == "words":
         for rec in live:
-            value = rec.values.get(c["field"])
+            value = get(rec.values, c["field"])
             if _blank(value):
                 if not c["allow_blank"]:
                     res.bad(rec, "blank", field=c["field"])
@@ -436,7 +515,7 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
                 res.bad(rec, "word_not_allowed", field=c["field"])
     elif part == "shape":
         for rec in live:
-            value = rec.values.get(c["field"])
+            value = get(rec.values, c["field"])
             if _blank(value):
                 if not c["allow_blank"]:
                     res.bad(rec, "blank", field=c["field"])
@@ -468,23 +547,52 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
             for row in by_kind.get(c["from"]["kind"], []):
                 if row.values is None or row.id is None:
                     continue
-                pairs, _blanks = _targets(vessel, row, c["from"]["via"])
-                for to, target_id in pairs:
+                for to, target_id, values in _pointing(vessel, row, c["from"]["via"]):
                     if to == kind.name and ":" not in target_id:
-                        index.setdefault(target_id, []).append(row.values)
+                        index.setdefault(target_id, []).append(values)
 
             def rows_of(rec):
                 return index.get(rec.id, [])
         for rec in live:
             rows = [r for r in rows_of(rec) if match(c["where"], r)]
             if c["distinct"]:
-                n = len({_distinct_word(r.get(c["distinct"])) for r in rows if not _blank(r.get(c["distinct"]))})
+                n = len({_distinct_word(get(r, c["distinct"])) for r in rows if not _blank(get(r, c["distinct"]))})
             else:
                 n = len(rows)
             if c["min"] is not None and n < c["min"]:
                 res.bad(rec, "too_few", count=n, min=c["min"])
             elif c["max"] is not None and n > c["max"]:
                 res.bad(rec, "too_many", count=n, max=c["max"])
+    elif part == "columns":
+        for rec in live:
+            present = set(rec.values) | set(rec.unread)  # 幅の足りない行の欠けたセルも、欄としては在る
+            if c["required"] and not c["required"] <= present:
+                res.bad(rec, "column_missing", fields=sorted(c["required"] - present))
+            if c["allowed"] is not None and not present <= c["allowed"]:
+                res.bad(rec, "column_not_allowed", fields=sorted(present - c["allowed"]))
+            if c["forbidden"] and present & c["forbidden"]:
+                res.bad(rec, "column_forbidden", fields=sorted(present & c["forbidden"]))
+    elif part == "prefixed_words":
+        for rec in live:
+            value = get(rec.values, c["field"])
+            if _blank(value):
+                if not c["allow_blank"]:
+                    res.bad(rec, "blank", field=c["field"])
+                continue
+            word = _text(value)
+            if word is None:
+                res.bad(rec, "not_text", field=c["field"])
+                continue
+            head, sep, tail = word.partition(c["sep"])
+            if not sep:
+                res.bad(rec, "no_prefix", field=c["field"])
+            elif head not in c["prefixes"]:
+                res.bad(rec, "prefix_not_allowed", field=c["field"])
+            elif c["prefixes"][head] is None:
+                if not _SHAPES["slug"].fullmatch(tail):
+                    res.bad(rec, "shape", field=c["field"], shape="slug", prefix=head)
+            elif tail not in c["prefixes"][head]:
+                res.bad(rec, "word_not_allowed", field=c["field"])
     elif part == "judged":
         counts = judgments_fn(c)
         for rec in live:

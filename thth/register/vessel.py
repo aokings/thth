@@ -27,6 +27,7 @@ import io
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from . import form
@@ -202,7 +203,9 @@ class Kind:
 _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows_at", "id", "questions", "pointers",
               "units", "inspects", "checks", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
-_P_KEYS = ("field", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "note")
+_P_KEYS = ("field", "fields", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "none",
+           "same_folder", "in_units", "note")
+NONE_MAX = 16                         # 指す欄の `none`（先なしと読む字）の数
 _RV_KEYS = ("field", "of", "hash")
 _U_KEYS = ("groups", "items", "id", "key", "time", "scope", "sources", "not_values", "note")
 _I_KEYS = ("follow", "question", "by", "content", "required", "note")
@@ -254,13 +257,14 @@ def _parse_kind(data, path: str) -> Kind:
         raise DeclarationError("format")
     records = data.get("records", "rows" if fmt == "csv" else "file")
     if records not in ("file", "rows") or (fmt == "csv" and records != "rows") or (
-            fmt in ("thth_row", "bytes", "yaml") and records != "file"):
+            fmt in ("thth_row", "bytes") and records != "file"):
         raise DeclarationError("records")
     max_bytes = data.get("max_bytes", TABLE_MAX_DEFAULT if records == "rows" else FILE_MAX_DEFAULT)
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 0 < max_bytes <= TABLE_MAX_DEFAULT:
         raise DeclarationError("max_bytes")
     rows_at = _path_steps(data.get("rows_at", []), "rows_at")
-    id_rule = _only(data.get("id", {"name": True} if records == "file" else {}), ("name", "field", "key"), "id")
+    id_rule = _only(data.get("id", {"name": True} if records == "file" else {}), ("name", "field", "key", "scope"),
+                    "id")
     if records == "rows" and not (("field" in id_rule) ^ ("key" in id_rule)):
         raise DeclarationError("id")
     if records == "file" and not (id_rule.get("name") is True) ^ ("field" in id_rule):
@@ -269,6 +273,15 @@ def _parse_kind(data, path: str) -> Kind:
         _field(id_rule["field"], "id")
     if "key" in id_rule:
         _strs(id_rule["key"], FIELD, "id")
+    if "scope" in id_rule:
+        # 置き場の中でだけ一意な番号（段 4 G2）: 番号は `<その枚のすぐ上のフォルダの名>.<番号>`。
+        if id_rule["scope"] != "folder":
+            raise DeclarationError("id")
+        for one in places:
+            parent = one.rsplit("/", 1)[0] if "/" in one else ""
+            last = parent.rsplit("/", 1)[-1]
+            if not parent or ("." in last and not any(c in last for c in "*?[")):
+                raise DeclarationError("id")
     questions = []
     seen = set()
     for raw in data.get("questions", []) if isinstance(data.get("questions", []), list) else [None]:
@@ -287,10 +300,29 @@ def _parse_kind(data, path: str) -> Kind:
     pointers = []
     for raw in data.get("pointers", []) if isinstance(data.get("pointers", []), list) else [None]:
         _only(raw, _P_KEYS, "pointers")
-        if ("field" in raw) == ("template" in raw):
+        if [("field" in raw), ("template" in raw), ("fields" in raw)].count(True) != 1:
             raise DeclarationError("pointers")
         if "field" in raw:
             _field(raw["field"], "pointers")
+        if "fields" in raw:
+            # 欄の組で指す（段 4 G7）: 先は番号を鍵の組で取る種類。組の作り方は先の鍵と同じ（種類をまたいで点検）。
+            if not isinstance(raw["fields"], list) or not 2 <= len(raw["fields"]) <= 16:
+                raise DeclarationError("pointers")
+            if len(set(_strs(raw["fields"], FIELD, "pointers"))) != len(raw["fields"]):
+                raise DeclarationError("pointers")
+            if "split" in raw or "recorded_version" in raw or "none" in raw:
+                raise DeclarationError("pointers")
+        if "none" in raw:
+            # 先なしと読む字の並び（段 4 G4）。
+            nones = raw["none"]
+            if not isinstance(nones, list) or not 1 <= len(nones) <= NONE_MAX or any(
+                    not isinstance(w, str) or not 0 < len(w) <= 64 or "\n" in w or "\r" in w for w in nones):
+                raise DeclarationError("pointers")
+        for flag in ("same_folder", "in_units"):
+            if flag in raw and raw[flag] is not True:
+                raise DeclarationError("pointers")
+        if raw.get("in_units") and ("template" in raw or "recorded_version" in raw):
+            raise DeclarationError("pointers")
         if "template" in raw and (not isinstance(raw["template"], str) or not TEMPLATE.fullmatch(raw["template"])):
             raise DeclarationError("pointers")
         if raw.get("meaning") not in MEANINGS:
@@ -311,6 +343,10 @@ def _parse_kind(data, path: str) -> Kind:
     units = None
     if data.get("units") is not None:
         units = _parse_units(data["units"])
+    if any(p.get("in_units") for p in pointers) and units is None:
+        raise DeclarationError("pointers")  # 内側の単位の宣言の無い種類に、単位の指す欄は書けない
+    if any(p.get("same_folder") for p in pointers) and id_rule.get("scope") != "folder":
+        raise DeclarationError("pointers")  # 同じフォルダを引くのは、番号を置き場の中で取る種類だけ
     inspects = None
     if data.get("inspects") is not None:
         inspects = _parse_inspects(data["inspects"])
@@ -422,6 +458,21 @@ def _no_duplicates(pairs):
     return out
 
 
+def _pointer_refs(kinds: dict) -> str | None:
+    """`fields` の先は鍵の組で番号を取る種類で、組の数が同じ。`same_folder` の先は置き場の中で番号を取る種類。
+    合わない種類の名前を返す（先の種類が宣言に無いのは、今までどおり先の無い指しに数える）。"""
+    for kind in kinds.values():
+        for p in kind.pointers:
+            other = kinds.get(p["to"])
+            if other is None:
+                continue
+            if "fields" in p and len(other.id_rule.get("key") or []) != len(p["fields"]):
+                return kind.name
+            if p.get("same_folder") and other.id_rule.get("scope") != "folder":
+                return kind.name
+    return None
+
+
 def has_declarations(root: str) -> bool:
     return os.path.isdir(os.path.join(root, DECL_DIR, KINDS_DIR)) and not os.path.islink(os.path.join(root, DECL_DIR))
 
@@ -448,6 +499,11 @@ def load_declarations(root: str, base: str | None = None) -> dict:
         if kind.name in kinds:
             raise RegisterRefused("register_kind_invalid", "kind_duplicate", declaration=rel)
         kinds[kind.name] = kind
+    broken = _pointer_refs(kinds)
+    if broken is not None:
+        # 指す欄の先が、組の作り方（G7）か置き場の番号（G2）で合わない（種類をまたぐ点検）。
+        raise RegisterRefused("register_kind_invalid", f"{broken[:30]}: pointers", declaration=kinds[broken].path,
+                              word="pointers")
     from . import checks as _checks
     broken = _checks.validate_refs(kinds)
     if broken is not None:
@@ -512,10 +568,21 @@ class Record:
         return f"{self.kind}:{self.id}"
 
 
-def _walk(root: str):
-    """台帳の中のファイル（隠しの名前と symlink は辿らない）。台帳の根からの道を `/` で。"""
+def _literal(pattern: str) -> str:
+    """置き場の型の、はじめの `*`・`?`・`[` より前の字（その型に当たる道は、必ずこの字で始まる）。"""
+    cut = [i for i in (pattern.find(c) for c in "*?[") if i >= 0]
+    return pattern[:min(cut)] if cut else pattern
+
+
+def _walk(root: str, prefixes: list | None = None):
+    """台帳の中のファイル（隠しの名前と symlink は辿らない）。台帳の根からの道を `/` で。
+    `prefixes`（置き場の型の頭の字の並び）を渡すと、どの型にも当たりえないフォルダには降りない（段 4 G1。
+    読む記録は変わらない。`*` は `/` もまたぐので、型の頭の字だけで決める）。"""
     for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(directory, d)))
+        rel_dir = os.path.relpath(directory, root).replace(os.sep, "/")
+        rel_dir = "" if rel_dir == "." else rel_dir + "/"
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(directory, d))
+                         and (prefixes is None or _could_hold(rel_dir + d + "/", prefixes)))
         for name in sorted(files):
             if name.startswith("."):
                 continue
@@ -523,8 +590,19 @@ def _walk(root: str):
             yield os.path.relpath(full, root).replace(os.sep, "/"), full
 
 
+def _could_hold(folder: str, prefixes: list) -> bool:
+    return any(lit.startswith(folder) or folder.startswith(lit) for lit in prefixes)
+
+
 def _matches(kind: Kind, rel: str) -> bool:
     return any(fnmatch.fnmatchcase(rel, pattern) for pattern in kind.places)
+
+
+def _matcher(kind: Kind):
+    """置き場の型の振り分け（`fnmatchcase` と同じ型を、型ごとの正規表現を 1 つにまとめて当てる）。"""
+    heads = tuple(_literal(p) for p in kind.places)
+    pattern = re.compile("|".join(f"(?:{fnmatch.translate(p)})" for p in kind.places))
+    return lambda rel: rel.startswith(heads) and pattern.match(rel) is not None
 
 
 def split_csv_rows(text: str) -> list:
@@ -569,10 +647,63 @@ def _get(obj, steps):
     return found
 
 
+ID_BYTES_MAX = 160
+_ID_ASCII_REST = frozenset("_.-")
+
+
+def _unicode_id(value: str) -> str | None:
+    """ASCII でない番号（段 4 G3）: NFC にそろえ、字・数字（Unicode の L・N と、字に付く M）と `_`・`.`・`-` だけ。
+    頭は字か数字。UTF-8 で 160 バイトまで。空白・制御の字・`/`・`\\`・`:`・`#`・`?`・`*` は受けない。"""
+    value = unicodedata.normalize("NFC", value)
+    if not value or len(value.encode("utf-8")) > ID_BYTES_MAX:
+        return None
+    for i, ch in enumerate(value):
+        cat = unicodedata.category(ch)
+        if cat[0] in "LN" or (i and cat[0] == "M"):
+            continue
+        if i and ch in _ID_ASCII_REST:
+            continue
+        return None
+    return value
+
+
 def _id_ok(value) -> str | None:
+    """番号の形。前から読めていた番号（ASCII の `RECORD_ID`）の読みはそのまま。ASCII でない番号は `_unicode_id`。"""
+    if isinstance(value, (int,)) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        return None
+    if RECORD_ID.fullmatch(value):
+        return value
+    return None if value.isascii() else _unicode_id(value)
+
+
+def _unit_id_ok(value) -> str | None:
+    """内側の単位の元の番号は、前のまま ASCII の形だけ（単位の指し先を変えない。段 1 の芯）。"""
     if isinstance(value, (int,)) and not isinstance(value, bool):
         value = str(value)
     return value if isinstance(value, str) and RECORD_ID.fullmatch(value) else None
+
+
+def _folder_of(rel: str) -> str:
+    """その枚のすぐ上のフォルダの名（台帳の根の枚は ""）。"""
+    return rel.rsplit("/", 2)[-2] if "/" in rel else ""
+
+
+def _scope_folder(records: list, rel: str) -> None:
+    """番号を置き場の中で取る種類（G2）: 番号を `<フォルダの名>.<番号>` にする。フォルダの名に `.` があるか、
+    つないだ番号が形に合わなければ、番号を付けずに読みの問題 `id_folder`。"""
+    folder = _folder_of(rel)
+    for rec in records:
+        if rec.id is None:
+            continue
+        joined = _id_ok(f"{folder}.{rec.id}") if folder and "." not in folder else None
+        if joined is None:
+            rec.id = None
+            if "id_folder" not in rec.problems:
+                rec.problems.append("id_folder")
+        else:
+            rec.id = joined
 
 
 def _decode(data: bytes):
@@ -583,14 +714,18 @@ def _decode(data: bytes):
     return text[1:] if text.startswith("﻿") else text
 
 
-def read_kind(root: str, kind: Kind, ids_table: dict) -> list:
-    """1 つの種類の記録を読む。"""
+def read_kind(root: str, kind: Kind, ids_table: dict, files: list | None = None) -> list:
+    """1 つの種類の記録を読む。`files` は台帳を 1 回たどった `(道, 実の道)` の並び（無ければここでたどる）。"""
     out = []
     reverse = {path: ref for ref, path in ids_table.items()}
-    for rel, full in _walk(root):
-        if rel.startswith(DECL_DIR + "/") or not _matches(kind, rel):
+    hit = _matcher(kind)
+    for rel, full in (files if files is not None else _walk(root)):
+        if rel.startswith(DECL_DIR + "/") or not hit(rel):
             continue
-        out.extend(_read_file(rel, full, kind, reverse))
+        got = _read_file(rel, full, kind, reverse)
+        if kind.id_rule.get("scope") == "folder":
+            _scope_folder(got, rel)
+        out.extend(got)
     _mark_duplicates(out)
     return out
 
@@ -631,6 +766,8 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
             return [Record(kind.name, rid, rel, version, None, False, [f"yaml:{problem}"])]
         if not inspected:
             return [Record(kind.name, rid, rel, version, None, False)]
+        if kind.records == "rows":
+            return _read_rows(rel, value, kind, version)  # YAML の並びも JSON の並びと同じ読み（段 4 G6）
         if "field" in kind.id_rule:
             rid = _id_ok(value.get(kind.id_rule["field"])) if isinstance(value, dict) else None
         rec = Record(kind.name, rid, rel, version, value if isinstance(value, dict) else {"_": value}, True)
@@ -659,6 +796,11 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
             rec.problems.append("id_form")
         _read_units(rec, kind)
         return [rec]
+    return _read_rows(rel, value, kind, version)
+
+
+def _read_rows(rel: str, value, kind: Kind, version: str) -> list:
+    """枚の中の並び（`rows_at` の先の並び）の 1 つずつを記録にする（JSON と YAML で同じ）。"""
     out = []
     for item, _trail in _get(value, kind.rows_at + ["*"]):
         if not isinstance(item, dict):
@@ -785,9 +927,9 @@ def _read_units(rec: Record, kind: Kind) -> None:
                 rec.problems.append("unit_not_object")  # 行の並びの中の物でない要素を黙って落とさない
     by_key = {}
     for group, item in raw:
-        if decl["id"] and _id_ok(item.get(decl["id"])):
+        if decl["id"] and _unit_id_ok(item.get(decl["id"])):
             # 番号は字にそろえて比べる（数の 1 と字の "1" は同じ指し先 `i:1` なので、同じ組で比べて重なりを出す）。
-            pointer_key = ("i", _id_ok(item.get(decl["id"])))
+            pointer_key = ("i", _unit_id_ok(item.get(decl["id"])))
         else:
             pointer_key = ("k", canonical(_key_of(decl, group, item)))
         by_key.setdefault(pointer_key, []).append((group, item))
@@ -1144,9 +1286,11 @@ def open_vessel(root: str, decl_base: str | None = None) -> Vessel:
     else:
         decl = {"kinds": {"thth_row": builtin_row_kind()}, "constitution": {}, "ids": {}}
     all_records = []
+    # 台帳のたどりは 1 回（段 4 G1）。どの種類の置き場の型にも当たりえないフォルダには降りない。
+    files = list(_walk(root, [_literal(p) for kind in decl["kinds"].values() for p in kind.places]))
     for kind in decl["kinds"].values():
         all_records.extend(read_kind(root, kind, {k: v for k, v in decl["ids"].items()
-                                                  if k.startswith(kind.name + ":")}))
+                                                  if k.startswith(kind.name + ":")}, files))
     records = {}
     for rec in all_records:
         if rec.id is not None:
@@ -1165,14 +1309,48 @@ def pointer_pieces(rec: Record, spec: dict) -> tuple:
     空の要素（`["e", ""]`・`c||d`）は、指す先の一部の欠けなので数えて返す（黙って落とさない）。"""
     if "template" in spec:
         return [spec["template"].replace("{id}", rec.id or "")], 0
-    raw = rec.values.get(spec["field"]) if rec.values else None
-    if raw in (None, ""):
+    if spec.get("in_units"):
+        # 内側の単位の欄が指す（段 4 G8）: 単位ごとの先を合わせる（記録からの指しとして数える。単位の指し先・
+        # 依る所は変えない）。
+        targets, blanks = [], 0
+        for unit in rec.units:
+            got, empty = _pieces(unit.item, spec)
+            targets.extend(t for t in got if t not in targets)
+            blanks += empty
+        return _in_folder(rec, spec, targets), blanks
+    got, empty = _pieces(rec.values or {}, spec)
+    return _in_folder(rec, spec, got), empty
+
+
+def _in_folder(rec: Record, spec: dict, targets: list) -> list:
+    """`same_folder`（段 4 G2）: 先の番号を、この記録と同じフォルダの番号として引く。よその台帳の先はそのまま。"""
+    if not spec.get("same_folder"):
+        return targets
+    folder = _folder_of(rec.path)
+    return [t if ":" in t else f"{folder}.{t}" for t in targets]
+
+
+def _pieces(values: dict, spec: dict) -> tuple:
+    nones = frozenset(spec.get("none") or ())
+
+    def is_none(v):
+        return bool(nones) and isinstance(v, str) and v.strip() in nones
+    if "fields" in spec:
+        # 欄の組で指す（段 4 G7）: 先の鍵の番号と同じ作り方。組の全部が空なら指していない。
+        parts = [values.get(f) for f in spec["fields"]]
+        if all(v in (None, "") for v in parts):
+            return [], 0
+        return ["k-" + short(fp(parts))], 0
+    raw = values.get(spec["field"])
+    if raw in (None, "") or is_none(raw):
         return [], 0
     if isinstance(raw, list):
-        return [str(v) for v in raw if v not in (None, "")], sum(1 for v in raw if v in (None, ""))
+        kept = [v for v in raw if not is_none(v)]
+        return [str(v) for v in kept if v not in (None, "")], sum(1 for v in kept if v in (None, ""))
     raw = str(raw)
     if spec.get("split"):
         parts = [p.strip() for p in raw.split(spec["split"])]
+        parts = [p for p in parts if not (nones and p in nones)]
         return [p for p in parts if p], sum(1 for p in parts if not p)
     return [raw], 0
 

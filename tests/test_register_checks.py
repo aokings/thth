@@ -393,11 +393,11 @@ _ATTACKS = [
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": []}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [1]}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [["x"]]}}},
-    {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [str(i) for i in range(257)]}}},
+    {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [str(i) for i in range(1025)]}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": ["x"], "not_in": ["y"]}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"regex": "^.*$"}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"blank": "yes"}}},
-    {"check": "required", "id": "a", "fields": ["t"], "when": {"s.t": {"blank": True}}},
+    {"check": "required", "id": "a", "fields": ["t"], "when": {"s.t.u.v.w": {"blank": True}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": ["x" * 257]}}},
     {"check": "unique", "id": "a", "fields": ["t"], "fold": "upper"},
     {"check": "unique", "id": "a", "fields": ["t"], "skip_blank": 0},
@@ -547,3 +547,123 @@ def test_YAMLの部品が無い機械では検査も中は見ていないと数�
     assert rc_ == 0 and value["not_inspected"] == 2
     title = value["checks"]["list"][0]
     assert title["not_inspected"] == 2 and title["checked"] == 0 and title["violations"] == 0
+
+
+# ================================================================== 段 4 §6 の直し: G5・G9・G10・G11
+
+def test_G5_語は1024個まで受け_1025個は断る():
+    words = [f"w{i}" for i in range(1024)]
+    kind = V.parse_kind(dict(EVIDENCE_KIND, checks=[
+        {"check": "words", "id": "a", "field": "strength", "in": words},
+        {"check": "required", "id": "b", "fields": ["strength"], "when": {"strength": {"not_in": words}}}]),
+        ".thth/kinds/evidence.json")
+    assert len(kind.checks) == 2
+    for chk in ({"check": "words", "id": "a", "field": "strength", "in": words + ["x"]},
+                {"check": "required", "id": "b", "fields": ["s"], "when": {"s": {"in": words + ["x"]}}}):
+        with pytest.raises(V.DeclarationError) as info:
+            V.parse_kind(dict(EVIDENCE_KIND, checks=[chk]), ".thth/kinds/evidence.json")
+        assert info.value.word == "checks"
+
+
+def test_G9_or_blankでこの語か空(env):
+    chk = [{"check": "required", "id": "k_a2", "when": {"status": {"in": ["draft"], "or_blank": True}},
+            "fields": ["title"]},
+           {"check": "required", "id": "k_a6", "when": {"status": {"not_in": ["draft"], "or_blank": True}},
+            "fields": ["title"]},
+           {"check": "required", "id": "plain", "when": {"status": {"in": ["draft"]}}, "fields": ["title"]}]
+    rows = [{"claim_id": "d", "status": "draft"}, {"claim_id": "blank", "status": " "},
+            {"claim_id": "e", "status": "established"}]
+    root = claims_ledger(env["tmp"], chk, rows)
+    assert bad_refs(root, "k_a2") == ["claim:blank", "claim:d"]
+    assert bad_refs(root, "k_a6") == ["claim:blank", "claim:e"]
+    assert bad_refs(root, "plain") == ["claim:d"]
+
+
+@pytest.mark.parametrize("test", [{"or_blank": True}, {"blank": True, "or_blank": True},
+                                  {"in": ["x"], "or_blank": 1}, {"in": ["x"], "or_blank": None},
+                                  {"in": ["x"], "or_blank": "true"}, {"in": ["x"], "not_in": ["y"], "or_blank": True}])
+def test_G9_宣言の攻め_or_blank(test):
+    with pytest.raises(V.DeclarationError) as info:
+        V.parse_kind(dict(EVIDENCE_KIND, checks=[{"check": "required", "id": "a", "fields": ["s"],
+                                                  "when": {"s": test}}]), ".thth/kinds/evidence.json")
+    assert info.value.word == "checks"
+
+
+def test_G10_columns_要る欄_ほかを許さない_あってはならない欄_表(env):
+    chk = [{"check": "columns", "id": "need", "required": ["claim_id", "status", "missing_col"]},
+           {"check": "columns", "id": "closed", "allowed": ["claim_id", "status", "title"]},
+           {"check": "columns", "id": "never", "forbidden": ["doi", "nope"]},
+           {"check": "columns", "id": "fine", "required": ["claim_id"], "allowed": CLAIM_HEADER, "forbidden": ["x"]}]
+    root = claims_ledger(env["tmp"], chk, [{"claim_id": "a"}])
+    r = {c["id"]: c for c in C.run(V.open_vessel(str(root)), [])["list"]}
+    assert [(x["record"], x["reason"], x["fields"]) for x in r["need"]["records"]] == [
+        ("claim:a", "column_missing", ["missing_col"])]
+    assert r["closed"]["records"][0]["reason"] == "column_not_allowed"
+    assert r["closed"]["records"][0]["fields"] == ["date", "doi", "lang", "reason", "slug", "url"]
+    assert [(x["reason"], x["fields"]) for x in r["never"]["records"]] == [("column_forbidden", ["doi"])]
+    assert r["fine"]["violations"] == 0
+
+
+def test_G10_columns_JSONの枚は頭の段の鍵で_幅の足りない行の欄も在ると数える(env):
+    page = {"schema": "thth.kind/1", "kind": "page", "place": "pages/*.json", "format": "json",
+            "checks": [{"check": "columns", "id": "keys", "required": ["title"], "allowed": ["title", "body"]}]}
+    root = make_ledger(env["tmp"] / "ledger", [page], {"pages/a.json": json.dumps({"title": "", "body": "x"}),
+                                                       "pages/b.json": json.dumps({"body": "x", "extra": 1})})
+    assert set(bad_refs(root, "keys")) == {"page:b"}
+    root2 = claims_ledger(env["tmp"] / "t2", [{"check": "columns", "id": "w", "required": ["reason"]}], [])
+    (root2 / "claims.csv").write_text(",".join(CLAIM_HEADER) + "\nc1,draft\n", encoding="utf-8")
+    assert result(root2, "w")["violations"] == 0
+
+
+@pytest.mark.parametrize("chk", [
+    {"check": "columns", "id": "a"},
+    {"check": "columns", "id": "a", "required": []},
+    {"check": "columns", "id": "a", "required": "x"},
+    {"check": "columns", "id": "a", "allowed": [None]},
+    {"check": "columns", "id": "a", "forbidden": [f"f{i}" for i in range(1025)]},
+    {"check": "columns", "id": "a", "required": ["x"], "forbidden": ["x"]},
+    {"check": "columns", "id": "a", "required": ["x"], "allowed": ["y"]},
+    {"check": "columns", "id": "a", "required": ["a.b"]},
+    {"check": "columns", "id": "a", "required": ["x"], "fields": ["x"]},
+])
+def test_G10_宣言の攻め_columns(chk):
+    with pytest.raises(V.DeclarationError) as info:
+        V.parse_kind(dict(EVIDENCE_KIND, checks=[chk]), ".thth/kinds/evidence.json")
+    assert info.value.word == "checks"
+
+
+def test_G11_prefixed_words_頭ごとに語を替える_nullならslugの形だけ(env):
+    chk = [{"check": "prefixed_words", "id": "j_7", "field": "slug", "sep": ":",
+            "prefixes": {"pillar": ["color", "dye"], "topic": None}}]
+    rows = [{"claim_id": "ok1", "slug": "pillar:color"}, {"claim_id": "ok2", "slug": "topic:indigo-blue"},
+            {"claim_id": "ok3", "slug": ""},
+            {"claim_id": "bad_word", "slug": "pillar:red"}, {"claim_id": "bad_shape", "slug": "topic:Indigo"},
+            {"claim_id": "bad_head", "slug": "class:x"}, {"claim_id": "no_sep", "slug": "pillar"},
+            {"claim_id": "empty_tail", "slug": "topic:"}]
+    root = claims_ledger(env["tmp"], chk, rows)
+    r = result(root, "j_7")
+    assert {(x["record"], x["reason"]) for x in r["records"]} == {
+        ("claim:bad_word", "word_not_allowed"), ("claim:bad_shape", "shape"), ("claim:bad_head", "prefix_not_allowed"),
+        ("claim:no_sep", "no_prefix"), ("claim:empty_tail", "shape")}
+
+
+@pytest.mark.parametrize("chk", [
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": "::", "prefixes": {"a": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": "", "prefixes": {"a": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": "\n", "prefixes": {"a": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": ["a"]},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"a:b": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"a": "x"}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"a": []}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"a": [1]}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {f"p{i}": None for i in range(65)}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "prefixes": {"a": None}},
+    {"check": "prefixed_words", "id": "a", "sep": ":", "prefixes": {"a": None}},
+    {"check": "prefixed_words", "id": "a", "field": "t", "sep": ":", "prefixes": {"a": None}, "shape": "slug"},
+])
+def test_G11_宣言の攻め_prefixed_words(chk):
+    with pytest.raises(V.DeclarationError) as info:
+        V.parse_kind(dict(EVIDENCE_KIND, checks=[chk]), ".thth/kinds/evidence.json")
+    assert info.value.word == "checks"

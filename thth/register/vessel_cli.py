@@ -60,7 +60,8 @@ def cmd_kinds(args, root: str) -> int:
         for q in k["questions"]:
             print(f"  問い {q['question']}（{q['level']}）: 状態の欄 {q['state'] or '-'}・依る欄 {q['depends']}")
         for p in k["pointers"]:
-            print(f"  指す欄 {p.get('field') or p.get('template')} → {p['to']}（{p['meaning']}）")
+            name = p.get("field") or "+".join(p.get("fields") or []) or p.get("template")
+            print(f"  指す欄 {name}{'（内側の単位）' if p.get('in_units') else ''} → {p['to']}（{p['meaning']}）")
         for c in k["checks"]:
             print(f"  検査 {c['id']}（{c['check']}・{c['level']}）" + (f": {c['note']}" if c["note"] else ""))
     if not value["yaml_reader"]:
@@ -161,7 +162,10 @@ def cmd_check(args, root: str) -> int:
 _REASON_JA = {"duplicate": "重なる", "blank": "空", "not_blank": "空でない", "none_filled": "どれも空",
               "more_than_one": "2 つ以上埋まっている", "not_text": "字でない", "word_not_allowed": "語の中に無い",
               "shape": "形に合わない", "forbidden_pair": "禁じた組を指している", "too_few": "数が足りない",
-              "too_many": "数が多すぎる", "not_judged_good": "効いている「よい」の判断が足りない"}
+              "too_many": "数が多すぎる", "not_judged_good": "効いている「よい」の判断が足りない",
+              "column_missing": "要る欄が無い", "column_not_allowed": "決めた欄の外の欄がある",
+              "column_forbidden": "あってはならない欄がある", "no_prefix": "区切りの字が無い",
+              "prefix_not_allowed": "頭の語が一覧に無い"}
 
 
 def _say_check(c: dict, file=None) -> None:
