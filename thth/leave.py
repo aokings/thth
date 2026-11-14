@@ -9,6 +9,11 @@ import secrets
 import stat
 from . import accounts, admin_log, article_media, relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
 
+def _name_ok(name):
+    """名前の検査（`accounts.name_is_safe` に重ねて `fullmatch`・末尾の改行も断る・段 8 の検収 中 1）。"""
+    return accounts.name_is_safe(name) and bool(accounts.NAME_RE.fullmatch(name))
+
+
 PHASES={'stopped','worker_revoked','remote_pending','remote_confirmed','manual_unconfirmed','deleting','deleted_pending_log','completed'}
 
 
@@ -20,7 +25,7 @@ def _save(row):
 
 
 def read(account):
-    if not accounts.name_is_safe(account):raise ValueError('invalid_account')
+    if not _name_ok(account):raise ValueError('invalid_account')
     try:
         with server_files.directory(gate.location(),private=True) as fd:
             value=json.loads(server_files.read_at(fd,account+'.json',private=True,maximum=262144))
@@ -87,7 +92,7 @@ def _valid_identity(value,*,file=False):
 def names():
     try:
         with server_files.directory(gate.location(),private=True) as fd:
-            return sorted(n[:-5] for n in os.listdir(fd) if n.endswith('.json') and accounts.name_is_safe(n[:-5]))
+            return sorted(n[:-5] for n in os.listdir(fd) if n.endswith('.json') and _name_ok(n[:-5]))
     except FileNotFoundError:return []
 
 
@@ -224,7 +229,7 @@ def _principal_credentials(cfg):
     from . import principals
     rows=[]
     name=cfg.get('principal')
-    if isinstance(name,str) and accounts.name_is_safe(name):
+    if isinstance(name,str) and _name_ok(name):
         try:p=principals.load_principal(name)
         except principals.PrincipalError as exc:
             # 台帳が壊れていると、どこに鍵があるかを言えない——消す前に止める（無いだけなら口座の写しで見る）。
@@ -285,7 +290,7 @@ def _guard_principal_credentials(cfg,trees):
     比べるのはパスの字でなくファイルの同一性（dev/ino・監査 5.18.1 の確かめの 8）: 葉が木の中を指す symlink、
     親の置き場が symlink、字の大小だけ違うパス（大小を分けない置き場）も、同じ物なら止める。中身は読まない（9）。
     口座の env は、消す前に（`inventory` が env を開くより前に）ここで stat だけで比べる。"""
-    principal=cfg.get('principal') if isinstance(cfg.get('principal'),str) and accounts.name_is_safe(cfg.get('principal') or '') else None
+    principal=cfg.get('principal') if isinstance(cfg.get('principal'),str) and _name_ok(cfg.get('principal') or '') else None
     candidates=[]
     for key,value in _principal_credentials(cfg):
         ids=_stat_ids(value)
@@ -304,7 +309,7 @@ def _guard_principal_credentials(cfg,trees):
         for index,tree in enumerate(trees):
             members=_tree_ids(tree)
             if any(ids&members for ids in candidates):where='state' if index==0 else 'managed_repo';break
-    account=cfg.get('account') if accounts.name_is_safe(cfg.get('account') or '') else None
+    account=cfg.get('account') if _name_ok(cfg.get('account') or '') else None
     if where:raise PrincipalCredentialsInside(principal,where,account)
 
 
@@ -494,7 +499,7 @@ PLAZA_OPEN=('delete','keep')
 
 def run(account,*,by,plaza_open='delete'):
     admin_log.actor(by)
-    if not accounts.name_is_safe(account):raise ValueError('invalid_account')
+    if not _name_ok(account):raise ValueError('invalid_account')
     if plaza_open not in PLAZA_OPEN:raise ValueError('invalid_plaza_open')
     # Serialize leave attempts outside every deletable directory. This lock is
     # not used by normal operations and never reverses their repo/account order.
@@ -574,9 +579,12 @@ def register_folders():
     from .register.errors import RegisterRefused
     out=set()
     for name in register_ledger.list_names():
-        try:cfg=register_ledger.load(name)
-        except RegisterRefused:continue
-        out.add(os.path.abspath(cfg['path']));out.add(os.path.realpath(cfg['path']))
+        try:path=register_ledger.load(name)['path']
+        except RegisterRefused:
+            # 読めない控えも、生の JSON の path を拾って囲いに入れる（段 8 の検収の穴 1）。
+            path=register_ledger.raw_path(name)
+            if not path:continue
+        out.add(os.path.abspath(path));out.add(os.path.realpath(path))
     return sorted(out)
 
 
@@ -598,11 +606,16 @@ def register_folder_guard(account,cfg=None):
         else:
             try:cfg=accounts.load_account(account)
             except accounts.AccountError:return
-    folders=register_folders()
-    if not folders:return
+    from .register import owner as register_owner
     clone,_=managed_repo.locations(account)
     places=[str(Path(accounts.state_dir_for(account)).absolute())]
     if cfg.get('repo_dir')==str(clone):places.append(str(clone))
+    # 最後の柵は構造で見る: 丸ごと消す木の中に台帳のフォルダらしい物（.thth/ を持つフォルダ）があれば断る
+    # （控えが読めるかどうかに頼らない・段 8 の検収の穴 1）。
+    if any(register_owner.has_register_inside(place) for place in places):
+        raise ValueError('owned_tree_contains_register_folder')
+    folders=register_folders()
+    if not folders:return
     files=[cfg.get(k) for k in ('token','env') if isinstance(cfg.get(k),str) and os.path.isabs(cfg.get(k))]
     files.append(str(Path(accounts.accounts_dir()).absolute()/(account+'.json')))
     for folder in folders:
@@ -681,6 +694,10 @@ def _run_locked(account,*,by):
             if row['phase'] in ('remote_confirmed','manual_unconfirmed','deleting'):
                 with gate.credentials(exclusive=True),admin_log.transaction():
                     _protect_targets(row)
+                    # 最後の柵（段 8 の検収の穴 1）: 丸ごと消す木の中に台帳のフォルダらしい物（.thth/）があれば、何も消さない。
+                    for target in row['targets']:
+                        if 'tree' in target and any('.thth' in Path(rel).parts for rel in target['tree']):
+                            raise ValueError('owned_tree_contains_register_folder')
                     row['phase']='deleting';_save(row)
                     for target in row['targets']:
                         if target['category'] in row['deleted']:continue
@@ -698,7 +715,7 @@ def _run_locked(account,*,by):
                         diff={'deleted_categories':[[],sorted(row['deleted'])],
                               'deleted_counts':[[],[row['deleted'][k] for k in sorted(row['deleted'])]], 'remote':[None,row['remote']]}
                         # 記事の口座は主体の名を残す（完了の案内が、打ち直しでも主体の鍵の残りと消し方を言えるように）。
-                        if _principal_owns_token(cfg) and accounts.name_is_safe(cfg.get('principal') or ''):
+                        if _principal_owns_token(cfg) and _name_ok(cfg.get('principal') or ''):
                             diff['principal']=[None,cfg['principal']]
                         admin_log.append('account_removed',account,{'media':cfg.get('media')},by=by,diff=diff,run_id=row['operation_id'])
                 row={k:row[k] for k in ('schema_version','account','operation_id','stopped_at','stopped_by','remote','deleted','preserved')}
@@ -786,7 +803,7 @@ def _principal_token_line(principal,media):
     """記事の口座の完了の案内の 2 行め: 主体の鍵が残ること・消し方（無ければ、そう言う）。鍵の値は読まない。"""
     from . import principals
     head='principal_token_kept: '
-    if not isinstance(principal,str) or not accounts.name_is_safe(principal):
+    if not isinstance(principal,str) or not _name_ok(principal):
         return (head+'主体の鍵は残しました（鍵の持ち主は主体で、口座の leave では消しません）。どの主体かは '
                 'thth principal show <主体> で確かめ、もう使わないなら thth principal auth <主体> --by <名前> --forget で消せます')
     try:
@@ -815,7 +832,7 @@ def _registers_kept(account):
         if row and row['phase']=='completed':return None
         cfg=row['cfg'] if row else accounts.load_account(account)
         project=cfg.get('project')
-        if not accounts.name_is_safe(project or ''):return None
+        if not _name_ok(project or ''):return None
         from .register import ledger as register_ledger
         names=register_ledger.media_of(project)
     except (OSError,ValueError,accounts.AccountError):return None
@@ -842,7 +859,8 @@ def _incomplete_detail(exc):
                 'もっと良くするには、主体の鍵は thth principal add が書く既定の置き場に置くと、口座の出入りで鍵が巻き込まれません')
     if str(exc)=='owned_tree_contains_register_folder':
         return ('owned_tree_contains_register_folder 台帳のフォルダが、この口座の leave で消す所（state・管理する repo・'
-                '口座の台帳・token・env）と重なっていて、消すと台帳のフォルダの中の物まで消えるので、何も止めずに断りました。'
+                '口座の台帳・token・env）と重なっているか、消す木の中に台帳のフォルダらしい物（.thth/ を持つフォルダ）があり、'
+                '消すと台帳のフォルダの中の物まで消えるので、何も消さずに断りました。'
                 '通すには、台帳のフォルダを THTH の置き場の外へ移し、thth register remove <台帳> --by <名前> と '
                 'thth register add <台帳> --path <新しいフォルダ> ... で控え直してから、同じ leave をもう一度打ってください。'
                 'もっと良くするには、台帳は持ち主の repo に置き、THTH の置き場（$THTH_ROOT）の外にしておくと、口座の出入りに巻き込まれません')
@@ -861,7 +879,7 @@ def _accounts_by_project():
     out={}
     d=accounts.accounts_dir()
     for name in accounts.list_account_names():
-        if not accounts.name_is_safe(name):continue
+        if not _name_ok(name):continue
         try:
             with open(os.path.join(d,name+'.json'),encoding='utf-8') as f:data=json.load(f)
         except (OSError,ValueError):data=None
@@ -882,7 +900,7 @@ def _principal_names():
     except OSError:entries=[]
     for entry in entries:
         name=entry[:-5]
-        if not entry.endswith('.json') or not accounts.name_is_safe(name):continue
+        if not entry.endswith('.json') or not _name_ok(name):continue
         try:
             principals.load_principal(name);good.append(name)
         except (principals.PrincipalError,accounts.AccountError,OSError,ValueError):bad.append(name)
@@ -894,7 +912,7 @@ def scope_plan(scope,target=None):
     from .register import owner
     from .register.errors import RegisterRefused
     if scope not in owner.SCOPES:raise RegisterRefused('register_args_invalid','scope')
-    if scope=='project' and not accounts.name_is_safe(target or ''):raise RegisterRefused('register_args_invalid','project')
+    if scope=='project' and not _name_ok(target or ''):raise RegisterRefused('register_args_invalid','project')
     by_project=_accounts_by_project();reg=owner.register_plan(scope,target)
     if scope=='project':
         gone=sorted(n for n,p in by_project.items() if p==target)
@@ -906,7 +924,8 @@ def scope_plan(scope,target=None):
         key=os.path.lexists(seal.key_path());other=[]
     body={'scope':scope,'target':target,'accounts':gone,'registers':reg['registers'],'principals':principals_gone,'seal_key':bool(key)}
     kept=reg['kept']+[{'what':'principal_unreadable','name':n} for n in principals_bad]
-    return {**body,'digest':owner.digest(body),
+    # 見積りのときの所属（打ち直しのたびに、これから消す 1 つずつを今と照らす・段 8 の検収の穴 2）。
+    return {**body,'account_meta':{n:by_project.get(n) for n in gone},'register_meta':reg['register_meta'],
             'remain':{'register_folders':reg['register_folders'],'register_files':reg['register_files'],
                       'common':reg['common'] if scope=='project' else [],'other_media':other},
             'kept':kept,'folders':reg['folders']}
@@ -931,7 +950,8 @@ def scope_preflight(p,guard):
     owner.preflight_registers(p['registers'],guard)
     for name in p['principals']:
         cfg=principals.load_principal(name)
-        if any(owner._overlap(folder,place) for folder in guard for place in _principal_places(name,cfg)):
+        if any(owner._overlap(folder,place) for folder in guard for place in _principal_places(name,cfg)) or any(
+                owner.has_register_inside(place) for place in _principal_places(name,cfg)[1:]):
             raise RegisterRefused('register_leave_overlap','principal',principal=name)
 
 
@@ -965,15 +985,49 @@ def remove_principal(name,guard,kept):
     return done
 
 
+def _changed(journal,what,name,was,now):
+    """所属が見積りのときと違う: その 1 つも残りも消さずに止まる。記録は「やめた」として日時つきで残し、次の見積りを
+    邪魔しない（もう消した物はそのまま）。"""
+    from .register import owner
+    from .register.errors import RegisterRefused
+    journal['phase']='changed';journal['changed']={'what':what,'name':name,'was':was,'now':now}
+    owner.save(journal);owner.archive(journal)
+    raise RegisterRefused('register_leave_changed',what,**{what:name,'was':was,'now':now})
+
+
+def _check_account_same(journal,name):
+    """これから外す口座の project が、見積りのときと同じか（台帳の生の JSON か、退出の途中の記録の写し）。"""
+    was=journal.get('account_meta',{}).get(name)
+    now=_accounts_by_project()
+    if name in now:
+        if now[name]!=was:_changed(journal,'account',name,was,now[name])
+        return
+    try:row=read(name)
+    except ValueError:row=None
+    if not (row and row['phase']=='completed'):_changed(journal,'account',name,was,None)
+
+
 def _scope_continue(journal,by):
     from .lock import LockBusy
     from .register import owner
     from .register.errors import RegisterRefused
     guard=sorted(set(journal['folders'])|set(owner.folders()))
     done=journal['done']
+    # 打ち直しのたびに、まず残りの全部を今の所属と照らす（1 つでも違えば、どれも消さずに止まる・段 8 の検収の穴 2）。
+    # 消す直前にも 1 つずつ照らす（下）。
+    if journal['phase']=='accounts':
+        for name in journal['accounts']:
+            if name not in done.get('accounts',[]):_check_account_same(journal,name)
+    if journal['phase'] in ('accounts','registers'):
+        for name in journal['registers']:
+            if name in done.get('registers',[]):continue
+            try:owner.check_control_same(name,journal.get('register_meta',{}).get(name))
+            except RegisterRefused as exc:
+                _changed(journal,'register',name,exc.extra.get('was'),exc.extra.get('now'))
     if journal['phase']=='accounts':
         for name in journal['accounts']:
             if name in done.setdefault('accounts',[]):continue
+            _check_account_same(journal,name)
             try:result=run(name,by=by)
             except (OSError,ValueError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError,LockBusy) as exc:
                 journal['stopped_at_account']=name;owner.save(journal)
@@ -985,7 +1039,11 @@ def _scope_continue(journal,by):
             owner.add(journal,{'accounts':1});owner.save(journal)
         journal['phase']='registers';owner.save(journal)
     if journal['phase']=='registers':
-        owner.remove_registers(journal,by,guard)
+        try:owner.remove_registers(journal,by,guard)
+        except RegisterRefused as exc:
+            if exc.code=='register_leave_changed':
+                _changed(journal,'register',exc.extra.get('register'),exc.extra.get('was'),exc.extra.get('now'))
+            raise
         journal['phase']='principals' if journal['scope']=='owner' else 'completed';owner.save(journal)
     if journal['phase']=='principals':
         for name in journal['principals']:
@@ -998,31 +1056,49 @@ def _scope_continue(journal,by):
         journal['phase']='completed';owner.save(journal)
     if 'completed_at' not in journal:
         journal['completed_at']=jst.iso();owner.save(journal)
+    owner.archive(journal)
     return owner.public(journal)
 
 
+RUNNING=('accounts','registers','principals','seal_key')
+
+
 def scope_run(scope,target=None,*,by,confirm=None):
-    """1 回め（`confirm` なし）は見積りだけ。合う `confirm` で消す。途中の記録があれば、その digest で続きから。"""
+    """1 回め（`confirm` なし）は見積り（その回だけの乱数を混ぜた digest を途中の記録に置く）。合う `confirm` で消す。
+    途中の記録があれば、その digest で続きから。済んだ記録は `done/` に日時つきで残る。"""
     from .register import owner
     from .register.errors import RegisterRefused
     try:by=admin_log.actor(by)
     except ValueError:raise RegisterRefused('register_args_invalid','by') from None
-    if scope=='project' and not accounts.name_is_safe(target or ''):raise RegisterRefused('register_args_invalid','project')
+    if scope=='project' and not _name_ok(target or ''):raise RegisterRefused('register_args_invalid','project')
     with owner.journal_lock(scope,target):
         journal=owner.read_journal(scope,target)
-        if journal and journal['phase']!='completed':
+        if journal and journal['phase'] in ('completed','changed'):
+            owner.archive(journal);journal=None        # 前の回の後始末（移す前に止まった）
+        if journal and journal['phase'] in RUNNING:
             if confirm!=journal['digest']:raise RegisterRefused('register_leave_confirm','in_progress',digest=journal['digest'])
             return {'stage':'done',**_scope_continue(journal,by)}
-        if journal and confirm is not None and confirm==journal['digest']:
-            return {'stage':'done',**owner.public(journal)}
+        if confirm is not None:
+            finished=owner.archived(scope,target,confirm)
+            if finished is not None and finished.get('phase')=='completed':
+                return {'stage':'done',**owner.public(finished)}
         p=scope_plan(scope,target)
         scope_preflight(p,p['folders'])
-        if confirm is None:return {'stage':'plan',**p}
-        if confirm!=p['digest']:raise RegisterRefused('register_leave_confirm','changed',digest=p['digest'])
-        journal={'schema':owner.SCHEMA,'scope':scope,'target':target,'operation_id':secrets.token_urlsafe(16),
-                 'digest':p['digest'],'phase':'accounts','started_at':jst.iso(),'stopped_by':admin_log.clean(by),
-                 'accounts':p['accounts'],'registers':p['registers'],'principals':p['principals'],'seal_key':p['seal_key'],
-                 'folders':p['folders'],'done':{},'deleted':{},'kept':list(p['kept'])}
+        body={k:p[k] for k in ('scope','target','accounts','registers','principals','seal_key')}
+        if confirm is None:
+            nonce=secrets.token_hex(8);p['digest']=owner.digest({**body,'nonce':nonce})
+            owner.save({'schema':owner.SCHEMA,'scope':scope,'target':target,'operation_id':secrets.token_urlsafe(16),
+                        'digest':p['digest'],'nonce':nonce,'phase':'planned','planned_at':jst.iso(),
+                        'accounts':p['accounts'],'registers':p['registers'],'principals':p['principals'],
+                        'seal_key':p['seal_key'],'account_meta':p['account_meta'],'register_meta':p['register_meta'],
+                        'folders':p['folders'],'done':{},'deleted':{},'kept':list(p['kept'])})
+            return {'stage':'plan',**p}
+        if (not journal or journal['phase']!='planned' or confirm!=journal['digest']
+                or owner.digest({**body,'nonce':journal.get('nonce')})!=journal['digest']
+                or p['account_meta']!=journal.get('account_meta') or p['register_meta']!=journal.get('register_meta')):
+            raise RegisterRefused('register_leave_confirm','changed')
+        journal.update(phase='accounts',started_at=jst.iso(),stopped_by=admin_log.clean(by),folders=p['folders'],
+                       kept=list(p['kept']))
         owner.save(journal)
         return {'stage':'done',**_scope_continue(journal,by)}
 

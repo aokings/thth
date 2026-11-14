@@ -529,6 +529,7 @@ def _common_group(js, common, seals) -> dict:
 def find_common(common_root, root: str):
     """`--common` か、THTH の側の控えの `role: common` の台帳（1 つのときだけ）。見つからなければ None。"""
     if common_root is not None:
+        L.check_walkable(common_root)
         return R.open_common(common_root)
     names = getattr(L, "common_names", None)
     if names is None:
@@ -545,15 +546,26 @@ def find_common(common_root, root: str):
         return None
     if os.path.abspath(path) == os.path.abspath(root):
         return None
+    try:
+        L.check_walkable(path)
+    except RegisterRefused:
+        return None
     return R.open_common(path)
 
 
 # ------------------------------------------------------------------ 健康
 
+def _open_vessel(root: str, *args):
+    """歩く数に上限を置いてから器として開く（段 8 の検収の穴 3: 控えの道が `/` でも止まる。上限を超えたら
+    `register_folder_too_wide`。`--all` と `--across` では、その台帳だけ読めないとして次へ進む）。"""
+    L.check_walkable(root)
+    return V.open_vessel(root, *args)
+
+
 def health(root: str, *, as_of=None, common_root=None, decl_base=None, thin: bool = False, name=None) -> dict:
     """読むだけ。`{"register", "as_of", "records", "groups": {群: {項目: {"count", "examples", ...}}}}`。"""
     as_of = _now(as_of)
-    vessel = V.open_vessel(root, decl_base)
+    vessel = _open_vessel(root, decl_base)
     raw = R.judgments_raw(root)
     js, js_problem = _judgments(raw, root)
     try:
@@ -669,14 +681,14 @@ def across_owner(root: str, name: str, vessel: V.Vessel | None = None) -> dict:
     for other, path in owner_ledgers():
         if os.path.abspath(path) == here:
             have_here = True
-            entries.append((other, vessel or V.open_vessel(root)))
+            entries.append((other, vessel or _open_vessel(root)))
             continue
         try:
-            entries.append((other, V.open_vessel(path)))
+            entries.append((other, _open_vessel(path)))
         except (RegisterRefused, V.DeclarationError, OSError) as exc:
             unreadable.append({"register": other, "why": getattr(exc, "code", None) or type(exc).__name__})
     if not have_here:
-        entries.insert(0, (name, vessel or V.open_vessel(root)))
+        entries.insert(0, (name, vessel or _open_vessel(root)))
     value = across(entries)
     value["unreadable"] = unreadable
     return value
@@ -703,7 +715,7 @@ def _project_of(name: str | None, root: str) -> str | None:
 def _usable_outlets(path: str, ref: str, as_of, cache: dict) -> tuple:
     """`(記録が在るか, 読者の出し口で使える出し口の名前の並び)`。封は確かめてから使う（`route.use` と同じ計算）。"""
     if path not in cache:
-        vessel = V.open_vessel(path)
+        vessel = _open_vessel(path)
         try:
             outlets = R.load_outlets(path, vessel)
         except RegisterRefused:
@@ -741,7 +753,7 @@ def sisters(root: str, *, name=None, media=None, common_root=None, as_of=None) -
         raise RegisterRefused("register_common_unusable", "common")
     if CORRESPONDENCE not in common.vessel.kinds:
         raise RegisterRefused("register_common_unusable", "correspondence")
-    own = V.open_vessel(root)
+    own = _open_vessel(root)
     here = os.path.abspath(root)
     candidates, not_usable, unverifiable, skipped = [], [], [], {}
     cache = {}

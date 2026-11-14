@@ -33,8 +33,13 @@ def registers_dir() -> str:
     return os.path.join(accounts.thth_root(), "registers")
 
 
+def name_ok(name) -> bool:
+    """名前の検査（末尾の改行も断る・`fullmatch`）。`accounts.name_is_safe` は `$` で末尾の改行を通すので重ねる。"""
+    return accounts.name_is_safe(name) and bool(accounts.NAME_RE.fullmatch(name))
+
+
 def check_name(name) -> str:
-    if not accounts.name_is_safe(name):
+    if not name_ok(name):
         raise RegisterRefused("register_args_invalid", "register_name")
     return name
 
@@ -52,7 +57,7 @@ def list_names() -> list:
         entries = sorted(os.listdir(registers_dir()))
     except OSError:
         return []
-    return [e[:-5] for e in entries if e.endswith(".json") and accounts.name_is_safe(e[:-5])]
+    return [e[:-5] for e in entries if e.endswith(".json") and name_ok(e[:-5])]
 
 
 def check_path(value) -> str:
@@ -74,22 +79,58 @@ def _inside(path: str, directory: str) -> bool:
 
 
 def thth_owned_dirs() -> list:
-    """THTH が `register remove`・`leave` で丸ごと消しうる置き場（台帳のフォルダを置いてはいけない所）。"""
-    return [os.path.join(accounts.thth_root(), "register_state"), registers_dir()]
+    """THTH の置き場（台帳のフォルダを置いてはいけない所）: `$THTH_ROOT` の下のどこでも（口座の state・管理する repo・
+    認めた記録・控え…。口座や台帳の leave が丸ごと消しうる）・控えの置き場・`~/.config/thth`（鍵の置き場）。"""
+    return [accounts.thth_root(), os.path.join(accounts.thth_root(), "register_state"), registers_dir(),
+            os.path.join(os.path.expanduser("~"), ".config", "thth")]
 
 
 def check_outside_thth(path: str) -> str:
-    """台帳のフォルダが THTH の置き場（認めた記録の置き場・控えの置き場）の中なら断る（消えるので・気づき 8）。"""
+    """台帳のフォルダが THTH の置き場の中なら断る（消えるので・気づき 8・段 8 の検収の穴 1）。THTH の置き場を含む親の
+    フォルダ（`/`・ホーム・`$THTH_ROOT` の先祖）も断る（そこを台帳と呼ぶと、THTH の置き場が台帳の中に入る）。"""
     if any(_inside(path, d) for d in thth_owned_dirs()):
         raise RegisterRefused("register_path_unusable", "inside_thth_state")
+    if any(_inside(d, path) for d in thth_owned_dirs()) or os.path.realpath(path) in (
+            os.path.realpath(os.sep), os.path.realpath(os.path.expanduser("~"))):
+        raise RegisterRefused("register_path_unusable", "contains_thth_state")
     return path
+
+
+WALK_MAX = 200_000
+
+
+def check_walkable(root: str, limit: int | None = None) -> int:
+    """台帳のフォルダを歩くのに上限を置く（段 8 の検収の穴 3: 控えの道が `/` に書き換えてあっても止まる）。
+    ファイルの数（symlink は追わない）を返す。`/` そのものか、`limit` を超えたら `register_folder_too_wide`。"""
+    if os.path.realpath(root) == os.path.realpath(os.sep):
+        raise RegisterRefused("register_folder_too_wide", "root")
+    if os.path.islink(root) or not os.path.isdir(root):
+        return 0
+    limit = WALK_MAX if limit is None else limit
+    count = 0
+    for _here, _dirs, files in os.walk(root, followlinks=False):
+        count += len(files)
+        if count > limit:
+            raise RegisterRefused("register_folder_too_wide", "files")
+    return count
+
+
+def raw_path(name: str):
+    """読めない控えからも `path` だけを拾う（消さない物の囲いに入れるため）。拾えなければ None。"""
+    try:
+        with open(path_for(name), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, RegisterRefused):
+        return None
+    value = data.get("path") if isinstance(data, dict) else None
+    return value if isinstance(value, str) and os.path.isabs(value) else None
 
 
 def validate(name: str, data) -> None:
     if (not isinstance(data, dict) or set(data) - {ROLE_FIELD} != set(FIELDS) or data.get("register") != name
             or (ROLE_FIELD in data and data[ROLE_FIELD] != COMMON)
             or data.get("kind") not in KINDS
-            or not isinstance(data.get("project"), str) or not accounts.name_is_safe(data["project"])
+            or not isinstance(data.get("project"), str) or not name_ok(data["project"])
             or not isinstance(data.get("path"), str) or not os.path.isabs(data["path"])):
         raise RegisterRefused("register_ledger_invalid")
 
