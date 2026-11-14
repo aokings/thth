@@ -273,7 +273,8 @@ ENTRIES = {
         "台帳の .thth/ の宣言（種類の宣言・憲法・番号の表）が決まった形に合っていません（1 行目の（）が、どの宣言の"
         "どの語か）。THTH は宣言を語と道の型として読むだけで、宣言に書いた命令は実行しません。知らない欄も断ります。",
         "（）の語の欄を直してください。種類の宣言に書けるのは schema・kind・place・format・records・max_bytes・"
-        "rows_at・id・questions・pointers・units・note だけで、値は欄の名前・道の型・語です。直したら打ち直してください。",
+        "rows_at・id・questions・pointers・units・inspects・checks・note だけで、値は欄の名前・道の型・語です"
+        "（checks は 9 つの部品と決まった形の条件だけ。式・正規表現は書けません）。直したら打ち直してください。",
         "thth register kinds <台帳>",
         "宣言は台帳の repo に commit しておくと、形を変えたこと（意味を変えたこと）が跡に残り、持ち主が確かめられます。"),
     "register_yaml_refused": _entry(
@@ -284,10 +285,11 @@ ENTRIES = {
         _CHECK,
         "日付や true・false も字のまま読み、型は種類の宣言で見るので、引用符を足す直しは要りません。"),
     "register_record_invalid": _entry(
-        "宣言した種類の記録の読みに問題があります（番号の形・同じ番号が 2 つ・表の列の数・大きさの上限・UTF-8 のどれか。"
-        "記録ごとの語は --json の problems）。同じ番号の記録は、黙って 1 つにしません。",
-        "記録ごとの語のとおりに元のファイルを直すか、種類の宣言（番号の取り方・max_bytes）を直して、"
-        "thth register check <台帳> で点検し直してください。",
+        "宣言した種類の記録の読みに問題があるか（番号の形・同じ番号が 2 つ・表の列の数・大きさの上限・UTF-8 のどれか。"
+        "記録ごとの語は --json の problems）、種類の宣言の検査（checks）のうち赤（error）の検査に合わない記録があります"
+        "（1 行目の（）の checks の数。検査の呼び名・注・記録と理由の語は --json の checks）。同じ番号の記録は、黙って 1 つにしません。",
+        "記録ごとの語、または検査の注と理由の語のとおりに元のファイルを直すか、種類の宣言（番号の取り方・max_bytes・"
+        "checks）を直して、thth register check <台帳> で点検し直してください。",
         _CHECK,
         "番号は一度付けたら変えないでください。番号で判断が付くので、付け直すと前の確かめが別の記録へ移りません。"),
     "register_record_missing": _entry(
