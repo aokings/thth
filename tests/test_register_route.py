@@ -125,9 +125,11 @@ def test_つなぐ先_こぴちゃの事実欄は基準のもとで元と同じ�
     assert rc == 0 and u["usable"] and u["as"] == "fact"
     rc, v = verify(capsys, led, "facts", site, "2027-03-21", "--no-previous")
     assert rc == 0 and v["ok"], v
-    # 内の道具が読む出し口は、選ばずに書く（判断が無くても全部・元と同じバイト）
-    accept(capsys, led, "tools", site)
-    assert (site / "data/knowledge/evidence.csv").read_bytes() == (FIX / "kopicha/data/knowledge/evidence.csv").read_bytes()
+    # 内の道具が読む出し口は、選ばずに書く（判断が無くても全部・元と同じバイト）。段 7（§7.1・§7.8）から、
+    # 読者の出し口と別の書き出し先に書く（同じ先だと、読者の材料が内の出し口の旧い材料に見える）
+    tools = env / "tools"
+    accept(capsys, led, "tools", tools)
+    assert (tools / "data/knowledge/evidence.csv").read_bytes() == (FIX / "kopicha/data/knowledge/evidence.csv").read_bytes()
 
 
 def test_つなぐ先_主張を直すと頁から外れる件数を配る前に出す(env, capsys):
@@ -233,8 +235,9 @@ def test_試験3b_まだの行は断言に使えず理由の種類が合えば�
     led, site = ledger(env, "mmr"), env / "site"
     for outlet in ("song_page", "artist_page"):
         baseline(capsys, led, outlet)
+    # 段 7（§7.8）から、出し口ごとに書き出し先を分ける（同じ先だと、もう片方の材料が旧い材料に見える）
     for outlet in ("song_page", "artist_page"):
-        accept(capsys, led, outlet, site)
+        accept(capsys, led, outlet, site / outlet)
     table = {"seed-liked-0443": ("other_version", True), "seed-liked-0831": ("release_credits", True),
              "seed-liked-1094": ("conflict", True), "seed-liked-0665": ("unresolved", False)}
     for seed, (kind, as_note) in table.items():
@@ -253,7 +256,7 @@ def test_試験3b_まだの行は断言に使えず理由の種類が合えば�
         rc, v = use(capsys, led, record, "song_page", "reservation", "--unit", _unit(led, record, seed))
         assert not v["usable"] and v["why"] == "not_permitted", record
     # 材料: 曲の頁は shown の印と held の注（理由の種類と、説明の文を付けて渡す）、人の頁は shown だけ
-    song = json.loads((site / "materials/song_page.json").read_text())
+    song = json.loads((site / "song_page/materials/song_page.json").read_text())
     got = {(i["values"]["seed"], i["as"], i.get("reason_kind")) for i in song}
     assert got == {("seed-liked-0161", "fact", None), ("seed-liked-0383", "fact", None),
                    ("seed-liked-0443", "reservation", "other_version"),
@@ -261,10 +264,10 @@ def test_試験3b_まだの行は断言に使えず理由の種類が合えば�
                    ("seed-liked-1094", "reservation", "conflict")}
     assert {i["note"] for i in song if i["as"] == "reservation"} == {
         "別の版の記載（見本の説明）", "盤全体の記載（見本の説明）", "資料で食い違う（見本の説明）"}
-    artist = json.loads((site / "materials/artist_page.json").read_text())
+    artist = json.loads((site / "artist_page/materials/artist_page.json").read_text())
     assert {(i["values"]["seed"], i["as"]) for i in artist} == {("seed-liked-0161", "fact"), ("seed-liked-0383", "fact")}
     for outlet in ("song_page", "artist_page"):
-        rc, v = verify(capsys, led, outlet, site, "2027-03-21", "--no-previous")
+        rc, v = verify(capsys, led, outlet, site / outlet, "2027-03-21", "--no-previous")
         assert rc == 0 and v["ok"], (outlet, v)
 
 

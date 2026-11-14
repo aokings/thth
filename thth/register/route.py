@@ -43,12 +43,32 @@
   CI は前に配った頭の続きでないとき、i 番めどうしの骨が同じで、印の形の行が署名の合った封の言う行だけなら通す
   （`erase_continued`）。行が減る・並びが変わる・骨が変わる（印の行の結論も）、は赤。
 
+- **材料を出す道の残り**（段 7・指示 `docs/指示_台帳の器_段6と段7_書く口と出口の残り_2026-11-14.md` §7.1〜7.4・7.8）:
+  - 出し口の宣言の `kinds` は、種類の名前の並びか、`{種類: 設定}`。設定は読者の出し口だけが持てる:
+    `private_fields`（出さない欄）・`inserts`（差し込みを受ける欄）・`hide`（`"record"`・`"unit"`・
+    `{"field": [欄]}`。既定は記録の出し口で record・内側の単位の出し口で unit）。種類の宣言（`vessel.py`）は触らない。
+  - `dest`（書き出し先の名前。台帳の外の相対の道）を内の道具の出し口と読者の出し口が同じに言えば、宣言の読みで断る。
+    手元でも、読む者の違う出し口の封の材料が置いてある道へ違う中身を書くなら断る（`register_material_stale`・
+    `other_outlet`）。内の道具の出し口は選ばずに元のバイトで書く（出さない欄も・差し込みもそのまま）。
+  - 出さない欄: 読者の材料では、表は列を残して値を空に・枚（YAML・JSON の上の段）は鍵を除く。ほかのセルと行の
+    バイトは変えない。除けない書き方の枚は記録ごと外す（`private_unremovable`）。封と材料の控えには値を入れない
+    （版と出力の sha256 だけ）。
+  - 差し込み `{{<種類>:<番号>.<欄>}}`: この出し口で事実として使える記録の、出さない欄でない字か整数の値だけ。
+    使えなければ差し込みを持つ記録ごと外し、`insert_unusable` と差し込みごとのわけを一覧に出す。先の版は項目
+    （`inserts`）と入力の版の組に入る。載せたままの項目の指紋が封と違えば、確かめで赤（`inputs_changed`）。
+  - 伏せ方 `field` は、判断の期限切れ・根拠の変わりのときだけ欄を伏せて記録を残す（項目は `=hidden`）。止めた・
+    中身が変わったは記録ごと外す。見直す日（中身の欄）は材料に効かない。
+  - 旧い材料: 書き出し先の全部（`.` で始まるフォルダ・`node_modules`・フォルダの symlink も）を見る。見ないのは
+    `ignore`（道の型）と、この出し口の配る物 `thth-seal.<出し口>.json` だけ。
+
 網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
 """
 from __future__ import annotations
 
+import csv
 import datetime
 import hashlib
+import io
 import json
 import os
 import re
@@ -59,6 +79,7 @@ from . import judgment as J
 from . import keep as K
 from . import seal as S
 from . import vessel as V
+from . import yamlread
 from .errors import RegisterRefused
 
 OUTLETS_FILE = "outlets.json"
@@ -73,10 +94,30 @@ RANK = {"none": 0, "reservation": 1, "fact": 2}
 MATERIALS_DIR = "materials"
 JST = datetime.timezone(datetime.timedelta(hours=9))
 QUESTION = re.compile(r"[a-z][a-z0-9_]{0,31}(@[a-z][a-z0-9_]{0,31})?\Z")
-_O_KEYS = ("audience", "kinds", "level", "requires", "fact", "reservation", "common", "on_narrow", "note")
+_O_KEYS = ("audience", "kinds", "level", "requires", "fact", "reservation", "common", "on_narrow", "dest", "ignore",
+           "note")
+_K_KEYS = ("private_fields", "inserts", "hide", "note")
+# 段 7: 伏せ方（§7.4）。使えなくなった物（止めた・期限が切れた・依る所が変わった）を、材料からどの粒で外すか。
+NARROW_WHYS = ("stopped", "expired", "against_changed", "no_inspection_for_new_version", "narrowed")
+# 欄だけを伏せるのは、記録の今の版が受けた判断の期限切れ・根拠の変わりのときだけ（止めたは記録ごと・中身が変わったは
+# 今の版のほかの欄も検められていないので記録ごと。狭い側へ倒す。段 7 の書き手の推し）
+FIELD_HIDE_WHYS = ("expired", "against_changed")
+INSERT_MAX = 64
+INSERT = re.compile(r"\{\{([a-z][a-z0-9_]{0,31}):([^{}\s]{1,160})\.([A-Za-z_][A-Za-z0-9_]{0,63})\}\}")
+IGNORE_MAX = 64
+_DEST = re.compile(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*\Z")
 
 
 # ------------------------------------------------------------------ 出し口の宣言
+
+@dataclass
+class KindConf:
+    """出し口の中の、種類ごとの設定（段 7。種類の宣言を触らずに、出し口の宣言 `kinds.<種類>` に持つ）。"""
+    private: tuple = ()        # 出さない欄（§7.2）
+    inserts: tuple = ()        # 差し込みを受ける欄（§7.3）
+    hide: str = "record"       # record・field・unit（§7.4）
+    hide_fields: tuple = ()    # hide が field のとき、伏せる欄
+
 
 @dataclass
 class Outlet:
@@ -89,6 +130,68 @@ class Outlet:
     reservation: dict | None   # {"question", "conclusion", "reason_kinds"}
     common: str | None         # 共通の台帳の種類（採った版を書く）
     on_narrow: str             # stop か drop
+    conf: dict = None          # 種類 → KindConf（段 7）
+    dest: str | None = None    # 書き出し先（宣言の上の名前。内の出し口と読者の出し口で同じなら断る。§7.1）
+    ignore: tuple = ()         # 旧い材料の柵で見ない道の型（§7.8）
+
+    def __post_init__(self):
+        if self.conf is None:
+            self.conf = {}
+
+    def kind_conf(self, kind: str) -> KindConf:
+        if kind in self.conf:
+            return self.conf[kind]
+        return KindConf(hide="unit" if self.level == "unit" else "record")
+
+
+def _fields(raw, word) -> tuple:
+    if not isinstance(raw, list) or any(not isinstance(f, str) or not V.FIELD.fullmatch(f) for f in raw) \
+            or len(set(raw)) != len(raw):
+        raise V.DeclarationError(word)
+    return tuple(raw)
+
+
+def _kind_conf(raw, kind: V.Kind, level: str, word: str) -> KindConf:
+    """`kinds.<種類>` の設定を読む。元の形式の道具がそのまま書ける形（表の列を空に・枚の上の段の鍵を除く）で
+    言える物だけを受ける（字のままの枚・今の店の台帳・JSON の並びの中の記録には欄を伏せる道が無いので断る）。"""
+    if not isinstance(raw, dict) or set(raw) - set(_K_KEYS):
+        raise V.DeclarationError(word)
+    private = _fields(raw.get("private_fields", []), word)
+    inserts = _fields(raw.get("inserts", []), word)
+    hide_raw = raw.get("hide", "unit" if level == "unit" else "record")
+    hide_fields = ()
+    if isinstance(hide_raw, dict):
+        if set(hide_raw) != {"field"}:
+            raise V.DeclarationError(word)
+        hide_fields = _fields(hide_raw["field"], word)
+        if not hide_fields:
+            raise V.DeclarationError(word)
+        hide = "field"
+    elif hide_raw in ("record", "unit"):
+        hide = hide_raw
+    else:
+        raise V.DeclarationError(word)
+    fieldwise = bool(private or inserts or hide == "field")
+    editable = kind.format == "csv" or (kind.format in ("yaml", "json") and kind.records == "file")
+    if fieldwise and not editable:
+        raise V.DeclarationError(f"{word}:format")
+    if hide == "unit" and level != "unit" and kind.records != "rows":
+        raise V.DeclarationError(f"{word}:hide_unit")   # 枚の中の行を、元の形式のまま外す道は無い
+    if inserts and level == "unit":
+        raise V.DeclarationError(f"{word}:inserts_unit")
+    return KindConf(private, inserts, hide, hide_fields)
+
+
+def _dest(raw, word) -> str:
+    if not isinstance(raw, str):
+        raise V.DeclarationError(word)
+    norm = raw.strip().rstrip("/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    norm = os.path.normpath(norm).replace(os.sep, "/") if norm else ""
+    if not norm or norm.startswith("/") or norm == ".." or norm.startswith("../") or not _DEST.fullmatch(norm):
+        raise V.DeclarationError(word)
+    return norm
 
 
 def _conds(raw, word) -> list:
@@ -126,8 +229,25 @@ def parse_outlets(data, kinds: dict) -> dict:
         common = o.get("common")
         if audience not in ("reader", "internal") or level not in ("record", "unit") or on_narrow not in ("stop", "drop"):
             raise V.DeclarationError(f"outlets:{name}")
+        confs = {}
+        if isinstance(names, dict):
+            # 段 7: 種類ごとの設定（出さない欄・差し込み・伏せ方）。内の道具の出し口は選ばずに書くので、書けば断る。
+            if any(not isinstance(k, str) or k not in kinds for k in names):
+                raise V.DeclarationError(f"outlets:{name}")
+            for k, raw_conf in names.items():
+                conf = _kind_conf(raw_conf, kinds[k], level, f"outlets:{name}:{k}")
+                if audience == "internal" and conf != KindConf(hide=conf.hide):
+                    raise V.DeclarationError(f"outlets:{name}:internal_settings")
+                confs[k] = conf
+            names = list(names)
         if not isinstance(names, list) or any(not isinstance(k, str) or k not in kinds for k in names):
             raise V.DeclarationError(f"outlets:{name}")
+        dest = _dest(o["dest"], f"outlets:{name}:dest") if "dest" in o else None
+        ignore = o.get("ignore", [])
+        if not isinstance(ignore, list) or len(ignore) > IGNORE_MAX or any(
+                not isinstance(p, str) or not V.PLACE.fullmatch(p) or p.startswith("/") or ".." in p.split("/")
+                for p in ignore):
+            raise V.DeclarationError(f"outlets:{name}:ignore")
         if common is not None and (not isinstance(common, str) or not V.NAME.fullmatch(common)):
             raise V.DeclarationError(f"outlets:{name}")
         if not names and common is None:
@@ -145,7 +265,13 @@ def parse_outlets(data, kinds: dict) -> dict:
                 raise V.DeclarationError(f"outlets:{name}")
             res = {"question": q, "conclusion": c, "reason_kinds": list(kinds_ok)}
         out[name] = Outlet(name, audience, list(names), level, _conds(o.get("requires"), f"outlets:{name}"),
-                           _conds(o.get("fact"), f"outlets:{name}"), res, common, on_narrow)
+                           _conds(o.get("fact"), f"outlets:{name}"), res, common, on_narrow, confs, dest,
+                           tuple(ignore))
+    # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）
+    for a in out.values():
+        for b in out.values():
+            if a.audience == "internal" and b.audience == "reader" and a.dest is not None and a.dest == b.dest:
+                raise V.DeclarationError(f"outlets:{a.name}:dest_shared:{b.name}")
     return out
 
 
@@ -381,9 +507,31 @@ class Ctx:
     as_of: datetime.datetime
     common: Common | None = None
     n_sealed: int = 0          # 封の中の判断の数（判断の記録の頭から何件めまでが封の中か）
+    cache: dict = None         # 判断の集まりごとの、記録の番号の索引（段 7。全部の記録で頭から見ない）
 
     def __post_init__(self):
         self.n_sealed = len(self.sealed)
+        self.cache = {}
+
+    def by_record(self, js: list) -> dict:
+        return _by_record(self.cache, js)
+
+
+def _by_record(cache: dict | None, js: list) -> dict:
+    """`{記録の番号: [(位置, 判断)]}`。位置は判断の集まりの中の位置のまま（新しさと封の中かの決め方は変えない）。
+    索引は集まりそのものと一緒に持つ（集まりが生きている間、同じ番号の別の集まりと取り違えない）。"""
+    if cache is not None:
+        hit = cache.get(id(js))
+        if hit is not None and hit[0] is js:
+            return hit[1]
+    idx = {}
+    for n, j in enumerate(js):
+        ref = (j.get("target") or {}).get("record")
+        if isinstance(ref, str):
+            idx.setdefault(ref, []).append((n, j))
+    if cache is not None:
+        cache[id(js)] = (js, idx)
+    return idx
 
 
 def _key(pair, n_sealed: int | None = None):
@@ -409,9 +557,11 @@ def conclusion_of(vessel: V.Vessel, j: dict):
     return J.conclusion_of(vessel, j)
 
 
-def answer(ctx: Ctx, js: list, match, question: str) -> dict:
-    """1 つの問いへの答え（その判断の集まりの中で、効いている最後の判断）。"""
-    mine = [(n, j) for n, j in enumerate(js) if j.get("question") == question and match(j.get("target") or {})]
+def answer(ctx: Ctx, js: list, match, question: str, ref: str | None = None) -> dict:
+    """1 つの問いへの答え（その判断の集まりの中で、効いている最後の判断）。`ref` を渡すと、その記録の判断だけを
+    索引から見る（`match` は記録の番号を見る物に限る）。"""
+    pool = ctx.by_record(js).get(ref, []) if ref is not None else enumerate(js)
+    mine = [(n, j) for n, j in pool if j.get("question") == question and match(j.get("target") or {})]
     if not mine:
         return {"conclusion": None, "why": "no_judgment"}
     effective = [p for p in mine if J.evaluate(ctx.vessel, p[1]) == "effective"]
@@ -443,7 +593,7 @@ def _unit_match(ref, pointer):
 def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     """`(段, 使えないわけ, 理由の種類)`。段は fact・reservation・none。"""
     for question, want in outlet.requires:
-        got = answer(ctx, js, _record_match(ref), question)
+        got = answer(ctx, js, _record_match(ref), question, ref)
         if got["conclusion"] != want:
             # 出してよいの判断が無い・だめ・まだは「出し口が無い」と同じ（MMR の public_song の欄が無い組も）。
             # 古い・期限切れ・根拠の変わりは、そのわけのまま返す（直し方が違うので）。
@@ -453,7 +603,7 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     why = None
     fact_ok = True
     for question, want in outlet.fact:
-        got = answer(ctx, js, match, question)
+        got = answer(ctx, js, match, question, ref)
         if got["conclusion"] != want:
             fact_ok = False
             why = why or got["why"] or f"not_{want}"
@@ -461,7 +611,7 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
         return "fact", None, None
     res = outlet.reservation
     if res is not None:
-        got = answer(ctx, js, match, res["question"])
+        got = answer(ctx, js, match, res["question"], ref)
         if got["conclusion"] == res["conclusion"]:
             if got.get("reason_kind") in res["reason_kinds"]:
                 return "reservation", None, got.get("reason_kind")
@@ -471,11 +621,12 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
 
 
 def _stop_state(js_every: list, n_sealed: int, vessel: V.Vessel | None, ref: str, pointer, outlet: str,
-                as_of) -> dict | None:
+                as_of, cache: dict | None = None) -> dict | None:
     """止めているなら、その判断。止めるは封を待たない。止めないは封の中（判断の記録の頭から `n_sealed` 件め
     まで。番号でなく位置で決める）だけで、期限が切れていない物。封の外の止めるは、`at` によらず封の中の止めないに勝つ。"""
     questions = {STOP, f"{STOP}@{outlet}"}
-    mine = [(n, j) for n, j in enumerate(js_every) if j.get("question") in questions
+    pool = _by_record(cache, js_every).get(ref, []) if cache is not None else enumerate(js_every)
+    mine = [(n, j) for n, j in pool if j.get("question") in questions
             and (j.get("target") or {}).get("record") == ref
             and (not (j.get("target") or {}).get("unit") or j["target"]["unit"] == pointer)]
     stops, lifts = [], []
@@ -496,7 +647,7 @@ def _stop_state(js_every: list, n_sealed: int, vessel: V.Vessel | None, ref: str
 
 def decide(ctx: Ctx, outlet: Outlet, ref: str, pointer=None) -> dict:
     """1 つの記録（か内側の単位）を、この出し口に、何として使えるか。"""
-    stop = _stop_state(ctx.every, ctx.n_sealed, ctx.vessel, ref, pointer, outlet.name, ctx.as_of)
+    stop = _stop_state(ctx.every, ctx.n_sealed, ctx.vessel, ref, pointer, outlet.name, ctx.as_of, ctx.cache)
     if stop is not None:
         return {"as": None, "why": "stopped"}
     if outlet.audience == "internal":
@@ -545,15 +696,26 @@ def _common_stopped(ctx: Ctx, ref: str, outlet: str):
     if ctx.common is None:
         return None
     return _stop_state(ctx.common.judgments, len(ctx.common.judgments), None, ref, None, outlet,
-                       ctx.as_of)
+                       ctx.as_of, ctx.cache)
 
 
 def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> dict:
-    """`{"items": [...], "files": {道: bytes}, "inputs": [...], "excluded": [...], "pending_takes": [...]}`。"""
+    """`{"items": [...], "files": {道: bytes}, "inputs": [...], "excluded": [...], "pending_takes": [...]}`。
+    段 7: 読者に出る出し口では、出さない欄（§7.2）を書かず、差し込み（§7.3）を置き換え、伏せ方（§7.4）の粒で外す。
+    内の道具の出し口は選ばずに書く（元のバイトのまま。§7.1）。"""
     items, excluded, inputs = [], [], []
     files, tables = {}, {}
     vessel = ctx.vessel
     by_path = {}
+    reader = outlet.audience == "reader"
+    decided = {}
+    row_edits, file_edits, raw_cache = {}, {}, {}
+    seen_inputs = set()
+
+    def decision(ref):
+        if ref not in decided:
+            decided[ref] = decide(ctx, outlet, ref)
+        return decided[ref]
     for rec in vessel.all_records:
         if rec.kind not in outlet.kinds:
             continue
@@ -561,31 +723,74 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             excluded.append({"record": rec.ref if rec.id else rec.path, "why": "record_problem"})
             continue
         inputs.append({"record": rec.ref, "version": rec.version})
+        seen_inputs.add(rec.ref)
         kind = vessel.kinds[rec.kind]
+        conf = outlet.kind_conf(rec.kind)
         if outlet.level == "unit":
             pointers = [u.pointer for u in rec.units]
             if len(set(pointers)) != len(pointers):
                 excluded.append({"record": rec.ref, "why": "unit_ambiguous"})
                 continue
+            mine, gone = [], []
             for unit in rec.units:
                 got = decide(ctx, outlet, rec.ref, unit.pointer)
+                if got["as"] is None and reader and conf.hide == "field" and got["why"] in FIELD_HIDE_WHYS:
+                    got = {"as": "hidden", "why": got["why"]}
                 if got["as"] is None:
-                    excluded.append({"record": rec.ref, "unit": unit.pointer, "why": got["why"]})
+                    gone.append({"record": rec.ref, "unit": unit.pointer, "why": got["why"]})
                     continue
-                item = {"record": rec.ref, "unit": unit.pointer, "as": got["as"], "key": unit.key,
-                        "values": unit.item}
+                values = unit.item
+                if reader:
+                    drop = set(conf.private) | (set(conf.hide_fields) if got["as"] == "hidden" else set())
+                    values = {k: v for k, v in unit.item.items() if k not in drop}
+                item = {"record": rec.ref, "unit": unit.pointer, "as": got["as"], "key": unit.key, "values": values}
+                if got["as"] == "hidden":
+                    item["hidden"] = list(conf.hide_fields)
+                    item["why"] = got["why"]
                 if got["as"] == "reservation":
                     item["reason_kind"] = got["reason_kind"]
-                    item["note"] = _unit_note(kind, unit, outlet.reservation["question"])
-                items.append(item)
+                    q = V.question_of(kind, outlet.reservation["question"])
+                    private_note = q is not None and q.reason_text in conf.private
+                    item["note"] = None if (reader and private_note) else _unit_note(kind, unit, outlet.reservation["question"])
+                mine.append(item)
+            if reader and conf.hide == "record" and any(g["why"] in NARROW_WHYS for g in gone):
+                # 伏せ方が記録ごと: 内側の単位の 1 つが使えなくなれば、その記録の単位を全部外す
+                gone += [{"record": rec.ref, "unit": i["unit"], "why": "hidden_with_record"} for i in mine]
+                mine = []
+            excluded.extend(gone)
+            items.extend(mine)
             continue
-        got = decide(ctx, outlet, rec.ref)
+        got = decision(rec.ref)
+        if got["as"] is None and reader and conf.hide == "field" and got["why"] in FIELD_HIDE_WHYS:
+            got = {"as": "hidden", "why": got["why"]}
         if got["as"] is None:
             excluded.append({"record": rec.ref, "why": got["why"]})
             continue
         item = {"record": rec.ref, "as": got["as"], "version": rec.version, "path": rec.path}
+        if got["as"] == "hidden":
+            item["hidden"] = list(conf.hide_fields)
+            item["why"] = got["why"]
         if got["as"] == "reservation":
             item["reason_kind"] = got["reason_kind"]
+        if reader and (conf.private or conf.inserts or got["as"] == "hidden"):
+            blank = set(conf.private) | (set(conf.hide_fields) if got["as"] == "hidden" else set())
+            repl, bad, used = _resolve_inserts(ctx, outlet, rec, conf, blank, decision)
+            if bad:
+                excluded.append({"record": rec.ref, "why": "insert_unusable", "inserts": bad})
+                continue
+            edited = _edit_record(ctx.root, kind, rec, blank, repl, raw_cache)
+            if edited is None:
+                excluded.append({"record": rec.ref, "why": "private_unremovable" if blank else "insert_unplaceable"})
+                continue
+            if edited is not False:
+                (row_edits.setdefault(rec.path, {}) if kind.records == "rows" else file_edits)[
+                    rec.version if kind.records == "rows" else rec.path] = edited
+            if used:
+                item["inserts"] = used
+                for u in used:
+                    if u["record"] not in seen_inputs:
+                        seen_inputs.add(u["record"])
+                        inputs.append({"record": u["record"], "version": u["version"]})
         items.append(item)
         by_path.setdefault(rec.path, set()).add(rec.version)
     # 記録ごとの表とファイル
@@ -596,9 +801,9 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             with open(os.path.join(ctx.root, *path.split("/")), "rb") as f:
                 data = f.read()
             if kind.records == "rows" and kind.format == "csv":
-                files[path], tables[path] = _table_bytes(data, keep)
+                files[path], tables[path] = _table_bytes(data, keep, row_edits.get(path))
             elif keep:
-                files[path] = data
+                files[path] = file_edits.get(path, data)
         facts = [i for i in items if i["as"] == "reservation"]
         if outlet.reservation is not None:
             files[f"{MATERIALS_DIR}/{outlet.name}.reservations.json"] = _json_bytes(
@@ -644,8 +849,9 @@ def _json_bytes(value) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
 
 
-def _table_bytes(data: bytes, keep: set) -> tuple:
+def _table_bytes(data: bytes, keep: set, edits: dict | None = None) -> tuple:
     """表から、使える行だけを元のバイトのまま残す（見出しと空の行はそのまま）。全部使えるなら元と同じバイト。
+    段 7: `edits`（版 → 書き直した行）がある行だけ、その行の字に替える（出さない欄を空に・差し込みを置き換えた行）。
     `(バイト, 書いた行ごとの sha256 の並び)`。並びの頭は見出し（BOM を含む）。封の指紋（`fingerprints.tables`）に使う。"""
     bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
     text = data[len(bom):].decode("utf-8")
@@ -654,10 +860,262 @@ def _table_bytes(data: bytes, keep: set) -> tuple:
         return data, [sha(data)]
     out = [rows[0]]
     for raw in rows[1:]:
-        if not raw.strip("\r\n") or V.bytes_version(raw.encode("utf-8")) in keep:
+        if not raw.strip("\r\n"):
             out.append(raw)
+            continue
+        version = V.bytes_version(raw.encode("utf-8"))
+        if version in keep:
+            out.append((edits or {}).get(version, raw))
     shas = [sha(bom + out[0].encode("utf-8"))] + [sha(r.encode("utf-8")) for r in out[1:]]
     return bom + "".join(out).encode("utf-8"), shas
+
+
+# ------------------------------------------------------------------ 段 7: 差し込みと、欄を書かない書き直し
+
+def _resolve_inserts(ctx: Ctx, outlet: Outlet, rec: V.Record, conf: KindConf, blank: set, decision) -> tuple:
+    """`(置き換え {欄: (新しい値, [(差し込みの字, 値)])}, 使えない差し込み [...], 使った先 [{"record", "version"}])`。
+    置き換えてよいのは、この出し口で事実として使える記録の、出さない欄でない欄の値（字か整数）だけ。入れ子は読まない
+    （先の値の中の `{{…}}` は字のまま）。1 つの欄に `INSERT_MAX` か所まで。"""
+    repl, bad, used = {}, [], []
+    for name in conf.inserts:
+        if name in blank:
+            continue
+        value = (rec.values or {}).get(name)
+        if not isinstance(value, str) or "{{" not in value:
+            continue
+        found = list(INSERT.finditer(value))
+        if len(found) > INSERT_MAX:
+            bad.append({"field": name, "why": "too_many", "count": len(found)})
+            continue
+        parts, tokens, last, ok = [], [], 0, True
+        for m in found:
+            kind_name, rid, field_name = m.groups()
+            token = f"{kind_name}:{rid}.{field_name}"
+            target = ctx.vessel.unique(f"{kind_name}:{rid}") if V.RECORD_ID.fullmatch(rid) else None
+            why, got = None, None
+            if target is None:
+                why = "missing"
+            elif target.problems or target.id is None:
+                why = "record_problem"
+            elif decision(target.ref)["as"] != "fact":
+                why = "not_fact"
+            elif field_name in outlet.kind_conf(target.kind).private:
+                why = "private"
+            else:
+                got = (target.values or {}).get(field_name)
+                if target.values is None or field_name not in target.values or got is None:
+                    why = "no_field"
+                elif isinstance(got, bool) or not isinstance(got, (str, int)):
+                    why = "not_scalar"
+            if why is not None:
+                bad.append({"field": name, "insert": token, "why": why})
+                ok = False
+                continue
+            text = str(got)
+            parts += [value[last:m.start()], text]
+            tokens.append((m.group(0), text))
+            last = m.end()
+            if not any(u["record"] == target.ref for u in used):
+                used.append({"record": target.ref, "version": target.version})
+        if ok:
+            repl[name] = ("".join(parts) + value[last:], tokens)
+    return repl, bad, sorted(used, key=lambda u: u["record"])
+
+
+def _csv_cells(row: str) -> list | None:
+    try:
+        return next(csv.reader(io.StringIO(row, newline=""), strict=False), [])
+    except csv.Error:
+        return None
+
+
+def _raw_cells(row: str) -> tuple:
+    """1 行を、元の字のままのセルに分ける（引用の中の区切りは切らない）。`(セルの字の並び, 行の終わりの改行)`。"""
+    end = next((nl for nl in ("\r\n", "\n", "\r") if row.endswith(nl)), "")
+    body = row[:len(row) - len(end)]
+    cells, start, quoted = [], 0, False
+    for i, ch in enumerate(body):
+        if ch == '"':
+            quoted = not quoted
+        elif ch == "," and not quoted:
+            cells.append(body[start:i])
+            start = i + 1
+    cells.append(body[start:])
+    return cells, end
+
+
+def _edit_row(header: list, row: str, blank: set, repl: dict) -> str | None:
+    """表の 1 行の、その欄のセルだけを書き直す（空にするか、差し込みを置き換えた値に）。ほかのセルと改行の字は
+    変えない。書き直した行を読み直して、思った値にならなければ None（記録ごと外す）。"""
+    cells, end = _raw_cells(row)
+    parsed = _csv_cells(row)
+    if parsed is None or len(cells) != len(parsed) or len(parsed) != len(header):
+        return None
+    want = list(parsed)
+    for i, name in enumerate(header):
+        if name in blank:
+            cells[i], want[i] = "", ""
+        elif name in repl:
+            value = repl[name][0]
+            quote = cells[i].startswith('"') or any(c in value for c in ',"\r\n')
+            cells[i] = '"' + value.replace('"', '""') + '"' if quote else value
+            want[i] = value
+    new = ",".join(cells) + end
+    return new if _csv_cells(new) == want else None
+
+
+_YKEY = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*:(?=[ \t]|$)")
+
+
+def _yaml_blocks(lines: list) -> dict | None:
+    """上の段の鍵ごとの行の範囲 `{鍵: [頭, 終わり)}`。鍵の行と、それに続く字下げの行・並びの行（`- `）。行の頭の注・
+    空の行は鍵に付けない（間にあれば範囲に入る）。読めない形（文書の区切り・流れの形・引用した鍵など）は None。"""
+    blocks, current = {}, None
+    for i, line in enumerate(lines):
+        bare = line.rstrip("\r\n")
+        if not bare.strip():
+            continue
+        head = bare[0]
+        if head in " \t" or (head == "-" and (len(bare) == 1 or bare[1] in " \t")):
+            if current is None:
+                return None
+            blocks[current][1] = i + 1
+            continue
+        if head == "#":
+            current = None
+            continue
+        m = _YKEY.match(bare)
+        if not m or m.group(1) in blocks:
+            return None
+        current = m.group(1)
+        blocks[current] = [i, i + 1]
+    return blocks
+
+
+def _yaml_edit(text: str, blank: set, repl: dict) -> str | None:
+    lines = text.splitlines(keepends=True)
+    blocks = _yaml_blocks(lines)
+    if blocks is None:
+        return None
+    for name, (_new, tokens) in repl.items():
+        if name not in blocks:
+            return None
+        s, e = blocks[name]
+        chunk = "".join(lines[s:e])
+        after = chunk.split(":", 1)[1].lstrip(" \t")
+        for token, value in tokens:
+            if after.startswith('"'):
+                value = value.replace("\\", "\\\\").replace('"', '\\"')
+            elif after.startswith("'"):
+                value = value.replace("'", "''")
+            chunk = chunk.replace(token, value)
+        lines[s:e] = [chunk] + [""] * (e - s - 1)
+    for name in blank:
+        if name in blocks:
+            s, e = blocks[name]
+            lines[s:e] = [""] * (e - s)
+    return "".join(lines)
+
+
+def _json_members(text: str) -> list | None:
+    """上の段の物の、鍵ごとの `(鍵, 鍵の頭, 値の頭, 値の終わり)`。物でなければ None。"""
+    dec = json.JSONDecoder()
+    ws = re.compile(r"[ \t\r\n]*")
+    i = ws.match(text, 0).end()
+    if i >= len(text) or text[i] != "{":
+        return None
+    i = ws.match(text, i + 1).end()
+    out = []
+    if text[i:i + 1] == "}":
+        return out
+    while True:
+        if text[i:i + 1] != '"':
+            return None
+        start = i
+        key, i = json.decoder.scanstring(text, i + 1)
+        i = ws.match(text, i).end()
+        if text[i:i + 1] != ":":
+            return None
+        i = ws.match(text, i + 1).end()
+        _value, end = dec.raw_decode(text, i)
+        out.append((key, start, i, end))
+        i = ws.match(text, end).end()
+        if text[i:i + 1] == ",":
+            i = ws.match(text, i + 1).end()
+            continue
+        return out if text[i:i + 1] == "}" else None
+
+
+def _json_edit(text: str, blank: set, repl: dict) -> str | None:
+    try:
+        members = _json_members(text)
+    except ValueError:
+        return None
+    if members is None:
+        return None
+    # 後ろから書き直す（前の位置がずれない）
+    for idx in range(len(members) - 1, -1, -1):
+        key, start, vstart, vend = members[idx]
+        if key in repl:
+            text = text[:vstart] + json.dumps(repl[key][0], ensure_ascii=False) + text[vend:]
+    members = _json_members(text)
+    for idx in range(len(members) - 1, -1, -1):
+        key, start, _vstart, vend = members[idx]
+        if key not in blank:
+            continue
+        if idx + 1 < len(members):
+            text = text[:start] + text[members[idx + 1][1]:]
+        elif idx > 0:
+            text = text[:members[idx - 1][3]] + text[vend:]
+        else:
+            text = text[:start] + text[vend:]
+        members = _json_members(text)
+    return text
+
+
+def _edit_record(root: str, kind: V.Kind, rec: V.Record, blank: set, repl: dict, raw_cache: dict):
+    """読者の材料に書く記録の字を書き直す。直す所が無ければ False、直せなければ None（記録ごと外す）、直せれば
+    表なら行の字・枚ならファイルのバイト。書き直したあとで読み直し、ほかの欄の値が元と同じかを見る。"""
+    values = rec.values or {}
+    blank = {f for f in blank if f in values}
+    if not blank and not repl:
+        return False
+    if kind.records == "rows":
+        if rec.path not in raw_cache:
+            with open(os.path.join(root, *rec.path.split("/")), "rb") as f:
+                data = f.read()
+            text = data.decode("utf-8")
+            text = text[1:] if text.startswith("﻿") else text
+            rows = V.split_csv_rows(text)
+            raw_cache[rec.path] = (_csv_cells(rows[0]) if rows else [],
+                                   {V.bytes_version(r.encode("utf-8")): r for r in rows[1:]})
+        header, by_version = raw_cache[rec.path]
+        row = by_version.get(rec.version)
+        if row is None or not header:
+            return None
+        return _edit_row(header, row, blank, repl)
+    with open(os.path.join(root, *rec.path.split("/")), "rb") as f:
+        data = f.read()
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
+    text = data[len(bom):].decode("utf-8")
+    new = _yaml_edit(text, blank, repl) if kind.format == "yaml" else _json_edit(text, blank, repl)
+    if new is None:
+        return None
+    want = {k: v for k, v in values.items() if k not in blank}
+    for name, (value, _tokens) in repl.items():
+        want[name] = value
+    if kind.format == "yaml":
+        got, problem, inspected = yamlread.load(new)
+        if problem or not inspected:
+            return None
+    else:
+        try:
+            got = json.loads(new)
+        except ValueError:
+            return None
+    if not isinstance(got, dict) or V.canonical(got) != V.canonical(want):
+        return None
+    return bom + new.encode("utf-8")
 
 
 def item_fp(item: dict) -> str:
@@ -824,20 +1282,40 @@ def _outlet_patterns(vessel: V.Vessel, outlet: Outlet) -> list:
     return pats
 
 
-def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
-    """書き出し先にある、この出し口の物（一覧の名前と、出し口の置き場の型に当たる物）の sha256。台帳の中は見ない。"""
+def _ignored(rel: str, patterns) -> bool:
+    """出し口の宣言の `ignore`（道の型）に当たるか。型が道の頭のフォルダに当たれば、その下は全部当たる。"""
     import fnmatch
+    parts = rel.split("/")
+    return any(fnmatch.fnmatchcase("/".join(parts[:n]), p) for p in patterns for n in range(1, len(parts) + 1))
+
+
+def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
+    """書き出し先にある物の sha256。段 7（§7.8）: 出し口の置き場の型に当たる物だけでなく、書き出し先の**全部**を見る
+    （`.` で始まるフォルダの中も・`node_modules` も）。見ないのは出し口の宣言の `ignore` に当たる物と、台帳の中と、
+    この出し口の配る物（書き出し先の頭の `thth-seal.<出し口>.json`。材料と一緒に配る、出し口の一覧の一部）だけ。
+    フォルダの symlink は辿らずに、それ自体を 1 つの物として数える（中に旧い材料を隠せない）。"""
     out = {}
-    pats = _outlet_patterns(vessel, outlet)
+    ignore = outlet.ignore
+    own_seal = f"thth-seal.{outlet.name}.json"   # 配る物（`verify --publish`。設計 §5.6 で材料と一緒に配る）
     if os.path.isdir(to):
         for directory, dirs, files in os.walk(to, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "node_modules"
-                             and not _inside(os.path.join(directory, d), root))
+            keep = []
+            for d in sorted(dirs):
+                full = os.path.join(directory, d)
+                rel = os.path.relpath(full, to).replace(os.sep, "/")
+                if _inside(full, root) or _ignored(rel, ignore):
+                    continue
+                if os.path.islink(full):
+                    out[rel] = "symlink"
+                    continue
+                keep.append(d)
+            dirs[:] = keep
             for name in sorted(files):
                 full = os.path.join(directory, name)
                 rel = os.path.relpath(full, to).replace(os.sep, "/")
-                if rel in names or any(fnmatch.fnmatchcase(rel, p) for p in pats) or (
-                        outlet.common and rel.startswith(COMMON + "/")):
+                if rel == own_seal and rel not in names:
+                    continue
+                if rel in names or not _ignored(rel, ignore):
                     out[rel] = _file_sha(full)
     for rel in names:
         if rel not in out:
@@ -845,6 +1323,26 @@ def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
             if os.path.isfile(full):
                 out[rel] = _file_sha(full)
     return out
+
+
+def mixed_outlets(root: str, vessel: V.Vessel, outlet: Outlet, to: str, outputs: dict) -> list:
+    """§7.1 の手元の柵: 書き出し先に、読む者の違う出し口（内の道具と読者）の封の材料が置いてあり、この出し口が
+    同じ道へ違う中身を書こうとしているなら、その道（と出し口）の並び。宣言の `dest` を書かない台帳でも、内の材料が
+    読者の書き出し先を上書きしない。別の出し口の封は署名を確かめずに読む（断る向きにだけ使う）。"""
+    out = []
+    for other in load_outlets(root, vessel).values():
+        if other.name == outlet.name or other.audience == outlet.audience:
+            continue
+        try:
+            seal = read_seal(root, other.name)
+        except RegisterRefused:
+            continue
+        for path, digest_ in ((seal or {}).get("body", {}).get("outputs") or {}).items():
+            if path in outputs and outputs[path] != digest_:
+                full = os.path.join(to, *path.split("/"))
+                if os.path.isfile(full) and not os.path.islink(full) and _file_sha(full) == digest_:
+                    out.append(f"{other.name}:{path}")
+    return sorted(out)
 
 
 def _file_sha(path: str) -> str:
@@ -891,15 +1389,18 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
     outputs = _outputs(result["files"])
     now = placed(root, ctx.vessel, outlet, to, set(outputs))
     stale = sorted(p for p in now if p not in outputs)
+    mixed = mixed_outlets(root, ctx.vessel, outlet, to, outputs)
     value = {"outlet": outlet.name, "as_of": ctx.as_of.isoformat(timespec="seconds"), "to": to,
              "generation": seal["body"]["generation"], "files": len(outputs), "items": len(result["items"]),
              "changes": _changes(seal["body"]["items"], [item_key(i) for i in result["items"]]),
              "excluded": result["excluded"], "pending_takes": result["pending_takes"], "stale": stale,
              "same_as_seal": outputs == seal["body"]["outputs"],
              "differs": sorted(p for p in set(outputs) | set(now) if outputs.get(p) != now.get(p)),
-             "check": check}
+             "mixed": mixed, "check": check}
     if check:
         return value
+    if mixed:
+        raise RegisterRefused("register_material_stale", "other_outlet", stale=mixed[:50])
     if stale:
         raise RegisterRefused("register_material_stale", f"{len(stale)} files", stale=stale[:50])
     write_files(to, result["files"])
@@ -951,7 +1452,8 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
     return {"outlet": outlet.name, "to": to, "body": body, "result": result, "digest": digest(body),
             "new_judgments": [_judgment_line(j) for j in new_judgments],
             "changes": _changes(base["body"]["items"] if base else [], body["items"]),
-            "stale": sorted(p for p in now if p not in body["outputs"])}
+            "stale": sorted(p for p in now if p not in body["outputs"]),
+            "mixed": mixed_outlets(root, ctx.vessel, outlet, to, body["outputs"])}
 
 
 def erased_seal(root: str, outlet: str) -> dict | None:
@@ -1084,6 +1586,8 @@ def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, com
     plan = accept_plan(root, outlet_name, to, as_of, common_root=common_root)
     if confirm != plan["digest"]:
         raise RegisterRefused("register_confirm_mismatch", "confirm", digest=plan["digest"])
+    if plan["mixed"]:
+        raise RegisterRefused("register_material_stale", "other_outlet", stale=plan["mixed"][:50])
     if plan["stale"]:
         raise RegisterRefused("register_material_stale", f"{len(plan['stale'])} files", stale=plan["stale"][:50])
     body = dict(plan["body"], at=at, public_key=S.fingerprint(S.local_public_pem()))
@@ -1106,7 +1610,7 @@ PROBLEMS = ("no_seal", "seal_shape", "public_key", "signature", "judgments_rewri
             "previous_signature", "previous_other_outlet", "previous_not_deployed", "seal_other_outlet",
             "generation_back", "generation_reused",
             "judgments_not_continued", "decl_changed", "material_mismatch", "narrowed_after_seal",
-            "widened_after_seal", "stale_material")
+            "widened_after_seal", "stale_material", "inputs_changed")
 
 
 def deployed_of(prev: dict) -> dict | None:
@@ -1242,13 +1746,23 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     if stale:
         red("stale_material", files=stale[:50])
     narrowed = sorted(set(body["items"]) - set(expected_items))
-    widened = sorted(set(expected_items) - set(body["items"]))
+    # 欄だけを伏せた項目（`=hidden`）は、使える物を増やさない（封のときに出していた記録の欄を減らすだけ）。
+    # 広がりには数えず、封のときの項目が外れた（狭まった）として扱う（drop でも指紋が合わないので赤）。
+    widened = sorted(k for k in set(expected_items) - set(body["items"]) if not k.endswith("=hidden"))
     why = {f"{e['record']}" + (f"#{e['unit']}" if e.get("unit") else ""): e["why"] for e in result["excluded"]}
     narrowed_detail = [{"item": k, "why": why.get(k.rsplit("=", 1)[0], "narrowed")} for k in narrowed]
     placed_sealed = all(here.get(p) == d for p, d in sealed_outputs.items()) and not (set(here) - set(sealed_outputs))
     placed_expected = all(here.get(p) == d for p, d in expected.items()) and not (set(here) - set(expected))
     if widened:
         red("widened_after_seal", items=widened[:50])
+    # 段 7（§7.3）: 載せたままの項目の指紋が封と違う（差し込んだ先の版が変わった・記録の版が変わった）なら赤。
+    # 差し込んだ先が出し口の種類に無いと、材料のバイトは同じのまま入力の版の組だけが変わるので、ここで見る。
+    fp_items = (body.get("fingerprints") or {}).get("items")
+    if isinstance(fp_items, dict):
+        moved = sorted(item_key(i) for i in result["items"]
+                       if item_key(i) in fp_items and fp_items[item_key(i)] != item_fp(i))
+        if moved:
+            red("inputs_changed", items=moved[:50])
     if narrowed or expected != sealed_outputs:
         if outlet.on_narrow == "drop" and not widened and placed_expected and _only_dropped(body, result, expected):
             warnings.append({"word": "dropped", "items": narrowed_detail[:50]})
