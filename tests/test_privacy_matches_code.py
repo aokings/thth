@@ -166,10 +166,100 @@ def _register_fence_codes() -> bool:
                                            "register_row_retired", "register_row_not_public"))
 
 
-def _leave_purges_registers() -> bool:
+def _account_leave_keeps_registers() -> bool:
+    """口座を外しても台帳の控えと判断を消さない（台帳の器 段 8）。`leave.run` が台帳の控えを消す口を呼ばず、
+    `leave.command` が「残った」と言い、外す範囲は `project` と `owner` の 2 つだけ。"""
     import inspect
     from thth import leave
-    return "_purge_registers(account,by)" in inspect.getsource(leave.run)
+    from thth.register import owner
+    run = inspect.getsource(leave.run)
+    return ("_purge_registers" not in run and "remove_control" not in run and "remove_state" not in run
+            and "register_kept" in inspect.getsource(leave.command) and owner.SCOPES == ("project", "owner"))
+
+
+def _project_leave_keeps_common() -> bool:
+    """メディアを外す見積りは、共通の台帳の控えを消す物に入れない（`owner.register_plan` を偽の控えで動かす）。
+    持ち主ごとやめる見積りは共通も入れる。封の秘密の鍵は持ち主ごとのときだけ（`leave.scope_plan`）。"""
+    import inspect
+    from thth import leave
+    from thth.register import owner
+    controls = {"m": {"project": "p", "path": "/nonexistent/m"},
+                "c": {"project": "c", "path": "/nonexistent/c", "role": "common"}}
+    saved = owner._controls, owner._files_in, owner.folders
+    owner._controls, owner._files_in, owner.folders = (lambda: (controls, [])), (lambda folder: 0), (lambda c=None: [])
+    try:
+        project = owner.register_plan("project", "p")
+        everyone = owner.register_plan("owner")
+    finally:
+        owner._controls, owner._files_in, owner.folders = saved
+    plan = inspect.getsource(leave.scope_plan)
+    return (project["registers"] == ["m"] and project["common"] == ["c"] and everyone["registers"] == ["c", "m"]
+            and "principals_gone,principals_bad,key=[],[],False" in plan and "seal.key_path()" in plan)
+
+
+def _register_places() -> dict:
+    """台帳の器が台帳のフォルダに書く置き場（コードの定数から作る）。"""
+    from thth.register import judgment, keep, published, route, vessel
+    d = vessel.DECL_DIR
+    return {"judgments": f"{d}/{judgment.FILE}", "seals": f"{d}/{route.SEALS_DIR}/", "kept": f"{d}/{keep.KEPT}/",
+            "batch": f"{d}/{keep.BATCH}/", "erase": f"{d}/{judgment.ERASE_DIR}/", "published": f"{d}/{published.DIR}/",
+            "kinds": f"{d}/{vessel.KINDS_DIR}/"}
+
+
+def _seal_key_default() -> str:
+    """封の秘密の鍵の既定の置き場（`seal.key_dir` が XDG の無いとき `~/.config/thth`）と、台帳の中を断ること・0600。"""
+    import inspect
+    from thth.register import seal
+    key_dir = inspect.getsource(seal.key_dir)
+    ok = ("inside_register" in inspect.getsource(seal.check_key_place)
+          and "0o077" in inspect.getsource(seal._private_ok)
+          and '".config"' in key_dir and '"thth"' in key_dir)
+    return f"~/.config/thth/{seal.KEY_NAME}</code>, mode 600" if ok else "封の鍵の置き場か権限が privacy と違う"
+
+
+def _erase_outside_unchecked() -> bool:
+    """消す求めが確かめない場所（`erase.OUTSIDE`）に git の履歴・材料・頁・写し・共通の台帳があり、手を入れる場所
+    （`erase.RUN_ORDER`）に判断の記録・封・今の本文・前の版・段取りがある。"""
+    from thth.register import erase
+    return ({"git_history", "materials", "pages", "copies", "clones", "common"} <= set(erase.OUTSIDE)
+            and {"judgments", "seals", "current_text", "kept_objects", "batch", "snapshots"} <= set(erase.RUN_ORDER))
+
+
+def _skeleton_without_who_and_id() -> bool:
+    """判断の行の骨（配る物の `deployed.lines`）は「誰が」と行の番号で変わらず、答えで変わる。"""
+    from thth.register import judgment
+    a = {"id": "j-1", "by": "masaru", "question": "use", "target": {"record": "r"}, "answer": {"word": "ok"},
+         "at": "2026-11-14T00:00:00+09:00"}
+    b = dict(a, id="j-2", by="someone")
+    c = dict(a, answer={"word": "ng"})
+    return judgment.skeleton_pair(a) == judgment.skeleton_pair(b) != judgment.skeleton_pair(c)
+
+
+# 封と配る物の欄（privacy の「封とその写しに入る物」）。値・説明・誰がの欄は無い。欄が増えたら privacy を見直す。
+SEAL_BODY_KEYS = {"schema", "outlet", "audience", "generation", "as_of", "judgments", "bytes", "count", "sha256",
+                  "decl", "thth", "inputs", "outputs", "items", "fingerprints", "tables", "common_unchecked",
+                  "previous"}
+DEPLOYED_KEYS = {"body", "signature", "deployed", "outlet", "generation", "judgments", "bytes", "sha256", "lines",
+                 "at", "dropped"}
+
+
+def _seal_holds_no_values() -> bool:
+    import inspect
+    from thth.register import route
+    body = set(re.findall(r'"(\w+)":', inspect.getsource(route.seal_body)))
+    deployed = set(re.findall(r'"(\w+)":', inspect.getsource(route.write_published)))
+    return body == SEAL_BODY_KEYS and deployed == DEPLOYED_KEYS
+
+
+def _shared_private_fence() -> bool:
+    """共通の出さない欄（段 8 §3）: 運営者の種類は記録ごと出さない既定を、共通の宣言を読んだ**あと**に重ね（外せない）、
+    メディアの出し口の宣言は読まない。除けない記録は外す。"""
+    import inspect
+    from thth.register import route
+    src = inspect.getsource(route.shared_private)
+    return (route.SHARED_PRIVATE_ALWAYS == {"operator": "*"}
+            and src.index("out.update(SHARED_PRIVATE_ALWAYS)") > src.index("parse_shared_private")
+            and "shared_private_unremovable" in inspect.getsource(route._shared_fence))
 
 
 def facts() -> list[tuple[str, str]]:
@@ -303,9 +393,9 @@ def facts() -> list[tuple[str, str]]:
          if any(isinstance(h, shop_wire._NoRedirect) for h in shop_wire.OPENER.handlers) else "リダイレクトを追う"),
         # 台帳の機械（計画 実店舗 段 1〜4）。台帳に書く欄・網に出ない・控えに残す物・退出で消える物。
         ("台帳に THTH が書く欄（register/form.MANAGED）",
-         "In the register, THTH writes only the fixed head fields " + _register_fields_en()),
+         "THTH writes in the register only the fixed head fields " + _register_fields_en()),
         ("台帳に THTH が書く欄・日本語",
-         "台帳に THTH が書くのは頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " と、"),
+         "台帳に THTH が書くのは、頭の決まった欄 " + "・".join(f"<code>{n}</code>" for n in register_form.MANAGED) + " と、"),
         ("台帳の機械は網に出ない（thth/register が網の部品を import しない）",
          "this part of THTH has no network access" if _register_offline() else "台帳の機械が網の部品を import している"),
         ("台帳の機械は網に出ない・日本語",
@@ -325,9 +415,55 @@ def facts() -> list[tuple[str, str]]:
         ("台帳の柵が断る行（register/fence）",
          "THTH refuses to use a row that is a guess, that the owner said is wrong, that is past its review date, "
          "that is retired or that is not marked as public" if _register_fence_codes() else "柵の断りが privacy と違う"),
-        ("台帳の退出（leave._purge_registers）",
-         "when the project's last account leaves, <code>thth leave</code> deletes them there. Neither deletes the "
-         "register folder" if _leave_purges_registers() else "leave が台帳の控えを消さない"),
+        # 台帳の器（段 1〜8）。外す範囲・置き場・封の鍵・封に入る物・消す求めの範囲・共通の出さない欄。
+        ("口座を外しても台帳の控えと判断は残る（leave.run・register/owner.SCOPES）",
+         "Removing an account keeps those files and the register's decisions, even for the project's last account"
+         if _account_leave_keeps_registers() else "口座の leave が台帳の控えを消す"),
+        ("口座を外しても台帳の控えと判断は残る・日本語",
+         "口座を外しても、そのファイルと台帳の判断は残ります（プロジェクトの最後の口座でも同じです）"
+         if _account_leave_keeps_registers() else "口座の leave が台帳の控えを消す"),
+        ("メディアを外すと共通の台帳は残り・封の鍵は持ち主ごとのときだけ（owner.register_plan・leave.scope_plan）",
+         "Removing a media project deletes its accounts and THTH's files for its registers, and keeps the shared "
+         "register and other projects" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
+        ("持ち主ごとやめると封の秘密の鍵も消す",
+         "THTH's files for every register (the shared one too), the owner's principals with the keys THTH holds for "
+         "them, and the seal's private key" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
+        ("メディアを外す・持ち主ごと・日本語",
+         "共通の台帳とほかのプロジェクトは残します。持ち主ごとやめると" if _project_leave_keeps_common()
+         else "外す範囲が privacy と違う"),
+        ("判断の記録の置き場（judgment.FILE）", f"<code>{_register_places()['judgments']}</code>"),
+        ("封の置き場（route.SEALS_DIR）", f"<code>{_register_places()['seals']}</code>"),
+        ("前の版の控え（keep.KEPT）", f"<code>{_register_places()['kept']}</code>"),
+        ("入れ替えの段取り（keep.BATCH）", f"<code>{_register_places()['batch']}</code>"),
+        ("消す求め（judgment.ERASE_DIR）", f"<code>{_register_places()['erase']}</code>"),
+        ("出したアドレスの控え（published.DIR）", f"<code>{_register_places()['published']}</code>"),
+        ("共通の台帳の種類の宣言（vessel.KINDS_DIR）", f"<code>{_register_places()['kinds']}</code>"),
+        ("封の秘密の鍵の置き場と権限（seal.KEY_NAME・key_dir・_private_ok・check_key_place）",
+         _seal_key_default()),
+        ("封の秘密の鍵・日本語",
+         _seal_key_default().replace("</code>, mode 600", "</code>・600）に置き、台帳の中にも")),
+        ("配る封の行ごとの指紋に誰がと番号を入れない（judgment.line_skeleton）",
+         "without who decided or the line's ID" if _skeleton_without_who_and_id() else "骨に誰がか番号が入る"),
+        ("配る封の行ごとの指紋・日本語",
+         "誰が決めたかと行の番号は入れません" if _skeleton_without_who_and_id() else "骨に誰がか番号が入る"),
+        ("封と配る物に値と説明が入らない（route.seal_body・write_published の欄）",
+         "They do not hold the records' values or the explanations of decisions" if _seal_holds_no_values()
+         else "封か配る物の欄が privacy の並びと違う"),
+        ("封と配る物に値と説明が入らない・日本語",
+         "記録の値と判断の説明は入りません" if _seal_holds_no_values() else "封か配る物の欄が privacy の並びと違う"),
+        ("消す求めが確かめない場所（erase.OUTSIDE・RUN_ORDER）",
+         "THTH does not change or check git history, material already written or published, other copies or the "
+         "shared register" if _erase_outside_unchecked() else "消す求めの範囲が privacy と違う"),
+        ("消す求めが確かめない場所・日本語",
+         "git の履歴・書き出した材料や出した頁・ほかの写し・共通の台帳は、THTH は変えず、確かめもしません"
+         if _erase_outside_unchecked() else "消す求めの範囲が privacy と違う"),
+        ("共通の出さない欄（route.SHARED_PRIVATE_ALWAYS・shared_private）",
+         "Records of the operator's details are not put into any material, and fields that the shared register "
+         "marks as private are removed from every project's material" if _shared_private_fence()
+         else "共通の出さない欄の柵が privacy と違う"),
+        ("共通の出さない欄・日本語",
+         "運営者の情報の記録はどの材料にも入れず、共通の台帳の側が出さないと決めた欄は、どのプロジェクトの材料からも除きます"
+         if _shared_private_fence() else "共通の出さない欄の柵が privacy と違う"),
         # 段 2: 実店舗の形と下書き（既定で出さない欄・画像なし・出さない期限・二段で認める種類）。
         ("店の住所と電話と休みの理由は既定で出さない（register/kinds.private_by_default）",
          "The shop's address and phone number, and the reason for a closure, are not put into drafts unless the owner "
