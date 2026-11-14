@@ -70,8 +70,8 @@
    "id": "c4_3_draft",
    "field": "draft",
    "in": [
-    "true",
-    "false"
+    true,
+    false
    ],
    "allow_blank": true,
    "note": "下書きは真偽（既定 真）"
@@ -87,7 +87,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },
@@ -102,7 +102,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },
@@ -117,7 +117,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },
@@ -138,7 +138,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },
@@ -155,7 +155,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },
@@ -170,7 +170,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     },
     "table": {
@@ -188,7 +188,7 @@
    "where": {
     "terashi": {
      "in": [
-      "true"
+      true
      ]
     }
    },

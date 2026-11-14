@@ -197,7 +197,8 @@
    "when": {
     "public": {
      "in": [
-      "true"
+      true,
+      1
      ]
     }
    },
