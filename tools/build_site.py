@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-13"  # 5.19.0（台帳の節と実店舗のレジの節）。出す日がずれたら直す。前: 2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-14"  # 5.20.0（台帳の器の節）。出す日がずれたら直す。前: 2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
