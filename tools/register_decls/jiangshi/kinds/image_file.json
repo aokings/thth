@@ -1,0 +1,10 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "image_file",
+ "place": "images/files/*",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 52428800
+}

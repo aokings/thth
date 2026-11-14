@@ -1,0 +1,10 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "story_backbone",
+ "place": "stories/backbone/*",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144
+}

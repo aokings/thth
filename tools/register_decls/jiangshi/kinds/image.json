@@ -1,0 +1,161 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "image",
+ "place": "data/images.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "j_1_image",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 134〜141 行（images は 284〜287 行）"
+  },
+  {
+   "check": "unique",
+   "id": "j_2_image",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "j_23",
+   "fields": [
+    "image_kind",
+    "title_ja",
+    "depicts_ja",
+    "entity_id"
+   ]
+  },
+  {
+   "check": "forbid_pair",
+   "id": "j_24",
+   "via": "source_id",
+   "target": {
+    "source_type": {
+     "in": [
+      "film",
+      "tv_series",
+      "manga",
+      "game",
+      "official_catalog"
+     ]
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "j_25",
+   "when": {
+    "image_kind": {
+     "in": [
+      "document"
+     ]
+    }
+   },
+   "fields": [
+    "source_id",
+    "locator",
+    "holder",
+    "holder_item_id",
+    "holder_item_url",
+    "rights_status",
+    "license",
+    "credit_line",
+    "terms_url",
+    "retrieved_at"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "j_26",
+   "when": {
+    "image_kind": {
+     "in": [
+      "document"
+     ]
+    }
+   },
+   "field": "rights_status",
+   "in": [
+    "public_domain",
+    "open_license"
+   ],
+   "allow_blank": true,
+   "note": "空は j_25 が赤にする"
+  },
+  {
+   "check": "shape",
+   "id": "j_27",
+   "when": {
+    "image_kind": {
+     "in": [
+      "document"
+     ]
+    }
+   },
+   "field": "holder_item_url",
+   "shape": "http_url",
+   "note": "台本は startswith('http')"
+  },
+  {
+   "check": "required",
+   "id": "j_28",
+   "when": {
+    "image_kind": {
+     "in": [
+      "reconstruction"
+     ]
+    }
+   },
+   "fields": [
+    "generator",
+    "prompt_path",
+    "additions_ja",
+    "retrieved_at"
+   ]
+  },
+  {
+   "check": "count",
+   "id": "j_30",
+   "when": {
+    "image_kind": {
+     "in": [
+      "reconstruction"
+     ]
+    }
+   },
+   "from": {
+    "kind": "image_basis",
+    "via": "image_id"
+   },
+   "min": 1
+  },
+  {
+   "check": "words",
+   "id": "j_31",
+   "field": "image_kind",
+   "in": [
+    "document",
+    "reconstruction"
+   ]
+  }
+ ]
+}

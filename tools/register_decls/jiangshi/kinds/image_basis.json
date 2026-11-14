@@ -1,0 +1,24 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "image_basis",
+ "place": "data/image_basis.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "image_id",
+   "claim_id"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "image_id",
+   "meaning": "parent",
+   "to": "image"
+  },
+  {
+   "field": "claim_id",
+   "meaning": "derived_from",
+   "to": "claim"
+  }
+ ]
+}
