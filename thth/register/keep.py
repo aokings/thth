@@ -348,6 +348,19 @@ def log(root: str, item: dict) -> None:
         f.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def note_trail(root: str, name: str, item: dict) -> None:
+    """取り込みの跡（段 5 §2.3・`trail.note`）: 控えの目録 `snapshots/<控えの名>.json` の `trail` に 1 件足す
+    （集めた者・検めた者・束の目録の指紋など）。控えの名（目録と宣言の指紋）には入らない。"""
+    if not isinstance(name, str) or len(name) < 8 or any(c not in "0123456789abcdef" for c in name):
+        raise RegisterRefused("register_args_invalid", "snapshot")
+    path = guard(root, _kept(root, SNAPSHOTS, name + ".json"))
+    value = _read_json(root, path, "snapshot")
+    if not isinstance(value, dict) or value.get("schema") != SNAPSHOT_SCHEMA:
+        raise RegisterRefused("register_kept_missing", "snapshot_broken")
+    value["trail"] = [*value.get("trail", []), item]
+    _write_json(root, path, value)
+
+
 def history(root: str) -> list:
     path = guard(root, _kept(root, LOG))
     if not os.path.exists(path):

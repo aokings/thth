@@ -1515,19 +1515,8 @@ def erase_block(root: str, erased_prev: dict | None, previous: dict | None) -> d
                          "judgments": {"bytes": pj.get("bytes"), "count": pj.get("count")}}}
 
 
-def line_skeleton(j: dict, with_unit: bool = True) -> str:
-    """判断の行の骨（問い・対象の記録の番号・単位の指し先・語・結論・日時・いつまで）の指紋。消す求めで印の形にしても
-    変わらない欄だけから作る。**番号と「誰が」は入れない**（配る物は公開の場所に出るので、当てやすい名前を指紋に
-    混ぜない。番号は消す求めで付け直す）。CI は、前に配った頭の行ごとの骨（`deployed.lines`）と今の行を**位置で**
-    比べる（段 5 §3.7）。`with_unit=False` は指し先を除いた骨（消す求めで指し先を除いた行と比べる）。"""
-    t = j.get("target") if isinstance(j.get("target"), dict) else {}
-    a = j.get("answer") if isinstance(j.get("answer"), dict) else {}
-    body = {"question": j.get("question"), "record": t.get("record"), "word": a.get("word"),
-            "conclusion": a.get("conclusion"), "at": j.get("at"), "until": j.get("until")}
-    if with_unit:
-        body["unit"] = t.get("unit")
-        body["value"] = t.get("value")
-    return sha(V.canonical(body).encode("utf-8"))[:32]
+# 行の骨の定めは `judgment.line_skeleton` の 1 か所（`check --against` と同じ骨）。
+line_skeleton = J.line_skeleton
 
 
 def line_skeletons(raw: bytes) -> list:
@@ -1539,8 +1528,7 @@ def line_skeletons(raw: bytes) -> list:
             item = json.loads(line)
         except (ValueError, RecursionError):
             item = {}
-        item = item if isinstance(item, dict) else {}
-        out.append([line_skeleton(item, True), line_skeleton(item, False)])
+        out.append(J.skeleton_pair(item if isinstance(item, dict) else {}))
     return out
 
 
@@ -1562,16 +1550,10 @@ def erase_continued(root: str, raw: bytes, dep: dict, erase) -> str | None:
         return "lines_reduced"
     allowed = set(erase.get("lines") or [])
     requests = set(erase.get("requests") or [])
-    for i, (with_unit, without_unit) in enumerate(lines):
-        j = now[i]
-        if J.is_erased(j):
-            if j.get("id") not in allowed or j["erased"].get("request") not in requests:
-                return "line_not_in_erase"
-            has_unit = bool((j.get("target") or {}).get("unit"))
-            if line_skeleton(j, has_unit) != (with_unit if has_unit else without_unit):
-                return "line_changed"
-        elif line_skeleton(j, True) != with_unit:
-            return "line_changed"
+    for i, pair in enumerate(lines):
+        why = J.line_continues(pair, now[i], lines=allowed, requests=requests)
+        if why is not None:
+            return why
     return None
 
 

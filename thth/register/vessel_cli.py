@@ -2,12 +2,15 @@
 
     thth register kinds <台帳> [--json]
         種類の宣言・憲法・備え付けの種類の一覧（宣言の無い台帳は、備え付けの今の頭つきの .md だけ）
-    thth register check <台帳> [--catalog] [--json]
+    thth register check <台帳> [--catalog] [--against <前>] [--json]
         台帳に .thth/kinds/ があれば、器として読む: 宣言の形・記録と内側の単位・YAML の範囲・同じ番号・鍵で決まらない
         単位・指す欄（先が無い・輪）・来歴の控えの見直し・判断（効いている・古い・消えた指し先）と結びの候補
-        （.thth/kinds/ が無い台帳は、今の check のまま）
+        （.thth/kinds/ が無い台帳は、今の check のまま）。--against <前>（commit か控えの名）は、判断の記録が
+        前の時点の記録の続き（前の全バイトが今の頭と同じ）でなければ赤（段 5 §2.2）
     thth register links <台帳> <種類:番号> [--units] [--unit <指し先>] [--key 欄=値 ...] [--json]
-        指す・指される・判断・観測。単位を鍵で引いて 2 つ以上に当たれば、黙って 1 つにせずに断る
+        指す・指される・判断・観測。単位を鍵で引いて 2 つ以上に当たれば、黙って 1 つにせずに断る。
+        判断ごとに対象の版・依る所の指紋・今の版に効くか・元の記録（inspects の表の行か、誰が・いつ）と、
+        今の版がどの取り込みで入ったか（控えの名・日時・集めた者・検めた者）を出す（段 5 §2.3・§2.4）
 
 どれも読むだけで、台帳にも THTH の側にも書かない。網に出ない。
 """
@@ -18,6 +21,7 @@ import sys
 
 from . import checks as C
 from . import judgment as J
+from . import trail as T
 from . import vessel as V
 from .errors import RegisterRefused
 
@@ -86,6 +90,12 @@ def _health(vessel: V.Vessel, graph: dict) -> dict:
     return {"contradicted_good": count}
 
 
+def _erase_unfinished(root: str) -> int:
+    """消し終わっていない消す求めの数（段 5 §3.5）。"""
+    from . import erase as E
+    return E.unfinished(root)
+
+
 def check(root: str, *, catalog: bool = False) -> dict:
     vessel = V.open_vessel(root)
     graph = V.links(vessel)
@@ -102,14 +112,35 @@ def check(root: str, *, catalog: bool = False) -> dict:
                        "review": graph["review"]},
              "observations": observations, "judgments": J.summary(vessel, judgments),
              "candidates": J.candidates(vessel, judgments), "ids_moves": V.ids_table_moves(vessel),
-             "health": _health(vessel, graph), "checks": C.run(vessel, judgments)}
+             "health": _health(vessel, graph), "checks": C.run(vessel, judgments),
+             "erase_unfinished": _erase_unfinished(root)}
     if catalog:
         value["catalog"] = vessel.catalog()
     return value
 
 
+def check_against(args, root: str) -> dict | None:
+    """`--against <前>`（段 5 §2.2）: 判断の記録が前の時点の続きでなければ赤（`register_judgment_invalid`・
+    judgments_rewritten）。続きなら結果を返す（無ければ None）。"""
+    name = getattr(args, "against", None)
+    if not name:
+        return None
+    result = T.against(root, name)
+    if not result["continues"]:
+        if not getattr(args, "json", False):
+            print(f"  判断の記録が前の時点（{result['from']} {result['against'][:12]}）の続きではありません: "
+                  f"前の {result['line']} 行めが{'ありません' if result['why'] == 'shortened' else '書き換わっています'}",
+                  file=sys.stderr)
+        raise RegisterRefused("register_judgment_invalid", f"judgments_rewritten line {result['line']}",
+                              against=result)
+    return result
+
+
 def cmd_check(args, root: str) -> int:
+    against = check_against(args, root)
     value = {"register": args.register, **check(root, catalog=getattr(args, "catalog", False))}
+    if against is not None:
+        value["against"] = against
     yaml_problems = [p for p in value["problems"] if any(w.startswith("yaml:") for w in p["words"])]
     other = [p for p in value["problems"] if p not in yaml_problems]
     if not args.json:
@@ -133,6 +164,9 @@ def cmd_check(args, root: str) -> int:
     if args.json:
         _print(value)
         return 0
+    if against is not None:
+        print(f"判断の記録は前の時点（{against['from']} {against['against'][:12]}）の続きです"
+              f"（前 {against['lines_before']} 行・今 {against['lines_now']} 行）")
     total = sum(value["records"].values())
     print(f"台帳 {args.register}: 記録 {total} 件（{', '.join(f'{k} {n}' for k, n in sorted(value['records'].items()))}）・"
           f"内側の単位 {value['units']}")
@@ -154,6 +188,8 @@ def cmd_check(args, root: str) -> int:
         for c in ch["list"]:
             if c["violations"] or c.get("unverifiable"):
                 _say_check(c)
+    if value["erase_unfinished"]:
+        print(f"  消し終わっていない消す求め {value['erase_unfinished']} 件（thth register erase status <台帳>）")
     if value["health"]["contradicted_good"]:
         print(f"  反する根拠を持つのに「よい」の語の記録 {value['health']['contradicted_good']} 件（語は上書きしていません）")
     return 0
@@ -188,6 +224,9 @@ def _say_check(c: dict, file=None) -> None:
         print(f"    ほか {rest} 件（--json の checks に 50 件まで）", file=file)
 
 
+_STATE_JA = {"effective": "効く", "stale": "古い", "vanished": "消えた指し先", "unverifiable": "よその台帳"}
+
+
 def _parse_key(items) -> dict:
     out = {}
     for item in items or []:
@@ -203,7 +242,8 @@ def links_of(root: str, ref: str, *, unit=None, key=None, units=False) -> dict:
     rec = vessel.get(ref)
     kind = vessel.kinds[rec.kind]
     graph = V.links(vessel)
-    judgments = J.read(root)
+    # 台帳に書いた判断と、検収の記録を持つ表（inspects）から作った判断（元の記録は元のまま・器は索引だけ）。
+    judgments = J.read(root) + J.inspections(vessel)
     mine = [j for j in judgments if j["target"].get("record") == ref]
     value = {"record": ref, "kind": rec.kind, "path": rec.path, "version": rec.version, "inspected": rec.inspected,
              "problems": rec.problems,
@@ -211,9 +251,10 @@ def links_of(root: str, ref: str, *, unit=None, key=None, units=False) -> dict:
              "points_to": [e for e in graph["edges"] if e["from"] == ref],
              "pointed_by": [e for e in graph["edges"] if e["to"] == ref],
              "review": [e for e in graph["review"] if e["from"] == ref or e["to"] == ref],
-             "judgments": [{"id": j["id"], "question": j["question"], "unit": j["target"].get("unit"),
-                            "value": j["target"].get("value"), "state": J.evaluate(vessel, j),
-                            "by": j.get("by"), "path": j.get("path")} for j in mine]}
+             "judgments": [T.judgment_view(vessel, j) for j in mine if T.shows_version(vessel, j)],
+             # 対象の版を示していない検収の記録（判断に数えない・効くかは言えない）
+             "unversioned": [T.unversioned_view(vessel, j) for j in mine if not T.shows_version(vessel, j)],
+             "entered": T.entered(root, rec)}
     if units:
         value["units"] = [{"pointer": u.pointer, "key": u.key, "ambiguous": u.ambiguous} for u in rec.units]
     picked = None
@@ -245,8 +286,22 @@ def cmd_links(args, root: str) -> int:
         print(f"  指される ← {e['from']}（{e['meaning']}）")
     for o in value["observations"]:
         print(f"  観測 {o['question']}: {o['word']}（書いてある語・判断ではない）")
+    e = value["entered"]
+    if e.get("kept"):
+        from .adopt_cli import intake_line
+        print(f"  この版が入った所: {intake_line(e)}")
+    else:
+        print("  この版が入った所: 控えに無い（控えのあとに直に書かれたか、控えの無い台帳）")
     for j in value["judgments"]:
-        print(f"  判断 {j['id']} {j['question']}: {j['state']}")
+        o = j["origin"]
+        where = (f"元の表 {o['table']} の行 {o['row']}" + (f"（{o['file']}）" if o.get("file") else "")
+                 if "table" in o else f"命令で足した（{o.get('by')}・{o.get('at')}）")
+        seen = f"版 {V.short(j['version'])}" if j["version"] else "確かめた中身"
+        depend = V.short(j["depend"]) if isinstance(j["depend"], str) else "-"
+        print(f"  判断 {j['id']} {j['question']}: {_STATE_JA.get(j['state'], j['state'])}（{seen}・依る所 {depend}・{where}）")
+    for u in value["unversioned"]:
+        print(f"  版を示していない検収の記録: 元の表 {u['table']} の行 {u['row']}"
+              + (f"（{u['file']}）" if u.get("file") else "") + f" {u['question']}: 今の版に効くかは言えない")
     for e in value["review"]:
         print(f"  見直す: {e['from']} の控え {e['recorded']} が、今の {e['to']} と違います（今 {e['now']}）")
     if "unit" in value:

@@ -172,6 +172,8 @@ def cmd_check(args) -> int:
     cfg = ledger.load(args.register)
     root = ledger.root_of(cfg)
     keep.refuse_if_pending(root)  # 止まった入れ替えの間は、混ざった姿を読まない（段 2）
+    if getattr(args, "against", None) and not vessel.has_declarations(root):
+        vessel_cli.check_against(args, root)  # 段 5 §2.2: 判断の記録は足すだけ（器でない台帳でも見る）
     if vessel.has_declarations(root):
         # 台帳の器 段 1: .thth/kinds/ がある台帳は、器として読む（無い台帳は今の check のまま）。
         return vessel_cli.cmd_check(args, root)
@@ -712,6 +714,8 @@ def register(sub) -> None:
         p.add_argument("register", metavar="台帳")
         if verb == "check":
             p.add_argument("--catalog", action="store_true", help="目録（番号・種類・版・場所）も出す（器の台帳）")
+            p.add_argument("--against", default=None, metavar="前",
+                           help="判断の記録が前の時点（commit か控えの名）の続きでなければ赤")
         p.add_argument("--json", action="store_true")
         p.set_defaults(func=_run(func))
 

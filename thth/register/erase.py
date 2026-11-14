@@ -26,7 +26,8 @@
 | `kept_objects` 前の版 | 範囲の版の中身を、控えの置き場から除く（表は枚ごとの控えなので、ほかの行の前の版も道連れ） |
 | `batch` 段取りの控え | 除いた中身の sha256 を、段取りと済んだ記録から外す |
 | `snapshots` 控えの目録 | 除いた中身の sha256（と大きさ）を外し、「消した」と記す |
-| `trail` 訂正と結びの跡 | 旧い文・新しい文は前の版と判断の行で除いた。結び（`carries`）は残す |
+| `trail` 訂正と結びの跡 | 旧い文・新しい文は前の版と判断の行で除いた。結び（`carries`）は残す。控えの目録の跡の注
+  （`trail.note`）が参照する判断の記録の控えのうち範囲を含む物を除き、参照と束の目録の指紋を外す |
 | `materials` 書き出した材料 | 器は書き出し先を知らない（台帳の中には置けない）: 確かめていない |
 | `common`・`git_history`・`clones`・`pages`・`copies` | 確かめていない（器は書き換えない。持ち主の手） |
 | `self_check` 消し終わりの確かめ | 台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋がどこにも無いか |
@@ -944,12 +945,81 @@ def _place_snapshots(root, req, reqb, rng, result, kind, by, at) -> dict:
     return {"state": "erased" if count or names else "nothing", "entries": count, "renamed": len(names)}
 
 
+def _judgments_in_range(data: bytes, reqb: dict, rng: Range, needles: list) -> bool:
+    """控えた判断の記録の中身が、範囲の行（範囲の版を対象にした・理由の文に消す値がある）か範囲の中身を含むか。"""
+    if any(n in data for n in needles):
+        return True
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        item = _read_line(line)
+        if item is not None and not J.is_erased(item) and _line_in_range(item, reqb, rng):
+            return True
+    return False
+
+
+def _read_line(line: str):
+    try:
+        item = json.loads(line) if line.strip() else None
+    except (ValueError, RecursionError):
+        return None
+    return item if isinstance(item, dict) else None
+
+
+def _strip_trail_notes(root: str, req: str, reqb: dict, rng: Range) -> dict:
+    """控えの目録の跡の注（`trail`・段 5 §2.3）が参照する、判断の記録の控えのうち範囲を含む物を除き、参照を外す
+    （指紋を残さない: 名の代わりに `judgments_erased` を記す）。範囲の版を持っていた目録の注の束の目録の指紋も外す。
+    除いた時点への `check --against` は「取り出せない」と言う。"""
+    needles, _short = rng.needles()
+    removed = notes_changed = 0
+    for full in _snapshot_files(root):
+        snap = K._read_json(root, full, "snapshot")
+        trail = snap.get("trail")
+        if not isinstance(trail, list) or not trail:
+            continue
+        touched_snapshot = req in (snap.get("erased") or [])
+        out, changed = [], False
+        for note in trail:
+            if not isinstance(note, dict):
+                out.append(note)
+                continue
+            note = dict(note)
+            digest = note.get("judgments")
+            if isinstance(digest, str):
+                path = K.guard(root, K.object_path(root, digest))
+                data = None
+                if os.path.isfile(path):
+                    with open(path, "rb") as f:
+                        data = f.read()
+                if data is None or _judgments_in_range(data, reqb, rng, needles):
+                    rng.names.add(digest)
+                    if data is not None:
+                        removed += K.remove_object(root, digest)
+                    note.pop("judgments")
+                    note["judgments_erased"] = req
+                    changed = True
+            bundle = note.get("bundle_fp")
+            if isinstance(bundle, str) and (touched_snapshot or bundle in rng.names):
+                rng.names.add(bundle)
+                note.pop("bundle_fp")
+                note["bundle_fp_erased"] = req
+                changed = True
+            out.append(note)
+        if changed:
+            notes_changed += 1
+            K.write_snapshot(root, os.path.basename(full)[:-5], dict(snap, trail=out))
+    return {"objects": removed, "snapshots": notes_changed}
+
+
 def _place_trail(root, req, reqb, rng, result, kind, by, at) -> dict:
     lines = [j for j in J.read(root) if J.is_erased(j) and j["erased"].get("request") == req
              and (j.get("carries") or j.get("path") == "carry")]
-    return {"state": "erased" if lines or result["places"].get("kept_objects", {}).get("state") == "erased"
-            else "nothing", "carry_lines": len(lines),
-            "note": "旧い文・新しい文は前の版と判断の行から除いた。結び（carries）は残した"}
+    notes = _strip_trail_notes(root, req, reqb, rng)
+    result["erased_counts"]["trail_judgments"] = result["erased_counts"].get("trail_judgments", 0) + notes["objects"]
+    hit = lines or notes["objects"] or notes["snapshots"] \
+        or result["places"].get("kept_objects", {}).get("state") == "erased"
+    return {"state": "erased" if hit else "nothing", "carry_lines": len(lines),
+            "judgments_kept": notes["objects"], "notes": notes["snapshots"],
+            "note": "旧い文・新しい文は前の版と判断の行から除いた。結び（carries）は残した。控えに置いた判断の記録の"
+                    "うち範囲を含む物は除き、跡の注の参照も外した"}
 
 
 PLACE_FUNCS = {"judgments": _place_judgments, "seals": _place_seals, "current_text": _place_current,

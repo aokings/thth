@@ -9,7 +9,9 @@
 - `restore`: 台帳の全部（か、控えた前の版）を、元の場所・名前・バイトで別のフォルダに書く。目録の指紋が取り込んだ
   時の元の目録の指紋と同じなら、数・名前・sha256 が全部同じ（進みの欄も含めて、バイトで比べるので）。
 - `diff`: 控えた 2 つの時点（か今）の、足した・変わった・退役した・消えた記録。番号が消えたら赤。台帳が git の外でも
-  （MMR）、器が控えた時点どうしなら取り出せる。
+  （MMR）、器が控えた時点どうしなら取り出せる。台帳が git の作業木なら、端に commit も受ける（段 5 §2.1・
+  `trail.py`。宣言の置き場に入る枚だけを読むだけの git で取り出す）。変わった記録には結びの候補を付け、
+  その間の取り込みの跡（集めた者・検めた者）を出す。
 - `merge`: 束（新しい中身のファイルを、台帳の中の道に置いたフォルダ）を、まとめての入れ替えで入れる。
 - `row_set`・`row_add`: 表（CSV）の 1 行を直す・足す。変える行のバイトだけを書き直し、触っていない行のバイトが
   1 つでも変わるなら書かずに断る。
@@ -29,7 +31,9 @@ import tempfile
 import unicodedata
 
 from . import form
+from . import judgment as J
 from . import keep as K
+from . import trail as T
 from . import vessel as V
 from .errors import RegisterRefused
 
@@ -241,7 +245,8 @@ def _too_large(kinds: dict, entries: list) -> list:
     return out
 
 
-def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | None = None) -> dict:
+def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | None = None,
+          checked_by: str | None = None) -> dict:
     source = os.path.abspath(os.path.expanduser(source))
     to = os.path.abspath(os.path.expanduser(to))
     if os.path.islink(source) or not os.path.isdir(source):
@@ -334,14 +339,17 @@ def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | Non
     source_fp = K.catalog_fp(before)
     source_after = K.catalog_fp(source_catalog(source, plan))
     record["plan"] = plan
-    record["adopted"].append({"at": at, "by": by, "fp": fp, "snapshot": result.get("snapshot"),
-                              "source_fp": source_fp, "files": len(before)})
+    record["adopted"].append({"at": at, "by": by, "checked_by": checked_by or None, "fp": fp,
+                              "snapshot": result.get("snapshot"), "source_fp": source_fp, "files": len(before)})
     K._write_json(to, _adopt_path(to), record)
+    # 取り込みの跡（段 5 §2.3）: 控えの目録に、集めた者・検めた者・束（元の範囲の目録）の指紋を残す。
+    T.note(to, result.get("snapshot"), what="adopt" if first else "readopt", by=by, at=at, checked_by=checked_by,
+           bundle_fp=source_fp)
     return {"register": to, "source": source, "files": len(before), "bytes": sum(e["size"] for e in before),
             "fp": fp, "snapshot": result.get("snapshot"), "source_fp": source_fp, "source_fp_after": source_after,
             "source_moved": source_after != source_fp, "same": fp == source_fp, "changed": result.get("applied", 0),
             "removed": removed, "continued": result.get("continued", False), "batch": result.get("batch"),
-            "decl": copied, "first": first}
+            "decl": copied, "first": first, "checked_by": checked_by or None}
 
 
 # ------------------------------------------------------------------ 戻す出口
@@ -378,28 +386,42 @@ def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
 
 # ------------------------------------------------------------------ 変えた跡
 
-def _side(root: str, name: str, tmp: str):
-    """`(目録, 器として読んだ台帳)`。`now` は今（段取りが残っていれば前の姿）。ほかは控えた目録。"""
-    if name == "now":
+def _side(root: str, name: str, tmp: str, decl: str | None = None):
+    """`(目録, 器として読んだ台帳, 端の説明)`。`now` は今（段取りが残っていれば前の姿）。控えの名は控えた目録。
+    台帳が git の作業木なら、控えの名でない名を commit として取り出す（段 5 §2.1）。`decl` は宣言の置き場
+    （既定は台帳の `.thth/`。commit と今の端に当てる。控えの端は控えた時点の宣言で読む）。"""
+    kind = T.side_kind(root, name)
+    if kind == "now":
         K.check_thth(root)
 
         def read():
             # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。
             entries = K._view_once(root)
             if K.pending(root) is None:
-                return entries, V.open_vessel(root)
+                return entries, V.open_vessel(root, decl_base=decl)
             into = tempfile.mkdtemp(prefix="now-", dir=tmp)
             for e in entries:
                 K.put_file(into, e["path"], K.view_bytes(root, e), False)
-            for e in K.decl_entries(root, store=False):
-                K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
-            return entries, V.open_vessel(into)
+            if decl is None:
+                for e in K.decl_entries(root, store=False):
+                    K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
+            return entries, V.open_vessel(into, decl_base=decl)
 
-        return K.consistent(root, read)
+        entries, vessel = K.consistent(root, read)
+        return entries, vessel, {"side": "now", "snapshot": None}
+    if kind == "commit":
+        into = tempfile.mkdtemp(prefix="commit-", dir=tmp)
+        base = decl or os.path.join(root, K.THTH)
+        for rel, data in (_decl_files(base) if os.path.isdir(base) else []):
+            K.put_file(into, f"{K.THTH}/{rel}", data, False)
+        kinds = V.open_vessel(into).kinds  # 宣言だけを先に読む（宣言の置き場に入る枚だけを取り出すため）
+        got = T.extract(root, name, into, kinds)
+        return got["files"], V.open_vessel(into), {"side": "commit", "commit": got["commit"],
+                                                   "absent_kinds": got["absent_kinds"], "snapshot": None}
     snap = K.load_snapshot(root, name)
     into = tempfile.mkdtemp(prefix="kept-", dir=tmp)
     K.materialize(root, snap, into)
-    return snap["files"], V.open_vessel(into)
+    return snap["files"], V.open_vessel(into), {"side": "snapshot", "snapshot": snap["id"]}
 
 
 def _read_decl(root: str, rel: str) -> bytes:
@@ -420,18 +442,29 @@ def _retired(rec: V.Record) -> bool:
     return rec.kind == "thth_row" and rec.values is not None and rec.values.get("status") == form.RETIRED
 
 
-def diff(root: str, spec: str) -> dict:
-    """`<前>..<後>`（どちらも控えた目録の指紋の頭・`first`・`last`・`now`）。"""
+def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict:
+    """`<前>..<後>`（どちらも控えた目録の指紋の頭・`first`・`last`・`now`。台帳が git の作業木なら commit も）。
+    `excused` は赤にしない記録の番号。既定は、台帳の消す求めの結果に載った番号（`trail.erase_excuses`）。"""
+    if excused is None:
+        excused = T.erase_excuses(root)["records"]
     if not isinstance(spec, str) or spec.count("..") != 1:
         raise RegisterRefused("register_args_invalid", "range")
     left, right = spec.split("..")
+    if decl is not None:
+        decl = os.path.abspath(os.path.expanduser(decl))
     with tempfile.TemporaryDirectory(prefix="thth-diff-") as tmp:
-        a_files, a = _side(root, left or "first", tmp)
-        b_files, b = _side(root, right or "now", tmp)
+        a_files, a, a_side = _side(root, left or "first", tmp, decl)
+        b_files, b, b_side = _side(root, right or "now", tmp, decl)
         ra, rb = _records(a), _records(b)
         added = sorted(set(rb) - set(ra))
         vanished = sorted(set(ra) - set(rb))
         changed, retired, units_gone = [], [], []
+        # 変わった記録の結びの候補（器は結ばない）。判断は台帳の今の記録（後の端で評価する）。
+        try:
+            stored = J.read(root)
+        except RegisterRefused:
+            stored = []
+        candidates = J.candidates(b, stored) if stored else []
         for ref in sorted(set(ra) & set(rb)):
             before, after = ra[ref], rb[ref]
             # 内側の番号は、記録の版が同じでも比べる（宣言だけを変えると、中身が同じまま番号が変わる）。
@@ -440,26 +473,44 @@ def diff(root: str, spec: str) -> dict:
             if sorted(r.version for r in before) != sorted(r.version for r in after) or units_a != units_b:
                 item = {"record": ref, "path": after[0].path}
                 if units_a or units_b:
-                    item["units"] = {"added": len(units_b - units_a), "vanished": len(units_a - units_b)}
+                    item["units"] = {"added": len(units_b - units_a), "vanished": len(units_a - units_b),
+                                     "added_pointers": sorted(units_b - units_a)[:50],
+                                     "vanished_pointers": sorted(units_a - units_b)[:50]}
                 # 内側の行の明示の番号（units.id。指し先は i:）が消えたら赤（設計 §5.5）。鍵の指し先（k:・kc:）は
                 # 中身で動くので、消えても赤にしない（変わった記録として出す）。
                 units_gone += [{"record": ref, "unit": p} for p in sorted(units_a - units_b) if p.startswith("i:")]
+                item["candidates"] = [c for c in candidates if c["record"] == ref]
                 changed.append(item)
             if not any(_retired(r) for r in before) and any(_retired(r) for r in after):
                 retired.append(ref)
         fa = {e["path"]: e["sha256"] for e in a_files}
         fb = {e["path"]: e["sha256"] for e in b_files}
+        if "commit" in (a_side["side"], b_side["side"]):
+            # commit の端は宣言の置き場の枚だけ。今と控えの端も、宣言の置き場の枚だけで比べる。
+            select = T.selector({**a.kinds, **b.kinds})
+            fa = {p: h for p, h in fa.items() if select(p)}
+            fb = {p: h for p, h in fb.items() if select(p)}
     files = {"added": sorted(set(fb) - set(fa)), "removed": sorted(set(fa) - set(fb)),
              "changed": sorted(p for p in set(fa) & set(fb) if fa[p] != fb[p])}
-    return {"from": K.catalog_fp(a_files), "to": K.catalog_fp(b_files),
+    red = T.vanished(vanished, units_gone, excused=excused)
+    removed_red = [p for p in files["removed"]
+                   if not any(r.path == p and r.ref in red["excused"] for rs in ra.values() for r in rs)]
+    intakes = None
+    if a_side["side"] != "commit" and b_side["side"] != "commit":
+        intakes = T.intakes_between(root, a_side.get("snapshot"), b_side.get("snapshot"))
+    return {"from": K.catalog_fp(a_files) if a_side["side"] != "commit" else a_side["commit"],
+            "to": K.catalog_fp(b_files) if b_side["side"] != "commit" else b_side["commit"],
+            "sides": [a_side, b_side],
             "records": {"added": added, "changed": changed, "retired": retired, "vanished": vanished},
             "units": {"vanished": units_gone},
-            "files": files, "red": bool(vanished or files["removed"] or units_gone)}
+            "files": files, "intakes": intakes, "excused": red["excused"],
+            "red": bool(red["records"] or removed_red or red["units"])}
 
 
 # ------------------------------------------------------------------ 束をまとめて入れる
 
-def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None) -> dict:
+def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None,
+          checked_by: str | None = None) -> dict:
     """束のフォルダの全部のファイルを、台帳の同じ道へ、まとめての入れ替えで入れる（足すか置き換えるだけ）。
     `base` を渡すと、台帳の今の目録の指紋がそれで始まるときだけ入れる（束を作った時から台帳が動いていない）。"""
     bundle = os.path.abspath(os.path.expanduser(bundle))
@@ -481,7 +532,11 @@ def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None) 
         if not now.startswith(base):
             raise RegisterRefused("register_batch_conflict", "base", now=now[:16])
     result = K.run(root, desired, what="merge", by=by, at=at)
-    return {**result, "bundle_files": len(desired)}
+    bundle_fp = K.catalog_fp([{"path": rel, "sha256": K.sha256(data), "size": len(data)}
+                              for rel, data in desired.items()])
+    # 取り込みの跡（段 5 §2.3）: 控えの目録に、集めた者・検めた者・束の目録の指紋を残す。
+    T.note(root, result.get("snapshot"), what="merge", by=by, at=at, checked_by=checked_by, bundle_fp=bundle_fp)
+    return {**result, "bundle_files": len(desired), "bundle_fp": bundle_fp, "checked_by": checked_by or None}
 
 
 # ------------------------------------------------------------------ 表の 1 行を書く
