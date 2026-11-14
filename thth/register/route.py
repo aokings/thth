@@ -56,6 +56,11 @@
   - `dest`（書き出し先の名前。台帳の外の相対の道）を内の道具の出し口と読者の出し口が同じに言えば、宣言の読みで断る。
     手元でも、読む者の違う出し口の封の材料が置いてある道へ違う中身を書くなら断る（`register_material_stale`・
     `other_outlet`）。内の道具の出し口は選ばずに元のバイトで書く（出さない欄も・差し込みもそのまま）。
+  - 段 10（`docs/受け入れ_台帳の器_段10_2026-11-14.md`）: 内の出し口が `dest_shared_with: [読者の出し口]` で名指しし、
+    書き出し先が同じ道で、種類も置き場の型も重ならないときだけ、同じ書き出し先を分け合える（repo の中に台帳を置き、
+    repo の根を写しにする形。公開するのは build の物で、書き出し先を丸ごと公開しない使い方に限る）。互いの材料は
+    相手の旧い材料に数えず、相手の置き場の型に当たる出力は書く前に断る（`register_write_unsafe`・`shared_dest`）。
+    台帳が書き出し先の中にあるとき、旧い材料の見張りは、出し口（と分け合う出し口）の置き場の型が載るフォルダだけ。
   - 出さない欄: 読者の材料では、表は列を残して値を空に・枚（YAML・JSON の上の段）は鍵を除く。ほかのセルと行の
     バイトは変えない。除けない書き方の枚は記録ごと外す（`private_unremovable`）。封と材料の控えには値を入れない
     （版と出力の sha256 だけ）。
@@ -110,7 +115,8 @@ MATERIALS_DIR = "materials"
 JST = datetime.timezone(datetime.timedelta(hours=9))
 QUESTION = re.compile(r"[a-z][a-z0-9_]{0,31}(@[a-z][a-z0-9_]{0,31})?\Z")
 _O_KEYS = ("audience", "kinds", "level", "requires", "fact", "reservation", "common", "on_narrow", "dest", "ignore",
-           "published", "note")
+           "published", "dest_shared_with", "note")
+SHARED_MAX = 8
 _K_KEYS = ("private_fields", "inserts", "hide", "reader_fields", "note")
 # 段 7 の後半（§7.7）: 出し口の宣言の頭の内部の語。字のまま比べる（正規表現は受けない）。
 INTERNAL_WORDS_MAX = 512
@@ -157,6 +163,7 @@ class Outlet:
     dest: str | None = None    # 書き出し先（宣言の上の名前。内の出し口と読者の出し口で同じなら断る。§7.1）
     ignore: tuple = ()         # 旧い材料の柵で見ない道の型（§7.8）
     published: dict | None = None  # 出した物の関門の厳しさ（§7.6。形は `published.parse_rules`）
+    shares_dest: tuple = ()    # 段 10: 内の出し口が、同じ書き出し先を名指しで分け合う読者の出し口（`dest_shared_with`）
 
     def __post_init__(self):
         if self.conf is None:
@@ -327,6 +334,10 @@ def parse_outlets(data, kinds: dict) -> dict:
             raise V.DeclarationError(f"outlets:{name}:ignore")
         if common is not None and (not isinstance(common, str) or not V.NAME.fullmatch(common)):
             raise V.DeclarationError(f"outlets:{name}")
+        shared = o.get("dest_shared_with", [])
+        if not isinstance(shared, list) or len(shared) > SHARED_MAX or len(set(shared)) != len(shared) or any(
+                not isinstance(x, str) or not x for x in shared) or (shared and (audience != "internal" or dest is None)):
+            raise V.DeclarationError(f"outlets:{name}:dest_shared_with")
         published = None
         if "published" in o:
             from . import published as P   # 段 7 の後半（§7.6）。published.py が route を読むので、ここで読む
@@ -347,13 +358,73 @@ def parse_outlets(data, kinds: dict) -> dict:
             res = {"question": q, "conclusion": c, "reason_kinds": list(kinds_ok)}
         out[name] = Outlet(name, audience, list(names), level, _conds(o.get("requires"), f"outlets:{name}"),
                            _conds(o.get("fact"), f"outlets:{name}"), res, common, on_narrow, confs, dest,
-                           tuple(ignore), published)
-    # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）
+                           tuple(ignore), published, tuple(shared))
+    # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）。
+    # 段 10: 例外は、内の出し口が `dest_shared_with` で読者の出し口を名指しし、書き出し先が同じ道（入れ子でない）で、
+    # 種類が重ならず、置き場の型どうしも重ならないときだけ（同じファイルに 2 つの出し口が書くことは無い）。
+    # 書き出し先そのものを丸ごと公開する使い方では名指ししない（こぴちゃの repo の根のように、公開するのは build の物）。
+    for a in out.values():
+        for x in a.shares_dest:
+            b = out.get(x)
+            if b is None or b.audience != "reader" or b.dest is None or dest_key(b.dest) != dest_key(a.dest):
+                raise V.DeclarationError(f"outlets:{a.name}:dest_shared_with:{x}"[:120])
+            if set(a.kinds) & set(b.kinds) or a.common is not None or b.common is not None or \
+                    _patterns_overlap(_kind_patterns(kinds, a), _kind_patterns(kinds, b)):
+                raise V.DeclarationError(f"outlets:{a.name}:dest_shared_with:{x}:overlap"[:120])
     for a in out.values():
         for b in out.values():
             if a.audience == "internal" and b.audience == "reader" and a.dest is not None and b.dest is not None \
-                    and dests_overlap(a.dest, b.dest):
+                    and dests_overlap(a.dest, b.dest) and b.name not in a.shares_dest:
                 raise V.DeclarationError(f"outlets:{a.name}:dest_shared:{b.name}")
+    return out
+
+
+def _kind_patterns(kinds: dict, outlet: Outlet) -> list:
+    return [pat for k in outlet.kinds for pat in kinds[k].places]
+
+
+def _patterns_overlap(xs, ys) -> bool:
+    """置き場の型どうしが重なるか（控えめに読む）。重なるとみるのは: 同じ型・片方が片方に当たる（fnmatch の `*` は
+    `/` も越える）・**型の字のある側の、型より前の固定のフォルダの下に、もう片方が置かれうる**（読者の出し口が型で
+    まとめて取るフォルダの中に、内の材料を置かせない。build はそのフォルダを丸ごと読むことが多い。段 10 の検収の穴 3）。"""
+    import fnmatch
+    for x in xs:
+        for y in ys:
+            if x == y or fnmatch.fnmatchcase(x, y) or fnmatch.fnmatchcase(y, x):
+                return True
+            for a, b in ((x, y), (y, x)):
+                deep = _glob_dir(a)
+                if deep is not None and _under(_fixed_dir(b), deep):
+                    return True
+    return False
+
+
+def _glob_dir(pattern: str):
+    """型の字があれば、その前の固定のフォルダ（根なら ""）。無ければ None。"""
+    if not any(ch in pattern for ch in "*?["):
+        return None
+    fixed = []
+    for part in pattern.split("/"):
+        if any(ch in part for ch in "*?["):
+            break
+        fixed.append(part)
+    return "/".join(fixed)
+
+
+def _fixed_dir(pattern: str) -> str:
+    """その型のファイルが置かれうる、いちばん浅いフォルダ（型の字があれば型の前・無ければファイルの親）。"""
+    deep = _glob_dir(pattern)
+    if deep is not None:
+        return deep
+    return pattern.rsplit("/", 1)[0] if "/" in pattern else ""
+
+
+def shared_partners(root: str, vessel: V.Vessel, outlet: Outlet) -> list:
+    """同じ書き出し先を名指しで分け合う、ほかの出し口（どちらの向きの名指しも）。"""
+    out = []
+    for other in load_outlets(root, vessel).values():
+        if other.name != outlet.name and (other.name in outlet.shares_dest or outlet.name in other.shares_dest):
+            out.append(other)
     return out
 
 
@@ -1613,6 +1684,52 @@ def _outlet_patterns(vessel: V.Vessel, outlet: Outlet) -> list:
     return pats
 
 
+def _watch_scope(root: str, vessel: V.Vessel, outlets) -> tuple:
+    """見張るフォルダ: (直下だけ見るフォルダの集まり, 下の全部を見るフォルダの集まり)。
+    - 型の字の無い置き場（1 枚のファイル）は、その親の直下。
+    - 型の字のある置き場は、型より前の固定のフォルダの下の全部（fnmatch の `*` は `/` を越えるので、下のフォルダの
+      ファイルも書き出されうる。段 10 の検収の穴 1）。
+    - 前の封の出力の道の親も直下を見る（出し口の種類を減らしたあとに残った旧い材料を拾う。段 10 の検収の穴 2）。"""
+    flat, deep = set(), set()
+    for o in outlets:
+        for pat in _outlet_patterns(vessel, o):
+            d = _glob_dir(pat)
+            if d is None:
+                flat.add(pat.rsplit("/", 1)[0] if "/" in pat else "")
+            else:
+                deep.add(d)
+        try:
+            seal = read_seal(root, o.name)
+        except RegisterRefused:
+            seal = None
+        for path in ((seal or {}).get("body", {}).get("outputs") or {}):
+            flat.add(path.rsplit("/", 1)[0] if "/" in path else "")
+    return flat, deep
+
+
+def _under(rel: str, base: str) -> bool:
+    return base == "" or rel == base or rel.startswith(base + "/")
+
+
+def _dir_in_scope(rel: str, scope) -> bool:
+    """このフォルダの中へ降りるか（見張るフォルダか、その途中か、その下）。"""
+    flat, deep = scope
+    return any(_under(rel, d) or _under(d, rel) for d in deep) or any(_under(d, rel) for d in flat)
+
+
+def _file_in_scope(rel: str, scope) -> bool:
+    flat, deep = scope
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    return parent in flat or any(_under(rel, d) for d in deep)
+
+
+def shared_clash(root: str, vessel: V.Vessel, outlet: Outlet, outputs) -> list:
+    """同じ書き出し先を分け合う出し口の置き場の型に当たる、この出し口の出力（宣言の読みで重ならないことを
+    確かめているが、型どうしの重なりは控えめにしか読めないので、書く前にもう一度見る）。"""
+    theirs = [pat for o in shared_partners(root, vessel, outlet) for pat in _outlet_patterns(vessel, o)]
+    return sorted(p for p in outputs if theirs and _ignored(p, theirs))
+
+
 def _ignored(rel: str, patterns) -> bool:
     """出し口の宣言の `ignore`（道の型）に当たるか。型が道の頭のフォルダに当たれば、その下は全部当たる。"""
     import fnmatch
@@ -1624,9 +1741,18 @@ def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
     """書き出し先にある物の sha256。段 7（§7.8）: 出し口の置き場の型に当たる物だけでなく、書き出し先の**全部**を見る
     （`.` で始まるフォルダの中も・`node_modules` も）。見ないのは出し口の宣言の `ignore` に当たる物と、台帳の中と、
     この出し口の配る物（書き出し先の頭の `thth-seal.<出し口>.json`。材料と一緒に配る、出し口の一覧の一部）だけ。
-    フォルダの symlink は辿らずに、それ自体を 1 つの物として数える（中に旧い材料を隠せない）。"""
+    フォルダの symlink は辿らずに、それ自体を 1 つの物として数える（中に旧い材料を隠せない）。
+    段 10: 同じ書き出し先を名指しで分け合う出し口の材料は数えない。台帳が書き出し先の中にある（repo の中に台帳、
+    repo の根が写し）ときは、見るのを `_watch_scope` のフォルダだけにする（その外の symlink も数えない）。"""
     out = {}
     ignore = outlet.ignore
+    partners = shared_partners(root, vessel, outlet)
+    # 段 10: 同じ書き出し先を分け合う出し口の材料は、この出し口の旧い材料に数えない（その出し口の柵が見る）
+    theirs = [pat for o in partners for pat in _outlet_patterns(vessel, o)]
+    # 段 10: 台帳が書き出し先の中にある（repo の中に台帳を置き、repo の根を写しにする）とき、見張るのは
+    # 出し口の置き場の型が載るフォルダだけ（その直下。型がフォルダの段にあれば、型の前の固定のフォルダの下の全部）。
+    # repo のほかの物（道具・文書）を ignore に並べずに済む。置き場のフォルダの旧い材料はこれまでどおり拾う。
+    scope = _watch_scope(root, vessel, [outlet] + partners) if _inside(root, to) else None
     own_seal = f"thth-seal.{outlet.name}.json"   # 配る物（`verify --publish`。設計 §5.6 で材料と一緒に配る）
     if os.path.isdir(to):
         for directory, dirs, files in os.walk(to, followlinks=False):
@@ -1634,7 +1760,7 @@ def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
             for d in sorted(dirs):
                 full = os.path.join(directory, d)
                 rel = os.path.relpath(full, to).replace(os.sep, "/")
-                if _inside(full, root) or _ignored(rel, ignore):
+                if _inside(full, root) or _ignored(rel, ignore) or (scope is not None and not _dir_in_scope(rel, scope)):
                     continue
                 if os.path.islink(full):
                     out[rel] = "symlink"
@@ -1645,6 +1771,8 @@ def placed(root: str, vessel: V.Vessel, outlet: Outlet, to: str, names) -> dict:
                 full = os.path.join(directory, name)
                 rel = os.path.relpath(full, to).replace(os.sep, "/")
                 if rel == own_seal and rel not in names:
+                    continue
+                if rel not in names and (_ignored(rel, theirs) or (scope is not None and not _file_in_scope(rel, scope))):
                     continue
                 if rel in names or not _ignored(rel, ignore):
                     out[rel] = _file_sha(full)
@@ -1728,6 +1856,9 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
              "same_as_seal": outputs == seal["body"]["outputs"],
              "differs": sorted(p for p in set(outputs) | set(now) if outputs.get(p) != now.get(p)),
              "mixed": mixed, "check": check}
+    clash = shared_clash(root, ctx.vessel, outlet, outputs)
+    if clash:
+        raise RegisterRefused("register_write_unsafe", "shared_dest", stale=clash[:50])
     if check:
         return value
     if mixed:
@@ -1781,6 +1912,9 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
         new_judgments = ctx.every[int(erased_prev["body"]["judgments"].get("count") or 0):]
     else:
         new_judgments = ctx.every
+    clash = shared_clash(root, ctx.vessel, outlet, body["outputs"])
+    if clash:
+        raise RegisterRefused("register_write_unsafe", "shared_dest", stale=clash[:50])
     now = placed(root, ctx.vessel, outlet, to, set(body["outputs"]))
     return {"outlet": outlet.name, "to": to, "body": body, "result": result, "digest": digest(body),
             "new_judgments": [_judgment_line(j) for j in new_judgments],

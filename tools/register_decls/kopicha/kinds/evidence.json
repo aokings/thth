@@ -159,7 +159,19 @@
      ]
     }
    },
-   "note": "K4-8（scripts/lib/knowledge.mjs 239〜245）。空の rights_status は見ない（台本のまま）"
+   "note": "K4-8（scripts/lib/knowledge.mjs 239〜245）。空の rights_status はここでは見ない（k4_8_warn が警告）"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "k4_8_warn",
+   "via": "source_id",
+   "target": {
+    "rights_status": {
+     "blank": true
+    }
+   },
+   "level": "warn",
+   "note": "blank_rights（scripts/lib/knowledge.mjs。こぴちゃ 58534e991・11/14）。rights_status が空の出典を指す根拠は警告（unknown の赤とは別）"
   },
   {
    "check": "words",

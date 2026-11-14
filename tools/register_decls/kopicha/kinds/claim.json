@@ -190,6 +190,30 @@
   },
   {
    "check": "count",
+   "id": "k4_6b",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "relation": {
+     "in": [
+      "supports"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "in": [
+      "supported"
+     ]
+    }
+   },
+   "note": "K4-6 の締め（scripts/lib/knowledge.mjs の supported_without_supports。こぴちゃ 58534e991・11/14）。supported なら relation=supports の根拠が 1 つ以上。根拠 0 の supported は k4_6 も赤にする（台本は 0 のときこの赤を出さない。赤の数は 1 つ多い）"
+  },
+  {
+   "check": "count",
    "id": "k4_9",
    "from": {
     "kind": "evidence",
@@ -203,6 +227,11 @@
       "maker",
       "retailer"
      ]
+    },
+    "relation": {
+     "in": [
+      "supports"
+     ]
     }
    },
    "min": 1,
@@ -213,7 +242,7 @@
      ]
     }
    },
-   "note": "K4-9（scripts/lib/knowledge.mjs 247〜254）。「全部が弱い 4 種なら赤」を「弱くない根拠が 1 つ以上」に言い換えた。根拠 0 の supported は k4_6 が別に赤にする。relation を問わない（台本のまま）"
+   "note": "K4-9（scripts/lib/knowledge.mjs の status_cap）。「支える根拠（relation=supports）が全部弱い 4 種なら赤」を「弱くない支える根拠が 1 つ以上」に言い換えた。こぴちゃ 58534e991（11/14）で支える根拠だけで数えるよう締めた。支える根拠が 0 の supported は k4_6b が別に赤にする"
   },
   {
    "check": "shape",

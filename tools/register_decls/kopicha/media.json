@@ -134,15 +134,13 @@
    "z4_1_variety_domain": 0,
    "z4_2_variety": 0,
    "z4_1_tea_type": 0,
-   "z4_2_tea": 0
+   "z4_2_tea": 0,
+   "k4_6b": 0,
+   "k4_8_warn": 79
   },
   "problems": 0
  },
- "ask_lane": [
-  "K4-9: 台本の注は「この 4 種の根拠だけで支えられた主張」だが、数えるのは relation を問わない全部の根拠。supports が全部 4 種で通る supported 3 件（c-origin-assam-010・c-origin-assam-026・c-origin-china-res-q18-20）。支える根拠だけで数えるべきか",
-  "K4-8: rights_status が空の出典 34（それを指す根拠 79）を見ない。空を unknown と同じに扱うか",
-  "K4-6: 根拠の行の数を relation を問わず数える。supports が 1 つも無いのに通る主張 56（supported 6・contextual 40・contested 9・unverified 1）。supported・contested も context だけで足りるとするか"
- ],
+ "ask_lane": [],
  "vessel_gaps": [
   "台帳をまたぐ指し: sister-links.entity_id→にがみラボの点は宣言できない（宿題に回した物: 指示 §6）",
   "ファイル・頁の道を指す欄: article-claims.file・shops.source（catalog）・entities.page_path・sister/article-links の page・target は宣言できない（宿題に回した物: 指示 §6）",
@@ -226,5 +224,8 @@
    }
   ],
   "drop": true
- }
+ },
+ "answered": [
+  "K4-9・K4-8・K4-6（11/14 こぴちゃ 58534e991・返事 docs/返事_台帳の器_段4の問い_2026-11-14.md）: 上限の 4 種は支える根拠だけで数える（k4_9）・rights の空は警告（k4_8_warn）・supported は支える根拠が 1 つ以上（k4_6b）"
+ ]
 }

@@ -1,6 +1,6 @@
 {
  "schema": "thth.outlets/1",
- "note": "こぴちゃの出し口（段 7 の実物の確かめ・tools/register_stage7_realcheck.py）。読む物は目録 docs/目録_台帳の器_こぴちゃ_2026-11-13.md §1.1 の「サイトが読むか」、内部の層は §3 の K-8。書き出し先の名前（dest）は叩き台で、実際の置き場は各メディアの向き替え（段 10・11）で決める",
+ "note": "こぴちゃの出し口（段 7 の実物の確かめ・tools/register_stage7_realcheck.py）。読む物は目録 docs/目録_台帳の器_こぴちゃ_2026-11-13.md §1.1 の「サイトが読むか」、内部の層は §3 の K-8。書き出し先は repo の根（\".\"）。repo の中に台帳のフォルダを置き、根の src/content/ と data/knowledge/ を書き出した写しにする（段 10）",
  "outlets": {
   "site": {
    "audience": "reader",
@@ -12,8 +12,9 @@
   "tools": {
    "audience": "internal",
    "kinds": ["hypothesis", "lead", "mention", "point", "name", "article_claim", "source_title_check"],
-   "dest": "internal",
-   "note": "内の道具が読む表: 仮説・問いと作り手の言説（leads）・言及・点・名前・来歴の控え・出典の題の点検。頁には出さない（K-8）。選ばずに書く"
+   "dest": ".",
+   "dest_shared_with": ["site"],
+   "note": "内の道具が読む表: 仮説・問いと作り手の言説（leads）・言及・点・名前・来歴の控え・出典の題の点検。頁には出さない（K-8）。選ばずに書く。段 10: repo の根を site と名指しで分け合う（種類も置き場も重ならない。公開するのは build の dist で、repo の根を丸ごと公開しない）"
   }
  }
 }
