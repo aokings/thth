@@ -491,8 +491,9 @@ def test_加えて2_今の書き方は全部受け入れ型を決めつけずに
     v = V.open_vessel(str(copy(env, "kopicha")))
     page = v.get("page:brazil")
     assert page.inspected and page.problems == []
-    assert page.values["updated"] == "2026-08-27" and page.values["draft"] == "false"
-    assert page.values["parent"] == "null" and page.values["aliases"] == ["Brazil"]
+    # 段 4 §9: 引用していない null と真偽だけは型にする（日付は字のまま）
+    assert page.values["updated"] == "2026-08-27" and page.values["draft"] is False
+    assert page.values["parent"] is None and page.values["aliases"] == ["Brazil"]
     assert page.values["summary"].startswith("ブラジルの見本の頁。\n")
     assert v.get("tea_page:tieguanyin").values["tags"] == {"kind": "oolong"}
 

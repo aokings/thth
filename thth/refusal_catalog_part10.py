@@ -353,7 +353,8 @@ ENTRIES = {
         "影の台帳は ~/Documents/THTH/shadow/<メディア>/ のように repo の外の決まった置き場に作ると、元と取り違えません。"),
     "register_batch_pending": _entry(
         "台帳に、途中で止まったまとめての入れ替えが残っています（1 行目の（）が何の入れ替えか）。混ざった姿を読まない"
-        "ように、器の読み手は入れ替えの前の姿だけを見せ、ほかの書き込みは止めています。",
+        "ように、器の読み手（check・health・links・used など）は断り、ほかの書き込みも止めています。前の姿で読めるのは"
+        "控えの読み・restore・resume だけです。",
         "続けるなら thth register resume <台帳> --continue --by <名前>（同じ命令を打ち直してもよい）、戻すなら"
         " thth register resume <台帳> --rollback --by <名前> を打ってください。別の者が打ってもかまいません。",
         "thth register resume <台帳> --continue --by <名前>",

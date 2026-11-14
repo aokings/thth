@@ -21,8 +21,8 @@
    "id": "k_p1_year",
    "field": "year",
    "in": [
-    "2026",
-    "2027"
+    2026,
+    2027
    ],
    "note": "procedures_check: year は 2026 か 2027（必須の鍵の残りは固有）"
   }
