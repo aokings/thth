@@ -309,8 +309,12 @@ ENTRIES = {
         _CHECK,
         "台帳の repo の CI で check を回すと、指す先の切れが commit の時点で分かります。"),
     "register_judgment_invalid": _entry(
-        "台帳の判断の記録（.thth/judgments.jsonl）の 1 行が、決まった形に合いません（1 行目の（）が行）。",
-        "その行を、git の前の版から戻してください（判断の記録は足すだけで、手で書き換えない物です）。",
+        "台帳の判断の記録（.thth/judgments.jsonl）の 1 行が、決まった形に合いません（1 行目の（）が行の番号と、"
+        "合わない欄の名前）。判断の 1 行には、id・question・target.record（どれも 1 字以上の字）が要り、"
+        "target.unit と target.value は字、answer・reason・seen・content は辞書、at は字、siblings は字の並びです。"
+        "形の合わない行が 1 つでもあると、どの判断が効いているかを数え違えるので、全体を読みません。",
+        "その行を、git の前の版から戻してください（判断の記録は足すだけで、手で書き換えない物です）。"
+        "前の版が無ければ、その行を外して、同じ判断を thth の命令で出し直してください。",
         _CHECK,
         "判断の記録を台帳の repo に commit しておくと、壊れたときに前の版へ戻せます。"),
     "register_judgment_same_person": _entry(
