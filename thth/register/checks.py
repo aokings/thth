@@ -3,6 +3,7 @@
 宣言に書けるのは 9 つの部品（`unique`・`required`・`empty`・`one_of`・`words`・`shape`・`forbid_pair`・`count`・
 `judged`）と、決まった形の条件だけ。**式・正規表現・命令は受け取らない。** 値の形（`shape`）は THTH が備えた名前から
 選ぶ。宣言にどんな値を書かれても、例外を漏らさず `DeclarationError("checks")` にする。
+条件の `in`・`not_in` の語の並びの中の空の語 `""` は「空」（欠け・null・空白だけ・空の並びと辞書）を指す。
 
 回すときは、先に索引を作り、記録の数に比例する手間で終える（2 重の繰り返しにしない）。`forbid_pair` と `count` は
 宣言済みの指す欄を 1 段だけたどる。よその台帳を指す先（`<台帳>:<番号>`）は違反にせず「確かめられない」に数える。
@@ -55,7 +56,7 @@ _ARGS = {
     "one_of": ("fields", "mode"),
     "words": ("field", "in", "allow_blank"),
     "shape": ("field", "shape", "prefix", "allow_blank"),
-    "forbid_pair": ("via", "target"),
+    "forbid_pair": ("via", "via_to", "target"),
     "count": ("from", "where", "distinct", "min", "max"),
     "judged": ("question", "min", "how"),
     "columns": ("required", "allowed", "forbidden"),
@@ -205,9 +206,14 @@ def _parse_one(raw, pointers: list) -> dict:
         out["allow_blank"] = _bool(raw.get("allow_blank"), True)
     elif part == "forbid_pair":
         via = _fieldname(raw.get("via"))
+        via_to = _via_to(raw)
         specs = [p for p in pointers if p.get("field") == via]
+        if not specs or any("to" not in p for p in specs):
+            raise _err()  # 宣言済みの指す欄だけ（先の種類が決まった物。to_by は使えない）
+        if via_to is not None:
+            specs = [p for p in specs if p["to"] == via_to]
         if not specs or len({p["to"] for p in specs}) != 1:
-            raise _err()  # 宣言済みの指す欄だけ（先の種類が 1 つに決まる物）
+            raise _err()  # 同じ欄に指す欄が 2 本あれば、via_to で先の種類を選ぶ（段 4 の足し 2）
         out["via"], out["to"] = via, specs[0]["to"]
         out["target"] = parse_condition(raw.get("target"))
     elif part == "count":
@@ -217,9 +223,10 @@ def _parse_one(raw, pointers: list) -> dict:
         if set(src) == {"units"} and src["units"] is True:  # 1 == True で通さない
             out["from"] = {"units": True}
         else:
-            if set(src) != {"kind", "via"} or not isinstance(src.get("kind"), str) or not NAME.fullmatch(src["kind"]):
+            if set(src) - {"via_to"} != {"kind", "via"} or not isinstance(src.get("kind"), str) \
+                    or not NAME.fullmatch(src["kind"]):
                 raise _err()
-            out["from"] = {"kind": src["kind"], "via": _fieldname(src["via"])}
+            out["from"] = {"kind": src["kind"], "via": _fieldname(src["via"]), "via_to": _via_to(src)}
         out["where"] = parse_condition(raw["where"]) if raw.get("where") is not None else None
         out["distinct"] = _path(raw["distinct"]) if raw.get("distinct") is not None else None
         out["min"] = _int(raw["min"]) if raw.get("min") is not None else None
@@ -290,9 +297,21 @@ def parse_checks(raw, pointers: list) -> list:
         raise _err() from None
 
 
+def _via_to(raw: dict):
+    """`via_to`（段 4 の足し 2）: 同じ欄に指す欄が 2 本以上あるとき、どの先の種類の 1 本を使うか。書かなければ None。"""
+    if "via_to" not in raw:
+        return None
+    from .vessel import NAME
+    word = raw["via_to"]
+    if not isinstance(word, str) or not NAME.fullmatch(word):
+        raise _err()
+    return word
+
+
 def validate_refs(kinds: dict) -> str | None:
     """種類をまたぐ宣言の点検（全部の種類を読んだあと）。`count` の `from.kind` が在り、その `via` が
-    この種類を指す宣言済みの指す欄であること。合わない種類の名前を返す（合えば None）。"""
+    この種類を指す宣言済みの指す欄であること（`via_to` を書いたら、それがこの種類で、その 1 本があること）。
+    合わない種類の名前を返す（合えば None）。"""
     for kind in kinds.values():
         for c in getattr(kind, "checks", []) or []:
             if c["check"] != "count" or "kind" not in c["from"]:
@@ -301,6 +320,13 @@ def validate_refs(kinds: dict) -> str | None:
             if other is None:
                 return kind.name
             specs = [p for p in other.pointers if p.get("field") == c["from"]["via"]]
+            if any("to" not in p for p in specs):
+                return kind.name  # to_by の指す欄は数えに使えない
+            via_to = c["from"].get("via_to")
+            if via_to is not None:
+                if via_to != kind.name:
+                    return kind.name
+                specs = [p for p in specs if p["to"] == via_to]
             if not specs or any(p.get("to") != kind.name for p in specs):
                 return kind.name
     return None
@@ -342,9 +368,10 @@ def match(cond: dict | None, values: dict) -> bool:
             if _blank(value) != arg:
                 return False
             continue
-        word = _text(value)
+        # 空の値（欠け・null・空白だけ・空の並びと辞書）は空の語 "" として比べる（段 4 の足し 1）。
+        word = "" if _blank(value) else _text(value)
         if word is None:
-            return False  # 辞書・並びには blank だけが使える
+            return False  # 中身のある辞書・並びには blank だけが使える
         if op == "in" and word not in arg:
             return False
         if op == "not_in" and word in arg:
@@ -406,12 +433,13 @@ class _Result:
             self.out["more"] += 1
 
 
-def _targets(vessel, rec, via: str):
-    """`via` の指す欄の先 `(種類, 番号)` の並び（重なりは 1 つ）と、空の要素の数。"""
+def _targets(vessel, rec, via: str, to: str | None = None):
+    """`via` の指す欄（`to` を渡せば、その先の種類の 1 本だけ）の先 `(種類, 番号)` の並び（重なりは 1 つ）と、
+    空の要素の数。"""
     from . import vessel as V
     out, blanks = [], 0
     for spec in vessel.kinds[rec.kind].pointers:
-        if spec.get("field") != via:
+        if spec.get("field") != via or (to is not None and spec.get("to") != to):
             continue
         got, empty = V.pointer_pieces(rec, spec)
         blanks += empty
@@ -422,12 +450,12 @@ def _targets(vessel, rec, via: str):
     return out, blanks
 
 
-def _pointing(vessel, row, via: str):
+def _pointing(vessel, row, via: str, to: str | None = None):
     """`via` の指す欄で、この行が指す先 `(種類, 番号, 数える行の値)`。内側の単位の指す欄（`in_units`）は、
     単位ごとに 1 行として返す（`count` が指してくる単位を数える）。"""
     from . import vessel as V
     for spec in vessel.kinds[row.kind].pointers:
-        if spec.get("field") != via:
+        if spec.get("field") != via or (to is not None and spec.get("to") != to):
             continue
         holders = [(u.item, V._pieces(u.item, spec)[0]) for u in row.units] if spec.get("in_units") else \
             [(row.values, V.pointer_pieces(row, spec)[0])]
@@ -524,7 +552,7 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
                 res.bad(rec, "shape", field=c["field"], shape=c["shape"], prefix=c["prefix"])
     elif part == "forbid_pair":
         for rec in live:
-            pairs, _blanks = _targets(vessel, rec, c["via"])
+            pairs, _blanks = _targets(vessel, rec, c["via"], c["to"])
             hits = []
             for to, target_id in pairs:
                 if ":" in target_id:
@@ -547,7 +575,7 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
             for row in by_kind.get(c["from"]["kind"], []):
                 if row.values is None or row.id is None:
                     continue
-                for to, target_id, values in _pointing(vessel, row, c["from"]["via"]):
+                for to, target_id, values in _pointing(vessel, row, c["from"]["via"], kind.name):
                     if to == kind.name and ":" not in target_id:
                         index.setdefault(target_id, []).append(values)
 

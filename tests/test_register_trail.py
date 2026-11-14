@@ -171,7 +171,7 @@ def test_diff_gitの作業木でない台帳と宣言の置き場が無いcommit
     plain = env["tmp"] / "plain"
     shutil.copytree(FIX / "kopicha", plain)
     rc_, value, _ = jrun(capsys, "register", "diff", str(plain), "HEAD..now")
-    assert rc_ != 0 and value["code"] == "register_kept_missing" and value["detail"] == "not_git"
+    assert rc_ != 0 and value["code"] == "register_version_unavailable" and value["detail"] == "not_git"
     rc_, out, err = run(capsys, "register", "diff", str(plain), "HEAD..now")
     assert rc_ != 0 and "keep" in out + err  # 控えの名で打ち直す道を添える
     # 控えの名の形（16 進 8 字以上）で控えに無い物は、今までどおり控えの断り。
@@ -187,9 +187,9 @@ def test_diff_gitの作業木でない台帳と宣言の置き場が無いcommit
     shutil.copytree(FIX / "kopicha" / "data", repo / "data")
     commit(repo, "台帳の枚を足す")
     rc_, value, _ = jrun(capsys, "register", "diff", str(repo), "HEAD~1..HEAD")
-    assert rc_ != 0 and value["code"] == "register_kept_missing" and value["detail"] == "no_places"
+    assert rc_ != 0 and value["code"] == "register_version_unavailable" and value["detail"] == "no_places"
     rc_, value, _ = jrun(capsys, "register", "diff", str(repo), "nosuchbranch..HEAD")
-    assert value["code"] == "register_kept_missing" and value["detail"] == "unknown_commit"
+    assert value["code"] == "register_version_unavailable" and value["detail"] == "unknown_commit"
 
 
 @pytest.mark.parametrize("name", ["--output=PWN", "-c", "HEAD;touch PWN", "HEAD 1", "HEAD:data", "@{-1}",
@@ -256,8 +256,8 @@ def test_check_against_足しただけは緑で直す消す並べ替えるは赤
     for word, body in cases.items():
         path.write_bytes(b"".join(body))
         rc_, value, _ = jrun(capsys, "register", "check", "kopt", "--against", "HEAD")
-        assert rc_ != 0 and value["code"] == "register_judgment_invalid", word
-        assert value["detail"].startswith("judgments_rewritten"), word
+        assert rc_ != 0 and value["code"] == "register_judgments_rewritten", word
+        assert value["detail"].startswith("line "), word
     path.write_bytes(b"".join(lines))
     rc_, value, _ = jrun(capsys, "register", "check", "kopt", "--against", "HEAD;touch PWN")
     assert rc_ != 0 and value["code"] == "register_args_invalid" and value["detail"] == "commit"
@@ -281,10 +281,10 @@ def test_check_against_控えの名でも前の時点の判断の記録と比べ
     path = repo / ".thth" / "judgments.jsonl"
     path.write_bytes(path.read_bytes().replace(b'"good"', b'"bad"', 1))
     rc_, value, _ = jrun(capsys, "register", "check", "plain", "--against", kept["fp"][:12])
-    assert rc_ != 0 and value["detail"] == "judgments_rewritten line 1"
+    assert rc_ != 0 and value["code"] == "register_judgments_rewritten" and value["detail"] == "line 1"
     # git の作業木でない台帳で、控えの名でない名は「取り出せない」。
     rc_, value, _ = jrun(capsys, "register", "check", "plain", "--against", "HEAD")
-    assert rc_ != 0 and value["code"] == "register_kept_missing" and value["detail"] == "not_git"
+    assert rc_ != 0 and value["code"] == "register_version_unavailable" and value["detail"] == "not_git"
 
 
 def test_check_against_消す求めの結果に載った印の行だけを骨で通す(env):

@@ -424,6 +424,9 @@ def published(root: str, outlet_name: str, list_path, now, *, record: bool = Fal
            "changes": [{k: v for k, v in c.items() if k != "row"} for c in result["changes"]][:SHOWN_MAX],
            "declared": outlet.published is not None, "recorded": 0}
     if not out["ok"]:
+        # 関門の赤は、受け入れの 1 段めと同じく終わりの番号 1 と verdict で返す（呼ぶ側の台本の読み方を変えない）。
+        # verdict に断りの符丁と 3 つの文を載せる（段 4 §8 の断りの語）。
+        out.update(_gate_refusal())
         return out
     if record and (result["new"] or result["changes"]):
         at = when.isoformat(timespec="seconds")
@@ -448,6 +451,13 @@ def published(root: str, outlet_name: str, list_path, now, *, record: bool = Fal
     if publish:
         out["head"] = _write_head(str(publish), outlet.name, raw)
     return out
+
+
+def _gate_refusal() -> dict:
+    """関門の赤の符丁 `register_published_gate` と、目録の 3 つの文（なぜ・通る直し方・もっと良く）。"""
+    from thth import refusal
+    found = refusal.parts("register_published_gate") or {}
+    return {"code": "register_published_gate", **{k: found[k] for k in ("why", "fix", "better") if found.get(k)}}
 
 
 def seed_lines(urls, *, at: str, generation=None) -> bytes:

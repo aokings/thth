@@ -727,7 +727,7 @@ def test_跡_消したあとcheck_againstとdiffは結果に載った物だけ�
     assert gone, "控えの判断の記録を除いた目録がある"
     with pytest.raises(RegisterRefused) as caught:
         T.against(str(led), gone[0])
-    assert caught.value.code == "register_kept_missing" and caught.value.detail == "judgments_erased"
+    assert caught.value.code == "register_version_unavailable" and caught.value.detail == "judgments_erased"
     for name in K.snapshots(str(led)):
         for note in K._read_json(str(led), K.snapshot_path(str(led), name), "snapshot").get("trail", []):
             assert "judgments" not in note or note["judgments"] is None or \

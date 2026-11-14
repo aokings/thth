@@ -31,6 +31,8 @@ REASONS = frozenset((
     # 台帳の器 段 3: 出し口・使えるか・材料・受け入れと封・確かめ・持ち主の鍵・共通の台帳。
     "register_outlet_unknown", "register_use_not_usable", "register_material_stale", "register_seal_missing",
     "register_seal_unverified", "register_seal_key_missing", "register_seal_key_unsafe", "register_common_unusable",
+    # 台帳の器 段 4 §8: 借り物の語から替えた（出した URL の関門の赤・判断の記録の書き換え・前の版を取り出せない）。
+    "register_published_gate", "register_judgments_rewritten", "register_version_unavailable",
     # 台帳の器 段 5: 消す求め。
     "register_erase_invalid", "register_erase_left",
     # 台帳の器 段 6: 書く口と束。

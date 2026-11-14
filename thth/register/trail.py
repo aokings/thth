@@ -4,7 +4,7 @@
   `<commit>^` も）を受ける。宣言の置き場に入るファイルだけを、git の読むだけの命令（`rev-parse`・`ls-tree`・
   `cat-file`）で取り出し、repo の外の一時の置き場に並べて器として読む。**作業木も index も変えない。**
   git の作業木でない台帳・その commit に宣言の置き場が 1 つも無い・commit が無いときは「取り出せない」
-  （`register_kept_missing`。控えの名で打ち直す道を添える）。commit に無い種類は「その時点に無い」として出す。
+  （`register_version_unavailable`。控えの名で打ち直す道を添える）。commit に無い種類は「その時点に無い」として出す。
 - **git を呼ぶのはこの部品だけ**（`tests/test_register_base.py` の `SUBPROCESS_ALLOWED`）。決まった場所の git だけを
   使い、PATH もシェルも使わない（`seal.py` の openssl と同じ決め方）。環境は空から作る（系と利用者の設定・
   置き換えの物・任意の錠を読まない）。commit の名は字の形を先に見て、`-` で始まる物・空白・`;`・`:`・`..` は
@@ -53,7 +53,7 @@ def git_binary() -> str:
     for binary in GIT_BINARIES:
         if os.path.isfile(binary) and os.access(binary, os.X_OK):
             return binary
-    raise RegisterRefused("register_kept_missing", "git_missing")
+    raise RegisterRefused("register_version_unavailable", "git_missing")
 
 
 def _git(cwd: str, arguments: list, *, data: bytes | None = None) -> subprocess.CompletedProcess:
@@ -61,7 +61,7 @@ def _git(cwd: str, arguments: list, *, data: bytes | None = None) -> subprocess.
         return subprocess.run([git_binary(), "-c", "core.fsmonitor=false", "-C", cwd, *arguments], input=data,
                               capture_output=True, timeout=TIMEOUT, env=_ENV)
     except (OSError, subprocess.SubprocessError):
-        raise RegisterRefused("register_kept_missing", "git_failed") from None
+        raise RegisterRefused("register_version_unavailable", "git_failed") from None
 
 
 def check_rev(name) -> str:
@@ -75,13 +75,13 @@ def check_rev(name) -> str:
 def repo_of(root: str) -> tuple:
     """`(git の作業木の根, 台帳のフォルダの根からの道の頭)`。git の作業木でなければ「取り出せない」。"""
     if not os.path.isdir(root):
-        raise RegisterRefused("register_kept_missing", "not_git")
+        raise RegisterRefused("register_version_unavailable", "not_git")
     result = _git(root, ["rev-parse", "--show-toplevel", "--show-prefix"])
     if result.returncode != 0:
-        raise RegisterRefused("register_kept_missing", "not_git")
+        raise RegisterRefused("register_version_unavailable", "not_git")
     lines = result.stdout.decode("utf-8", errors="strict").split("\n")
     if len(lines) < 2 or not lines[0]:
-        raise RegisterRefused("register_kept_missing", "not_git")
+        raise RegisterRefused("register_version_unavailable", "not_git")
     return lines[0], lines[1]
 
 
@@ -98,7 +98,7 @@ def resolve(top: str, name: str) -> str:
     result = _git(top, ["rev-parse", "--verify", "--quiet", "--end-of-options", name + "^{commit}"])
     sha = result.stdout.decode("ascii", errors="replace").strip()
     if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", sha):
-        raise RegisterRefused("register_kept_missing", "unknown_commit")
+        raise RegisterRefused("register_version_unavailable", "unknown_commit")
     return sha
 
 
@@ -106,7 +106,7 @@ def _tree(top: str, sha: str) -> list:
     """commit の木の全部の枚 `(道, 中身の名, 実行の印)`（symlink と submodule は除く）。"""
     result = _git(top, ["ls-tree", "-r", "-z", "--full-tree", sha])
     if result.returncode != 0:
-        raise RegisterRefused("register_kept_missing", "git_failed")
+        raise RegisterRefused("register_version_unavailable", "git_failed")
     out = []
     for item in result.stdout.split(b"\0"):
         if not item:
@@ -130,13 +130,13 @@ def _blobs(top: str, names: list) -> dict:
         return {}
     result = _git(top, ["cat-file", "--batch"], data=("\n".join(names) + "\n").encode("ascii"))
     if result.returncode != 0:
-        raise RegisterRefused("register_kept_missing", "git_failed")
+        raise RegisterRefused("register_version_unavailable", "git_failed")
     out, data, pos = {}, result.stdout, 0
     for name in names:
         end = data.find(b"\n", pos)
         header = data[pos:end].split(b" ") if end >= 0 else []
         if len(header) != 3 or header[1] != b"blob" or header[0].decode("ascii", errors="replace") != name:
-            raise RegisterRefused("register_kept_missing", "git_failed")
+            raise RegisterRefused("register_version_unavailable", "git_failed")
         size = int(header[2])
         out[name] = data[end + 1:end + 1 + size]
         pos = end + 1 + size + 1
@@ -164,7 +164,7 @@ def extract(root: str, name: str, into: str, kinds: dict) -> dict:
             continue
         wanted.append((K.safe_rel(rel), blob, executable))
     if not wanted:
-        raise RegisterRefused("register_kept_missing", "no_places", commit=sha[:12])
+        raise RegisterRefused("register_version_unavailable", "no_places", commit=sha[:12])
     blobs = _blobs(top, [b for _r, b, _x in wanted])
     files = []
     for rel, blob, executable in wanted:
@@ -191,7 +191,7 @@ def file_at(root: str, name: str, rel: str) -> bytes | None:
 def _tree_at(top: str, sha: str, path: str) -> list:
     result = _git(top, ["ls-tree", "-z", "--full-tree", sha, "--", path])
     if result.returncode != 0:
-        raise RegisterRefused("register_kept_missing", "git_failed")
+        raise RegisterRefused("register_version_unavailable", "git_failed")
     out = []
     for item in result.stdout.split(b"\0"):
         meta, _tab, raw = item.partition(b"\t")
@@ -228,7 +228,7 @@ def side_kind(root: str, name: str) -> str:
         if len(name) >= 8 and all(c in "0123456789abcdef" for c in name):
             raise RegisterRefused("register_kept_missing", "snapshot", asked=name[:16])
         check_rev(name)
-        raise RegisterRefused("register_kept_missing", "not_git")
+        raise RegisterRefused("register_version_unavailable", "not_git")
     check_rev(name)
     return "commit"
 
@@ -342,10 +342,10 @@ def previous_judgments(root: str, name: str) -> dict:
                  and ("judgments" in n or "judgments_erased" in n)]
         if not notes:
             # 控えの目録に判断の記録の跡が無い（段 5 より前の控え）。commit の名で打ち直す。
-            raise RegisterRefused("register_kept_missing", "no_judgments_kept", snapshot=snap["id"][:16])
+            raise RegisterRefused("register_version_unavailable", "no_judgments_kept", snapshot=snap["id"][:16])
         if notes[-1].get("judgments_erased"):
             # 消す求めが、その時点の判断の記録の控えを除いた（範囲の行を含んでいた）。取り出せない。
-            raise RegisterRefused("register_kept_missing", "judgments_erased")
+            raise RegisterRefused("register_version_unavailable", "judgments_erased")
         digest = notes[-1]["judgments"]
         return {"from": "snapshot", "name": snap["id"], "bytes": b"" if digest is None else K.get_object(root, digest)}
     top, _prefix = repo_of(root)

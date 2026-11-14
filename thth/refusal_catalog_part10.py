@@ -274,7 +274,8 @@ ENTRIES = {
         "どの語か）。THTH は宣言を語と道の型として読むだけで、宣言に書いた命令は実行しません。知らない欄も断ります。",
         "（）の語の欄を直してください。種類の宣言に書けるのは schema・kind・place・format・records・max_bytes・"
         "rows_at・id・questions・pointers・delimiter・units・inspects・checks・note だけで、値は欄の名前・道の型・語です"
-        "（checks は 9 つの部品と決まった形の条件だけ。式・正規表現は書けません）。直したら打ち直してください。",
+        "（checks は 9 つの部品と決まった形の条件だけ。式・正規表現は書けません）。forbid_pair・count の via の欄に"
+        "指す欄が 2 本以上あるときは、via_to に先の種類の名前を書いて 1 本を選んでください。直したら打ち直してください。",
         "thth register kinds <台帳>",
         "宣言は台帳の repo に commit しておくと、形を変えたこと（意味を変えたこと）が跡に残り、持ち主が確かめられます。"),
     "register_yaml_refused": _entry(
@@ -318,9 +319,7 @@ ENTRIES = {
         "段 3 の命令（verify・export・accept・use）は加えて、id が中身から作った番号と合わない行（id_not_from_content）・"
         "中身の違う前の行と同じ id の行（id_same_as_line と前の行の番号）・at が日時として読めない行（at）も断ります。"
         "番号を借りた行は、受け入れていない判断を封の中の判断に見せかけられるためです。"
-        "形の合わない行が 1 つでもあると、どの判断が効いているかを数え違えるので、全体を読みません。"
-        "check --against の judgments_rewritten は、判断の記録が前の時点の記録の続きではない（前の行が書き換わったか、"
-        "減った。（）の line が前の時点の行の番号）ことです。判断の記録は足すだけなので、書き換えは跡を消すことになります。",
+        "形の合わない行が 1 つでもあると、どの判断が効いているかを数え違えるので、全体を読みません。",
         "その行を、git の前の版から戻してください（判断の記録は足すだけで、手で書き換えない物です）。"
         "前の版が無ければ、その行を外して、同じ判断を thth の命令で出し直してください（命令が番号と日時を正しく付けます）。",
         _CHECK,
@@ -374,13 +373,36 @@ ENTRIES = {
         "器の控え（.thth/kept/）に、求めた前の版がありません（1 行目の（）の語）。取り出せる前の版は、器が取り込んだか"
         "控えた時点からだけで、それより前と、控えと控えの間の版は取り出せません。",
         "thth register keep <台帳> --list で控えた時点を並べ、その目録の指紋の頭（8 字以上）か first・last で打ち直して"
-        "ください。控えが壊れている（object_broken・snapshot_broken）ときは、元からもう一度取り込んでください。"
-        "git の commit で求めたとき: not_git は台帳のフォルダが git の作業木でない・unknown_commit はその名の commit が無い・"
-        "no_places はその commit に宣言の置き場の枚が 1 つも無い・git_missing は決まった場所に git が無い。"
-        "どれも控えの名（keep --list の目録の指紋の頭・first・last）でなら打ち直せます。no_judgments_kept は、"
-        "段 5 より前の控えで判断の記録を控えていないので、commit の名で打ち直してください。",
+        "ください。控えが壊れている（object_broken・snapshot_broken）ときは、元からもう一度取り込んでください。",
         "thth register keep <台帳> --list",
         "元の形式の道具で直したあとに thth register keep を打つ習いにすると、git の外の台帳でも前の版を取り出せます。"),
+    "register_version_unavailable": _entry(
+        "求めた時点の版を取り出せません（1 行目の（）の語）。not_git は台帳のフォルダが git の作業木でない・"
+        "unknown_commit はその名の commit が無い・no_places はその commit に宣言の置き場の枚が 1 つも無い・"
+        "git_missing は決まった場所に git が無い・git_failed は git が読めなかった・no_judgments_kept は段 5 より前の"
+        "控えで判断の記録を控えていない・judgments_erased は消す求めがその時点の判断の記録の控えを除いた、です。"
+        "器は取り出せない版を推して埋めません。",
+        "git の commit で求めたときは、控えの名（keep --list の目録の指紋の頭・first・last）で打ち直してください。"
+        "no_judgments_kept は commit の名で、judgments_erased は消す求めより後の控えか commit の名で打ち直してください。",
+        "thth register keep <台帳> --list",
+        "台帳の repo に commit する習いにすると、控えが無い時点でも commit の名で前の版を取り出せます。"),
+    "register_judgments_rewritten": _entry(
+        "判断の記録（.thth/judgments.jsonl）が、前の時点の記録の続きになっていません（前の行が書き換わったか、減った。"
+        "1 行目の（）の line が前の時点の行の番号）。判断の記録は足すだけなので、書き換えは跡を消すことになります。"
+        "消す求めの結果に載った印の行は、骨が前の行と同じなら通します。",
+        "その行を git の前の版から戻してください。判断を取り消したいときは、行を書き換えずに、止める判断を thth の命令で"
+        "足してください。直したら thth register check <台帳> --against <前> で確かめ直してください。",
+        _CHECK,
+        "CI で check --against <前の commit> を回すと、判断の記録の書き換えが commit の時点で分かります。"),
+    "register_published_gate": _entry(
+        "出した URL の関門が赤です（--json の problems に URL と語: missing は前に出した URL が一覧から消えて転送も"
+        "消した印も無い・redirect_target_missing は転送の先が一覧に無い・redirect_chain は転送が 2 段・"
+        "redirect_status は転送の番号が決まりの外・duplicate と redirect_with_page は決まりで赤にした物）。"
+        "出した URL を黙って 404 にしないための関門で、控えには何も足していません（終わりの番号は 1）。",
+        "消えた URL には、出し口の宣言の published.redirects に転送を足すか、published.gone に消した理由を書いて"
+        "ください。転送の先は一覧にある URL にしてください。直したら同じ一覧で打ち直してください。",
+        _CHECK,
+        "build のあと、配る前に published を回し、緑のときだけ --record で控えに足すと、出した URL の跡が途切れません。"),
     "register_record_vanished": _entry(
         "前の時点にあった記録の番号（かファイルか、内側の行の明示の番号。--json の units_vanished）が、後の時点にありません。番号が消えると、その番号への判断と、"
         "指していた記録がたどれなくなります。",
