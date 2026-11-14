@@ -36,6 +36,13 @@
   止める・だめが、日時の書き方で封の中の止めない・よいに負けない）。その中では日時を時刻として比べ（字で比べない）、
   同じ時刻なら判断の記録の中で後に足した物（番号の文字の順にはしない）。止めないにも期限を見る（切れたら止めるが効く）。
 
+- **消す求めのあと**（段 5・`erase.py`）: 消す求めは封から項目の指紋を外すので、署名が合わず、受け入れ直すまで封なし。
+  受け入れ直す口だけは、求めの結果がこの出し口の封を書き換えたと言う封から世代の番号を継ぐ（`erased_seal`）。
+  受け入れ直した封は「消す求めの結果」（`erase`: 求め・書き換えた行の番号・前の封の判断の記録の頭）を持つ。配る物は
+  判断の行ごとの骨（`deployed.lines`。問い・記録・指し先・語・結論・日時・いつまで。番号と誰がは入れない）も持ち、
+  CI は前に配った頭の続きでないとき、i 番めどうしの骨が同じで、印の形の行が署名の合った封の言う行だけなら通す
+  （`erase_continued`）。行が減る・並びが変わる・骨が変わる（印の行の結論も）、は赤。
+
 網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
 """
 from __future__ import annotations
@@ -266,11 +273,13 @@ def judgments_raw(root: str) -> bytes:
     return data
 
 
-def parse_judgments(raw: bytes) -> list:
+def parse_judgments(raw: bytes, root: str | None = None) -> list:
     """`judgment.read` と同じ点検（形は `J.shape_problem`）で、バイトから読む（封の中の頭だけを読むため）。
     段 3 は加えて、番号の重なり（`id_same_as_line N`）・中身から作り直した番号との食い違い（`id_not_from_content`）・
     読めない日時（`at`）の行を断る。封の中か外かは記録の中の位置で決めるが、番号で判断を名指しする所
-    （結び直す口など）が別の行を指さないように、番号は中身から決まる物だけを受ける（同じ中身の行の重なりは受ける）。"""
+    （結び直す口など）が別の行を指さないように、番号は中身から決まる物だけを受ける（同じ中身の行の重なりは受ける）。
+    段 5: 消す求めで印の形にした行（`erased`）は、番号と中身を比べない。代わりに、台帳の根 `root` の
+    `.thth/erase/<求め>/` の結果にその行の番号が載っていることを見る（載っていなければ断る・`root` が無ければ断る）。"""
     out = []
     seen = {}
     for number, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), start=1):
@@ -291,7 +300,10 @@ def parse_judgments(raw: bytes) -> list:
         if first is not None and V.canonical(first[1]) != V.canonical(item):
             # 同じ中身の行が 2 つ（同じ秒に同じ命令を 2 回）は、番号も同じで害が無い。中身の違う行が番号を借りたら断る。
             raise RegisterRefused("register_judgment_invalid", f"line {number} id_same_as_line {first[0]}")
-        if item["id"] != J.new_id(item):
+        if J.is_erased(item):
+            if not J.erased_ok(root, item):
+                raise RegisterRefused("register_judgment_invalid", f"line {number} erased_not_in_result")
+        elif item["id"] != J.new_id(item):
             raise RegisterRefused("register_judgment_invalid", f"line {number} id_not_from_content")
         if item.get("at") not in (None, "") and _when_or_none(item["at"]) is None:
             raise RegisterRefused("register_judgment_invalid", f"line {number} at")
@@ -337,7 +349,7 @@ def open_common(path) -> Common | None:
     if not isinstance(path, str) or not os.path.isdir(path) or os.path.islink(path):
         raise RegisterRefused("register_common_unusable", "path")
     root = os.path.abspath(path)
-    return Common(root, V.open_vessel(root), parse_judgments(judgments_raw(root)))
+    return Common(root, V.open_vessel(root), parse_judgments(judgments_raw(root), root))
 
 
 def common_bytes(common: Common, ref: str, version: str) -> bytes:
@@ -423,7 +435,9 @@ def _record_match(ref):
 
 
 def _unit_match(ref, pointer):
-    return lambda t: t.get("record") == ref and t.get("unit") == pointer and not t.get("value") and not t.get("ledger")
+    # 消す求めで指し先を除いた印の行（`unit_dropped`）は、その記録の全部の単位に当たる（狭める向きにだけ効くので）。
+    return lambda t: t.get("record") == ref and (t.get("unit") == pointer or bool(t.get("unit_dropped"))) \
+        and not t.get("value") and not t.get("ledger")
 
 
 def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
@@ -469,7 +483,8 @@ def _stop_state(js_every: list, n_sealed: int, vessel: V.Vessel | None, ref: str
         word = ((j.get("answer") or {}).get("conclusion"))
         if word == "bad" and not _passed(j, as_of):
             stops.append((n, j))
-        elif word == "good" and n < n_sealed and not _passed(j, as_of):
+        elif word == "good" and n < n_sealed and not _passed(j, as_of) and not J.is_erased(j):
+            # 印の形にした「止めない」は、対象の版を確かめられないので効かない（段 5 §3.4）
             lifts.append((n, j))
     if not stops:
         return None
@@ -740,21 +755,21 @@ def _refuse_unverified(outlet: str, state: str):
     raise RegisterRefused("register_seal_unverified", state, seal=state)
 
 
-def sealed_judgments(raw: bytes, seal: dict | None) -> list:
+def sealed_judgments(raw: bytes, seal: dict | None, root: str | None = None) -> list:
     if seal is None:
         return []
     jm = seal["body"]["judgments"]
     if len(raw) < jm["bytes"] or sha(raw[:jm["bytes"]]) != jm["sha256"]:
         raise RegisterRefused("register_seal_unverified", "judgments_rewritten")
-    return parse_judgments(raw[:jm["bytes"]])
+    return parse_judgments(raw[:jm["bytes"]], root)
 
 
 def context(root: str, as_of, *, common_root=None, raw: bytes | None = None, seal: dict | None = None,
             sealed_all: bool = False) -> Ctx:
     vessel = V.open_vessel(root)
     raw = judgments_raw(root) if raw is None else raw
-    every = parse_judgments(raw)
-    sealed = every if sealed_all else sealed_judgments(raw, seal)
+    every = parse_judgments(raw, root)
+    sealed = every if sealed_all else sealed_judgments(raw, seal, root)
     return Ctx(root, vessel, sealed, every, parse_time(as_of), open_common(common_root))
 
 
@@ -908,19 +923,154 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
     if raw and not raw.endswith(b"\n"):
         raise RegisterRefused("register_judgment_invalid", "no_final_newline")
     previous, state = trusted_seal(root, outlet.name)
-    if state != "none" and previous is None:
+    erased_prev = None
+    if state in ("signature", "shape"):
+        # 消す求めで項目の指紋を外した封（署名は合わない）だけは、世代の番号を継いで受け入れ直せる（段 5 §3.7）。
+        # 広げる向きには何も継がない（封の中の判断は今の全部を受け入れ直す）。ほかの署名の合わない封は今までどおり断る。
+        erased_prev = erased_seal(root, outlet.name)
+        if erased_prev is None:
+            _refuse_unverified(outlet.name, state)
+    elif state != "none" and previous is None:
         _refuse_unverified(outlet.name, state)   # 署名の合わない封から、世代と判断の頭を継がない
     if previous is not None:
-        sealed_judgments(raw, previous)   # 封のあとで判断の記録の頭が書き換わっていれば、受け入れずに断る
+        sealed_judgments(raw, previous, root)   # 封のあとで判断の記録の頭が書き換わっていれば、受け入れずに断る
     ctx = context(root, as_of, common_root=common_root, raw=raw, sealed_all=True)
-    result = compute(ctx, outlet, common_known=_known_paths(previous))
-    body = seal_body(root, outlet, ctx, result, raw, previous)
-    new_judgments = parse_judgments(raw[previous["body"]["judgments"]["bytes"]:]) if previous else ctx.every
+    base = previous or erased_prev
+    result = compute(ctx, outlet, common_known=_known_paths(base))
+    body = seal_body(root, outlet, ctx, result, raw, base)
+    block = erase_block(root, erased_prev, previous)
+    if block is not None:
+        body["erase"] = block
+    if previous is not None:
+        new_judgments = parse_judgments(raw[previous["body"]["judgments"]["bytes"]:], root)
+    elif erased_prev is not None:
+        new_judgments = ctx.every[int(erased_prev["body"]["judgments"].get("count") or 0):]
+    else:
+        new_judgments = ctx.every
     now = placed(root, ctx.vessel, outlet, to, set(body["outputs"]))
     return {"outlet": outlet.name, "to": to, "body": body, "result": result, "digest": digest(body),
             "new_judgments": [_judgment_line(j) for j in new_judgments],
-            "changes": _changes(previous["body"]["items"] if previous else [], body["items"]),
+            "changes": _changes(base["body"]["items"] if base else [], body["items"]),
             "stale": sorted(p for p in now if p not in body["outputs"])}
+
+
+def erased_seal(root: str, outlet: str) -> dict | None:
+    """消す求めで項目の指紋と判断の記録の頭の指紋を外した封（`body.erased` に求めの番号）。どの求めも、結果の記録で、
+    この出し口の封を書き換えたと言っているときだけ返す（言っていなければ None。ただの崩れた封として断る）。"""
+    path = seal_path(root, outlet)
+    if not os.path.isfile(path) or os.path.islink(path):
+        return None
+    try:
+        seal = _read_json(path, J.MAX_BYTES)
+    except (V.DeclarationError, OSError):
+        return None
+    if not isinstance(seal, dict) or not isinstance(seal.get("body"), dict) \
+            or seal["body"].get("outlet") != outlet or not isinstance(seal["body"].get("generation"), int) \
+            or not isinstance(seal["body"].get("judgments"), dict) or not isinstance(seal["body"].get("items"), list):
+        return None
+    requests = seal["body"].get("erased")
+    if not isinstance(requests, list) or not requests:
+        return None
+    for req in requests:
+        result = _erase_result(root, req)
+        if result is None or outlet not in (result.get("seals") or []):
+            return None
+    return seal
+
+
+def _erase_result(root: str, req) -> dict | None:
+    if not isinstance(req, str) or not J.ERASE_ID.fullmatch(req):
+        return None
+    base = os.path.join(root, V.DECL_DIR, J.ERASE_DIR, req)
+    if os.path.islink(base) or not os.path.isfile(os.path.join(base, J.ERASE_SCOPE)):
+        return None
+    try:
+        with open(os.path.join(base, J.ERASE_RESULT), "rb") as f:
+            value = json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value.get("request") == req else None
+
+
+def erase_block(root: str, erased_prev: dict | None, previous: dict | None) -> dict | None:
+    """受け入れ直した封が持つ「消す求めの結果」（段 5 §3.7）: 求めの番号・書き換えた判断の行の番号・前の封の判断の
+    記録の頭（バイトの数と指紋）。前の封が持っていた物は継ぐ（配る前に受け入れを重ねても、CI が前に配った世代と
+    比べられるように）。消した中身もその指紋も持たない。"""
+    prior = (previous or {}).get("body", {}).get("erase") if previous else None
+    if erased_prev is None:
+        return prior if isinstance(prior, dict) else None
+    requests = set((prior or {}).get("requests") or [])
+    lines = set((prior or {}).get("lines") or [])
+    for req in erased_prev["body"]["erased"]:
+        result = _erase_result(root, req) or {}
+        requests.add(req)
+        lines.update(x for x in result.get("rewritten_lines") or [] if isinstance(x, str))
+    pj = erased_prev["body"]["judgments"]
+    # 前の封の判断の記録の頭の指紋は、消す求めが外した（消した行を含むバイトの指紋なので）。残るのはバイトの数だけ。
+    # 前に配った頭の指紋は公開の場所の配る物にあり、CI はそれと行ごとの骨で比べる。
+    return {"requests": sorted(requests), "lines": sorted(lines),
+            "previous": {"generation": erased_prev["body"]["generation"],
+                         "judgments": {"bytes": pj.get("bytes"), "count": pj.get("count")}}}
+
+
+def line_skeleton(j: dict, with_unit: bool = True) -> str:
+    """判断の行の骨（問い・対象の記録の番号・単位の指し先・語・結論・日時・いつまで）の指紋。消す求めで印の形にしても
+    変わらない欄だけから作る。**番号と「誰が」は入れない**（配る物は公開の場所に出るので、当てやすい名前を指紋に
+    混ぜない。番号は消す求めで付け直す）。CI は、前に配った頭の行ごとの骨（`deployed.lines`）と今の行を**位置で**
+    比べる（段 5 §3.7）。`with_unit=False` は指し先を除いた骨（消す求めで指し先を除いた行と比べる）。"""
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    a = j.get("answer") if isinstance(j.get("answer"), dict) else {}
+    body = {"question": j.get("question"), "record": t.get("record"), "word": a.get("word"),
+            "conclusion": a.get("conclusion"), "at": j.get("at"), "until": j.get("until")}
+    if with_unit:
+        body["unit"] = t.get("unit")
+        body["value"] = t.get("value")
+    return sha(V.canonical(body).encode("utf-8"))[:32]
+
+
+def line_skeletons(raw: bytes) -> list:
+    out = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except (ValueError, RecursionError):
+            item = {}
+        item = item if isinstance(item, dict) else {}
+        out.append([line_skeleton(item, True), line_skeleton(item, False)])
+    return out
+
+
+def erase_continued(root: str, raw: bytes, dep: dict, erase) -> str | None:
+    """前に配った頭（`dep`）の続きでないとき、消す求めの書き換えとして通せるか。通せれば None、通せなければ語。
+    行が減っていない・前に配った i 番めの行の骨と今の i 番めの骨が同じ（印の行も、そうでない行も。並びが変われば
+    違う）・印の形の行は署名の合った封が言う行（と求め）だけ。印でない行は、番号が中身から作った物と合うことを
+    読む入口が見る。消す求めの無い回は、今までどおり頭のバイトの続きだけで比べる（ここは呼ばれない）。"""
+    if not isinstance(erase, dict):
+        return "no_erase"
+    lines = dep.get("lines")
+    if not isinstance(lines, list) or any(not (isinstance(p, list) and len(p) == 2) for p in lines):
+        return "previous_lines_missing"
+    try:
+        now = parse_judgments(raw, root)
+    except RegisterRefused:
+        return "lines_unreadable"
+    if len(now) < len(lines):
+        return "lines_reduced"
+    allowed = set(erase.get("lines") or [])
+    requests = set(erase.get("requests") or [])
+    for i, (with_unit, without_unit) in enumerate(lines):
+        j = now[i]
+        if J.is_erased(j):
+            if j.get("id") not in allowed or j["erased"].get("request") not in requests:
+                return "line_not_in_erase"
+            has_unit = bool((j.get("target") or {}).get("unit"))
+            if line_skeleton(j, has_unit) != (with_unit if has_unit else without_unit):
+                return "line_changed"
+        elif line_skeleton(j, True) != with_unit:
+            return "line_changed"
+    return None
 
 
 def _judgment_line(j: dict) -> dict:
@@ -978,6 +1128,8 @@ def write_published(path: str, seal: dict, raw: bytes, now: datetime.datetime, d
     value = {"body": body, "signature": seal["signature"],
              "deployed": {"outlet": body["outlet"], "generation": body["generation"],
                           "judgments": {"bytes": len(raw), "sha256": sha(raw)},
+                          # 行ごとの骨（段 5 §3.7。消す求めの書き換えを、次の回の CI が行ごとに比べる）
+                          "lines": line_skeletons(raw[:len(raw)]),
                           "at": now.isoformat(timespec="seconds"), "dropped": dropped}}
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
@@ -1044,17 +1196,27 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
                 elif body["generation"] == pb["generation"] and V.canonical(body) != V.canonical(pb):
                     red("generation_reused", generation=body["generation"])
                 pj = pb["judgments"]
+                dep = deployed_of(prev)
+                broken = []
                 if len(raw) < pj["bytes"] or sha(raw[:pj["bytes"]]) != pj["sha256"]:
-                    red("judgments_not_continued", previous_bytes=pj["bytes"], now_bytes=len(raw))
+                    broken.append({"previous_bytes": pj["bytes"], "now_bytes": len(raw)})
                 # 封をし直さずに配った回（止めるで外した・期限で外した）の判断も、前に配った物の続きでなければ赤。
                 # 止めるの行を消して古い材料に戻すと、封の頭は続いていても、配った時の頭が続かない。
-                dep = deployed_of(prev)
                 if dep is None:
                     red("previous_not_deployed")
                 else:
                     dj = dep["judgments"]
                     if len(raw) < dj["bytes"] or sha(raw[:dj["bytes"]]) != dj["sha256"]:
-                        red("judgments_not_continued", deployed_bytes=dj["bytes"], now_bytes=len(raw))
+                        broken.append({"deployed_bytes": dj["bytes"], "now_bytes": len(raw)})
+                if broken:
+                    # 消す求めで印の形にした行だけが違うなら、署名の合った封が言う行に限って通す（段 5 §3.7）。
+                    why = erase_continued(root, raw, dep, body.get("erase")) if dep is not None else "no_erase"
+                    if why is None:
+                        warnings.append({"word": "erase_rewrite", "requests": body["erase"]["requests"],
+                                         "lines": len(body["erase"]["lines"])})
+                    else:
+                        for one in broken:
+                            red("judgments_not_continued", erase=why, **one)
     elif not no_previous:
         red("previous_unknown")
     else:
@@ -1062,7 +1224,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     if decl_fp(root) != body.get("decl"):
         red("decl_changed")
     # 封の中の判断だけ（と、封を待たない狭める物）で、今の日時で計算し直す
-    ctx = Ctx(root, vessel, parse_judgments(raw[:jm["bytes"]]), parse_judgments(raw), as_of,
+    ctx = Ctx(root, vessel, parse_judgments(raw[:jm["bytes"]], root), parse_judgments(raw, root), as_of,
               open_common(common_root))
     result = compute(ctx, outlet, common_known=_known_paths(seal))
     expected = _outputs(result["files"])

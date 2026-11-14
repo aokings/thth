@@ -26,6 +26,10 @@
 - 器の外の道具（サイトの build など）が台帳のフォルダを直に読むと、止まった間は前と後が混ざって見え、1 枚の置き換えの
   間は枚が無く見える。器が守るのは器の読み手（戻す出口・目録・差・材料の出口）まで（正直に書く残り）。
 
+- **消す求め**（段 5・`erase.py`）だけは、控えの置き場から中身を除き（`remove_object`）、控えの目録の行から sha256 と
+  大きさを外して「消した」と記す（`write_snapshot`）。外した行のある目録は名を作り直せないので、目録が求めの番号を
+  持つときだけ読み（`load_snapshot`）、外した行の中身は「取り出せない」と言う。
+
 網に出ない（標準の部品と、台帳の機械の部品だけ）。
 """
 from __future__ import annotations
@@ -382,14 +386,68 @@ def load_snapshot(root: str, name: str) -> dict:
     if len(hits) > 1:
         raise RegisterRefused("register_args_invalid", "snapshot", candidates=hits[:10])
     value = _read_json(root, _kept(root, SNAPSHOTS, hits[0] + ".json"), "snapshot")
-    if value.get("schema") != SNAPSHOT_SCHEMA or snapshot_id(value.get("files", []), value.get("decl", [])) != hits[0]:
+    if value.get("schema") != SNAPSHOT_SCHEMA:
+        raise RegisterRefused("register_kept_missing", "snapshot_broken")
+    if erased_entries(value):
+        # 消す求めで中身の sha256 を外した控え（段 5 §3.3）: 名は作り直せない。外した行は「消した」と記してあり、
+        # 求めの番号を目録が持つときだけ受ける（外した行の中身は取り出せない）。
+        if not isinstance(value.get("erased"), list) or any(
+                not e.get("erased") or e["erased"] not in value["erased"] for e in erased_entries(value)):
+            raise RegisterRefused("register_kept_missing", "snapshot_broken")
+        return value
+    if snapshot_id(value.get("files", []), value.get("decl", [])) != hits[0]:
         raise RegisterRefused("register_kept_missing", "snapshot_broken")
     return value
+
+
+def erased_entries(snap: dict) -> list:
+    """控えの目録のうち、消す求めで sha256 を外した行。"""
+    return [e for e in snap.get("files", []) if isinstance(e, dict) and e.get("sha256") is None]
+
+
+def snapshot_path(root: str, name: str) -> str:
+    return guard(root, _kept(root, SNAPSHOTS, name + ".json"))
+
+
+def write_snapshot(root: str, name: str, value: dict) -> None:
+    """消す求めが、控えの目録から sha256 を外して書き直す（段 5 §3.3。ほかの口は控えの目録を書き直さない）。"""
+    _write_json(root, snapshot_path(root, name), value)
+
+
+def remove_object(root: str, digest: str) -> bool:
+    """消す求めが、控えの置き場から 1 つの中身を除く（段 5 §3.3）。除いたら True・もう無ければ False。"""
+    if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise RegisterRefused("register_args_invalid", "object")
+    path = guard(root, object_path(root, digest))
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def object_digests(root: str) -> list:
+    """控えの置き場の中身の名（sha256）の並び。"""
+    base = guard(root, _kept(root, OBJECTS))
+    out = []
+    if not os.path.isdir(base):
+        return out
+    for head in sorted(os.listdir(base)):
+        sub = os.path.join(base, head)
+        if len(head) != 2 or not os.path.isdir(sub) or os.path.islink(sub):
+            continue
+        for rest in sorted(os.listdir(sub)):
+            digest = head + rest
+            if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
+                out.append(digest)
+    return out
 
 
 def materialize(root: str, snap: dict, into: str) -> None:
     """控えた目録の姿を、別のフォルダに書く（読む物を作るだけ。台帳には書かない）。"""
     for e in snap["files"]:
+        if e.get("sha256") is None:
+            raise RegisterRefused("register_kept_missing", "erased", path=e.get("path"))
         put_file(into, e["path"], get_object(root, e["sha256"]), e.get("x", False))
     for e in snap.get("decl", []):
         put_file(into, f"{THTH}/{e['path']}", get_object(root, e["sha256"]), False)
