@@ -43,7 +43,8 @@
    "index_feature": 123,
    "shelf_song": 1168,
    "feature_figure": 19,
-   "timeline_event": 188
+   "timeline_event": 188,
+   "review": 414
   },
   "dangling": {
    "name.entity_id": 0,
@@ -212,7 +213,7 @@
   "ledger.json root_additions が消えた記録（claims 106・evidence 106）を指す。来歴として残すのが決まりか、跡（root_fixes_data）を足すか"
  ],
  "stage9": {
-  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2（段 2 の台本の範囲から §5 の検収の記録 content/reviews と staging を除いた物）。readers は目録 §4",
+  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2（段 2 の台本の範囲から staging を除いた物。content/reviews（414 枚・頭の無い md）は 11/14 の検収で種類 review に入れた（bytes・中は見ていない））。readers は目録 §4",
   "include": [
    "data/*.csv",
    "data/dossiers/**",
@@ -222,9 +223,6 @@
    "site/src/credits/*.json",
    "site/src/credit-versions/versions.json",
    "lab.yaml"
-  ],
-  "exclude": [
-   "content/reviews/**"
   ],
   "readers": [
    {
