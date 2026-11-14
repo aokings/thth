@@ -445,3 +445,65 @@ def test_shared_privateの宣言の攻めで例外が漏れない(env, capsys, b
             R.shared_private(R.open_common(str(common)))
     rc, v, err = jrun(capsys, "register", "health", kop, "--common", common)
     assert rc in (0, 1) and v is not None
+
+
+# ------------------------------------------------------------------ 健康: 判断の多い台帳でも速い（跡の版を枚ごとに 1 回だけ読む）
+
+def _many(env, capsys, n: int) -> pathlib.Path:
+    """主張 n 行を取り込み（跡あり）、記録ごとに判断を 1 件。取り込みのあとに表へ直に 1 行足し、1 行を直す
+    （今の枚の中身が控えと違う＝控えの版を読んで比べる道を通る。直した 1 行は控えに無い版）。"""
+    from thth.register import judgment as J
+    from thth.register import vessel as V
+    src = env / "src"
+    shutil.copytree(FIX / "kopicha", src, ignore=shutil.ignore_patterns(".thth"))
+    head = (FIX / "kopicha" / CLAIMS).read_text(encoding="utf-8").splitlines()[0]
+    rows = [f"c-gen-{i:05d},term-x,has_value,,値 {i},主張 {i} とされる,quantity,,supported,,,," for i in range(n)]
+    (src / CLAIMS).write_text("\n".join([head] + rows) + "\n", encoding="utf-8")
+    reg = env / "reg"
+    rc, _out, err = run(capsys, "register", "adopt", src, "--to", reg, "--by", "集める者",
+                        "--decl", FIX / "kopicha" / ".thth", "--json")
+    assert rc == 0, err
+    edit(reg / CLAIMS, "c-gen-00001,term-x,has_value,,値 1,主張 1 とされる",
+         "c-gen-00001,term-x,has_value,,値 1,主張 1 は直に直した")
+    with open(reg / CLAIMS, "a", encoding="utf-8") as f:
+        f.write(f"c-gen-{n:05d},term-x,has_value,,値 {n},あとから直に足した,quantity,,supported,,,,\n")
+    vessel = V.open_vessel(str(reg))
+    items = [J.make(vessel, {"record": f"claim:c-gen-{i:05d}"}, "says_so", by=("集める者" if i % 3 else "masaru"),
+                    at=SEALED_AT, word="supported") for i in range(n + 1)]
+    J.append(str(reg), items)
+    return reg
+
+
+def test_判断が3000件でも健康は10秒以内(env, capsys):
+    import time
+    from thth.register import health as H
+    reg = _many(env, capsys, 3000)
+    t = time.monotonic()
+    got = H.health(str(reg), as_of=AS_OF)["groups"]["judgment"]
+    took = time.monotonic() - t
+    assert took < 10, f"{took:.1f} 秒"
+    assert got["self_check"]["count"] == 1999 and got["writer_only"]["count"] == 1999
+
+
+def test_健康の書き手の数は覚えを使わない跡の答えと同じ(env, capsys):
+    from thth.register import health as H
+    from thth.register import trail as T
+    from thth.register import vessel as V
+    reg = _many(env, capsys, 30)
+    vessel = V.open_vessel(str(reg))
+    plain = {f"claim:c-gen-{i:05d}": T.entered(str(reg), vessel.unique(f"claim:c-gen-{i:05d}")) for i in range(31)}
+    shared = {}
+    assert {ref: T.entered(str(reg), vessel.unique(ref), cache=shared) for ref in plain} == plain
+    assert not plain["claim:c-gen-00001"]["kept"] and not plain["claim:c-gen-00030"]["kept"]
+    selfs, only, unc = 0, 0, 0
+    for i in range(31):
+        info, by = plain[f"claim:c-gen-{i:05d}"], ("集める者" if i % 3 else "masaru")
+        if not info["kept"]:
+            unc += 1
+            continue
+        assert info["what"] == "adopt" and info["noted"]
+        selfs += by == info["by"]
+        only += by == info["by"]
+    got = H.health(str(reg), as_of=AS_OF)["groups"]["judgment"]
+    assert got["self_check"]["count"] == selfs == 19 and got["writer_only"]["count"] == only
+    assert got["self_check"]["uncounted"] == {"version_not_kept": unc} and unc == 2

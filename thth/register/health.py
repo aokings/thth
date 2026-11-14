@@ -185,7 +185,7 @@ def _net(vessel: V.Vessel, graph: dict, root: str, thin_all: bool) -> dict:
 
 def _writer(root: str, vessel: V.Vessel, effective: list) -> tuple:
     """`(書き手と同じ者の確かめ, 書き手だけの読み)`。取り込みの跡が言えない版は数えずに、わけごとに数える。"""
-    cache, unc = {}, {}
+    cache, unc, trail_cache = {}, {}, {}   # trail_cache: 跡・控え・枚ごとの版の覚え（この 1 回の中だけ）
     selfs, by_record = [], {}
     for j in effective:
         t = j.get("target") or {}
@@ -196,7 +196,7 @@ def _writer(root: str, vessel: V.Vessel, effective: list) -> tuple:
             continue
         if rec.ref not in cache:
             try:
-                cache[rec.ref] = T.entered(root, rec)
+                cache[rec.ref] = T.entered(root, rec, cache=trail_cache)
             except (RegisterRefused, OSError):
                 cache[rec.ref] = None
         info = cache[rec.ref]
