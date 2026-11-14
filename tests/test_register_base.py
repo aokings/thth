@@ -327,7 +327,9 @@ STDLIB_DENIED = frozenset((
     "telnetlib", "xmlrpc", "asyncio", "webbrowser", "multiprocessing", "concurrent", "ctypes", "importlib",
     "subprocess", "pty", "requests", "httpx",
 ))
-SUBPROCESS_ALLOWED = frozenset(("draft.py", "seal.py"))
+# trail.py: 段 5 の跡（git の commit どうしの差・判断の記録の続きの比べ）。決まった場所の git の読むだけの命令
+# （rev-parse・ls-tree・cat-file）だけを、PATH もシェルも使わずに呼ぶ（seal.py の openssl と同じ決め方）。
+SUBPROCESS_ALLOWED = frozenset(("draft.py", "seal.py", "trail.py"))
 # 標準の外の部品で、許すのは YAML を字として読む PyYAML だけ（台帳の器 段 1・設計 §5.2「追加の部品を入れた機械だけ」）。
 # 許すのは yamlread.py の 1 枚だけ。PyYAML は網にも外の命令にも触れない。入れていない機械では import が失敗し、
 # YAML の記録は「中は見ていない」になる（依存 0 は変えない・`pip install 'thth[yaml]'`）。

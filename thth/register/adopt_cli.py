@@ -1,16 +1,19 @@
 """台帳の器 段 2 の命令（設計 §13 の `register adopt`・`restore`・`diff`・`merge`・`row add|set` と、控えの
 `keep`・止まった入れ替えの `resume`）。
 
-    thth register adopt <元のフォルダ> --to <台帳のフォルダ> --by <名前> [--plan <範囲.json>] [--decl <宣言のフォルダ>] [--json]
-        元から台帳を作る（元には 1 バイトも書かない）。2 回めは取り込み直し（変わった物と消えた物だけ・片道）
+    thth register adopt <元のフォルダ> --to <台帳のフォルダ> --by <名前> [--checked-by <名前>] [--plan <範囲.json>]
+                        [--decl <宣言のフォルダ>] [--json]
+        元から台帳を作る（元には 1 バイトも書かない）。2 回めは取り込み直し（変わった物と消えた物だけ・片道）。
+        控えの目録に、集めた者（--by）と検めた者（--checked-by。無ければ「検めていない」）を残す
     thth register restore <台帳> --to <先のフォルダ> [--at <控え>] [--json]
         台帳の全部（か控えた前の版）を元の場所・名前・バイトで書く。目録の指紋で、数・名前・sha256 が同じと言える
-    thth register diff <台帳> <前>..<後> [--json]
+    thth register diff <台帳> <前>..<後> [--decl <宣言のフォルダ>] [--json]
         足した・変わった・退役した・消えた記録とファイル。番号かファイルが消えたら赤（rc 1）。<前>・<後> は控えた
-        目録の指紋の頭（8 字以上）・first・last・now
+        目録の指紋の頭（8 字以上）・first・last・now。台帳が git の作業木なら commit（HEAD・枝の名・<commit>^）も
+        （宣言の置き場の枚だけを読むだけの git で取り出す）。変わった記録の結びの候補と、間の取り込みの跡も出す
     thth register keep <台帳> --by <名前> [--list] [--json]
         今の姿を控える（元の形式の道具が直に書いたあと・git の外の台帳で前の版を取り出せるように）
-    thth register merge <台帳> <束のフォルダ> --by <名前> [--base <目録の指紋>] [--json]
+    thth register merge <台帳> <束のフォルダ> --by <名前> [--checked-by <名前>] [--base <目録の指紋>] [--json]
         束のファイルを、まとめての入れ替えで入れる（止まっても、打ち直すか resume で続け、resume --rollback で戻す）
     thth register resume <台帳> (--continue | --rollback) --by <名前> [--json]
         止まった入れ替えを続ける・戻す（別の者が打ってよい）
@@ -29,6 +32,7 @@ from .. import admin_log, jst
 from . import adopt as A
 from . import keep as K
 from . import ledger
+from . import trail as T
 from .errors import RegisterRefused
 
 
@@ -58,11 +62,29 @@ def _short(fp) -> str:
     return fp[:16] if isinstance(fp, str) else "-"
 
 
+def _checked_by(args):
+    """検めた者（段 5 §2.3）。無ければ None（「検めていない」と出る）。"""
+    raw = getattr(args, "checked_by", None)
+    if raw is None:
+        return None
+    try:
+        return admin_log.actor(raw)
+    except ValueError:
+        raise RegisterRefused("register_args_invalid", "checked_by") from None
+
+
+def intake_line(item: dict) -> str:
+    """取り込みの跡の 1 行（控えの名・日時・集めた者・検めた者）。"""
+    checked = f"検めた者 {item['checked_by']}" if item.get("checked_by") else "検めていない"
+    return (f"{item.get('what')}（控え {_short(item.get('snapshot'))}・{item.get('at')}・集めた者 {item.get('by')}・"
+            f"{checked}）")
+
+
 def cmd_adopt(args) -> int:
     by = _by(args)
     plan = A.read_plan(args.plan)
     decl = os.path.abspath(os.path.expanduser(args.decl)) if args.decl else None
-    value = A.adopt(args.source, args.to, plan=plan, by=by, at=_at(), decl=decl)
+    value = A.adopt(args.source, args.to, plan=plan, by=by, at=_at(), decl=decl, checked_by=_checked_by(args))
     if args.json:
         _print(value)
         return 0
@@ -76,6 +98,8 @@ def cmd_adopt(args) -> int:
     if value["source_moved"]:
         print("  取り込みの間に元が動きました（元の目録の指紋が読み始めと読み終わりで違います）。もう一度取り込むと追いつきます")
     print("  元には書いていません（読んだだけ）")
+    print(f"  集めた者 {by}・" + (f"検めた者 {value['checked_by']}" if value["checked_by"]
+                                 else "検めていない（--checked-by が無い）"))
     return 0
 
 
@@ -94,7 +118,7 @@ def cmd_restore(args) -> int:
 
 def cmd_diff(args) -> int:
     root = root_of(args.register)
-    value = A.diff(root, args.range)
+    value = A.diff(root, args.range, decl=getattr(args, "decl", None))
     if args.json:
         if not value["red"]:
             _print(value)
@@ -112,7 +136,20 @@ def cmd_diff(args) -> int:
         for item in r["changed"][:20]:
             units = item.get("units")
             extra = f"（単位 足した {units['added']}・消えた {units['vanished']}）" if units else ""
+            if item.get("candidates"):
+                extra += f"・結びの候補 {len(item['candidates'])} 件（器は結びません）"
             print(f"  変わった {item['record']}{extra}")
+        for ref in r["added"][:20]:
+            print(f"  足した {ref}")
+        for side, word in zip(value["sides"], ("前", "後")):
+            if side["side"] == "commit":
+                print(f"  {word}は commit {side['commit'][:12]}" + (
+                    f"（その時点に無い種類: {', '.join(side['absent_kinds'])}）" if side["absent_kinds"] else ""))
+        if value["intakes"] is not None:
+            if not value["intakes"]:
+                print("  間の取り込み: なし")
+            for item in value["intakes"]:
+                print(f"  間の取り込み {intake_line(item)}")
     if value["red"]:
         raise RegisterRefused("register_record_vanished", f"{len(value['records']['vanished'])} records "
                               f"{len(value['files']['removed'])} files {len(value['units']['vanished'])} units",
@@ -135,7 +172,9 @@ def cmd_keep(args) -> int:
     by = _by(args)
     K.refuse_if_pending(root)
     entries = K.view(root)
-    kept = K.save_snapshot(root, entries, what="keep", by=by, at=_at())
+    at = _at()
+    kept = K.save_snapshot(root, entries, what="keep", by=by, at=at)
+    T.note(root, kept["snapshot"], what="keep", by=by, at=at)  # 判断の記録の今の中身も控える（check --against）
     fp = kept["fp"]
     value = {**kept, "files": len(entries)}
     if args.json:
@@ -154,11 +193,13 @@ def _batch_line(value: dict) -> str:
 
 def cmd_merge(args) -> int:
     root = root_of(args.register)
-    value = A.merge(root, args.bundle, by=_by(args), at=_at(), base=args.base)
+    value = A.merge(root, args.bundle, by=_by(args), at=_at(), base=args.base, checked_by=_checked_by(args))
     if args.json:
         _print(value)
     else:
         print(_batch_line(value))
+        if value.get("batch"):
+            print("  " + (f"検めた者 {value['checked_by']}" if value["checked_by"] else "検めていない（--checked-by が無い）"))
     return 0
 
 
@@ -217,7 +258,8 @@ def register_parsers(verbs, run) -> None:
     p = verbs.add_parser("adopt", help="元のフォルダから台帳を作る（元には書かない・2 回めは取り込み直し）")
     p.add_argument("source", metavar="元のフォルダ")
     p.add_argument("--to", required=True, metavar="台帳のフォルダ")
-    p.add_argument("--by", required=True)
+    p.add_argument("--by", required=True, help="集めた者")
+    p.add_argument("--checked-by", default=None, help="検めた者（無ければ「検めていない」と残る）")
     p.add_argument("--plan", default=None, metavar="範囲.json", help="取り込む物の範囲（thth.adopt_plan/1）")
     p.add_argument("--decl", default=None, metavar="宣言のフォルダ", help="種類の宣言（kinds/）と憲法を台帳の .thth/ に置く")
     p.add_argument("--json", action="store_true")
@@ -233,6 +275,8 @@ def register_parsers(verbs, run) -> None:
     p = verbs.add_parser("diff", help="足した・変わった・退役した・消えた記録（番号が消えたら赤）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("range", metavar="前..後")
+    p.add_argument("--decl", default=None, metavar="宣言のフォルダ",
+                   help="commit と今の端を読む宣言（既定は台帳の .thth/。台帳の外に宣言を置く repo 用）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_diff))
 
@@ -246,7 +290,8 @@ def register_parsers(verbs, run) -> None:
     p = verbs.add_parser("merge", help="束をまとめて入れる（途中で止まっても前か後のどちらかに）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("bundle", metavar="束のフォルダ")
-    p.add_argument("--by", required=True)
+    p.add_argument("--by", required=True, help="集めた者")
+    p.add_argument("--checked-by", default=None, help="検めた者（無ければ「検めていない」と残る）")
     p.add_argument("--base", default=None, metavar="目録の指紋")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_merge))
