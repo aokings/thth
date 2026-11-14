@@ -168,7 +168,8 @@ def test_メディアの見積りは何も消さず消える物と残る物の�
     after = _tree(world["tmp"])
     assert all(after.get(k) == v for k, v in before.items())   # 1 つも消えず、1 つも変わらない
     rc, out, _ = _main(capsys, "project", "leave", "alpha", "--by", "operator")
-    assert rc == 0 and "まだ何も消していません" in out and f"--confirm {value['digest']}" in out
+    # digest は見積りの回ごとに変わる（その回だけの乱数を混ぜる・段 8 の検収 中 2）。
+    assert rc == 0 and "まだ何も消していません" in out and "--confirm " in out and value["digest"] not in out
     assert world["calls"] == []
 
 
