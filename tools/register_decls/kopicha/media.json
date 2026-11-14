@@ -117,6 +117,8 @@
    "l4_1_article": 0,
    "l4_2_article": 0,
    "l4_3_article": 0,
+   "z4_1_article_category": 0,
+   "z4_2_article": 0,
    "z4_1_origin_domain": 0,
    "z4_1_origin_level": 0,
    "z4_2_origin": 0,
@@ -142,7 +144,6 @@
   "K4-6: 根拠の行の数を relation を問わず数える。supports が 1 つも無いのに通る主張 56（supported 6・contextual 40・contested 9・unverified 1）。supported・contested も context だけで足りるとするか"
  ],
  "vessel_gaps": [
-  "頭つき MD（記事 61 枚）: 器の形式に frontmatter の読みが無いので bytes で置いた。記事の category・title などの検査（Z4-1・Z4-2 の記事の分）は書けない（宿題に回した物: 指示 §6 の「頭つきの .md の中を読む」）",
   "台帳をまたぐ指し: sister-links.entity_id→にがみラボの点は宣言できない（宿題に回した物: 指示 §6）",
   "ファイル・頁の道を指す欄: article-claims.file・shops.source（catalog）・entities.page_path・sister/article-links の page・target は宣言できない（宿題に回した物: 指示 §6）",
   "入れ子の並びの行: YAML の facts[]（X4-2・Z4-1 の facts[].level）は、点でつないだ道が並びの中を読まないので書けない（今 facts を持つ枚 0）"

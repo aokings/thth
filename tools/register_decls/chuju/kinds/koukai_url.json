@@ -1,0 +1,54 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "koukai_url",
+ "place": "scripts/koukai-url.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "url"
+ ],
+ "id": {
+  "key": [
+   "path"
+  ]
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_50_koukai",
+   "fields": [
+    "path",
+    "hi",
+    "ima"
+   ],
+   "note": "公開した URL の台帳の欄"
+  },
+  {
+   "check": "unique",
+   "id": "c4_51_path",
+   "fields": [
+    "path"
+   ],
+   "note": "同じ URL を 2 行にしない"
+  },
+  {
+   "check": "words",
+   "id": "c4_52_ima",
+   "field": "ima",
+   "in": [
+    "aru",
+    "sageta",
+    "utsushita"
+   ],
+   "note": "今の姿の 3 語"
+  },
+  {
+   "check": "shape",
+   "id": "c4_53_hi",
+   "field": "hi",
+   "shape": "date",
+   "note": "初めて公開した日"
+  }
+ ],
+ "note": "公開した URL の台帳（url[] の行。path は / で始まり番号の形にならないので、path の鍵で番号を作る）。出来上がった頁と合うかは check-dist 13（器の外）。"
+}

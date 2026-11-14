@@ -1,0 +1,26 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "koyomi_ken",
+ "place": "src/data/koyomi-ken.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "ken"
+ ],
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_30_ken",
+   "fields": [
+    "id",
+    "na",
+    "todofuken"
+   ],
+   "note": "圏の欄"
+  }
+ ],
+ "note": "入試の暦の圏（ken[] の 1 つずつ。番号は id）。"
+}
