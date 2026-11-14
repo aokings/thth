@@ -525,7 +525,7 @@ def test_JSONの内側の単位の欄を消す_ほかの単位と止めるは残
     bundle = env / "bundle"
     (bundle / rel).parent.mkdir(parents=True)
     (bundle / rel).write_text(json.dumps(value, ensure_ascii=False, indent=1), encoding="utf-8")
-    A.merge(str(led), str(bundle), by="masaru", at="2027-03-19T09:00:00+09:00")
+    A.merge(str(led), str(bundle), by="masaru", at="2027-03-19T09:00:00+09:00", checked_by="検める者")
     rec = V.open_vessel(str(led)).get(ref)
     pointer = next(u.pointer for u in rec.units if u.item.get("seed") == "seed-liked-0443")
     judge(capsys, led, ref, "--stop", "--unit", pointer)

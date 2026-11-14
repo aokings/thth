@@ -747,19 +747,19 @@ def _place_current(root, req, reqb, rng, result, kind, by, at) -> dict:
     rel = rec.path
     if kind.format == "csv":
         data, bom, lines = A._table(root, kind, rel)
-        header = V._parse_csv_line(lines[0])
+        header = V._parse_csv_line(lines[0], kind.delimiter)
         hits = [i for i, raw in enumerate(lines[1:], start=1)
                 if raw.strip("\r\n") and V.bytes_version(raw.encode("utf-8")) == rec.version]
         if len(hits) != 1:
             raise RegisterRefused("register_unit_ambiguous", "row", record=reqb["record"])
         if reqb.get("field"):
             body, eol = A._split_eol(lines[hits[0]])
-            cells = A.raw_cells(body)
+            cells = A.raw_cells(body, kind.delimiter)
             if len(cells) != len(header):
                 raise RegisterRefused("register_write_unsafe", "row_width")
             cells[header.index(reqb["field"])] = ""
             new_lines = list(lines)
-            new_lines[hits[0]] = A._join_row(cells, eol)
+            new_lines[hits[0]] = A._join_row(cells, eol, kind.delimiter)
             A._write_table(root, rel, kind, "".join(lines), new_lines, bom, target_id=rec.id,
                            values=dict(rec.values, **{reqb["field"]: ""}), adding=False, by=by, at=at, what=what)
         else:
