@@ -1,0 +1,10 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "guide",
+ "place": "content/guides/*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 1000000
+}

@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lab",
+ "place": "lab.yaml",
+ "format": "yaml",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "憲法（facets・languages・vocab・決定の記録）。中の語は検査の語の出どころ"
+}

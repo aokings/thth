@@ -1,0 +1,18 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "ledger",
+ "place": "ledger.json",
+ "format": "json",
+ "records": "file",
+ "max_bytes": 8000000,
+ "id": {
+  "name": true
+ },
+ "pointers": [
+  {
+   "field": "completed_seed_ids",
+   "meaning": "about",
+   "to": "song"
+  }
+ ]
+}

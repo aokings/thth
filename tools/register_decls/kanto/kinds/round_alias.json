@@ -1,0 +1,12 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "round_alias",
+ "place": "round_alias.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "raw"
+  ]
+ },
+ "note": "raw は日本語の回の名で、番号の形に合わないので鍵で読む"
+}

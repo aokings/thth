@@ -1,0 +1,73 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "meta",
+ "place": "data/meta.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "seed_id",
+   "service"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "seed_id",
+   "meaning": "about",
+   "to": "song"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "m_v27_unique",
+   "fields": [
+    "seed_id",
+    "service"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v27_service",
+   "field": "service",
+   "in": [
+    "beatport",
+    "apple",
+    "deezer",
+    "discogs",
+    "spotify",
+    "musickit"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v27_match",
+   "field": "match",
+   "in": [
+    "exact",
+    "title_artist",
+    "none",
+    "error",
+    "release_artist",
+    "isrc",
+    "no_isrc"
+   ]
+  },
+  {
+   "check": "shape",
+   "id": "m_v28",
+   "when": {
+    "match": {
+     "in": [
+      "exact",
+      "isrc",
+      "release_artist"
+     ]
+    }
+   },
+   "field": "url",
+   "shape": "http_url",
+   "allow_blank": false,
+   "note": "台本は startswith('http')"
+  }
+ ]
+}

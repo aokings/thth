@@ -1,0 +1,10 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "pillar_en",
+ "place": "site/src/content/pillars-en/[a-z0-9]*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144
+}

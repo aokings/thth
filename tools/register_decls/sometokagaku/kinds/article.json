@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "article",
+ "place": "site/src/content/articles/[a-z0-9]*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "本文の印 〔claim-…〕 は器が読まない（固有 S-C1）。_ で始まる見本は外す"
+}

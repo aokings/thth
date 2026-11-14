@@ -1,0 +1,109 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source",
+ "place": "data/sources.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "shape",
+   "id": "j_1_source",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 134〜141 行（images は 284〜287 行）"
+  },
+  {
+   "check": "unique",
+   "id": "j_2_source",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "j_3_source_source_type",
+   "field": "source_type",
+   "in": [
+    "classical_text",
+    "modern_edition",
+    "translation",
+    "journal_article",
+    "book",
+    "thesis",
+    "reference_work",
+    "film",
+    "tv_series",
+    "manga",
+    "game",
+    "official_catalog",
+    "archive",
+    "museum_collection",
+    "government",
+    "press",
+    "other"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_source_access_status",
+   "field": "access_status",
+   "in": [
+    "open",
+    "abstract_only",
+    "restricted",
+    "unknown"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_source_review_status",
+   "field": "review_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "machine_read",
+    "full_text_checked",
+    "needs_full_text"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_source_rights_status",
+   "field": "rights_status",
+   "in": [
+    "fact_only",
+    "open_license",
+    "public_domain",
+    "permission_needed",
+    "unknown"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "shape",
+   "id": "j_18_url",
+   "field": "url",
+   "shape": "http_url",
+   "allow_blank": false,
+   "when": {
+    "doi": {
+     "blank": true
+    }
+   },
+   "note": "url が http で始まるか doi が要る（257〜258 行）。台本は startswith('http')、器は http:// か https://"
+  },
+  {
+   "check": "shape",
+   "id": "j_18_retrieved_at",
+   "field": "retrieved_at",
+   "shape": "date",
+   "allow_blank": false
+  }
+ ]
+}

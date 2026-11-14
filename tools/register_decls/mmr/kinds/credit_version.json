@@ -1,0 +1,85 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "credit_version",
+ "place": "site/src/credit-versions/versions.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "rows"
+ ],
+ "max_bytes": 2000000,
+ "id": {
+  "key": [
+   "claim",
+   "seed"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "claim",
+   "meaning": "derived_from",
+   "to": "claim"
+  },
+  {
+   "field": "seed",
+   "meaning": "about",
+   "to": "song"
+  },
+  {
+   "field": "subject",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "object",
+   "meaning": "related",
+   "to": "entity"
+  },
+  {
+   "field": "object_seeds",
+   "meaning": "related",
+   "to": "song"
+  }
+ ],
+ "checks": [
+  {
+   "check": "words",
+   "id": "m_w4_status",
+   "field": "status",
+   "in": [
+    "shown",
+    "held"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_w4_shown",
+   "when": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    }
+   },
+   "fields": [
+    "mark",
+    "next_check_ja"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_w4_held",
+   "when": {
+    "status": {
+     "in": [
+      "held"
+     ]
+    }
+   },
+   "fields": [
+    "held_kind",
+    "held_reason_ja"
+   ]
+  }
+ ]
+}

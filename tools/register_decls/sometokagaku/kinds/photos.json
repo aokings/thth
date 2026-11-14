@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "photos",
+ "place": "site/photos.yaml",
+ "format": "yaml",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "写真の台帳。今は photos: [] の 0 行。YAML の並びを行として読めない（records は file だけ）"
+}

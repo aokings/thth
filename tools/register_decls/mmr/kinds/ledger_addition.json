@@ -1,0 +1,50 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "ledger_addition",
+ "place": "ledger.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "root_additions"
+ ],
+ "max_bytes": 8000000,
+ "id": {
+  "key": [
+   "at",
+   "origin",
+   "sources",
+   "mood",
+   "claims",
+   "evidence",
+   "entities"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "claims",
+   "meaning": "derived_from",
+   "to": "claim"
+  },
+  {
+   "field": "evidence",
+   "meaning": "derived_from",
+   "to": "evidence"
+  },
+  {
+   "field": "sources",
+   "meaning": "derived_from",
+   "to": "source"
+  },
+  {
+   "field": "mood",
+   "meaning": "derived_from",
+   "to": "mood"
+  },
+  {
+   "field": "entities",
+   "meaning": "derived_from",
+   "to": "entity"
+  }
+ ],
+ "note": "来歴。消えた記録を指す行がある（決まりの実物 §2: claims 106・evidence 106）"
+}

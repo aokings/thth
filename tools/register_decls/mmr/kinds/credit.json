@@ -1,0 +1,206 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "credit",
+ "place": "site/src/credits/*.json",
+ "format": "json",
+ "records": "file",
+ "max_bytes": 2000000,
+ "id": {
+  "name": true
+ },
+ "questions": [
+  {
+   "name": "credit_holds",
+   "level": "unit",
+   "state": "status",
+   "reason_kind": "held_kind",
+   "reason_text": "held_reason_ja",
+   "depends": [
+    "seed",
+    "title"
+   ]
+  },
+  {
+   "name": "may_publish",
+   "outlet": "artist_page",
+   "state": "public",
+   "depends": []
+  },
+  {
+   "name": "may_publish",
+   "outlet": "song_page",
+   "state": "public_song",
+   "depends": []
+  }
+ ],
+ "units": {
+  "groups": [],
+  "items": [
+   "rows",
+   "*"
+  ],
+  "key": [
+   "seed"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  }
+ ],
+ "checks": [
+  {
+   "check": "count",
+   "id": "m_c10_kind",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "held"
+     ]
+    },
+    "held_kind": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "R7: held の行に held_kind が要る（439〜442 行）"
+  },
+  {
+   "check": "count",
+   "id": "m_c10_reason",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "held"
+     ]
+    },
+    "held_reason_ja": {
+     "blank": true
+    }
+   },
+   "max": 0
+  },
+  {
+   "check": "count",
+   "id": "m_c11",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "not_in": [
+      "shown",
+      "held"
+     ]
+    }
+   },
+   "max": 0,
+   "note": "status は shown か held（443〜445 行）"
+  },
+  {
+   "check": "count",
+   "id": "m_c12_mark",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "mark": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "R7: shown の行に mark と next_check_ja が要る（446〜447 行）"
+  },
+  {
+   "check": "count",
+   "id": "m_c12_next",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "next_check_ja": {
+     "blank": true
+    }
+   },
+   "max": 0
+  },
+  {
+   "check": "count",
+   "id": "m_c13_kind",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "held_kind": {
+     "blank": false
+    }
+   },
+   "max": 0,
+   "note": "R7: shown の行の held_kind・held_reason_ja は空（448〜449 行）"
+  },
+  {
+   "check": "count",
+   "id": "m_c13_reason",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "held_reason_ja": {
+     "blank": false
+    }
+   },
+   "max": 0
+  },
+  {
+   "check": "count",
+   "id": "m_c23",
+   "when": {
+    "public": {
+     "in": [
+      "true"
+     ]
+    }
+   },
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    }
+   },
+   "min": 2,
+   "note": "R6: 公開の組は shown の行が 2 つ以上（517〜518 行）"
+  }
+ ]
+}

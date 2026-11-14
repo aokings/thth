@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "owner_read",
+ "place": "site/owner-read.txt",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 1048576,
+ "note": "masaru が読んだ記録（パス<TAB>日<TAB>メモ）。タブ区切りは器が表として読めない"
+}

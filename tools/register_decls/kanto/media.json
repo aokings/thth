@@ -1,0 +1,66 @@
+{
+ "name": "関東",
+ "source": "asmon/research/kanto_type",
+ "expected": {
+  "records": {
+   "target": 265,
+   "school_master": 265,
+   "admission_result": 265,
+   "school_record": 265,
+   "fees": 265,
+   "round_times": 265,
+   "commute": 265,
+   "access": 265,
+   "disclosure": 265,
+   "events": 264,
+   "events_v3": 1,
+   "procedures": 46,
+   "boshu_henkou": 163,
+   "submission_doc": 265,
+   "timeline": 10,
+   "insight": 229,
+   "hensachi": 5945,
+   "high_school": 136,
+   "shinro": 265,
+   "round_alias": 1920,
+   "feature_row": 1037,
+   "type_row": 1037,
+   "human_review": 373,
+   "site_urls": 2
+  },
+  "dangling": {
+   "school_master.school_id": 0,
+   "admission_result.school_id": 0,
+   "school_record.school_id": 0,
+   "fees.school_id": 0,
+   "round_times.school_id": 0,
+   "commute.school_id": 0,
+   "access.school_id": 0,
+   "disclosure.school_id": 0,
+   "events.school_id": 0,
+   "events_v3.school_id": 0,
+   "procedures.school_id": 0,
+   "boshu_henkou.school_id": 0,
+   "submission_doc.school_id": 0,
+   "timeline.school_id": 0,
+   "hensachi.school_id": 0,
+   "high_school.school_id": 0,
+   "shinro.school_id": 0
+  },
+  "checks": {
+   "k_m1": 0,
+   "k_a10": 23,
+   "k_a12": 2,
+   "k_x5": 0,
+   "k_f2_fees": 0,
+   "k_f2_access": 0,
+   "k_p1_year": 0
+  }
+ },
+ "ask_lane": [
+  "K-A11: 回の source_tier が空なら年の値を継ぐ（実効の段）。器の条件は回の欄しか見ないので、継ぐ決まりは固有に残した。回に段を書き下ろすか（47 行だけが持つ）はデータの層の決め",
+  "鍵の重なる 37 組 74 行: course の欄（承認待ち）が入るまで、unique の検査は書かない（書けば今 74 行が赤）",
+  "access_fees_lint の WARN 589 のうち「同じ定員の数が 2 つ以上の回」173 は、capacity_scope（承認待ち）で言い直せる見込み",
+  "events の 211 が無い（264 枚）。母集合の全部に面の記録が要るか（K-M1 は school_master だけ）"
+ ]
+}

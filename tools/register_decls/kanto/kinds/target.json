@@ -1,0 +1,22 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "target",
+ "place": "school_master/_targets.csv",
+ "format": "csv",
+ "id": {
+  "field": "school_id"
+ },
+ "checks": [
+  {
+   "check": "count",
+   "id": "k_m1",
+   "from": {
+    "kind": "school_master",
+    "via": "school_id"
+   },
+   "min": 1,
+   "note": "母集合の全部に school_master/<id>.json がある（school_master_guard 50〜53 行）"
+  }
+ ],
+ "note": "母集合 265 校（順もここが正）。各面の school_id はここを指す"
+}

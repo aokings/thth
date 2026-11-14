@@ -1,0 +1,26 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "ledger_fix",
+ "place": "ledger.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "root_fixes_data"
+ ],
+ "max_bytes": 8000000,
+ "id": {
+  "key": [
+   "at",
+   "id",
+   "field",
+   "file",
+   "files",
+   "ids",
+   "fix",
+   "old_line_sha256",
+   "old",
+   "why"
+  ]
+ },
+ "note": "訂正の id は表をまたぐ（先の種類が行ごとに違う）ので指す欄にしない"
+}

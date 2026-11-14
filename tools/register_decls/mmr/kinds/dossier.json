@@ -1,0 +1,41 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "dossier",
+ "place": "data/dossiers.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_dossier",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "260〜261 行"
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_dossier",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v19_dossier",
+   "fields": [
+    "wave"
+   ]
+  }
+ ],
+ "note": "path の本文が在るかは固有（M-V26 の後半）"
+}

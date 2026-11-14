@@ -1,0 +1,81 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "name",
+ "place": "data/names.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_name",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_name",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v3_name_name_type",
+   "field": "name_type",
+   "in": [
+    "common",
+    "scientific",
+    "trade",
+    "colour_index",
+    "cas",
+    "local",
+    "transliteration",
+    "abbreviation",
+    "historical"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_name_id_confidence",
+   "field": "identification_confidence",
+   "in": [
+    "high",
+    "medium",
+    "low",
+    "unverified"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "m_v6_name",
+   "fields": [
+    "name",
+    "language"
+   ]
+  },
+  {
+   "check": "shape",
+   "id": "m_v7_language",
+   "field": "language",
+   "shape": "lang",
+   "note": "names.language の形（173〜176 行）"
+  }
+ ]
+}
