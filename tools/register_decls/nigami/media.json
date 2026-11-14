@@ -113,6 +113,7 @@
    "q_results.evidence_id": 0,
    "q_comparability.row_id": 0,
    "q_readings.row_ids": 0,
+   "en_text.id": 1,
    "en_search_title.entity_id": 0,
    "en_search_noindex.entity_id": 0
   },
@@ -333,7 +334,7 @@
  ],
  "vessel_gaps": [
   "区切り 2 字: readings.row_ids は ; と , の両方で切る（実物の , は 0）。器の split は 1 字",
-  "欄の値で先の種類が決まる指し: i18n/en/texts.(file, id) は file 欄が先の表（data/<file>.csv）を決め、id がその表の番号。欄の組で指す（G7）は先の種類が 1 つに決まっている物だけなので書けない（先が無い 1: entity-overview-evidence の overview-evidence-specialty-coffee-02）。pair-shas.(file, row, name) も同じ",
+  "pair-shas.(file, row) の指し: file は表の道で、問いのフォルダの表（data/questions/<問い>/<表>.csv）が 140 余りあり、to_by の map（64 個まで）に入らない。row は表ごとに作り方が違い（比べの表は row_id/comparison、問いの表は問いの番号）、先の番号そのものでない行が 1,091 ある。to_by の file の map では書けない",
   "台帳をまたぐ指し: sister-links.url（こぴちゃの頁）（宿題に回した物: 指示 §6）",
   "ファイルを指す欄: entity-media.path・media-manifest.path・observations.media_path・entity-figures.path・lab-recipe-figures の path 系・entity-notes.note_path（宿題に回した物: 指示 §6）"
  ]

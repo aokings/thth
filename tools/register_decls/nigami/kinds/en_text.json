@@ -11,5 +11,24 @@
    "field"
   ]
  },
- "note": "(file, id) で data/<file>.csv の行を指す（組で、しかも種類が file 欄で決まるので指す欄にできない）"
+ "pointers": [
+  {
+   "field": "id",
+   "meaning": "derived_from",
+   "to_by": {
+    "field": "file",
+    "map": {
+     "claims": "claim",
+     "evidence": "evidence",
+     "entity-overview-evidence": "overview_evidence",
+     "entity-overviews": "overview",
+     "entity-media": "entity_media",
+     "entities": "point",
+     "measurements": "measurement"
+    }
+   },
+   "note": "英訳の行は (file, id) で data/<file>.csv の行の訳。file 欄で先の種類が決まる（段 4 G15 to_by）"
+  }
+ ],
+ "note": "英訳の表。(file, id) が訳した元の行"
 }
