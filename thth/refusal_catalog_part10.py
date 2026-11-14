@@ -449,4 +449,24 @@ ENTRIES = {
         "--common に共通の台帳のフォルダを渡してください。共通に置く記録は、1 つのファイル = 1 つの記録の種類にしてください。",
         "thth register take <台帳> --common <共通の台帳> --record <種類:番号> --by <名前>",
         "共通の台帳を git に置き、直すたびに thth register keep で控えると、前の版を採っているメディアも材料を作り直せます。"),
+    # ---------------------------------------------------------------- 台帳の器 段 5: 消す求め
+    "register_erase_invalid": _entry(
+        "消す求めの形が合いません（1 行目の（）の語: why は理由が種類の語でない・field と unit は記録に無い欄か単位・"
+        "id_field は番号の欄・format はこの形の記録は欄では消せない・request_missing は求めが無い・scope_missing は"
+        "範囲の判断が無い・scope_wider は範囲が求めより広い・scope_exists は範囲の判断がもうある・versions は版の"
+        "書き方・place と result は場所と結果の語・not_run はまだ実行していない）。何も消していません。",
+        "理由は personal・rights・mistake・other のどれかの語だけで書き、中身は書かないでください。範囲は求めと同じ"
+        "番号・欄か、それより狭く。版は all・current・控えの名のどれかで。範囲の判断を置いてから run を打ってください。"
+        "YAML・頭つきの .md・バイトの枚は、記録ごと（--field なし）で求めてください。",
+        "thth register erase status <台帳> <求め>",
+        "出すのを今すぐ止めたいなら、消す求めとは別に thth register judge <台帳> <記録> --stop を足すと、封を待たずに"
+        "次の材料から外れます。"),
+    "register_erase_left": _entry(
+        "消し終わりの確かめで、台帳のフォルダの中に、消した範囲の中身か指紋がまだあります（--json の found_in が場所）。"
+        "求めの範囲の外（ほかの記録の文・ほかの判断の理由）に同じ中身があるときも、ここで止まります。",
+        "found_in の場所を見て、範囲の外の物なら、その記録にも消す求めを置くか、持ち主が "
+        "thth register erase done <台帳> <求め> --place <場所> --result kept で「消さない」と決めてください。"
+        "器の記録に残っているなら、もう一度 thth register erase run で続きから消せます。",
+        "thth register erase status <台帳> <求め>",
+        "住所や電話のような値は、判断の理由の文や注に写さないでおくと、消すときに 1 つの求めで済みます。"),
 }

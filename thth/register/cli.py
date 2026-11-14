@@ -70,7 +70,7 @@ import sys
 from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
-from . import adopt_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
+from . import adopt_cli, erase_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -827,3 +827,5 @@ def register(sub) -> None:
     adopt_cli.register_parsers(verbs, _run)
     # 台帳の器 段 3: 判断・採る・材料・受け入れと封・確かめ・持ち主の鍵（`route_cli.py`）。
     route_cli.register_parsers(verbs, _run)
+    # 台帳の器 段 5: 消す求め（求め・範囲の判断・実行・結果と残り。`erase_cli.py`）。
+    erase_cli.register_parsers(verbs, _run)

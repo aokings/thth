@@ -21,12 +21,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 
 from . import vessel as V
 from .errors import RegisterRefused
 
 FILE = "judgments.jsonl"
 SCHEMA = "thth.judgment/1"
+ERASE_DIR = "erase"                   # 消す求めの記録（`.thth/erase/<求めの番号>/`。erase.py が書く）
+ERASE_RESULT = "result.json"
+ERASE_SCOPE = "scope.json"
+ERASE_ID = re.compile(r"e-[0-9a-f]{16}\Z")
 PATHS = ("inspection", "acceptance", "carry")
 MAX_BYTES = 50 * 1024 * 1024
 
@@ -60,8 +65,34 @@ def read(root: str) -> list:
         problem = shape_problem(item)
         if problem:
             raise RegisterRefused("register_judgment_invalid", f"line {number} {problem}")
+        if "erased" in item and not erased_ok(root, item):
+            raise RegisterRefused("register_judgment_invalid", f"line {number} erased_not_in_result")
         out.append(item)
     return out
+
+
+def erased_ok(root, item: dict) -> bool:
+    """消す求めで印の形に書き換えた行（`erased`）が、その求めの記録に載っているか（設計 §5.5・指示 段 5 §3.4）。
+    `.thth/erase/<求め>/` に範囲の判断と結果があり、結果の「書き換えた判断の行」にこの行の番号があるときだけ真。
+    印の行は、番号が中身から作った物と合うかを見ない（中身を除いたので）。代わりにこれを見る。"""
+    mark = item.get("erased")
+    if root is None or not isinstance(mark, dict) or not isinstance(mark.get("request"), str) \
+            or not ERASE_ID.fullmatch(mark["request"]):
+        return False
+    base = os.path.join(root, V.DECL_DIR, ERASE_DIR, mark["request"])
+    if os.path.islink(base) or not os.path.isfile(os.path.join(base, ERASE_SCOPE)):
+        return False
+    try:
+        with open(os.path.join(base, ERASE_RESULT), "rb") as f:
+            result = json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    lines = result.get("rewritten_lines") if isinstance(result, dict) else None
+    return isinstance(lines, list) and item.get("id") in lines and result.get("request") == mark["request"]
+
+
+def is_erased(item) -> bool:
+    return isinstance(item, dict) and isinstance(item.get("erased"), dict)
 
 
 def _text(value) -> bool:
@@ -89,6 +120,8 @@ def shape_problem(item: dict) -> str | None:
             return name
     if item.get("at") is not None and not isinstance(item["at"], str):
         return "at"
+    if "erased" in item and not (isinstance(item["erased"], dict) and isinstance(item["erased"].get("request"), str)):
+        return "erased"
     siblings = item.get("siblings")
     if siblings is not None and not (isinstance(siblings, list) and all(isinstance(x, str) for x in siblings)):
         return "siblings"
@@ -241,6 +274,11 @@ def evaluate(vessel: V.Vessel, j: dict) -> str:
     （よその台帳を指す判断。この台帳の器では確かめられない。設計 §5.4。消えた指し先とは数えない）。"""
     if (j.get("target") or {}).get("ledger"):
         return "unverifiable"
+    if is_erased(j):
+        # 消す求めで印の形にした行: 対象の版を確かめられないので、広げる向き（よい・止めない）には効かない。
+        # 番号に付く「だめ」は、狭める向きにだけ効いたまま（指示 段 5 §3.4）。
+        conclusion, _reason = conclusion_of(vessel, j)
+        return "effective" if conclusion == "bad" else "stale"
     now = current_depend(vessel, j["target"], j["question"], scope_said(j))
     if now is None:
         return "vanished"

@@ -31,6 +31,8 @@ REASONS = frozenset((
     # 台帳の器 段 3: 出し口・使えるか・材料・受け入れと封・確かめ・持ち主の鍵・共通の台帳。
     "register_outlet_unknown", "register_use_not_usable", "register_material_stale", "register_seal_missing",
     "register_seal_unverified", "register_seal_key_missing", "register_seal_key_unsafe", "register_common_unusable",
+    # 台帳の器 段 5: 消す求め。
+    "register_erase_invalid", "register_erase_left",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 
