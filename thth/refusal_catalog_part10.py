@@ -394,7 +394,9 @@ ENTRIES = {
         "その出し口が、台帳の .thth/outlets.json に宣言されていないか、宣言の形が崩れています（1 行目の（）の語: "
         "outlet は名前が無い・outlets: に続く語は宣言の崩れた所）。材料は書いていません。",
         "thth register kinds <台帳> で種類の名前を確かめ、.thth/outlets.json の outlets に出し口を足すか直してから、"
-        "打ち直してください（出し口ごとに audience・kinds・requires・fact・reservation を書きます）。",
+        "打ち直してください（出し口ごとに audience・kinds・requires・fact・reservation を書きます）。kinds を"
+        "種類ごとの設定（private_fields・inserts・hide）で書くのは読者の出し口だけ・欄の名前は英数字と _ だけ・"
+        "dest は台帳の外の相対の道で、内の道具の出し口と読者の出し口で同じにしない（語の dest_shared）。",
         "thth register kinds <台帳>",
         "読者に出る出し口と内の道具が読む出し口を分けて宣言すると、出さない層が公開の材料へ混ざりません。"),
     "register_use_not_usable": _entry(
@@ -408,9 +410,13 @@ ENTRIES = {
         "thth register judge <台帳> <種類:番号> --question <問い> --conclusion good --by <名前>",
         "直しと検収を同じ便に入れると、頁から外れる間を作らずに済みます。"),
     "register_material_stale": _entry(
-        "書き出し先に、この出し口の一覧に無い旧い材料のファイルがあります（--json の stale）。読まれ続けると、"
-        "外したはずの記録が頁に残るので、書くのをやめました。THTH はファイルを消しません。",
-        "一覧に無いファイルを、持ち主の手で書き出し先から外して（git の repo なら git rm）、打ち直してください。",
+        "書き出し先に、この出し口の一覧に無い旧い材料のファイルがあります（--json の stale。. で始まるフォルダの中も"
+        "見ます）。読まれ続けると、外したはずの記録が頁に残るので、書くのをやめました。1 行目の（）の語が other_outlet なら、"
+        "読む者の違う出し口（内の道具と読者）の材料が同じ書き出し先にあり、上書きすると出さない欄や内部の層が"
+        "読者の材料へ混ざります。THTH はファイルを消しません。",
+        "一覧に無いファイルを、持ち主の手で書き出し先から外して（git の repo なら git rm）、打ち直してください。"
+        "other_outlet なら、出し口ごとに別の書き出し先を使います。build の道具など材料でない物は、出し口の宣言の"
+        " ignore に道の型で書けば見ません。",
         "thth register export <台帳> --outlet <出し口> --to <先> --as-of <日時> --check",
         "書き出し先を出し口ごとのフォルダに分けると、旧い材料がほかのファイルと混ざりません。"),
     "register_seal_missing": _entry(
