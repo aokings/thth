@@ -206,7 +206,7 @@ def _parse_one(raw, pointers: list) -> dict:
     elif part == "forbid_pair":
         via = _fieldname(raw.get("via"))
         specs = [p for p in pointers if p.get("field") == via]
-        if not specs or len({p["to"] for p in specs}) != 1:
+        if not specs or any("to" not in p for p in specs) or len({p["to"] for p in specs}) != 1:
             raise _err()  # 宣言済みの指す欄だけ（先の種類が 1 つに決まる物）
         out["via"], out["to"] = via, specs[0]["to"]
         out["target"] = parse_condition(raw.get("target"))

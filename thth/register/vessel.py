@@ -206,12 +206,12 @@ _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows
               "delimiter",
               "units", "inspects", "checks", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
-_P_KEYS = ("field", "fields", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "none",
+_P_KEYS = ("field", "fields", "template", "meaning", "meaning_from", "to", "to_by", "split", "recorded_version", "none",
            "same_folder", "in_units", "note")
 NONE_MAX = 16                         # 指す欄の `none`（先なしと読む字）の数
 _RV_KEYS = ("field", "of", "hash")
 _U_KEYS = ("groups", "items", "id", "key", "time", "scope", "sources", "not_values", "note")
-_I_KEYS = ("follow", "question", "by", "content", "required", "note")
+_I_KEYS = ("follow", "question", "by", "content", "content_by", "required", "note")
 
 
 def parse_kind(data, path: str) -> Kind:
@@ -229,12 +229,28 @@ def _parse_inspects(raw) -> dict:
     `content`（先の欄 ← この行の欄）を「確かめた中身そのもの」として持つ検収の記録にする。"""
     _only(raw, _I_KEYS, "inspects")
     follow = _strs(raw.get("follow"), FIELD, "inspects")
+    if ("content" in raw) == ("content_by" in raw):
+        raise DeclarationError("inspects")
+    if "content_by" in raw:
+        # 行ごとに変わる欄（段 4 G16）: 直した欄の名前を持つ欄と、新しい中身を持つ欄（点でつないだ道を受ける）。
+        from . import checks as _checks
+        by_spec = raw["content_by"]
+        if not isinstance(by_spec, dict) or set(by_spec) != {"field", "value"} or raw.get("required") is not None:
+            raise DeclarationError("inspects")
+        try:
+            content_by = {"field": _checks._path(by_spec["field"]), "value": _checks._path(by_spec["value"])}
+        except DeclarationError:
+            raise DeclarationError("inspects") from None
+        return {"follow": follow, "question": _name(raw.get("question"), "inspects"),
+                "by": _name(raw.get("by"), "inspects"), "content": None, "content_by": content_by,
+                "required": None}
     content = raw.get("content")
     if not isinstance(content, dict) or not content:
         raise DeclarationError("inspects")
     out = {"follow": follow, "question": _name(raw.get("question"), "inspects"),
            "by": _name(raw.get("by"), "inspects"),
            "content": {_field(k, "inspects"): _field(v, "inspects") for k, v in content.items()},
+           "content_by": None,
            "required": _strs(raw["required"], FIELD, "inspects") if raw.get("required") is not None else None}
     if out["required"] is not None and not set(out["required"]) <= set(out["content"]):
         raise DeclarationError("inspects")
@@ -339,7 +355,14 @@ def _parse_kind(data, path: str) -> Kind:
             raise DeclarationError("pointers")
         if "meaning_from" in raw:
             _field(raw["meaning_from"], "pointers")
-        _name(raw.get("to"), "pointers")
+        if ("to" in raw) == ("to_by" in raw):
+            raise DeclarationError("pointers")
+        if "to" in raw:
+            _name(raw.get("to"), "pointers")
+        else:
+            _parse_to_by(raw["to_by"])
+            if "fields" in raw or "template" in raw or raw.get("same_folder"):
+                raise DeclarationError("pointers")
         if "split" in raw and (not isinstance(raw["split"], str) or not re.fullmatch(r"[;|,]", raw["split"])):
             raise DeclarationError("pointers")
         if "recorded_version" in raw:
@@ -468,12 +491,72 @@ def _no_duplicates(pairs):
     return out
 
 
+TO_BY_PREFIX_MAX = 32
+TO_BY_MAP_MAX = 64
+
+
+def _parse_to_by(raw) -> None:
+    """行ごとに先の種類が変わる指す欄（段 4 G15）: `{"prefix": {頭: 種類}}`（番号の頭。32 個まで）か
+    `{"field": 欄, "map": {値: 種類}}`（別の欄の値。64 個まで）。"""
+    if not isinstance(raw, dict):
+        raise DeclarationError("pointers")
+    if set(raw) == {"prefix"}:
+        table, limit = raw["prefix"], TO_BY_PREFIX_MAX
+    elif set(raw) == {"field", "map"}:
+        _field(raw["field"], "pointers")
+        table, limit = raw["map"], TO_BY_MAP_MAX
+    else:
+        raise DeclarationError("pointers")
+    if not isinstance(table, dict) or not 1 <= len(table) <= limit:
+        raise DeclarationError("pointers")
+    for head, to in table.items():
+        if not isinstance(head, str) or not 0 < len(head) <= 64 or not head.isprintable() or head != head.strip():
+            raise DeclarationError("pointers")
+        _name(to, "pointers")
+
+
+def route_kind(spec: dict, holder: dict, target_id: str) -> str | None:
+    """指す欄の先の種類。`to` ならそれ。`to_by` は頭（長い頭を先に当てる）か別の欄の値で決める。決まらなければ None。"""
+    if "to" in spec:
+        return spec["to"]
+    rule = spec["to_by"]
+    if "prefix" in rule:
+        for head in sorted(rule["prefix"], key=len, reverse=True):
+            if target_id.startswith(head):
+                return rule["prefix"][head]
+        return None
+    raw = holder.get(rule["field"]) if isinstance(holder, dict) else None
+    word = word_of(raw)
+    return rule["map"].get(word.strip()) if isinstance(word, str) else None
+
+
+def pointer_refs(rec: Record, spec: dict) -> tuple:
+    """`(先の (種類, 番号) の並び, 空の要素の数, 先の種類が決まらない番号の並び)`。`to` の指す欄は `pointer_pieces` と
+    同じ先に種類を付けた物。`to_by`（段 4 G15）は行（内側の単位の指す欄なら単位）ごとに種類を決める。"""
+    if "to_by" not in spec:
+        targets, blanks = pointer_pieces(rec, spec)
+        return [(spec["to"], t) for t in targets], blanks, []
+    holders = [u.item for u in rec.units] if spec.get("in_units") else [rec.values or {}]
+    refs, blanks, unrouted = [], 0, []
+    for holder in holders:
+        got, empty = _pieces(holder, spec)
+        blanks += empty
+        for target_id in got:
+            to = route_kind(spec, holder, target_id)
+            if to is None:
+                if target_id not in unrouted:
+                    unrouted.append(target_id)
+            elif (to, target_id) not in refs:
+                refs.append((to, target_id))
+    return refs, blanks, unrouted
+
+
 def _pointer_refs(kinds: dict) -> str | None:
     """`fields` の先は鍵の組で番号を取る種類で、組の数が同じ。`same_folder` の先は置き場の中で番号を取る種類。
     合わない種類の名前を返す（先の種類が宣言に無いのは、今までどおり先の無い指しに数える）。"""
     for kind in kinds.values():
         for p in kind.pointers:
-            other = kinds.get(p["to"])
+            other = kinds.get(p.get("to"))
             if other is None:
                 continue
             if "fields" in p and len(other.id_rule.get("key") or []) != len(p["fields"]):
@@ -1429,18 +1512,22 @@ def recorded_hash(spec: dict, target: Record) -> str | None:
 
 def links(vessel: Vessel) -> dict:
     """指す欄を全部たどる: `{"edges": [...], "dangling": [...], "cycles": [...], "review": [...]}`。"""
-    edges, dangling, review, ambiguous, blank = [], [], [], [], []
+    edges, dangling, review, ambiguous, blank, unrouted = [], [], [], [], [], []
     for rec in vessel.all_records:
         if rec.id is None or rec.values is None:
             continue
         kind = vessel.kinds[rec.kind]
         for spec in kind.pointers:
-            targets, blanks = pointer_pieces(rec, spec)
+            refs, blanks, lost = pointer_refs(rec, spec)
             if blanks:
                 # 並び・区切りの中の空の要素: 指す先の一部が欠けている（黙って落とさず見せる）。
-                blank.append({"from": rec.ref, "to_kind": spec["to"], "field": spec.get("field"), "blanks": blanks})
-            for target_id in targets:
-                ref = f"{spec['to']}:{target_id}"
+                blank.append({"from": rec.ref, "to_kind": spec.get("to"), "field": spec.get("field"),
+                              "blanks": blanks})
+            for target_id in lost:
+                # 先の種類が決まらない（`to_by` のどれにも当たらない。段 4 G15）: 先が無い指しとは数えない。
+                unrouted.append({"from": rec.ref, "target": target_id, "field": spec.get("field")})
+            for to, target_id in refs:
+                ref = f"{to}:{target_id}"
                 target = vessel.unique(ref)
                 meaning = spec["meaning"]
                 if spec.get("meaning_from"):
@@ -1464,7 +1551,7 @@ def links(vessel: Vessel) -> dict:
                         review.append({**edge, "recorded": recorded, "now": now})
     cycles = _cycles(edges)
     return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review, "ambiguous": ambiguous,
-            "blank": blank}
+            "blank": blank, "unrouted": unrouted}
 
 
 def _cycles(edges: list) -> list:

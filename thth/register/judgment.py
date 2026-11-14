@@ -555,8 +555,15 @@ def inspection_report(vessel: V.Vessel) -> dict:
       取り違えない）
     - `target_split`: たどった先が 2 つ以上の記録に分かれる
     - `required_empty`: `required` の欄（既定は問いの状態の欄）が空か null
-    状態の語は観測と同じ直し方（`word_of`）。効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。"""
-    out, skipped = [], []
+    - `target_unrouted`: たどる欄の先の種類が決まらない（`to_by` のどれにも当たらない。段 4 G15）
+    状態の語は観測と同じ直し方（`word_of`）。効くかは `evaluate`（中身の指紋が今の依る所と合うか）で決まる。
+
+    `content_by`（段 4 G16）の表は、行の「直した欄の名前」と「新しい中身」を、先の記録の「その欄がその中身である
+    版」を確かめた検収の記録にする。結ばずに「版を示していない」（`unversioned`）に数える行と理由:
+    `field_missing`（欄の名前が字でない・無い）・`field_compound`（2 つ以上の欄を 1 つの字で持つ。欄の名前の形でない）・
+    `field_not_in_target`（先の記録にその欄が無い）・`value_missing`（新しい中身の欄が無い）。"""
+    from .checks import get as _get_path
+    out, skipped, unversioned = [], [], []
     for rec in vessel.all_records:
         kind = vessel.kinds[rec.kind]
         spec = kind.inspects
@@ -569,10 +576,14 @@ def inspection_report(vessel: V.Vessel) -> dict:
             # 読みの問題のある行（幅の違う行の欠けたセルは値でなく欠け）。番号の重なりは行の中身に効かないので除く。
             skip("source_problem")
             continue
-        if any(from_field not in rec.values for from_field in spec["content"].values()):
-            skip("content_missing")
-            continue
-        content = {to_field: rec.values[from_field] for to_field, from_field in spec["content"].items()}
+        by_row = spec.get("content_by")
+        if by_row is None:
+            if any(from_field not in rec.values for from_field in spec["content"].values()):
+                skip("content_missing")
+                continue
+            content = {to_field: rec.values[from_field] for to_field, from_field in spec["content"].items()}
+        else:
+            content = None
         here, reason = [rec], None
         for step in spec["follow"]:
             nxt = []
@@ -581,12 +592,14 @@ def inspection_report(vessel: V.Vessel) -> dict:
                 for pointer in vessel.kinds[one.kind].pointers:
                     if pointer.get("field") != step:
                         continue
-                    targets, blanks = V.pointer_pieces(one, pointer)
-                    found_here += len(targets) + blanks
+                    targets, blanks, lost = V.pointer_refs(one, pointer)
+                    found_here += len(targets) + blanks + len(lost)
                     if blanks:
                         reason = "target_blank"
-                    for target_id in targets:
-                        ref = f"{pointer['to']}:{target_id}"
+                    if lost:
+                        reason = reason or "target_unrouted"
+                    for to, target_id in targets:
+                        ref = f"{to}:{target_id}"
                         found = vessel.unique(ref)
                         if vessel.is_duplicated(ref):
                             reason = reason or "target_duplicated"
@@ -613,6 +626,21 @@ def inspection_report(vessel: V.Vessel) -> dict:
             skip("target_split")
             continue
         target_kind = vessel.kinds[here[0].kind]
+        if by_row is not None:
+            name = _get_path(rec.values, by_row["field"])
+            why = None
+            if not isinstance(name, str) or not name.strip():
+                why = "field_missing"
+            elif not V.FIELD.fullmatch(name.strip()):
+                why = "field_compound"
+            elif here[0].values is None or name.strip() not in here[0].values:
+                why = "field_not_in_target"
+            elif not _has_path(rec.values, by_row["value"]):
+                why = "value_missing"
+            if why:
+                unversioned.append({"source": rec.ref, "reason": why, "record": refs[0]})
+                continue
+            content = {name.strip(): _get_path(rec.values, by_row["value"])}
         q = V.question_of(target_kind, spec["question"])
         required = spec["required"] if spec["required"] is not None else (
             [q.state] if q is not None and q.state in content else [])
@@ -622,4 +650,14 @@ def inspection_report(vessel: V.Vessel) -> dict:
         word = V.word_of(content.get(q.state)) if q is not None and q.state in content else None
         out.append(make(vessel, {"record": refs[0]}, spec["question"], by=spec["by"], at=None, word=word,
                         content=content, source=rec.ref))
-    return {"judgments": out, "skipped": skipped}
+    return {"judgments": out, "skipped": skipped, "unversioned": unversioned}
+
+
+def _has_path(values, path: str) -> bool:
+    """点でつないだ道の先に欄が在るか（明示の null は在る）。"""
+    here = values
+    for step in path.split("."):
+        if not isinstance(here, dict) or step not in here:
+            return False
+        here = here[step]
+    return True

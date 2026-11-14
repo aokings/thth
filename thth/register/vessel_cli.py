@@ -49,7 +49,19 @@ def kinds(root: str) -> dict:
                                                        "constitution": {}, "ids": {}}
     return {"declared": declared, "kinds": [_kind_view(k) for k in decl["kinds"].values()],
             "constitution": {q: sorted(words) for q, words in decl["constitution"].items()},
-            "builtin": ["thth_row"], "yaml_reader": V.yamlread.available()}
+            "builtin": ["thth_row"], "yaml_reader": V.yamlread.available(), **_outlets_view(root, decl["kinds"])}
+
+
+def _outlets_view(root: str, kinds_: dict) -> dict:
+    """出し口ごとの読者に見える欄と、内部の語の数（段 4 のつなぎ。出し口の宣言が無ければ空）。"""
+    from types import SimpleNamespace
+    from . import route as R
+    holder = SimpleNamespace(kinds=kinds_)
+    outlets = R.load_outlets(root, holder)
+    view = [{"outlet": name, "audience": o.audience,
+             "reader_fields": {k: list(o.kind_conf(k).reader) for k in o.kinds if o.kind_conf(k).reader}}
+            for name, o in sorted(outlets.items())]
+    return {"outlets": view, "internal_words": len(R.internal_words(root, holder)) if outlets else 0}
 
 
 def cmd_kinds(args, root: str) -> int:
@@ -65,9 +77,17 @@ def cmd_kinds(args, root: str) -> int:
             print(f"  問い {q['question']}（{q['level']}）: 状態の欄 {q['state'] or '-'}・依る欄 {q['depends']}")
         for p in k["pointers"]:
             name = p.get("field") or "+".join(p.get("fields") or []) or p.get("template")
-            print(f"  指す欄 {name}{'（内側の単位）' if p.get('in_units') else ''} → {p['to']}（{p['meaning']}）")
+            to = p.get("to") or "・".join(sorted(set((p.get("to_by") or {}).get("prefix", {}).values())
+                                                 | set((p.get("to_by") or {}).get("map", {}).values())))
+            print(f"  指す欄 {name}{'（内側の単位）' if p.get('in_units') else ''} → {to}（{p['meaning']}）")
         for c in k["checks"]:
             print(f"  検査 {c['id']}（{c['check']}・{c['level']}）" + (f": {c['note']}" if c["note"] else ""))
+    for o in value["outlets"]:
+        if o["reader_fields"]:
+            fields = "・".join(f"{k}（{', '.join(f)}）" for k, f in o["reader_fields"].items())
+            print(f"出し口 {o['outlet']}（{o['audience']}）: 読者に見える欄 {fields}")
+    if value["outlets"]:
+        print(f"内部の語 {value['internal_words']} 語（読者に見える欄に出たら check が赤にします）")
     if not value["yaml_reader"]:
         print("  YAML の中を読む部品（PyYAML）が入っていないので、YAML の記録は版を取るだけで、中は見ていません"
               "（pip install 'thth[yaml]'）")
@@ -96,6 +116,18 @@ def _erase_unfinished(root: str) -> int:
     return E.unfinished(root)
 
 
+def _all_checks(root: str, vessel: V.Vessel, judgments: list) -> dict:
+    """宣言の検査（`checks.run`）に、読者に見える欄の点検（`reader_check.check`）を足す（数えにも入れる）。"""
+    from . import reader_check as RC
+    out = C.run(vessel, judgments)
+    for one in RC.check(root, vessel):
+        out["total"] += 1
+        out[one["level"]] += one["violations"]
+        out["failed"] += 1 if one.get("failed") else 0
+        out["list"].append(one)
+    return out
+
+
 def check(root: str, *, catalog: bool = False) -> dict:
     vessel = V.open_vessel(root)
     graph = V.links(vessel)
@@ -109,10 +141,10 @@ def check(root: str, *, catalog: bool = False) -> dict:
              "not_inspected": sum(1 for r in vessel.all_records if not r.inspected and not r.problems),
              "ambiguous_units": V.ambiguous_units(vessel), "problems": V.problems(vessel),
              "links": {"edges": len(graph["edges"]), "dangling": graph["dangling"], "cycles": graph["cycles"],
-                       "review": graph["review"]},
+                       "review": graph["review"], "unrouted": graph["unrouted"]},
              "observations": observations, "judgments": J.summary(vessel, judgments),
              "candidates": J.candidates(vessel, judgments), "ids_moves": V.ids_table_moves(vessel),
-             "health": _health(vessel, graph), "checks": C.run(vessel, judgments),
+             "health": _health(vessel, graph), "checks": _all_checks(root, vessel, judgments),
              "erase_unfinished": _erase_unfinished(root)}
     if catalog:
         value["catalog"] = vessel.catalog()
@@ -180,6 +212,9 @@ def cmd_check(args, root: str) -> int:
           + (f"・よその台帳を指して確かめられない {j['unverifiable']}" if j["unverifiable"] else ""))
     if value["candidates"]:
         print(f"  結びの候補 {len(value['candidates'])} 件（器は結びません。結ぶなら人が名指しします）")
+    if value["links"]["unrouted"]:
+        print(f"  先の種類が決まらない指し {len(value['links']['unrouted'])} 件（to_by のどれにも当たらない。"
+              "先が無い指しとは数えていません）")
     if value["links"]["review"]:
         print(f"  来歴の控えが今の版と違う物 {len(value['links']['review'])} 件（見直す物）")
     ch = value["checks"]

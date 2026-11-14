@@ -541,3 +541,200 @@ def test_G14_宣言の攻め_delimiter(delim):
 
 def test_G14_表でない形式にdelimiterは書けない():
     parse_fails(kind("t", "t.json", "json", delimiter="\t"), "delimiter")
+
+
+# ================================================================== G15 行ごとに先の種類が変わる指す欄（to_by）
+
+def _route_ledger(tmp, pointer, fix_rows, extra_kinds=()):
+    claim = kind("claim", "claims.csv", id={"field": "id"}, questions=[{"name": "reads_right", "depends": ["text"]}])
+    mood = kind("mood", "moods.csv", id={"field": "id"}, questions=[{"name": "reads_right", "depends": ["text"]}])
+    fix = kind("fix", "fixes.json", "json", records="rows", rows_at=["fixes"], id={"field": "n"}, pointers=[pointer])
+    return make_ledger(tmp / "l", [claim, mood, fix, *extra_kinds], {
+        "claims.csv": "id,text,scope_ja\nclaim-1,a,x\nclaim-2,b,y\n",
+        "moods.csv": "id,text\nmood-1,m\n",
+        "fixes.json": json.dumps({"fixes": fix_rows}, ensure_ascii=False)})
+
+
+FIX_ROWS = [{"n": "f1", "id": "claim-1", "file": "claims.csv"}, {"n": "f2", "id": "mood-1", "file": "moods.csv"},
+            {"n": "f3", "id": "claim-9", "file": "claims.csv"}, {"n": "f4", "id": "dos-1", "file": "x.md"},
+            {"n": "f5", "id": "", "file": ""}]
+
+
+def test_G15_to_byの頭で先の種類を決め_当たらない行はunrouted(tmp_path):
+    p = {"field": "id", "meaning": "about", "to_by": {"prefix": {"claim-": "claim", "mood-": "mood", "c": "mood"}}}
+    graph = V.links(V.open_vessel(str(_route_ledger(tmp_path, p, FIX_ROWS))))
+    assert sorted((e["from"], e["to"]) for e in graph["edges"]) == [
+        ("fix:f1", "claim:claim-1"), ("fix:f2", "mood:mood-1"), ("fix:f3", "claim:claim-9")]  # 長い頭が先
+    assert [e["to"] for e in graph["dangling"]] == ["claim:claim-9"]
+    assert [(u["from"], u["target"]) for u in graph["unrouted"]] == [("fix:f4", "dos-1")]
+
+
+def test_G15_to_byの別の欄の値で先の種類を決める(tmp_path):
+    p = {"field": "id", "meaning": "about", "to_by": {"field": "file", "map": {"claims.csv": "claim",
+                                                                             "moods.csv": "mood"}}}
+    graph = V.links(V.open_vessel(str(_route_ledger(tmp_path, p, FIX_ROWS))))
+    assert sorted(e["to"] for e in graph["edges"]) == ["claim:claim-1", "claim:claim-9", "mood:mood-1"]
+    assert [u["from"] for u in graph["unrouted"]] == ["fix:f4"]
+
+
+def test_G15_輪と来歴の控えも先の種類ごとに見る(tmp_path):
+    p = {"field": "id", "meaning": "related", "to_by": {"prefix": {"claim-": "claim"}},
+         "recorded_version": {"field": "sha", "of": ["text"], "hash": "sha1:12"}}
+    import hashlib
+    rows = [{"n": "f1", "id": "claim-1", "sha": hashlib.sha1(b"a").hexdigest()[:12]},
+            {"n": "f2", "id": "claim-2", "sha": "000000000000"}]
+    graph = V.links(V.open_vessel(str(_route_ledger(tmp_path, p, rows))))
+    assert [(r["from"], r["to"]) for r in graph["review"]] == [("fix:f2", "claim:claim-2")]
+    loop = kind("node", "nodes.csv", id={"field": "id"},
+                pointers=[{"field": "parent", "meaning": "parent", "to_by": {"prefix": {"n": "node"}}}])
+    root = make_ledger(tmp_path / "loop", [loop], {"nodes.csv": "id,parent\nn1,n2\nn2,n1\n"})
+    assert V.links(V.open_vessel(str(root)))["cycles"]
+
+
+@pytest.mark.parametrize("to_by", [
+    None, "claim", [], {}, {"prefix": {}}, {"prefix": {"": "claim"}}, {"prefix": {"a": "Claim!"}},
+    {"prefix": {f"p{i}": "claim" for i in range(33)}}, {"prefix": {"a\n": "claim"}}, {"prefix": ["claim-"]},
+    {"field": "file"}, {"field": "file", "map": {}}, {"field": "a.b", "map": {"x": "claim"}},
+    {"field": "file", "map": {f"m{i}": "claim" for i in range(65)}}, {"field": "file", "map": {"x": 1}},
+    {"prefix": {"a": "claim"}, "field": "file", "map": {"x": "claim"}}, {"prefix": {"a": "claim"}, "other": 1},
+])
+def test_G15_宣言の攻め_to_by(to_by):
+    parse_fails(kind("fix", "f.csv", id={"field": "n"},
+                     pointers=[{"field": "id", "meaning": "about", "to_by": to_by}]), "pointers")
+
+
+@pytest.mark.parametrize("extra", [{"to": "claim"}, {"fields": ["a", "b"]}, {"same_folder": True}])
+def test_G15_to_byはtoと組と同じフォルダとは書けない(extra):
+    pointer = {"meaning": "about", "to_by": {"prefix": {"c": "claim"}}, **extra}
+    if "fields" not in extra:
+        pointer["field"] = "id"
+    parse_fails(kind("fix", "q/*/f.csv", id={"field": "n", "scope": "folder"}, pointers=[pointer]), "pointers")
+
+
+@pytest.mark.parametrize("chk", [{"check": "forbid_pair", "id": "x", "via": "id", "target": {"a": {"blank": True}}},
+                                 {"check": "count", "id": "x", "from": {"kind": "fix", "via": "id"}, "min": 1}])
+def test_G15_forbid_pairとcountのviaには使えない(tmp_path, chk):
+    p = {"field": "id", "meaning": "about", "to_by": {"prefix": {"claim-": "claim"}}}
+    if chk["check"] == "forbid_pair":
+        parse_fails(kind("fix", "f.csv", id={"field": "n"}, pointers=[p], checks=[chk]), "checks")
+    else:
+        root = _route_ledger(tmp_path, p, FIX_ROWS)
+        data = json.loads((root / ".thth/kinds/claim.json").read_text(encoding="utf-8"))
+        data["checks"] = [chk]
+        (root / ".thth/kinds/claim.json").write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(RegisterRefused) as info:
+            V.open_vessel(str(root))
+        assert info.value.code == "register_kind_invalid"
+
+
+def test_G15_にがみの英訳の表の_file_idを_mapで指す(tmp_path):
+    texts = kind("text_en", "i18n/en/texts.csv", id={"key": ["file", "id"]},
+                 pointers=[{"field": "id", "meaning": "about", "to_by": {"field": "file", "map": {
+                     "claims.csv": "claim", "moods.csv": "mood"}}}])
+    root = _route_ledger(tmp_path, {"field": "id", "meaning": "about", "to_by": {"prefix": {"claim-": "claim"}}},
+                         [], extra_kinds=[texts])
+    (root / "i18n/en").mkdir(parents=True)
+    (root / "i18n/en/texts.csv").write_text("file,id,text\nclaims.csv,claim-1,A\nclaims.csv,claim-7,B\n"
+                                            "moods.csv,mood-1,C\n", encoding="utf-8")
+    graph = V.links(V.open_vessel(str(root)))
+    assert [e["to"] for e in graph["dangling"]] == ["claim:claim-7"]
+
+
+# ================================================================== G16 inspects の content_by
+
+def _fix_ledger(tmp, rows, depends=("text",)):
+    claim = kind("claim", "claims.csv", id={"field": "id"},
+                 questions=[{"name": "reads_right", "depends": list(depends)}])
+    fix = kind("fix", "fixes.json", "json", records="rows", rows_at=["fixes"], id={"field": "n"},
+               pointers=[{"field": "id", "meaning": "about", "to_by": {"prefix": {"claim-": "claim"}}}],
+               inspects={"follow": ["id"], "question": "reads_right", "by": "fixer",
+                         "content_by": {"field": "field", "value": "new.text"}})
+    return make_ledger(tmp / "l", [claim, fix], {
+        "claims.csv": "id,text,scope_ja\nclaim-1,new-a,x\nclaim-2,b,y\n",
+        "fixes.json": json.dumps({"fixes": rows}, ensure_ascii=False)})
+
+
+def test_G16_content_byは直した欄とその中身を検収の記録にする(tmp_path):
+    from thth.register import judgment as J, trail as T
+    rows = [{"n": "f1", "id": "claim-1", "field": "text", "new": {"text": "new-a"}},
+            {"n": "f2", "id": "claim-2", "field": "text", "new": {"text": "old-b"}},
+            {"n": "f3", "id": "claim-1", "field": "scope_ja/scope_en", "new": {"text": "x"}},
+            {"n": "f4", "id": "claim-1", "field": "nope", "new": {"text": "x"}},
+            {"n": "f5", "id": "claim-1", "field": "text"},
+            {"n": "f6", "id": "dos-1", "field": "text", "new": {"text": "x"}}]
+    v = V.open_vessel(str(_fix_ledger(tmp_path, rows)))
+    report = J.inspection_report(v)
+    js = {j["source"]: j for j in report["judgments"]}
+    assert sorted(js) == ["fix:f1", "fix:f2"]
+    assert js["fix:f1"]["content"] == {"text": "new-a"} and js["fix:f1"]["target"] == {"record": "claim:claim-1"}
+    assert J.evaluate(v, js["fix:f1"]) == "effective" and J.evaluate(v, js["fix:f2"]) == "stale"
+    assert all(T.shows_version(v, j) for j in js.values())
+    assert sorted((u["source"], u["reason"]) for u in report["unversioned"]) == [
+        ("fix:f3", "field_compound"), ("fix:f4", "field_not_in_target"), ("fix:f5", "value_missing")]
+    assert ("fix:f6", "target_unrouted") in {(s["source"], s["reason"]) for s in report["skipped"]}
+
+
+def test_G16_問いの依る欄が2つ以上なら1欄の中身は版を示していない(tmp_path):
+    from thth.register import judgment as J, trail as T
+    v = V.open_vessel(str(_fix_ledger(tmp_path, [{"n": "f1", "id": "claim-1", "field": "text",
+                                                  "new": {"text": "new-a"}}], depends=("text", "scope_ja"))))
+    j = J.inspection_report(v)["judgments"][0]
+    assert not T.shows_version(v, j)
+
+
+def test_G16_今のcontentの読みは変わらない(tmp_path):
+    from thth.register import judgment as J
+    claim = kind("claim", "claims.csv", id={"field": "id"}, questions=[{"name": "q", "state": "st",
+                                                                         "depends": ["text", "st"]}])
+    insp = kind("insp", "insp.csv", id={"field": "n"}, pointers=[{"field": "cid", "to": "claim", "meaning": "about"}],
+                inspects={"follow": ["cid"], "question": "q", "by": "c", "content": {"text": "text", "st": "st"}})
+    root = make_ledger(tmp_path / "l", [claim, insp], {"claims.csv": "id,text,st\nc1,a,ok\n",
+                                                       "insp.csv": "n,cid,text,st\ni1,c1,a,ok\n"})
+    v = V.open_vessel(str(root))
+    report = J.inspection_report(v)
+    assert [j["content"] for j in report["judgments"]] == [{"text": "a", "st": "ok"}]
+    assert report["unversioned"] == []
+
+
+@pytest.mark.parametrize("insp", [
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": "f"}},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": "f", "value": "v", "x": 1}},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": 1, "value": "v"}},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": "a.b.c.d.e", "value": "v"}},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": "f"},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": "f", "value": "v"},
+     "content": {"a": "a"}},
+    {"follow": ["id"], "question": "q", "by": "c", "content_by": {"field": "f", "value": "v"}, "required": ["f"]},
+])
+def test_G16_宣言の攻め_content_by(insp):
+    parse_fails(kind("fix", "f.csv", id={"field": "n"}, pointers=[{"field": "id", "to": "c", "meaning": "about"}],
+                     inspects=insp), "inspects")
+
+
+# ================================================================== つなぎ: 読者に見える欄の点検を check に
+
+def _reader_ledger(tmp, title):
+    page = kind("page", "pages.csv", id={"field": "id"})
+    root = make_ledger(tmp / "l", [page], {"pages.csv": f"id,title,memo\npage-1,{title},社内メモ\n"})
+    (root / ".thth" / "outlets.json").write_text(json.dumps({
+        "schema": "thth.outlets/1", "internal_words": ["社内メモ"],
+        "outlets": {"site": {"audience": "reader", "dest": "site", "kinds": {"page": {"reader_fields": ["title"]}}}}},
+        ensure_ascii=False), encoding="utf-8")
+    return root
+
+
+def test_つなぎ_読者に見える欄の点検がcheckのchecksに入り数えにも入る(tmp_path):
+    from thth.register import vessel_cli
+    ok = vessel_cli.check(str(_reader_ledger(tmp_path / "a", "ふつうの題")))
+    ids = {c["id"] for c in ok["checks"]["list"]}
+    assert {"reader_internal_words", "reader_hidden_ids"} <= ids and ok["checks"]["total"] == 2
+    bad = vessel_cli.check(str(_reader_ledger(tmp_path / "b", "社内メモの題")))
+    assert bad["checks"]["error"] == 1 and C.red(bad["checks"])
+
+
+def test_つなぎ_kindsに出し口ごとの読者に見える欄と内部の語の数(tmp_path):
+    from thth.register import vessel_cli
+    value = vessel_cli.kinds(str(_reader_ledger(tmp_path, "t")))
+    assert value["outlets"] == [{"outlet": "site", "audience": "reader",
+                                 "reader_fields": {"page": ["title"]}}]
+    assert value["internal_words"] == 1
