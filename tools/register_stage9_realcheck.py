@@ -20,8 +20,10 @@
 メディアごとに見る物（「済み」の線 §1）:
 
 - (a) 目録に漏れなし: 札の `stage9.include`（目録の「器に入れる物」。前の台本の範囲）の全部のファイルが、宣言の
-  どれかの種類の置き場に入るか、札の `outside` の型に当たる。どちらにも無いファイルが 0。`outside` のうち
-  `gap: true`（器の不足で外に置いた物）が 1 つでもあれば「通らない（器）」。
+  どれかの種類の置き場に入るか、札の `outside` の型に当たる。どちらにも無いファイルが 0。範囲から黙って除く口
+  （`stage9.exclude`）は無い（札に書いてあれば「通らない（宣言）」）。器の外に置く物は理由つきの `outside` だけ。
+  `outside` のうち `gap: true`（器が読めないので外に置いた物、または `held` の種類に bytes で置いて中を読めない物）
+  が 1 つでもあれば「未完了（器の不足: N 件）」（N はファイルの数。「通る」とは書かない。rc は 1 にしない）。
 - (b) 元どおり戻せる: 範囲を影に取り込み → 戻す → 数・名前・sha256 が、元のバイトから計った物と全部同じ。
 - (c) 段 4 の実物の確かめ（`register_stage4_realcheck.run_one`）が「合う」。段 1〜3 の実物の確かめ 3 本を、この回の
   置き場で 1 回ずつ打ち、前と同じ結果か（段 1 は指示 段 1 §5 の数・段 2 は前の result.json の真偽の全部・段 3 は rc 0）。
@@ -29,7 +31,15 @@
 - (d) 難しい読み手の代表の例（札の `stage9.readers`）: 読み手の読むファイルが種類に入り、その記録に読みの問題 0・
   読み手の読む欄が記録に在る。中を見ていない記録は札に理由が書いてあるときだけ通す。
 - (e) 起きうる事 e1〜e7（§2）を影の上で 1 回ずつ。どの事のあとも、元の repo の `git status` の行数と、取り込んだ
-  ファイルの sha256 が変わっていないこと。
+  ファイルの sha256 が変わっていないこと。e1・e2・e4 の赤は、理由の語と、外れる項目の記録がその記録だけであることまで
+  比べる。e4 は止めたあと新しい材料を別の置き場に実際に書き、新しい材料・古い材料（古い封のまま）の両方で赤を見る。
+  e5 の止め方は器の中の関数（`keep._replace`）の差し替えで、処理が落ちたときのまねではない。
+  e7 は影のフォルダ全体（`.git/` を除く）を探す。影の台帳（`register/`）に残れば赤。台本が束として渡した写し・
+  取り込みの元の写しは器の外の「ほかの写し」（`copies`）、出し口の材料の置き場は `materials` に数え、残っていれば
+  消す求めの結果がその場所を「確かめていない」と出し、状態が「消し終わっていない」であることを見る。
+- (e) の続き（札の `stage9.drop` が真のメディアだけ）: 出し口 `on_narrow: drop` の試しの出し口 `s9_drop` を足し、
+  d1（更新）・d2（期限をまたぐ）・d4（止める）で、外して書いた材料は緑（警告 dropped にその記録だけ）・封のときの
+  材料のままは赤・外して書いた材料の残りの行を 1 字変えると赤、を見る。
 - (f) こぴちゃ（札の `stage9.page` が真）: 段 7 の確かめ（`register_stage7_realcheck.py`）を、この回の置き場で打つ。
   頁の一致（build）は `--page` のとき（指示 §3 の限り）。
 
@@ -75,6 +85,8 @@ GIT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"}
 LETTERS = "abcdef"
 EVENTS = ["e1", "e2", "e3", "e4", "e5", "e6", "e7"]
+DROP_EVENTS = ["d1", "d2", "d4"]                 # on_narrow: drop の出し口で（札の stage9.drop が真のメディアだけ）
+CHANGED_WHYS = {"against_changed", "no_inspection_for_new_version"}   # e1・d1: 記録の版が変わったので外れる
 
 
 def sha(data: bytes) -> str:
@@ -130,9 +142,9 @@ class Guard:
 
 def plan_of(A, cfg: dict, media: dict | None = None) -> dict:
     """範囲。`media` を渡すと、札の `outside`（器の外）の型も除く（取り込む範囲）。"""
-    exclude = list(cfg.get("exclude", []))
+    exclude = []    # 範囲から黙って除く口（stage9.exclude）は無い。器の外は理由つきの outside だけ
     for entry in (media or {}).get("outside", []):
-        if isinstance(entry, dict):
+        if isinstance(entry, dict) and not entry.get("held"):   # held: 種類に bytes で置く（取り込む）
             exclude += entry.get("place", [])
     return A.parse_plan({"schema": A.PLAN_SCHEMA, "include": cfg["include"], "exclude": exclude})
 
@@ -161,16 +173,24 @@ def check_a(A, V, root: pathlib.Path, media: dict, decl: str) -> dict:
             missing.append(e["path"])
     entries = media.get("outside", [])
     gaps = [e for e in entries if isinstance(e, dict) and e.get("gap")]
-    bad_shape = [e for e in entries if not isinstance(e, dict) or not e.get("why")]
+    gap_files = sorted(e["path"] for e in catalog
+                       if any(fnmatch.fnmatchcase(e["path"], p) for g in gaps for p in g.get("place", [])))
+    bad_shape = [e for e in entries if not isinstance(e, dict) or not e.get("why") or "gap" not in e
+                 or (e.get("held") and e["held"] not in kinds)]
     out = {"files": len(catalog), "in_kinds": sum(by_kind.values()), "kinds_used": len(by_kind),
            "outside": {str(i): {"files": n, "why": entries[i]["why"][:80]} for i, n in sorted(outside.items())},
-           "missing": missing[:20], "missing_count": len(missing), "gap_entries": [g["why"][:120] for g in gaps]}
-    if missing:
+           "missing": missing[:20], "missing_count": len(missing), "gap_entries": [g["why"][:120] for g in gaps],
+           "gap_files": gap_files}
+    if cfg.get("exclude"):
+        out["verdict"] = verdict("fail", "札に stage9.exclude がある（範囲から黙って除く口は無い。器の外は理由つきの outside）",
+                                 cause="decl")
+    elif missing:
         out["verdict"] = verdict("fail", f"どちらにも無いファイル {len(missing)}", cause="decl")
     elif bad_shape:
-        out["verdict"] = verdict("fail", "outside に理由の無い物がある", cause="decl")
+        out["verdict"] = verdict("fail", "outside に理由・gap の印の無い物か、held の種類が無い物がある", cause="decl")
     elif gaps:
-        out["verdict"] = verdict("fail", f"器の不足で外に置いた物 {len(gaps)}", cause="vessel")
+        out["verdict"] = verdict("incomplete", f"器の不足: {len(gap_files)} 件（" + "・".join(gap_files[:6])
+                                 + ("…" if len(gap_files) > 6 else "") + "）", cause="vessel", count=len(gap_files))
     else:
         out["verdict"] = verdict("pass", f"{len(catalog)} 枚が種類 {len(by_kind)} に入る・外 {sum(outside.values())}")
     return out
@@ -374,9 +394,28 @@ class Events:
         plan = self.R.accept_plan(str(self.reg), outlet, str(self.to(outlet)), as_of, **kw)
         return self.R.accept(str(self.reg), outlet, str(self.to(outlet)), as_of, confirm=plan["digest"], at=AT, **kw)
 
-    def verify(self, outlet, now=NOW_BEFORE, common=None):
+    def verify(self, outlet, now=NOW_BEFORE, common=None, material=None):
         kw = {"common_root": str(common)} if common else {}
-        return self.R.verify(str(self.reg), outlet, str(self.to(outlet)), now, no_previous=True, **kw)
+        return self.R.verify(str(self.reg), outlet, str(material or self.to(outlet)), now, no_previous=True, **kw)
+
+    @staticmethod
+    def items_of(v, kind, word):
+        """確かめの赤（problems）か警告（warnings）の、語 `word` の項目を (記録, 理由) で。"""
+        return [(i["item"].rsplit("=", 1)[0].split("#")[0], i.get("why"))
+                for p in v[kind] if p["word"] == word for i in p.get("items", [])]
+
+    def red_is(self, v, ref, whys, also=()) -> bool:
+        """赤で、語が narrowed_after_seal（と `also`）だけ・外れた項目の記録がその記録だけ・理由が期待の語。"""
+        words = [p["word"] for p in v["problems"]]
+        items = self.items_of(v, "problems", "narrowed_after_seal")
+        return (not v["ok"]) and "narrowed_after_seal" in words and set(words) <= {"narrowed_after_seal", *also} \
+            and {r for r, _ in items} == {ref} \
+            and {w for _, w in items} <= set(whys)
+
+    @staticmethod
+    def red_detail(v) -> dict:
+        return {"words": [p["word"] for p in v["problems"]],
+                "items": [i for p in v["problems"] for i in p.get("items", [])][:5]}
 
     def setup(self):
         """出し口の宣言を影の `.thth/` に置き（札の宣言のフォルダに無ければ試しの読者の出し口を作る）、基準で受ける。"""
@@ -452,8 +491,8 @@ class Events:
                                        + ("表（csv・行）" if mode == "row" else "1 枚 1 記録の種類")
                                        + "の、材料に載った記録を先頭から 3 つ")
 
-    def change_field(self, rec):
-        kind = self.kind
+    def change_field(self, rec, kind=None):
+        kind = kind or self.kind
         ids = {kind.id_rule.get("field")} | set(kind.id_rule.get("key", []))
         depends = []
         for q, _c in self.questions(self.main):
@@ -481,17 +520,7 @@ class Events:
         self.pre_catalog = {e["path"]: e["sha256"] for e in self.K.view(str(self.reg))}
         h0 = self.count(self.health(), "judgment", "stale")
         s0 = self.judged_states()
-        if self.cfg.get("e1", "row") == "row":
-            field = self.change_field(rec)
-            self.A.row_set(str(self.reg), rec.ref, {field: rec.values[field] + "（段9の確かめ）"}, by=BY, at=AT)
-            how = f"row set {rec.ref} の {field}"
-        else:
-            bundle = self.place / "bundle-e1"
-            data = (self.reg / rec.path).read_bytes() + "\n<!-- 段9の確かめ e1 -->\n".encode()
-            (bundle / rec.path).parent.mkdir(parents=True, exist_ok=True)
-            (bundle / rec.path).write_bytes(data)
-            self.A.merge(str(self.reg), str(bundle), by=BY, at=AT, unchecked=True)
-            how = f"merge で {rec.path} を入れ替え"
+        how = self.modify(rec, "e1")
         diff = self.A.diff(str(self.reg), f"{pre[:16]}..now")
         changed = [c["record"] for c in diff["records"]["changed"]]
         s1 = self.judged_states()
@@ -504,8 +533,8 @@ class Events:
         checks = {"差が 1 レコード": changed == [rec.ref] and not diff["records"]["added"] and not diff["records"]["vanished"],
                   "古くなった判断はその記録だけ": newly == [rec.ref],
                   "健康の古くなった判断が 1 増える": h1 == h0 + 1,
-                  ("受け入れ直すまで赤" if narrow == "stop" else "外して配る"):
-                      (not red["ok"]) if narrow == "stop" else (any(rec.ref in x for x in leaving)),
+                  "受け入れ直すまで赤（語 narrowed_after_seal・外れた項目はその記録だけ・理由は版が変わった）":
+                      narrow == "stop" and self.red_is(red, rec.ref, CHANGED_WHYS),
                   "外れる物にその記録": any(x.startswith(rec.ref + "=") or x.startswith(rec.ref + "#") for x in leaving),
                   "元の repo は同じ": self.guard_ok("e1")}
         for q, c in self.questions(self.main):
@@ -513,7 +542,19 @@ class Events:
         self.accept(self.main.name)
         checks["受け入れ直すと緑"] = self.verify(self.main.name)["ok"]
         return checks, {"how": how, "diff_changed": changed[:5], "newly_stale": newly[:5], "stale": [h0, h1],
-                        "red_words": [p["word"] for p in red["problems"]], "leaving": leaving[:5], "on_narrow": narrow}
+                        "red": self.red_detail(red), "leaving": leaving[:5], "on_narrow": narrow}
+
+    def modify(self, rec, tag) -> str:
+        if self.cfg.get("e1", "row") == "row":
+            field = self.change_field(rec, self.vessel().kinds[rec.kind])
+            self.A.row_set(str(self.reg), rec.ref, {field: rec.values[field] + f"（段9の確かめ {tag}）"}, by=BY, at=AT)
+            return f"row set {rec.ref} の {field}"
+        bundle = self.place / f"bundle-{tag}"
+        data = (self.reg / rec.path).read_bytes() + f"\n<!-- 段9の確かめ {tag} -->\n".encode()
+        (bundle / rec.path).parent.mkdir(parents=True, exist_ok=True)
+        (bundle / rec.path).write_bytes(data)
+        self.A.merge(str(self.reg), str(bundle), by=BY, at=AT, unchecked=True)
+        return f"merge で {rec.path} を入れ替え"
 
     def e2(self):
         rec = self.recs[1]
@@ -526,10 +567,12 @@ class Events:
         pb = self.count(hb, "deadline", "passed_in_last_generation")
         pa = self.count(ha, "deadline", "passed_in_last_generation")
         ex = [e.get("record") for e in ha["groups"]["deadline"]["passed_in_last_generation"]["examples"]]
-        checks = {"期限の前は緑": before["ok"], "期限の後は赤": not after["ok"],
+        checks = {"期限の前は緑": before["ok"],
+                  "期限の後は赤（語 narrowed_after_seal・外れた項目はその記録だけ・理由 expired）":
+                      self.red_is(after, rec.ref, {"expired"}),
                   "健康の「過ぎたのに最後の世代に載っている」が 1": pa == pb + 1 and rec.ref in ex,
                   "元の repo は同じ": self.guard_ok("e2")}
-        return checks, {"record": rec.ref, "until": UNTIL, "after_words": [p["word"] for p in after["problems"]],
+        return checks, {"record": rec.ref, "until": UNTIL, "after": self.red_detail(after),
                         "passed_in_last_generation": [pb, pa]}
 
     def e3(self):
@@ -567,17 +610,27 @@ class Events:
 
     def e4(self):
         rec = self.recs[2]
-        old_material = {str(p): p.read_bytes() for p in self.to(self.main.name).rglob("*") if p.is_file()}
+        name = self.main.name
+        old_dir = self.place / "old-e4" / name          # 止める前の材料（古い封の材料）を別の置き場に写す
+        shutil.copytree(self.to(name), old_dir)
         self.R.stop(str(self.reg), rec.ref, by=BY, at=AT)
-        ex = self.R.export(str(self.reg), self.main.name, str(self.to(self.main.name)), NOW_BEFORE, check=True)
+        new_dir = self.place / "new-e4" / name          # 止めたあとの新しい材料を実際に書く（封はし直さない）
+        ex = self.R.export(str(self.reg), name, str(new_dir), NOW_BEFORE)
         gone = any(x.startswith(rec.ref + "=") for x in ex["changes"]["leaving"])
         why = sorted({e["why"] for e in ex["excluded"] if e["record"] == rec.ref})
-        red = self.verify(self.main.name)
-        same_old = all(pathlib.Path(p).read_bytes() == b for p, b in old_material.items())
-        checks = {"受け入れを待たずに次の材料から外れる": gone and "stopped" in why,
-                  "古い封と古い材料で確かめると赤": same_old and not red["ok"],
+        new_files = {p.relative_to(new_dir): p.read_bytes() for p in new_dir.rglob("*") if p.is_file()}
+        old_files = {p.relative_to(old_dir): p.read_bytes() for p in old_dir.rglob("*") if p.is_file()}
+        red_new = self.verify(name, material=new_dir)
+        red_old = self.verify(name, material=old_dir)  # 古い封（封はし直していない）と古い材料に戻す
+        checks = {"受け入れを待たずに次の材料から外れる（理由 stopped）": gone and why == ["stopped"],
+                  "新しい材料を実際に書いた（古い材料と違う）": bool(new_files) and new_files != old_files,
+                  "新しい材料で確かめると赤（出し口は stop。語 narrowed_after_seal と material_mismatch・外れた項目は"
+                  "その記録だけ・理由 stopped）": self.red_is(red_new, rec.ref, {"stopped"}, also={"material_mismatch"}),
+                  "古い封と古い材料に戻して確かめると赤（外れた項目はその記録だけ・理由 stopped）":
+                      self.red_is(red_old, rec.ref, {"stopped"}),
                   "元の repo は同じ": self.guard_ok("e4")}
-        return checks, {"record": rec.ref, "why": why, "red_words": [p["word"] for p in red["problems"]]}
+        return checks, {"record": rec.ref, "why": why, "new_material": str(new_dir.relative_to(self.place)),
+                        "red_new": self.red_detail(red_new), "red_old": self.red_detail(red_old)}
 
     def bundle_files(self) -> list:
         if self.cfg.get("bundle"):
@@ -685,6 +738,7 @@ class Events:
             ref = f"{rec.kind}:{stem}"
         needle = value.encode()
         before = self.scan(needle)
+        self.e7_value = needle
         req = self.E.request(str(self.reg), ref, by=BY, at=AT, why="mistake")["request"]
         first = self.E.scope(str(self.reg), req, ["all"], by=BY, at=AT)
         self.E.scope(str(self.reg), req, ["all"], by=BY, at=AT, confirm=first.get("digest"))
@@ -692,23 +746,144 @@ class Events:
         after = self.scan(needle)
         status = self.E.status(str(self.reg), req)
         not_checked = sorted(p for p, x in status["places"].items() if x["state"] == "not_checked")
-        checks = {"消す前は影に試しの値がある": bool(before),
-                  "影のフォルダ（.git を除く）に試しの値が無い": not after,
+        inside = [h for h in after if self.where(h) == "register"]
+        outer = [h for h in after if self.where(h) != "register"]
+        outer_places = sorted({self.where(h) for h in outer})
+        checks = {"消す前は影の台帳に試しの値がある": any(self.where(h) == "register" for h in before),
+                  "影の台帳（register/・.git を除く）に試しの値が無い": not inside,
+                  "器の外の写しが残る場所の種類を、消す求めの結果が「確かめていない」と出す":
+                      all(p in not_checked for p in outer_places),
                   "「確かめていない」場所が残り「消し終わっていない」": bool(not_checked) and status["state"] == "unfinished",
                   "元の repo は 1 バイトも変わらない": self.guard_ok("e7")}
         return checks, {"record": ref, "request": req, "found_before": len(before), "found_after": after[:5],
+                        "left_in_register": inside[:5], "left_outside": len(outer), "left_outside_places": outer_places,
+                        "left_outside_files": outer[:5],
                         "not_checked": not_checked, "state": status["state"],
                         "erased": sorted(p for p, x in status["places"].items() if x["state"] == "erased")}
 
     def scan(self, needle: bytes) -> list:
+        """影のフォルダ全体（`<work>/<メディア>/`。`.git/` を除く）で、試しの値を持つファイルの道。"""
         hits = []
-        for directory, dirs, files in os.walk(self.reg):
+        for directory, dirs, files in os.walk(self.place):
             dirs[:] = [d for d in dirs if d != ".git"]
             for name in files:
                 p = pathlib.Path(directory) / name
                 if needle in p.read_bytes():
-                    hits.append(str(p.relative_to(self.reg)))
+                    hits.append(str(p.relative_to(self.place)))
         return sorted(hits)
+
+    @staticmethod
+    def where(rel: str) -> str:
+        """影の中の場所の種類: 台帳（register/）・出し口の材料（materials）・共通の台帳（common）・ほかの写し（copies:
+        台本が束として渡した写し・取り込みの元の写し・戻した写しなど。器の外）。"""
+        head = rel.split("/", 1)[0]
+        if head == "register":
+            return "register"
+        if head == "out" or head.startswith(("old-", "new-", "tamper-")):
+            return "materials"
+        if head == "common":
+            return "common"
+        return "copies"
+
+    # -- on_narrow: drop の出し口（札の stage9.drop が真のメディアだけ）
+    def drop_setup(self):
+        v = self.vessel()
+        used = {r.ref for r in self.recs[:3]}
+        mode = self.cfg.get("e1", "row")
+
+        def fit(k):
+            return (k.format == "csv" and k.records == "rows" and "field" in k.id_rule) if mode == "row" \
+                else k.records == "file"
+
+        def usable(name):
+            return [r for r in v.all_records if r.kind == name and r.ref not in used and r.id and not r.problems
+                    and not v.is_duplicated(r.ref) and (mode != "row" or r.values)]
+        order = [n for n in (self.cfg.get("outlet_kinds") or self.main.kinds) if fit(v.kinds[n])]
+        kind = next((n for n in order if len(usable(n)) >= 3), None)
+        if kind is None:
+            raise Cannot("出し口の種類に、使っていない記録が 3 つある種類が無い")
+        self.drop_kind = kind
+        path = self.reg / ".thth" / "outlets.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["outlets"]["s9_drop"] = {"audience": "reader", "kinds": [kind], "on_narrow": "drop",
+                                      "fact": [{"question": "may_publish@s9_drop", "conclusion": "good"}],
+                                      "note": "段 9 の on_narrow: drop の試し（影だけ）"}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        v = self.vessel()
+        self.drop = self.R.load_outlets(str(self.reg), v)["s9_drop"]
+        self.R.baseline(str(self.reg), "s9_drop", by=BY, at=AT)
+        self.accept("s9_drop")
+        if not self.verify("s9_drop")["ok"]:
+            raise RuntimeError("s9_drop を受け入れた直後の確かめが赤")
+        on = set(self.material_refs(self.drop))
+        cands = [r for r in usable(kind) if r.ref in on]
+        if len(cands) < 3:
+            raise Cannot(f"s9_drop の材料に載った記録が 3 つ無い（{len(cands)}）")
+        self.drecs = cands[:3]
+        self.out["drop_picked"] = {"kind": kind, "d1": cands[0].ref, "d2": cands[1].ref, "d4": cands[2].ref}
+
+    def drop_case(self, label, rec, whys, event, now=NOW_BEFORE, accept_first=None):
+        """受け入れ直す → 封のときの材料を写す → 事 → 外して書く → 外した材料は緑・封のときの材料は赤・残りを変えると赤。"""
+        name = "s9_drop"
+        if accept_first:
+            accept_first()
+        self.accept(name)
+        old_dir = self.place / f"old-{label}" / name
+        shutil.copytree(self.to(name), old_dir)
+        how = event()
+        new_dir = self.place / f"new-{label}" / name
+        ex = self.R.export(str(self.reg), name, str(new_dir), now)
+        leaving = [x.rsplit("=", 1)[0].split("#")[0] for x in ex["changes"]["leaving"]]
+        green = self.verify(name, now=now, material=new_dir)
+        dropped = self.items_of(green, "warnings", "dropped")
+        red_old = self.verify(name, now=now, material=old_dir)
+        tamper_dir = self.place / f"tamper-{label}" / name
+        shutil.copytree(new_dir, tamper_dir)
+        target = None
+        for p in sorted(tamper_dir.rglob("*")):
+            if p.is_file() and not p.name.startswith("thth-seal"):
+                data = p.read_bytes()
+                if p.suffix == ".csv" and data.count(b"\n") >= 2:
+                    target = p
+                    break
+                target = target or p
+        if target is None:
+            raise Cannot("外して書いた材料に、変えて試せる残りのファイルが無い")
+        data = target.read_bytes()
+        cut = data.rstrip(b"\r\n")
+        target.write_bytes(cut + b"x" + data[len(cut):])       # 残りの最後の行の終わりに 1 字足す
+        red_tamper = self.verify(name, now=now, material=tamper_dir)
+        checks = {"外れる物はその記録だけ": leaving == [rec.ref],
+                  "外して書いた材料は緑（警告 dropped の項目はその記録だけ・理由が期待の語）":
+                      green["ok"] and {r for r, _ in dropped} == {rec.ref} and {w for _, w in dropped} <= set(whys),
+                  "封のときの材料のままは赤（外れた項目はその記録だけ）": self.red_is(red_old, rec.ref, whys),
+                  "外して書いた材料の残りを 1 字変えると赤": not red_tamper["ok"],
+                  "元の repo は同じ": self.guard_ok(label)}
+        return checks, {"record": rec.ref, "how": how, "leaving": leaving[:5], "dropped": dropped[:5],
+                        "green_problems": self.red_detail(green), "red_old": self.red_detail(red_old),
+                        "red_tamper": self.red_detail(red_tamper),
+                        "tampered": str(target.relative_to(self.place))}
+
+    def d1(self):
+        rec = self.drecs[0]
+        return self.drop_case("d1", rec, CHANGED_WHYS, lambda: self.modify(rec, "d1"))
+
+    def d2(self):
+        rec = self.drecs[1]
+
+        def until():
+            self.R.judge(str(self.reg), rec.ref, "may_publish@s9_drop", conclusion="good", by=BY, at=AT, until=UNTIL,
+                         reason_text="段9 d2 の期限つき")
+        return self.drop_case("d2", rec, {"expired"}, lambda: f"判断の「いつまで」{UNTIL}・判定 {NOW_AFTER}",
+                              now=NOW_AFTER, accept_first=until)
+
+    def d4(self):
+        rec = self.drecs[2]
+
+        def stop():
+            self.R.stop(str(self.reg), rec.ref, by=BY, at=AT)
+            return f"stop {rec.ref}"
+        return self.drop_case("d4", rec, {"stopped"}, stop)
 
     def run(self) -> dict:
         try:
@@ -740,6 +915,33 @@ class Events:
             if not ok:
                 bad = [k for k, v in self.out["events"][name].get("checks", {}).items() if not v]
                 fails.append(f"{name} {bad or self.out['events'][name].get('error')}")
+        if self.cfg.get("drop"):
+            self.out["drop"] = {}
+            try:
+                self.drop_setup()
+                todo = DROP_EVENTS
+            except Cannot as exc:
+                self.out["drop"]["setup"] = {"ok": None, "cannot": str(exc)}
+                todo = []
+            except Exception as exc:  # noqa: BLE001
+                self.out["drop"]["setup"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+                fails.append(f"drop の支度 {type(exc).__name__}")
+                todo = []
+            for name in todo:
+                started = time.monotonic()
+                try:
+                    checks, detail = getattr(self, name)()
+                    self.out["drop"][name] = {"ok": all(checks.values()), "checks": checks, "detail": detail,
+                                              "seconds": round(time.monotonic() - started, 1)}
+                except Cannot as exc:
+                    self.out["drop"][name] = {"ok": None, "cannot": str(exc)}
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    self.out["drop"][name] = {"ok": False, "error": f"{type(exc).__name__}: {getattr(exc, 'code', '') or ''} "
+                                                                    f"{getattr(exc, 'detail', '') or str(exc)[:300]}"}
+                if not self.out["drop"][name]["ok"]:
+                    bad = [k for k, v in self.out["drop"][name].get("checks", {}).items() if not v]
+                    fails.append(f"{name} {bad or self.out['drop'][name].get('error')}")
         self.out["guard"] = self.guard.log
         skipped = [x for x in ("e1", "e2", "e3", "e4", "e5", "e6", "e7") if x not in EVENTS]
         cannot = [x for x, ev in self.out["events"].items() if ev.get("ok") is None]
@@ -754,7 +956,8 @@ class Events:
                                        + (f"。起こせない: {'・'.join(cannot)}" if cannot else "")
                                        + (f"。打っていない: {'・'.join(skipped)}" if skipped else ""))
         else:
-            self.out["verdict"] = verdict("pass", "e1〜e7 がどれも期待のとおり・元の repo は事ごとに同じ")
+            self.out["verdict"] = verdict("pass", "e1〜e7" + ("・d1・d2・d4（on_narrow: drop）" if self.out.get("drop") else "")
+                                          + " がどれも期待のとおり・元の repo は事ごとに同じ")
         return self.out
 
 
@@ -831,7 +1034,13 @@ def run_media(mods, S4, folder: pathlib.Path, media: dict, developer: pathlib.Pa
     return out
 
 
-MARK = {"pass": "通る", "fail": "通らない", "unconfirmed": "未確認", "na": "—"}
+MARK = {"pass": "通る", "fail": "通らない", "unconfirmed": "未確認", "na": "—", "incomplete": "未完了（器の不足）"}
+
+
+def mark(v: dict) -> str:
+    if v["state"] == "incomplete":
+        return f"未完了（器の不足: {v.get('count', '?')} 件）"
+    return MARK.get(v["state"], v["state"])
 
 
 def say(results: list, s13) -> None:
@@ -840,7 +1049,7 @@ def say(results: list, s13) -> None:
         cells = []
         for x in LETTERS:
             v = one["results"].get(x, {}).get("verdict")
-            cells.append(MARK.get(v["state"], v["state"]) if v else "打っていない")
+            cells.append(mark(v) if v else "打っていない")
         print(f"{one['name']} | " + " | ".join(cells) + f" | {one.get('seconds')}")
     for one in results:
         print(f"\n== {one['name']}（{one['source']}）")
@@ -849,7 +1058,7 @@ def say(results: list, s13) -> None:
             if not r:
                 continue
             v = r["verdict"]
-            print(f"  ({x}) {MARK.get(v['state'], v['state'])}: {v['why']}"
+            print(f"  ({x}) {mark(v)}: {v['why']}"
                   + (f"［分け: {v['cause']}］" if v.get("cause") else ""))
             if x == "a" and r.get("missing"):
                 print(f"      どちらにも無い: {r['missing'][:5]}")
@@ -860,10 +1069,14 @@ def say(results: list, s13) -> None:
             if x == "e":
                 if r.get("picked"):
                     print(f"      選び方: {r['picked'].get('rule')}・{r.get('outlets_from')}")
-                for name, ev in r.get("events", {}).items():
+                for name, ev in list(r.get("events", {}).items()) + list(r.get("drop", {}).items()):
                     bad = [k for k, val in ev.get("checks", {}).items() if not val]
                     print(f"      {name} {'起こせない ' + ev['cannot'] if ev['ok'] is None else '期待のとおり' if ev['ok'] else '違う'}"
                           + (f" {bad}" if bad else "") + (f" {ev['error']}" if ev.get("error") else ""))
+                    if name == "e7" and ev.get("detail", {}).get("left_outside"):
+                        d = ev["detail"]
+                        print(f"         器の外の写しに {d['left_outside']} か所残る（器は確かめない。場所の種類 "
+                              f"{'・'.join(d['left_outside_places'])}・消す求めの結果は「確かめていない」{'・'.join(d['not_checked'])}）")
     if s13:
         print("\n段 1〜3 の実物の確かめ（この回の置き場で打った）:")
         for k, v in s13.items():

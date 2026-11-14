@@ -199,6 +199,22 @@
    ],
    "why": "動作確認用のフィクスチャ（頭の title に「動作確認用フィクスチャ」）。台帳の記録でない",
    "gap": false
+  },
+  {
+   "place": [
+    "site/src/lib/entity-page-rules.ts"
+   ],
+   "held": "entity_page_rules",
+   "why": "HIDDEN_CLAIM_IDS（図鑑に出さない主張 13）。種類 entity_page_rules に bytes で置く（取り込む・戻せる）が、TypeScript の一覧は器が読めない。器の不足",
+   "gap": true
+  },
+  {
+   "place": [
+    "site/owner-read.txt"
+   ],
+   "held": "owner_read",
+   "why": "タブ区切りでも見出しの行が無く # の注の行が頭にあるので、器が表として読めない。種類 owner_read に bytes で置く。器の不足",
+   "gap": true
   }
  ]
 }

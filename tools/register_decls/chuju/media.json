@@ -87,15 +87,15 @@
     "src/lib/dougu-list.ts",
     "src/lib/yoyaku-fuseru.ts"
    ],
-   "why": "道具の一覧 src/lib/dougu-list.ts・伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript で読まない（固有）",
-   "gap": false
+   "why": "道具の一覧 src/lib/dougu-list.ts（id つき 11 件・問いの頁の dougu[] から 72 本が指す）と伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript の一覧で、器が読めない（指す先の切れを器で見られない）。器の不足",
+   "gap": true
   },
   {
    "place": [
     "docs/照合台帳_*.md"
    ],
-   "why": "照合台帳 docs/照合台帳_*.md 47 枚は検収の記録の文書（器の判断の記録に写すかはレーンに聞く）",
-   "gap": false
+   "why": "照合台帳 docs/照合台帳_*.md 47 枚（shougou.daichou が指す）。名前に漢字を含み、器の置き場（place）に書けない（ASCII だけ）ので種類にできない。器の不足（器の判断の記録に写すかはレーンに聞く）",
+   "gap": true
   },
   {
    "place": [],

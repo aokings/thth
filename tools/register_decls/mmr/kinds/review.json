@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "review",
+ "place": "content/reviews/*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 1000000,
+ "note": "§5 の検収の記録（414 枚）。頭（YAML）の無い md なので bytes で置く（中は見ていない）"
+}
