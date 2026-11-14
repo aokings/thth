@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "media",
+ "place": "media.yaml",
+ "format": "yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "note": "media: の並び（7 メディア）を 1 つずつの記録として読む口が YAML に無いので、1 枚の記録として置く"
+}
