@@ -377,3 +377,167 @@ def test_G8_宣言の攻め_in_units(extra):
 def test_G8_内側の単位の宣言の無い種類にin_unitsは書けない():
     parse_fails(kind("e", "e.csv", id={"field": "id"},
                      pointers=[{"field": "s", "to": "s", "meaning": "about", "in_units": True}]), "pointers")
+
+
+# ================================================================== G12 頭に YAML を持つ .md（md_yaml）
+
+MD_OK = "---\ntitle: 苦味の話\ncategory: tea\nparent: null\n---\n本文の 1 行目\n\n2 行目\n"
+
+
+@yaml_needed
+def test_G12_md_yamlは頭の段の鍵を欄に_本文は_body(tmp_path):
+    art = kind("article", "articles/*.md", "md_yaml", max_bytes=200_000,
+               pointers=[{"field": "parent", "to": "article", "meaning": "parent", "none": ["null"]}],
+               checks=[{"check": "words", "id": "cat", "field": "category", "in": ["tea"]},
+                       {"check": "required", "id": "title", "fields": ["title", "_body"]}])
+    root = make_ledger(tmp_path / "l", [art], {"articles/a.md": MD_OK,
+                                               "articles/b.md": "---\ntitle: B\ncategory: coffee\nparent: a\n---\n",
+                                               "articles/big.md": "---\ntitle: X\ncategory: tea\n---\n" + "字" * 30000})
+    v = V.open_vessel(str(root))
+    a = v.get("article:a")
+    assert a.inspected and a.values == {"title": "苦味の話", "category": "tea", "parent": "null",
+                                        "_body": "本文の 1 行目\n\n2 行目\n"}
+    assert a.version == V.bytes_version(MD_OK.encode("utf-8"))  # 版は全バイト
+    assert V.problems(v) == []
+    graph = V.links(v)
+    assert [(e["from"], e["to"]) for e in graph["edges"]] == [("article:b", "article:a")]
+    out = {c["id"]: c for c in C.run(v, [])["list"]}
+    assert [r["record"] for r in out["cat"]["records"]] == ["article:b"]
+    assert [r["record"] for r in out["title"]["records"]] == ["article:b"]  # 本文が空
+
+
+@yaml_needed
+def test_G12_番号は欄からも取れる_CRLFの頭も読む(tmp_path):
+    art = kind("article", "a/*.md", "md_yaml", id={"field": "slug"})
+    root = make_ledger(tmp_path / "l", [art], {})
+    (root / "a").mkdir()
+    (root / "a" / "x.md").write_bytes(b"---\r\nslug: hello\r\n---\r\nbody\r\n")
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["article:hello"] and v.get("article:hello").values["_body"] == "body\r\n"
+
+
+@yaml_needed
+@pytest.mark.parametrize("text,word", [
+    ("本文だけ\n", "md_head_missing"),
+    ("---\ntitle: a\n本文\n", "md_head_open"),
+    ("---\n- a\n- b\n---\n", "md_head_shape"),
+    ("---\n_body: x\n---\n", "md_head_shape"),
+    ("---\na: &x 1\nb: *x\n---\n", "yaml:"),
+    ("---\na: 1\na: 2\n---\n", "yaml:"),
+])
+def test_G12_頭が無い_閉じていない_範囲の外の書き方は読みの問題(tmp_path, text, word):
+    root = make_ledger(tmp_path / "l", [kind("article", "a/*.md", "md_yaml")], {"a/x.md": text})
+    v = V.open_vessel(str(root))
+    rec = v.all_records[0]
+    assert rec.values is None and any(w.startswith(word) for w in rec.problems)
+
+
+def test_G12_部品の無い機械では中は見ていない(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    root = make_ledger(tmp_path / "l", [kind("article", "a/*.md", "md_yaml")], {"a/x.md": MD_OK})
+    rec = V.open_vessel(str(root)).get("article:x")
+    assert rec.inspected is False and rec.values is None and rec.problems == []
+
+
+def test_G12_今の店の台帳の読みは変わらない(tmp_path):
+    from thth.register import form
+    text = "---\nid: r1\nkind: menu\n---\n本文\n"
+    root = make_ledger(tmp_path / "l", [kind("row", "rows/*.md", "thth_row")], {"rows/r1.md": text})
+    rec = V.open_vessel(str(root)).get("row:r1")
+    assert rec.values == dict(form.parse("rows/r1.md", text).head, body="本文\n") and hasattr(rec, "thth_row")
+
+
+@pytest.mark.parametrize("raw", [kind("a", "a/*.md", "md_yaml", records="rows"),
+                                 kind("a", "a/*.md", "md_yaml", rows_at=["x"]),
+                                 kind("a", "a/*.md", "md_yaml", max_bytes=10 ** 12)])
+def test_G12_宣言の攻め_md_yaml(raw):
+    with pytest.raises(V.DeclarationError):
+        V.parse_kind(raw, ".thth/kinds/a.json")
+
+
+# ================================================================== G13 鍵の辞書を行として読む
+
+def test_G13_JSONの鍵の辞書は鍵ごとに1行_番号は鍵(tmp_path):
+    ken = kind("todofuken", "koyomi.json", "json", records="rows", rows_at=["todofuken"], id={"from": "key"},
+               checks=[{"check": "words", "id": "shurui", "when": {"_value": {"blank": True}}, "field": "shurui",
+                        "in": ["kimari", "kanko"]}])
+    data = {"todofuken": {"tokyo": {"shurui": "kimari"}, "kanagawa": {"shurui": "x"}, "saitama": "字だけ",
+                          "chiba": [1, 2]}}
+    root = make_ledger(tmp_path / "l", [ken], {"koyomi.json": json.dumps(data, ensure_ascii=False)})
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["todofuken:chiba", "todofuken:kanagawa", "todofuken:saitama", "todofuken:tokyo"]
+    assert v.get("todofuken:saitama").values == {"_value": "字だけ"}
+    assert v.get("todofuken:chiba").values == {"_value": [1, 2]}
+    tokyo = v.get("todofuken:tokyo")
+    assert tokyo.version == "v:" + V.fp({"key": "tokyo", "value": {"shurui": "kimari"}})
+    assert [r["record"] for r in C.run(v, [])["list"][0]["records"]] == ["todofuken:kanagawa"]
+
+
+def test_G13_鍵が変われば同じ中身でも版が変わる(tmp_path):
+    ken = kind("t", "k.json", "json", records="rows", rows_at=["m"], id={"from": "key"})
+    root = make_ledger(tmp_path / "l", [ken], {"k.json": json.dumps({"m": {"a": {"x": 1}, "b": {"x": 1}}})})
+    v = V.open_vessel(str(root))
+    assert v.get("t:a").version != v.get("t:b").version
+
+
+def test_G13_鍵が番号の形でなければ読みの問題_並びはfrom_keyで番号が付かない(tmp_path):
+    ken = kind("t", "k.json", "json", records="rows", rows_at=["m"], id={"from": "key"})
+    lst = kind("u", "u.json", "json", records="rows", rows_at=["m"], id={"from": "key"})
+    root = make_ledger(tmp_path / "l", [ken, lst], {"k.json": json.dumps({"m": {"a b": {}, "ok": {}}}),
+                                                    "u.json": json.dumps({"m": [{"x": 1}]})})
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["t:ok"]
+    assert sorted(w for p in V.problems(v) for w in p["words"]) == ["id_form", "id_form"]
+
+
+def test_G13_並びの読みは今のまま(tmp_path):
+    lst = kind("u", "u.json", "json", records="rows", rows_at=["m"], id={"field": "id"})
+    root = make_ledger(tmp_path / "l", [lst], {"u.json": json.dumps({"m": [{"id": "a"}]})})
+    assert V.open_vessel(str(root)).get("u:a").version == "v:" + V.fp({"id": "a"})
+
+
+@yaml_needed
+def test_G13_YAMLの鍵の辞書も鍵ごとに1行(tmp_path):
+    ken = kind("t", "k.yaml", "yaml", records="rows", rows_at=["m"], id={"from": "key"})
+    root = make_ledger(tmp_path / "l", [ken], {"k.yaml": "m:\n  a:\n    x: 1\n  b: two\n"})
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["t:a", "t:b"] and v.get("t:b").values == {"_value": "two"}
+
+
+@pytest.mark.parametrize("rule", [{"from": "value"}, {"from": 1}, {"from": None}, {"from": "key", "field": "id"},
+                                  {"from": "key", "key": ["a"]}, {"from": ["key"]}])
+def test_G13_宣言の攻め_from(rule):
+    parse_fails(kind("t", "k.json", "json", records="rows", rows_at=["m"], id=rule), "id")
+
+
+def test_G13_from_keyは並びの記録だけ():
+    parse_fails(kind("t", "k/*.json", "json", id={"from": "key"}), "id")
+
+
+# ================================================================== G14 タブ区切りの表
+
+def test_G14_タブ区切りの表を読み_行の版は元のバイト(tmp_path):
+    owner = kind("owner", "owner-read.txt", delimiter="\t", id={"field": "id"},
+                 checks=[{"check": "required", "id": "who", "fields": ["who"]}])
+    text = "id\twho\tnote\na\tm\t\"x,y\"\nb\t\t\"改\n行\"\n"
+    root = make_ledger(tmp_path / "l", [owner], {"owner-read.txt": text})
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["owner:a", "owner:b"]
+    assert v.get("owner:a").values == {"id": "a", "who": "m", "note": "x,y"}
+    assert v.get("owner:b").values["note"] == "改\n行"
+    assert v.get("owner:b").version == V.bytes_version("b\t\t\"改\n行\"\n".encode("utf-8"))
+    assert [r["record"] for r in C.run(v, [])["list"][0]["records"]] == ["owner:b"]
+
+
+def test_G14_delimiterを書かない表はコンマのまま(tmp_path):
+    root = make_ledger(tmp_path / "l", [kind("t", "t.csv", id={"field": "id"})], {"t.csv": "id,a\nx,1\n"})
+    assert V.open_vessel(str(root)).get("t:x").values == {"id": "x", "a": "1"}
+
+
+@pytest.mark.parametrize("delim", [";", "|", "", ",,", 1, None, ["\t"], " "])
+def test_G14_宣言の攻め_delimiter(delim):
+    parse_fails(kind("t", "t.csv", delimiter=delim, id={"field": "id"}), "delimiter")
+
+
+def test_G14_表でない形式にdelimiterは書けない():
+    parse_fails(kind("t", "t.json", "json", delimiter="\t"), "delimiter")

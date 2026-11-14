@@ -42,7 +42,8 @@ KIND_SCHEMA = "thth.kind/1"
 CONSTITUTION_SCHEMA = "thth.constitution/1"
 IDS_SCHEMA = "thth.ids/1"
 
-FORMATS = ("csv", "json", "yaml", "thth_row", "bytes")
+FORMATS = ("csv", "json", "yaml", "thth_row", "bytes", "md_yaml")
+DELIMITERS = (",", "\t")              # 表の区切り（段 4 G14）
 FILE_MAX_DEFAULT = 64 * 1024          # 1 枚の既定（今の台帳と同じ）
 TABLE_MAX_DEFAULT = 50 * 1024 * 1024  # 表の既定（叩き台: 50 MB）
 TABLE_ROWS_MAX = 200_000              # 表の行の既定（叩き台: 20 万行）
@@ -198,9 +199,11 @@ class Kind:
     path: str                  # 宣言のファイル（台帳の根からの道）
     inspects: dict | None = None  # 検収の記録を持つ表の宣言（`_parse_inspects`）
     checks: list = field(default_factory=list)  # 検査の部品（段 4。`checks.parse_checks`）
+    delimiter: str = ","       # 表の区切り（`,` か タブ。段 4 G14）
 
 
 _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows_at", "id", "questions", "pointers",
+              "delimiter",
               "units", "inspects", "checks", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
 _P_KEYS = ("field", "fields", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "none",
@@ -257,16 +260,23 @@ def _parse_kind(data, path: str) -> Kind:
         raise DeclarationError("format")
     records = data.get("records", "rows" if fmt == "csv" else "file")
     if records not in ("file", "rows") or (fmt == "csv" and records != "rows") or (
-            fmt in ("thth_row", "bytes") and records != "file"):
+            fmt in ("thth_row", "bytes", "md_yaml") and records != "file"):
         raise DeclarationError("records")
+    delimiter = data.get("delimiter", ",")
+    if ("delimiter" in data and fmt != "csv") or not isinstance(delimiter, str) or delimiter not in DELIMITERS:
+        raise DeclarationError("delimiter")
     max_bytes = data.get("max_bytes", TABLE_MAX_DEFAULT if records == "rows" else FILE_MAX_DEFAULT)
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 0 < max_bytes <= TABLE_MAX_DEFAULT:
         raise DeclarationError("max_bytes")
     rows_at = _path_steps(data.get("rows_at", []), "rows_at")
-    id_rule = _only(data.get("id", {"name": True} if records == "file" else {}), ("name", "field", "key", "scope"),
-                    "id")
-    if records == "rows" and not (("field" in id_rule) ^ ("key" in id_rule)):
+    if fmt == "md_yaml" and "rows_at" in data:
+        raise DeclarationError("rows_at")
+    id_rule = _only(data.get("id", {"name": True} if records == "file" else {}),
+                    ("name", "field", "key", "scope", "from"), "id")
+    if records == "rows" and [("field" in id_rule), ("key" in id_rule), ("from" in id_rule)].count(True) != 1:
         raise DeclarationError("id")
+    if "from" in id_rule and (records != "rows" or id_rule["from"] != "key"):
+        raise DeclarationError("id")  # 鍵の辞書の鍵を番号にする（段 4 G13）。並びの記録だけ
     if records == "file" and not (id_rule.get("name") is True) ^ ("field" in id_rule):
         raise DeclarationError("id")
     if "field" in id_rule:
@@ -358,7 +368,7 @@ def _parse_kind(data, path: str) -> Kind:
         checks = _checks.parse_checks(data["checks"], pointers)
     return Kind(name=name, places=places, format=fmt, records=records, max_bytes=max_bytes, rows_at=rows_at,
                 id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path, inspects=inspects,
-                checks=checks)
+                checks=checks, delimiter=delimiter)
 
 
 def _name(value, word):
@@ -624,10 +634,10 @@ def split_csv_rows(text: str) -> list:
     return rows
 
 
-def _parse_csv_line(raw: str) -> list | None:
+def _parse_csv_line(raw: str, delimiter: str = ",") -> list | None:
     """1 行を読む。読めなければ None（大きすぎるセルなど。csv の部品の例外を漏らさない）。"""
     try:
-        return next(csv.reader(io.StringIO(raw, newline=""), strict=False), [])
+        return next(csv.reader(io.StringIO(raw, newline=""), strict=False, delimiter=delimiter), [])
     except csv.Error:
         return None
 
@@ -751,6 +761,8 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
                        False, ["not_utf8"])]
     if kind.format == "csv":
         return _read_csv(rel, text, kind)
+    if kind.format == "md_yaml":
+        return [_read_md(rel, text, kind, version, name_id)]
     if kind.format == "thth_row":
         row = form.parse(rel, text)
         if not form.is_row(row):
@@ -799,23 +811,68 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
     return _read_rows(rel, value, kind, version)
 
 
+def _read_md(rel: str, text: str, kind: Kind, version: str, name_id: str) -> Record:
+    """頭に YAML を持つ .md（段 4 G12）: 1 枚 = 1 記録。頭の `---` から次の `---` の行までを YAML として読み、
+    頭の段の鍵を欄に、残りの本文を欄 `_body` にする。YAML は `yamlread`（型を決めつけない読み）のまま。
+    今の店の台帳（`thth_row`）とは別の形式で、その読みは変えない。版は全バイト。"""
+    rid = _id_ok(name_id) if kind.id_rule.get("name") else None
+
+    def refused(word):
+        return Record(kind.name, rid, rel, version, None, False, [word])
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return refused("md_head_missing")
+    close = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"), None)
+    if close is None:
+        return refused("md_head_open")
+    value, problem, inspected = yamlread.load("".join(lines[1:close]))
+    if problem:
+        return refused(f"yaml:{problem}")
+    if not inspected:
+        return Record(kind.name, rid, rel, version, None, False)
+    value = {} if value is None or value == "" else value
+    if not isinstance(value, dict) or "_body" in value:
+        return refused("md_head_shape")
+    values = dict(value, _body="".join(lines[close + 1:]))
+    if "field" in kind.id_rule:
+        rid = _id_ok(values.get(kind.id_rule["field"]))
+    rec = Record(kind.name, rid, rel, version, values, True)
+    if rid is None:
+        rec.problems.append("id_form")
+    _read_units(rec, kind)
+    return rec
+
+
 def _read_rows(rel: str, value, kind: Kind, version: str) -> list:
-    """枚の中の並び（`rows_at` の先の並び）の 1 つずつを記録にする（JSON と YAML で同じ）。"""
+    """枚の中の並び（`rows_at` の先の並び）の 1 つずつを記録にする（JSON と YAML で同じ）。`rows_at` の先が
+    鍵の辞書なら鍵ごとに 1 行（段 4 G13。辞書でない値は欄 `_value` 1 つの行）。"""
     out = []
-    for item, _trail in _get(value, kind.rows_at + ["*"]):
-        if not isinstance(item, dict):
-            out.append(Record(kind.name, None, rel, version, None, False, ["row_shape"]))
-            continue
-        if "field" in kind.id_rule:
-            rid = _id_ok(item.get(kind.id_rule["field"]))
+    for container, _trail in _get(value, kind.rows_at):
+        if isinstance(container, list):
+            members = [(None, item) for item in container]
+        elif isinstance(container, dict):
+            members = list(container.items())
         else:
-            rid = "k-" + short(fp([item.get(k) for k in kind.id_rule["key"]]))
-        # 並びの中の 1 つは、ほかの記録とバイトを分け合うので、版は読んだ値の指紋（注: §5.1 の全バイトは枚の版）。
-        rec = Record(kind.name, rid, rel, "v:" + fp(item), item, True)
-        if rid is None:
-            rec.problems.append("id_form")
-        _read_units(rec, kind)
-        out.append(rec)
+            continue
+        for key, item in members:
+            if key is None and not isinstance(item, dict):
+                out.append(Record(kind.name, None, rel, version, None, False, ["row_shape"]))
+                continue
+            values = item if isinstance(item, dict) else {"_value": item}
+            if "from" in kind.id_rule:
+                rid = _id_ok(key) if key is not None else None
+            elif "field" in kind.id_rule:
+                rid = _id_ok(values.get(kind.id_rule["field"]))
+            else:
+                rid = "k-" + short(fp([values.get(k) for k in kind.id_rule["key"]]))
+            # 並びの中の 1 つは、ほかの記録とバイトを分け合うので、版は読んだ値の指紋（注: §5.1 の全バイトは枚の版）。
+            # 鍵の辞書の行は、鍵も中身に入れる（鍵だけが変わった行を同じ版にしない）。
+            row_version = "v:" + (fp(item) if key is None else fp({"key": key, "value": item}))
+            rec = Record(kind.name, rid, rel, row_version, values, True)
+            if rid is None:
+                rec.problems.append("id_form")
+            _read_units(rec, kind)
+            out.append(rec)
     return out
 
 
@@ -836,7 +893,7 @@ def _read_csv(rel: str, text: str, kind: Kind) -> list:
     lines = split_csv_rows(text)
     if not lines:
         return []
-    header = _parse_csv_line(lines[0])
+    header = _parse_csv_line(lines[0], kind.delimiter)
     out = []
     if len(lines) - 1 > TABLE_ROWS_MAX:
         return [Record(kind.name, None, rel, "", None, False, ["too_many_rows"])]
@@ -848,7 +905,7 @@ def _read_csv(rel: str, text: str, kind: Kind) -> list:
     for raw in lines[1:]:
         if not raw.strip("\r\n"):
             continue
-        cells = _parse_csv_line(raw)
+        cells = _parse_csv_line(raw, kind.delimiter)
         if cells is None:
             out.append(Record(kind.name, None, rel, bytes_version(raw.encode("utf-8")), None, False, ["csv"]))
             continue
