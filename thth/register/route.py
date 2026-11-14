@@ -36,12 +36,18 @@
   止める・だめが、日時の書き方で封の中の止めない・よいに負けない）。その中では日時を時刻として比べ（字で比べない）、
   同じ時刻なら判断の記録の中で後に足した物（番号の文字の順にはしない）。止めないにも期限を見る（切れたら止めるが効く）。
 
-- **消す求めのあと**（段 5・`erase.py`）: 消す求めは封から項目の指紋を外すので、署名が合わず、受け入れ直すまで封なし。
+- **消す求めのあと**（段 5・`erase.py`）: 消す求めは封から項目の指紋と署名を外すので、受け入れ直すまで封なし。
   受け入れ直す口だけは、求めの結果がこの出し口の封を書き換えたと言う封から世代の番号を継ぐ（`erased_seal`）。
-  受け入れ直した封は「消す求めの結果」（`erase`: 求め・書き換えた行の番号・前の封の判断の記録の頭）を持つ。配る物は
-  判断の行ごとの骨（`deployed.lines`。問い・記録・指し先・語・結論・日時・いつまで。番号と誰がは入れない）も持ち、
-  CI は前に配った頭の続きでないとき、i 番めどうしの骨が同じで、印の形の行が署名の合った封の言う行だけなら通す
-  （`erase_continued`）。行が減る・並びが変わる・骨が変わる（印の行の結論も）、は赤。
+  受け入れ直した封は「消す求めの結果」（`erase`: 求め・書き換えた行の番号と位置・結びの付け直しで番号の変わった行・
+  除いた記録の番号・前の封の判断の記録の頭）を持つ。配る物は判断の行ごとの組（`deployed.lines`。塩を混ぜた
+  指し先つきの骨・指し先を除いた骨・行の全バイト・番号と結びを除いた欄）も持ち、CI は前に配った頭の続きでないとき、
+  印の形の行は署名の合った封の言う行だけ・決まった欄だけ・骨が同じなら通し、**載っていない行は全バイトが同じ**
+  ことを見る（`erase_continued`。段 5 の検収の穴 4）。行が減る・並びが変わる・骨が変わる・載っていない行が変わる、は赤。
+- **公開の写しと塩**（段 7 の検収 7-1）: 台帳ごとに秘密の塩（`.thth/seals/salt`。32 バイト・0600・`accept` が作る。
+  材料にも配る物にも入れない。消す求めでも変えない）。封の署名は、細目でなく「公開の写しの中身」（`public_of`。
+  塩を混ぜた要約）に作る。台帳の中の封は細目と署名を持ち、確かめ（`verify`・`trusted_seal`）は細目と塩から要約を
+  作り直して署名と照らす。公開の場所の写し（`write_published`）は記録の番号・版・素の指紋を持たない。塩が無い・
+  前の写しが古い形なら赤（`salt_missing`・`previous_old_form`。一度ふつうに受け入れて配り直す）。
 
 - **材料を出す道の残り**（段 7・指示 `docs/指示_台帳の器_段6と段7_書く口と出口の残り_2026-11-14.md` §7.1〜7.4・7.8）:
   - 出し口の宣言の `kinds` は、種類の名前の並びか、`{種類: 設定}`。設定は読者の出し口だけが持てる:
@@ -77,6 +83,7 @@ import io
 import json
 import os
 import re
+import secrets
 from dataclasses import dataclass
 
 from thth import __version__
@@ -91,6 +98,9 @@ OUTLETS_FILE = "outlets.json"
 OUTLETS_SCHEMA = "thth.outlets/1"
 SEALS_DIR = "seals"
 SEAL_SCHEMA = "thth.seal/1"
+PUBLIC_SCHEMA = "thth.seal_public/1"     # 公開の場所に出す写し（塩を混ぜた要約。段 7 の検収 7-1）
+SALT_FILE = "salt"                        # 台帳ごとの秘密の塩（`.thth/seals/salt`。乱数 32 バイト・0600）
+SALT_BYTES = 32
 TAKE = "take"
 STOP = "stop"
 COMMON = "common"
@@ -722,11 +732,18 @@ def _unit_match(ref, pointer):
         and not t.get("value") and not t.get("ledger")
 
 
+def _meets(got: dict, want) -> bool:
+    """出し口の条件を満たす答えか。消す求めで印の形にした行（`erased`）は、条件を満たす判断に数えない（狭める向き
+    ＝止める・だめとして外す、にだけ効く。条件が `conclusion: bad` を求める出し口で、版を確かめられない印の「だめ」が
+    広げる向きに効かないように。段 5 の検収）。"""
+    return got["conclusion"] == want and not J.is_erased(got.get("judgment"))
+
+
 def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     """`(段, 使えないわけ, 理由の種類)`。段は fact・reservation・none。"""
     for question, want in outlet.requires:
         got = answer(ctx, js, _record_match(ref), question, ref)
-        if got["conclusion"] != want:
+        if not _meets(got, want):
             # 出してよいの判断が無い・だめ・まだは「出し口が無い」と同じ（MMR の public_song の欄が無い組も）。
             # 古い・期限切れ・根拠の変わりは、そのわけのまま返す（直し方が違うので）。
             why = got["why"] if got["why"] in ("no_inspection_for_new_version", "expired", "against_changed") else None
@@ -736,7 +753,7 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     fact_ok = True
     for question, want in outlet.fact:
         got = answer(ctx, js, match, question, ref)
-        if got["conclusion"] != want:
+        if not _meets(got, want):
             fact_ok = False
             why = why or got["why"] or f"not_{want}"
     if fact_ok:
@@ -744,7 +761,7 @@ def _level(ctx: Ctx, js: list, outlet: Outlet, ref: str, pointer) -> tuple:
     res = outlet.reservation
     if res is not None:
         got = answer(ctx, js, match, res["question"], ref)
-        if got["conclusion"] == res["conclusion"]:
+        if _meets(got, res["conclusion"]):
             if got.get("reason_kind") in res["reason_kinds"]:
                 return "reservation", None, got.get("reason_kind")
             return "none", "reason_kind_not_allowed", got.get("reason_kind")
@@ -1324,7 +1341,84 @@ def check_seal_shape(value) -> dict:
     return value
 
 
-SEAL_STATES = ("none", "verified", "shape", "other_outlet", "public_key", "signature")
+SEAL_STATES = ("none", "verified", "shape", "other_outlet", "salt", "public_key", "signature")
+
+
+# ------------------------------------------------------------------ 塩と公開の写し（段 7 の検収 7-1）
+
+def salt_path(root: str) -> str:
+    return os.path.join(root, V.DECL_DIR, SEALS_DIR, SALT_FILE)
+
+
+def read_salt(root: str) -> bytes | None:
+    """台帳の秘密の塩（32 バイト）。無い・symlink・長さが違うなら None。"""
+    path = salt_path(root)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        data = f.read(SALT_BYTES + 1)
+    return data if len(data) == SALT_BYTES else None
+
+
+def ensure_salt(root: str) -> bytes:
+    """塩が無ければ作る（`accept` だけが呼ぶ。0600・台帳の中だけ）。あるのに読めない（長さが違う・symlink）なら
+    作り直さずに断る（塩を替えると前に配った物と比べられなくなるので）。"""
+    got = read_salt(root)
+    if got is not None:
+        return got
+    path = salt_path(root)
+    if os.path.lexists(path):
+        raise RegisterRefused("register_seal_unverified", "salt_broken", seal="salt")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(secrets.token_bytes(SALT_BYTES))
+    got = read_salt(root)
+    if got is None:
+        raise RegisterRefused("register_seal_unverified", "salt_broken", seal="salt")
+    return got
+
+
+def salted(salt: bytes, value) -> str:
+    """sha256(塩 ‖ 中身)。中身はバイトか、決まった並び（`V.canonical`）にした値。"""
+    data = value if isinstance(value, bytes) else V.canonical(value).encode("utf-8")
+    return hashlib.sha256(salt + data).hexdigest()
+
+
+def salted_head(salt: bytes, hex_sha) -> str | None:
+    """判断の記録の頭の、塩を混ぜた指紋（素の sha256 の 16 進に塩を混ぜる）。"""
+    return salted(salt, hex_sha.encode("ascii")) if isinstance(hex_sha, str) else None
+
+
+def _public_head(salt: bytes, jm) -> dict | None:
+    if not isinstance(jm, dict):
+        return None
+    return {"bytes": jm.get("bytes"), "count": jm.get("count"), "sha256": salted_head(salt, jm.get("sha256"))}
+
+
+def public_of(body: dict, salt: bytes) -> dict:
+    """公開の場所に出す写しの中身（署名はこれに作る）。出し口・読む者・世代・日時・宣言の指紋・塩を混ぜた要約
+    （入力の版の組・載せた項目・項目と行の指紋・出力の指紋・封の細目の全部）・判断の記録の頭（バイトと行の数・
+    塩を混ぜた指紋）・消す求めの結果（求めの数と行の位置）。記録の番号・版・素の指紋は入れない。"""
+    prev = body.get("previous") if isinstance(body.get("previous"), dict) else None
+    erase = body.get("erase") if isinstance(body.get("erase"), dict) else None
+    return {"schema": PUBLIC_SCHEMA, "outlet": body.get("outlet"), "audience": body.get("audience"),
+            "generation": body.get("generation"), "as_of": body.get("as_of"), "at": body.get("at"),
+            "decl": body.get("decl"), "thth": body.get("thth"), "public_key": body.get("public_key"),
+            "common_unchecked": bool(body.get("common_unchecked")),
+            "summary": {"inputs": salted(salt, body.get("inputs")), "items": salted(salt, body.get("items")),
+                        "fingerprints": salted(salt, body.get("fingerprints")),
+                        "outputs": salted(salt, body.get("outputs")), "body": salted(salt, body)},
+            "judgments": _public_head(salt, body.get("judgments")),
+            "previous": ({"generation": prev.get("generation"), "judgments": _public_head(salt, prev.get("judgments"))}
+                         if prev else None),
+            "erase": ({"requests": len(erase.get("requests") or []), "positions": list(erase.get("positions") or [])}
+                      if erase else None)}
+
+
+def seal_message(body: dict, salt: bytes) -> bytes:
+    """封の署名の対象（公開の写しの中身の決まった並び）。"""
+    return V.canonical(public_of(body, salt)).encode("utf-8")
 
 
 def trusted_seal(root: str, outlet: str) -> tuple:
@@ -1339,11 +1433,14 @@ def trusted_seal(root: str, outlet: str) -> tuple:
         return None, "none"
     if seal["body"].get("outlet") != outlet:
         return None, "other_outlet"
+    salt = read_salt(root)
+    if salt is None:
+        return None, "salt"
     try:
         pem, _origin = S.trusted_public_pem()
     except RegisterRefused:
         return None, "public_key"
-    if not S.verify(V.canonical(seal["body"]).encode("utf-8"), seal["signature"], pem):
+    if not S.verify(seal_message(seal["body"], salt), seal["signature"], pem):
         return None, "signature"
     return seal, "verified"
 
@@ -1572,15 +1669,17 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
         erased_prev = erased_seal(root, outlet.name)
         if erased_prev is None:
             _refuse_unverified(outlet.name, state)
-    elif state != "none" and previous is None:
+    elif state not in ("none", "salt") and previous is None:
         _refuse_unverified(outlet.name, state)   # 署名の合わない封から、世代と判断の頭を継がない
+    # 塩が無い（消した・まだ作っていない）ときは、封を確かめられないので、初めての受け入れと同じに世代 1 から封をする
+    # （受け入れで塩を作る。前に配った物とは比べられないので、CI は「一度ふつうに配り直す」まで赤）。
     if previous is not None:
         sealed_judgments(raw, previous, root)   # 封のあとで判断の記録の頭が書き換わっていれば、受け入れずに断る
     ctx = context(root, as_of, common_root=common_root, raw=raw, sealed_all=True)
     base = previous or erased_prev
     result = compute(ctx, outlet, common_known=_known_paths(base))
     body = seal_body(root, outlet, ctx, result, raw, base)
-    block = erase_block(root, erased_prev, previous)
+    block = erase_block(root, erased_prev, previous, ctx.every)
     if block is not None:
         body["erase"] = block
     if previous is not None:
@@ -1635,23 +1734,52 @@ def _erase_result(root: str, req) -> dict | None:
     return value if isinstance(value, dict) and value.get("request") == req else None
 
 
-def erase_block(root: str, erased_prev: dict | None, previous: dict | None) -> dict | None:
-    """受け入れ直した封が持つ「消す求めの結果」（段 5 §3.7）: 求めの番号・書き換えた判断の行の番号・前の封の判断の
-    記録の頭（バイトの数と指紋）。前の封が持っていた物は継ぐ（配る前に受け入れを重ねても、CI が前に配った世代と
-    比べられるように）。消した中身もその指紋も持たない。"""
+def _erase_request(root: str, req) -> dict | None:
+    if not isinstance(req, str) or not J.ERASE_ID.fullmatch(req):
+        return None
+    path = os.path.join(root, V.DECL_DIR, J.ERASE_DIR, req, "request.json")
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            value = json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value.get("id") == req else None
+
+
+def erase_block(root: str, erased_prev: dict | None, previous: dict | None, every: list | None = None) -> dict | None:
+    """受け入れ直した封が持つ「消す求めの結果」（段 5 §3.7）: 求めの番号・書き換えた判断の行の番号と位置・
+    結びの付け直しで番号の変わった行・今の本文から除いた記録の番号・前の封の判断の記録の頭（バイトと行の数）。
+    前の封が持っていた物は継ぐ。`diff` と `check --against` が通すのは、署名の合った封のここに載った物だけ
+    （`trail.erase_excuses`）。結果の記録は、今の判断の記録と求めに合う物だけを写す（印の行で、その求めの物・
+    記録ごと消す求めの記録の番号だけ）。消した中身もその指紋も持たない。"""
     prior = (previous or {}).get("body", {}).get("erase") if previous else None
     if erased_prev is None:
         return prior if isinstance(prior, dict) else None
+    every = every or []
+    by_id = {j.get("id"): j for j in every}
     requests = set((prior or {}).get("requests") or [])
     lines = set((prior or {}).get("lines") or [])
+    renumbered = set((prior or {}).get("renumbered") or [])
+    records = set((prior or {}).get("records") or [])
     for req in erased_prev["body"]["erased"]:
         result = _erase_result(root, req) or {}
+        reqb = _erase_request(root, req) or {}
         requests.add(req)
-        lines.update(x for x in result.get("rewritten_lines") or [] if isinstance(x, str))
+        lines.update(x for x in result.get("rewritten_lines") or []
+                     if isinstance(x, str) and J.is_erased(by_id.get(x)) and by_id[x]["erased"].get("request") == req)
+        if result.get("field") is None and reqb.get("field") is None:
+            records.update(x for x in result.get("erased_records") or [] if x == reqb.get("record"))
+        renumbered.update(x for x in result.get("renumbered_lines") or []
+                          if isinstance(x, str) and isinstance(by_id.get(x), dict) and not J.is_erased(by_id[x]))
+    renumbered = {x for x in renumbered if by_id.get(x, {}).get("carries") in lines | renumbered}
     pj = erased_prev["body"]["judgments"]
     # 前の封の判断の記録の頭の指紋は、消す求めが外した（消した行を含むバイトの指紋なので）。残るのはバイトの数だけ。
-    # 前に配った頭の指紋は公開の場所の配る物にあり、CI はそれと行ごとの骨で比べる。
-    return {"requests": sorted(requests), "lines": sorted(lines),
+    # 前に配った頭の指紋（塩を混ぜた物）は公開の場所の写しにあり、CI はそれと行ごとの組で比べる。
+    return {"requests": sorted(requests), "lines": sorted(lines), "renumbered": sorted(renumbered),
+            "records": sorted(records),
+            "positions": [n for n, j in enumerate(every) if j.get("id") in lines],
             "previous": {"generation": erased_prev["body"]["generation"],
                          "judgments": {"bytes": pj.get("bytes"), "count": pj.get("count")}}}
 
@@ -1660,41 +1788,64 @@ def erase_block(root: str, erased_prev: dict | None, previous: dict | None) -> d
 line_skeleton = J.line_skeleton
 
 
-def line_skeletons(raw: bytes) -> list:
+def _line_rest(item: dict) -> bytes:
+    """行の、番号と結び（`carries`）を除いた全部の欄の決まった並び（消す求めの結びの付け直しだけを通すため）。"""
+    return V.canonical({k: v for k, v in item.items() if k not in ("id", "carries")}).encode("utf-8")
+
+
+def _line_texts(raw: bytes) -> list:
+    return [line for line in raw.decode("utf-8", errors="replace").splitlines() if line.strip()]
+
+
+def line_entries(raw: bytes, salt: bytes) -> list:
+    """配る物の行ごとの組（塩を混ぜた形）: `[指し先つきの骨, 指し先を除いた骨, 行の全バイト, 番号と結びを除いた
+    全部の欄]`。消す求めの結果に載った行は骨で、載っていない行は全バイトで、前に配った物と比べる。"""
     out = []
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
+    for line in _line_texts(raw):
         try:
             item = json.loads(line)
         except (ValueError, RecursionError):
             item = {}
-        out.append(J.skeleton_pair(item if isinstance(item, dict) else {}))
+        item = item if isinstance(item, dict) else {}
+        out.append(J.skeleton_pair(item, salt) + [salted(salt, line.encode("utf-8")), salted(salt, _line_rest(item))])
     return out
 
 
-def erase_continued(root: str, raw: bytes, dep: dict, erase) -> str | None:
+def erase_continued(root: str, raw: bytes, dep: dict, erase, salt: bytes) -> str | None:
     """前に配った頭（`dep`）の続きでないとき、消す求めの書き換えとして通せるか。通せれば None、通せなければ語。
-    行が減っていない・前に配った i 番めの行の骨と今の i 番めの骨が同じ（印の行も、そうでない行も。並びが変われば
-    違う）・印の形の行は署名の合った封が言う行（と求め）だけ。印でない行は、番号が中身から作った物と合うことを
-    読む入口が見る。消す求めの無い回は、今までどおり頭のバイトの続きだけで比べる（ここは呼ばれない）。"""
+    行が減っていない・印の形の行は署名の合った封が言う行（と求め）だけで、印の形が決まった欄だけで、骨が前に配った
+    i 番めと同じ・**載っていない行は、行の全バイトが前に配った i 番めと同じ**（結びの付け直しで番号の変わった行は、
+    封が言う行だけ、番号と結びを除いた全部の欄が同じで、新しい結びが封の言う行を指すとき）。前に配った物が骨だけの
+    古い形なら通さない（一度ふつうに配り直してから）。"""
     if not isinstance(erase, dict):
         return "no_erase"
     lines = dep.get("lines")
-    if not isinstance(lines, list) or any(not (isinstance(p, list) and len(p) == 2) for p in lines):
+    if not isinstance(lines, list) or any(not (isinstance(p, list) and len(p) == 4
+                                               and all(isinstance(x, str) for x in p)) for p in lines):
         return "previous_lines_missing"
     try:
         now = parse_judgments(raw, root)
     except RegisterRefused:
         return "lines_unreadable"
-    if len(now) < len(lines):
+    texts = _line_texts(raw)
+    if len(now) < len(lines) or len(texts) != len(now):
         return "lines_reduced"
     allowed = set(erase.get("lines") or [])
     requests = set(erase.get("requests") or [])
-    for i, pair in enumerate(lines):
-        why = J.line_continues(pair, now[i], lines=allowed, requests=requests)
-        if why is not None:
-            return why
+    renumbered = set(erase.get("renumbered") or [])
+    for i, entry in enumerate(lines):
+        j = now[i]
+        if J.is_erased(j):
+            why = J.line_continues(entry[:2], j, lines=allowed, requests=requests, salt=salt)
+            if why is not None:
+                return why
+            continue
+        if salted(salt, texts[i].encode("utf-8")) == entry[2]:
+            continue
+        if j.get("id") in renumbered and j.get("carries") in allowed | renumbered \
+                and salted(salt, _line_rest(j)) == entry[3]:
+            continue
+        return "line_changed"
     return None
 
 
@@ -1714,7 +1865,8 @@ def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, com
     if plan["stale"]:
         raise RegisterRefused("register_material_stale", f"{len(plan['stale'])} files", stale=plan["stale"][:50])
     body = dict(plan["body"], at=at, public_key=S.fingerprint(S.local_public_pem()))
-    signature = S.sign(V.canonical(body).encode("utf-8"), register_root=root)
+    salt = ensure_salt(root)
+    signature = S.sign(seal_message(body, salt), register_root=root)
     write_files(plan["to"], plan["result"]["files"])
     path = seal_path(root, plan["outlet"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1738,7 +1890,7 @@ PROBLEMS = ("no_seal", "seal_shape", "public_key", "signature", "judgments_rewri
 
 def deployed_of(prev: dict) -> dict | None:
     """前に配った物の控え（`deployed`）。形が合わなければ None。封の頭より短い頭は受けない。"""
-    pb, d = prev["body"], prev.get("deployed")
+    pb, d = prev["public"], prev.get("deployed")
     if not isinstance(d, dict) or d.get("outlet") != pb.get("outlet") or d.get("generation") != pb.get("generation"):
         return None
     dj = d.get("judgments")
@@ -1748,16 +1900,33 @@ def deployed_of(prev: dict) -> dict | None:
     return d
 
 
-def write_published(path: str, seal: dict, raw: bytes, now: datetime.datetime, dropped: list) -> None:
-    """配る物: 封（署名つき）と、配った時の判断の記録の頭（`deployed`）。次の回の CI が「前に配った物」として読む。
-    `deployed` は署名の外（CI は鍵を持たない）。守るのは、公開の場所へ置けるのがこの確かめを通った配りだけ、という事。"""
+def check_public_shape(value) -> dict:
+    """公開の場所の写し（`write_published` が書いた物）の形。古い形（細目の封 `body` を持つ）は `previous_old_form`。"""
+    if isinstance(value, dict) and "public" not in value and "body" in value:
+        raise RegisterRefused("register_seal_unverified", "previous_old_form")
+    if (not isinstance(value, dict) or not isinstance(value.get("public"), dict) or not isinstance(value.get("signature"), str)
+            or value["public"].get("schema") != PUBLIC_SCHEMA):
+        raise RegisterRefused("register_seal_unverified", "previous_signature")
+    pj = value["public"].get("judgments")
+    if (not isinstance(pj, dict) or not isinstance(pj.get("bytes"), int) or not isinstance(pj.get("sha256"), str)
+            or not isinstance(value["public"].get("generation"), int)):
+        raise RegisterRefused("register_seal_unverified", "previous_signature")
+    return value
+
+
+def write_published(path: str, seal: dict, raw: bytes, now: datetime.datetime, dropped: list, salt: bytes) -> None:
+    """配る物（公開の場所の写し）: 公開の写しの中身（`public_of`。署名はこれに作ってある）・署名・配った時の判断の
+    記録の頭と行ごとの組（`deployed`。塩を混ぜた形）。次の回の CI が「前に配った物」として読む。
+    `deployed` は署名の外（CI は鍵を持たない）。守るのは、公開の場所へ置けるのがこの確かめを通った配りだけ、という事。
+    記録の番号・版・素の指紋・封の細目は入れない。封のあとに外した物は数だけ。"""
     body = seal["body"]
-    value = {"body": body, "signature": seal["signature"],
+    value = {"public": public_of(body, salt), "signature": seal["signature"],
              "deployed": {"outlet": body["outlet"], "generation": body["generation"],
-                          "judgments": {"bytes": len(raw), "sha256": sha(raw)},
-                          # 行ごとの骨（段 5 §3.7。消す求めの書き換えを、次の回の CI が行ごとに比べる）
-                          "lines": line_skeletons(raw[:len(raw)]),
-                          "at": now.isoformat(timespec="seconds"), "dropped": dropped}}
+                          "judgments": {"bytes": len(raw), "count": len(_line_texts(raw)),
+                                        "sha256": salted_head(salt, sha(raw))},
+                          # 行ごとの組（段 5 §3.7。消す求めの書き換えを、次の回の CI が行ごとに比べる）
+                          "lines": line_entries(raw, salt),
+                          "at": now.isoformat(timespec="seconds"), "dropped": len(dropped)}}
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -1791,7 +1960,13 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
         red("public_key")
         return _verdict(problems, warnings)
     body = seal["body"]
-    if not S.verify(V.canonical(body).encode("utf-8"), seal["signature"], pem):
+    salt = read_salt(root)
+    if salt is None:
+        # 塩が無い（消した・書き換えた）と、署名の合う要約を作り直せず、前に配った物とも比べられない
+        red("salt_missing")
+        return _verdict(problems, warnings, key=origin)
+    public = public_of(body, salt)
+    if not S.verify(V.canonical(public).encode("utf-8"), seal["signature"], pem):
         red("signature")
         return _verdict(problems, warnings, key=origin)
     if body.get("outlet") != outlet.name:
@@ -1807,12 +1982,15 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     # 前に配った世代（公開の場所から CI の手順が取ってくる封）
     if previous_path is not None:
         try:
-            prev = check_seal_shape(_read_json(previous_path, J.MAX_BYTES))
-        except (RegisterRefused, V.DeclarationError, OSError):
+            prev = check_public_shape(_read_json(previous_path, J.MAX_BYTES))
+        except RegisterRefused as exc:
+            prev = None
+            red(exc.detail if exc.detail == "previous_old_form" else "previous_signature")
+        except (V.DeclarationError, OSError):
             prev = None
             red("previous_signature")
         if prev is not None:
-            pb = prev["body"]
+            pb = prev["public"]
             if not S.verify(V.canonical(pb).encode("utf-8"), prev["signature"], pem):
                 red("previous_signature")
             elif pb.get("outlet") != outlet.name:
@@ -1820,12 +1998,12 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
             else:
                 if body["generation"] < pb["generation"]:
                     red("generation_back", previous=pb["generation"], now=body["generation"])
-                elif body["generation"] == pb["generation"] and V.canonical(body) != V.canonical(pb):
+                elif body["generation"] == pb["generation"] and V.canonical(public) != V.canonical(pb):
                     red("generation_reused", generation=body["generation"])
                 pj = pb["judgments"]
                 dep = deployed_of(prev)
                 broken = []
-                if len(raw) < pj["bytes"] or sha(raw[:pj["bytes"]]) != pj["sha256"]:
+                if len(raw) < pj["bytes"] or salted_head(salt, sha(raw[:pj["bytes"]])) != pj["sha256"]:
                     broken.append({"previous_bytes": pj["bytes"], "now_bytes": len(raw)})
                 # 封をし直さずに配った回（止めるで外した・期限で外した）の判断も、前に配った物の続きでなければ赤。
                 # 止めるの行を消して古い材料に戻すと、封の頭は続いていても、配った時の頭が続かない。
@@ -1833,13 +2011,13 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
                     red("previous_not_deployed")
                 else:
                     dj = dep["judgments"]
-                    if len(raw) < dj["bytes"] or sha(raw[:dj["bytes"]]) != dj["sha256"]:
+                    if len(raw) < dj["bytes"] or salted_head(salt, sha(raw[:dj["bytes"]])) != dj["sha256"]:
                         broken.append({"deployed_bytes": dj["bytes"], "now_bytes": len(raw)})
                 if broken:
                     # 消す求めで印の形にした行だけが違うなら、署名の合った封が言う行に限って通す（段 5 §3.7）。
-                    why = erase_continued(root, raw, dep, body.get("erase")) if dep is not None else "no_erase"
+                    why = erase_continued(root, raw, dep, body.get("erase"), salt) if dep is not None else "no_erase"
                     if why is None:
-                        warnings.append({"word": "erase_rewrite", "requests": body["erase"]["requests"],
+                        warnings.append({"word": "erase_rewrite", "requests": len(body["erase"]["requests"]),
                                          "lines": len(body["erase"]["lines"])})
                     else:
                         for one in broken:
@@ -1903,7 +2081,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     verdict = _verdict(problems, warnings, key=origin, generation=body["generation"],
                        pending_takes=result["pending_takes"])
     if publish is not None and verdict["ok"]:
-        write_published(publish, seal, raw, as_of, narrowed)
+        write_published(publish, seal, raw, as_of, narrowed, salt)
         verdict["published"] = os.path.abspath(publish)
     return verdict
 

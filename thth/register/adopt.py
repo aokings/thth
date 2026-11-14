@@ -449,8 +449,11 @@ def _retired(rec: V.Record) -> bool:
 def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict:
     """`<前>..<後>`（どちらも控えた目録の指紋の頭・`first`・`last`・`now`。台帳が git の作業木なら commit も）。
     `excused` は赤にしない記録の番号。既定は、台帳の消す求めの結果に載った番号（`trail.erase_excuses`）。"""
+    excuses = None
     if excused is None:
-        excused = T.erase_excuses(root)["records"]
+        # 署名を確かめた封の「消す求めの結果」に載った番号だけ（結果の記録だけでは信じない。段 5 の検収の穴 3）
+        excuses = T.erase_excuses(root)
+        excused = excuses["records"]
     if not isinstance(spec, str) or spec.count("..") != 1:
         raise RegisterRefused("register_args_invalid", "range")
     left, right = spec.split("..")
@@ -508,7 +511,10 @@ def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict
             "records": {"added": added, "changed": changed, "retired": retired, "vanished": vanished},
             "units": {"vanished": units_gone},
             "files": files, "intakes": intakes, "excused": red["excused"],
-            "red": bool(red["records"] or removed_red or red["units"])}
+            "red": bool(red["records"] or removed_red or red["units"]),
+            **({"erase_unsealed": excuses["unsealed"], "erase_no_outlets": excuses["no_outlets"]}
+               if excuses is not None and (red["records"] or removed_red or red["units"])
+               and (excuses["unsealed"] or excuses["no_outlets"]) else {})}
 
 
 # ------------------------------------------------------------------ 束をまとめて入れる
