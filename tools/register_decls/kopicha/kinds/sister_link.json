@@ -12,6 +12,25 @@
  },
  "checks": [
   {
+   "check": "columns",
+   "id": "l4_1_sister",
+   "required": [
+    "page",
+    "entity_id",
+    "url",
+    "label",
+    "context"
+   ],
+   "allowed": [
+    "page",
+    "entity_id",
+    "url",
+    "label",
+    "context"
+   ],
+   "note": "L4-1（tests/sister-links.test.mjs 22〜26。欄がちょうど 5 つ）"
+  },
+  {
    "check": "required",
    "id": "l4_2_sister",
    "fields": [

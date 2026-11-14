@@ -5,7 +5,8 @@
  "format": "csv",
  "records": "rows",
  "id": {
-  "field": "reading_id"
+  "field": "reading_id",
+  "scope": "folder"
  },
  "pointers": [
   {
@@ -13,10 +14,23 @@
    "meaning": "derived_from",
    "to": "q_results",
    "split": ";",
+   "same_folder": true,
    "note": "台本は ; と , のどちらでも切る（実物の , は 0）。器の区切りは 1 字だけ"
   }
  ],
  "checks": [
+  {
+   "check": "columns",
+   "id": "n4_41_read_cols",
+   "required": [
+    "reading_id",
+    "kind",
+    "sort",
+    "text_ja",
+    "text_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 110〜112 の列が無い）"
+  },
   {
    "check": "required",
    "id": "n4_41_read_req",
@@ -58,5 +72,5 @@
    "note": "N4-41（scripts/gate_question_tables.py 166〜168）"
   }
  ],
- "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る"
+ "note": "番号は問いの中でだけ一意（scope: folder。番号は <問いのフォルダ>.<番号>）"
 }

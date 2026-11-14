@@ -5,10 +5,19 @@
   "records": {
    "concept": 31,
    "registry_readme": 1,
-   "media": 1
+   "media": 7,
+   "indicator": 22
   },
   "dangling": {},
-  "checks": {},
+  "checks": {
+   "m4_1": 0,
+   "m4_1_unique": 0,
+   "m4_2": 0,
+   "m4_3_status": 0,
+   "m4_3_direction": 0,
+   "m4_4": 0,
+   "m4_5": 0
+  },
   "problems": 0
  },
  "ask_lane": [
@@ -16,8 +25,7 @@
   "media.yaml の status は live・launching と注にあるが検査が無い（ほかの語が入っても誰も断らない）。器で語の検査にするか"
  ],
  "vessel_gaps": [
-  "YAML の並びを行として読めない: 器は YAML を records: file だけで読むので、media.yaml の media: の 7 メディア（と hub に残る指標の台帳 indicators.yaml の 22 行）を 1 つずつの記録にできない。media.status の語・id の重なりの検査が書けない",
-  "台帳をまたぐ指し: concepts.csv の sometokagaku・nigamilab・kopicha の列（25・26・7 本、決まりの実物では先が無い 0）は、指す先がよその台帳なので宣言できない",
-  "N 欄のうち 2 つ以上: 「1 行 = 1 つの同じもの」（3 つのメディアの列のうち 2 つ以上が埋まる）は one_of の at_least_one・exactly_one では言えない"
+  "台帳をまたぐ指し: concepts.csv の sometokagaku・nigamilab・kopicha の列（25・26・7 本、決まりの実物では先が無い 0）は、指す先がよその台帳なので宣言できない（宿題に回した物: 指示 §6）",
+  "N 欄のうち 2 つ以上: 「1 行 = 1 つの同じもの」（3 つのメディアの列のうち 2 つ以上が埋まる）は one_of の at_least_one・exactly_one では言えない（人の文だけの決まり。§6 の直しの外）"
  ]
 }

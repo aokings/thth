@@ -23,6 +23,24 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_lab_recipe",
+   "required": [
+    "id",
+    "title",
+    "headline",
+    "lead_entity_ids",
+    "ingredients_text",
+    "why_bitter_text",
+    "keep_text",
+    "unknown_text",
+    "based_on_source_ids",
+    "construction_note",
+    "status"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_lab_recipe",
    "field": "id",

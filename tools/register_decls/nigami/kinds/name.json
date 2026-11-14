@@ -26,6 +26,19 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_name",
+   "required": [
+    "id",
+    "entity_id",
+    "name",
+    "language",
+    "name_type",
+    "identification_confidence"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_name",
    "field": "id",

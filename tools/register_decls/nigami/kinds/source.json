@@ -20,6 +20,20 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_source",
+   "required": [
+    "id",
+    "title",
+    "source_type",
+    "url",
+    "language",
+    "review_status",
+    "retrieved_at"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_source",
    "field": "id",

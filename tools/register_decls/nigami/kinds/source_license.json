@@ -16,6 +16,18 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_source_license",
+   "required": [
+    "id",
+    "source_id",
+    "license",
+    "checked_at",
+    "basis"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_source_license",
    "field": "id",

@@ -29,9 +29,41 @@
    "field": "entity_id",
    "meaning": "related",
    "to": "point"
+  },
+  {
+   "fields": [
+    "entity_id",
+    "matched_name"
+   ],
+   "to": "name",
+   "meaning": "about",
+   "note": "(点, 当たった名前) で names の (entity_id, name) を指す。台本は見ない"
   }
  ],
  "checks": [
+  {
+   "check": "columns",
+   "id": "k4_1_mention",
+   "required": [
+    "claim_id",
+    "entity_id",
+    "matched_name",
+    "status",
+    "reason_ja",
+    "checked_by",
+    "updated_at"
+   ],
+   "allowed": [
+    "claim_id",
+    "entity_id",
+    "matched_name",
+    "status",
+    "reason_ja",
+    "checked_by",
+    "updated_at"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
   {
    "check": "required",
    "id": "k4_14_required",

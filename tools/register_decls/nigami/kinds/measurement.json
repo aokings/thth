@@ -31,6 +31,19 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_measurement",
+   "required": [
+    "id",
+    "kind",
+    "compound_entity_id",
+    "value",
+    "unit",
+    "source_id"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_measurement",
    "field": "id",

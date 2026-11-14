@@ -21,5 +21,26 @@
    "meaning": "supports",
    "to": "source"
   }
+ ],
+ "checks": [
+  {
+   "check": "columns",
+   "id": "k4_1_name",
+   "required": [
+    "entity_id",
+    "name",
+    "language",
+    "name_type",
+    "source_id"
+   ],
+   "allowed": [
+    "entity_id",
+    "name",
+    "language",
+    "name_type",
+    "source_id"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  }
  ]
 }

@@ -9,6 +9,15 @@
  },
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_prep_method",
+   "required": [
+    "id",
+    "label_ja"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_prep_method",
    "field": "id",

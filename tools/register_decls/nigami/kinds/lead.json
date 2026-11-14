@@ -32,6 +32,21 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_lead",
+   "required": [
+    "id",
+    "subject_entity_id",
+    "title",
+    "lead_text",
+    "lead_type",
+    "origin_status",
+    "verification_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_lead",
    "field": "id",

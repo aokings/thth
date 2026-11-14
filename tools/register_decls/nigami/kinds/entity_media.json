@@ -16,6 +16,34 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_entity_media",
+   "required": [
+    "id",
+    "entity_id",
+    "path",
+    "role",
+    "depicted_taxon",
+    "depicted_part",
+    "caption",
+    "alt_text",
+    "creator",
+    "license_name",
+    "license_url",
+    "source_url",
+    "original_url",
+    "sha256",
+    "mime_type",
+    "width_px",
+    "height_px",
+    "identification_status",
+    "review_status",
+    "derivative_note",
+    "retrieved_at"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_entity_media",
    "field": "id",

@@ -5,13 +5,15 @@
  "format": "csv",
  "records": "rows",
  "id": {
-  "field": "row_id"
+  "field": "row_id",
+  "scope": "folder"
  },
  "pointers": [
   {
    "field": "study_id",
    "meaning": "parent",
-   "to": "study"
+   "to": "q_studies",
+   "same_folder": true
   },
   {
    "field": "claim_id",
@@ -25,6 +27,32 @@
   }
  ],
  "checks": [
+  {
+   "check": "columns",
+   "id": "n4_41_results_cols",
+   "required": [
+    "row_id",
+    "study_id",
+    "measure",
+    "label_ja",
+    "label_en",
+    "condition_ja",
+    "condition_en",
+    "a_ja",
+    "a_en",
+    "b_ja",
+    "b_en",
+    "unit_ja",
+    "unit_en",
+    "direction",
+    "test",
+    "test_note_ja",
+    "test_note_en",
+    "locator_ja",
+    "locator_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 110〜112 の列が無い）"
+  },
   {
    "check": "required",
    "id": "n4_41_results_req",
@@ -174,8 +202,8 @@
      ]
     }
    },
-   "note": "N4-41（scripts/gate_question_tables.py 145〜146）。器は問いをまたいで数える（番号の重なり 1 組）"
+   "note": "N4-41（scripts/gate_question_tables.py 145〜146）。同じ問いの comparability だけを数える"
   }
  ],
- "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る。study_id は「同じ問いの studies に在る」が台本の決まりで、器は data/studies.csv に在るかまで"
+ "note": "番号は問いの中でだけ一意（scope: folder。番号は <問いのフォルダ>.<番号>）。study_id は同じ問いの studies に在る（その studies が data/studies.csv を指す）"
 }

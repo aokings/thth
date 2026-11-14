@@ -15,7 +15,15 @@
    "field": "entity_id",
    "meaning": "about",
    "to": "point"
+  },
+  {
+   "fields": [
+    "entity_id",
+    "name"
+   ],
+   "to": "name",
+   "meaning": "about",
+   "note": "(点, 名前) で names の (entity_id, name) を指す。台本は見ない"
   }
- ],
- "note": "(entity_id, name) の組で names を指す（先が無い 5）は、組の指す欄が無いので宣言できない"
+ ]
 }

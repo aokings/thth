@@ -21,6 +21,17 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_prep_reading_evidence",
+   "required": [
+    "id",
+    "reading_id",
+    "evidence_id",
+    "use_note"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_prep_reading_evidence",
    "field": "id",

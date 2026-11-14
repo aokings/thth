@@ -21,6 +21,20 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_recipe",
+   "required": [
+    "id",
+    "dish_entity_id",
+    "title",
+    "ingredients_text",
+    "method_text",
+    "verification_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_recipe",
    "field": "id",

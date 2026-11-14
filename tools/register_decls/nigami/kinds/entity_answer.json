@@ -22,6 +22,20 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_entity_answer",
+   "required": [
+    "id",
+    "entity_id",
+    "answer",
+    "tries",
+    "unknowns",
+    "claim_ids",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_entity_answer",
    "field": "id",

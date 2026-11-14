@@ -22,6 +22,37 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "k4_1_evidence",
+   "required": [
+    "id",
+    "claim_id",
+    "source_id",
+    "relation",
+    "evidence_type",
+    "locator",
+    "finding_ja",
+    "method",
+    "material",
+    "limitations",
+    "extraction_status"
+   ],
+   "allowed": [
+    "id",
+    "claim_id",
+    "source_id",
+    "relation",
+    "evidence_type",
+    "locator",
+    "finding_ja",
+    "method",
+    "material",
+    "limitations",
+    "extraction_status"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
+  {
    "check": "unique",
    "id": "k4_2_evidence",
    "fields": [

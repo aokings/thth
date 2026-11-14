@@ -16,7 +16,8 @@
      "ask_lane": ["今の台本と決まりの文が食い違う所（1 行ずつ）"],
      "vessel_gaps": ["器の不足（宣言で言えず、読める所までにした所。1 行ずつ）"]}
 
-指す欄の呼び名は `<種類>.<欄>`（決まった形の指し `template` は `<種類>.{template}`）。宣言した指す欄は全部
+指す欄の呼び名は `<種類>.<欄>`（決まった形の指し `template` は `<種類>.{template}`、欄の組 `fields` は
+`<種類>.<欄>+<欄>`）。1 つの種類に、同じ先を指す `template` と `fields` を両方書くと、先の無い数を分けられない。宣言した指す欄は全部
 `expected.dangling` に書く（書き漏らしは「合わない」）。検査の id はメディアの中で重ならないように付ける
 （同じ id が 2 つの種類にあれば数を足して比べる）。
 
@@ -81,7 +82,11 @@ def copy_decls(src: pathlib.Path, dst: pathlib.Path, keep_checks: bool) -> dict:
 
 
 def pointer_name(kind: str, spec: dict) -> str:
-    return f"{kind}.{spec['field']}" if spec.get("field") else f"{kind}.{{{spec['template']}}}"
+    if spec.get("field"):
+        return f"{kind}.{spec['field']}"
+    if spec.get("fields"):
+        return f"{kind}." + "+".join(spec["fields"])
+    return f"{kind}.{{{spec['template']}}}"
 
 
 def measure(V, C, root: str, base: str) -> dict:
