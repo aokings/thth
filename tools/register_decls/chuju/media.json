@@ -66,11 +66,42 @@
   "problems": 0
  },
  "outside": [
-  "関東の写し src/data/dougu/*.json 9 本は器の外（asmon が正本。scripts/import-kanto.mjs が asmon.ai/kanto/data/ の公開の写しから作る。2027 年 3 月以降に学校台帳へ移る予定）",
-  "通学の目安の網 src/data/dougu/kayoeru-*.json・public/data/kayoeru・public/data/yubin は道具の材料で台帳でない（器の外）",
-  "道具の一覧 src/lib/dougu-list.ts・伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript で読まない（固有）",
-  "照合台帳 docs/照合台帳_*.md 47 枚は検収の記録の文書（器の判断の記録に写すかはレーンに聞く）",
-  "chuju_data/（repo の外・git でない・約 30 GB）と問いの受け口（D1）は器の外。触れない"
+  {
+   "place": [
+    "src/data/dougu/*.json"
+   ],
+   "why": "関東の写し src/data/dougu/*.json 9 本は器の外（asmon が正本。scripts/import-kanto.mjs が asmon.ai/kanto/data/ の公開の写しから作る。2027 年 3 月以降に学校台帳へ移る予定）",
+   "gap": false
+  },
+  {
+   "place": [
+    "src/data/dougu/kayoeru-*.json",
+    "public/data/kayoeru/**",
+    "public/data/yubin/**"
+   ],
+   "why": "通学の目安の網 src/data/dougu/kayoeru-*.json・public/data/kayoeru・public/data/yubin は道具の材料で台帳でない（器の外）",
+   "gap": false
+  },
+  {
+   "place": [
+    "src/lib/dougu-list.ts",
+    "src/lib/yoyaku-fuseru.ts"
+   ],
+   "why": "道具の一覧 src/lib/dougu-list.ts・伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript で読まない（固有）",
+   "gap": false
+  },
+  {
+   "place": [
+    "docs/照合台帳_*.md"
+   ],
+   "why": "照合台帳 docs/照合台帳_*.md 47 枚は検収の記録の文書（器の判断の記録に写すかはレーンに聞く）",
+   "gap": false
+  },
+  {
+   "place": [],
+   "why": "chuju_data/（repo の外・git でない・約 30 GB）と問いの受け口（D1）は器の外。触れない",
+   "gap": false
+  }
  ],
  "ask_lane": [
   "頁の ima.validUntil と表の行の shimekiri は、器では観測として読むだけにした（判断の「いつまで」に結ばない）。器の言葉で「判断のいつまで」として受けるか、「記録の欄の観測」のままにするか",
@@ -85,5 +116,76 @@
   "1 つの種類に内側の単位は 1 つ: 問いの頁は分かれ道（branches[] 167）を単位にしたので、表の行（table.rows[] 252）の source.kind・ken・shimekiri には検査を当てられない（C-T12・C-T13・C-T21 の語の一部）",
   "並びの値の語と数: taishou.ken・jiki.grades（並び）には words が当たらない（字でないと not_text）。並びの長さの上限（next 3・dougu 4・wadai 3）も言えない。空の並びは required で空と読む（C-T2・C-T4・C-T7 はこれで書けた）",
   "内側の単位の欄の形: 公立の行（kouritsu[]）の kensa・kensa2・happyou・tashikametaHi が YYYY-MM-DD かは、count の where に形の条件が無いので言えない（C-Y1 の一部）"
- ]
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §2（種類の一覧）の repo の中の物。表（csv）が無いので e1 は 1 枚 1 記録の種類（toi）の枚を束の取り込みで入れ替える。目録に「難しい読み手」の節が無いので、readers は §6（頁を作る入力・過ぎると伏せる）と §3（指す欄）から選んだ",
+  "include": [
+   "src/content/toi/*.md",
+   "src/content/koyomi/*.md",
+   "src/data/*.json",
+   "src/data/dougu/*.json",
+   "scripts/koukai-url.json",
+   "src/lib/dougu-list.ts",
+   "src/lib/yoyaku-fuseru.ts",
+   "docs/照合台帳_*.md"
+  ],
+  "outlet_kinds": [
+   "toi"
+  ],
+  "e1": "file",
+  "readers": [
+   {
+    "example": "§6 src/pages/toi/[slug].astro（ima.validUntil で表を伏せ、行の shimekiri で行を外す）",
+    "files": [
+     "src/content/toi/*.md"
+    ],
+    "fields": {
+     "toi": [
+      "draft",
+      "ima",
+      "table",
+      "next",
+      "dougu"
+     ]
+    }
+   },
+   {
+    "example": "§6 値の差し込み {{koyomi:<都県>.<欄の道>}}（scripts/koyomi-ken.mjs が入試の暦の台帳を引く）",
+    "files": [
+     "src/data/koyomi-ken.json"
+    ]
+   },
+   {
+    "example": "§3 scripts/check-dist.mjs の公開した URL の台帳（path・ima）",
+    "files": [
+     "scripts/koukai-url.json"
+    ],
+    "fields": {
+     "koukai_url": [
+      "path",
+      "ima",
+      "hi"
+     ]
+    }
+   },
+   {
+    "example": "§3 scripts/import-taiou.mjs --tashikame（関東の番号 → 学校コード）",
+    "files": [
+     "src/data/kouho-taiou.json"
+    ]
+   },
+   {
+    "example": "§6 暦の頁（toi[] で問いの頁を指す）",
+    "files": [
+     "src/content/koyomi/*.md"
+    ],
+    "fields": {
+     "koyomi": [
+      "toi",
+      "draft"
+     ]
+    }
+   }
+  ]
+ }
 }

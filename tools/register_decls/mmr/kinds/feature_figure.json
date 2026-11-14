@@ -1,0 +1,15 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "feature_figure",
+ "place": [
+  "content/features/*/*.svg",
+  "content/features/*/*.webp"
+ ],
+ "format": "bytes",
+ "id": {
+  "name": true,
+  "scope": "folder"
+ },
+ "max_bytes": 1048576,
+ "note": "段 9 (a) で足した（目録 §1.1 の content/ の中で、宣言に無かった）。特集の図（svg・webp）。中を読まない。名前（fig1 など）は特集のフォルダの中で決まる"
+}

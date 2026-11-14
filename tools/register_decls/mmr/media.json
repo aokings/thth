@@ -41,7 +41,9 @@
    "index_essay": 416,
    "index_guide": 6,
    "index_feature": 123,
-   "shelf_song": 1168
+   "shelf_song": 1168,
+   "feature_figure": 19,
+   "timeline_event": 188
   },
   "dangling": {
    "name.entity_id": 0,
@@ -208,5 +210,98 @@
   "ledger.json root_fixes_data の先の無い 12 行（file の表に番号が無い）: entities.csv の pfs-scene-dubstep-heard-by-matt-colton-in-bristol-・pfs-studio-studio-la-boutique-dakar、claims.csv の claim-pfs-groover-obsessions-06・claim-pfs-wonderwheel-05・claim-pfs-guts-21・claim-pfs-guts-22・claim-9393、evidence.csv の ev-pfs-groover-obsessions-06・ev-pfs-wonderwheel-05・ev-pfs-guts-21・ev-pfs-guts-22・ev-9841（直したあと消えた記録か）",
   "ledger.json root_fixes_data の先の種類が決まらない 46 行: file の無い 44 行（例 claim-9691・mood-m042-017・mood-w101-001・ev-3557・dos-d037 (data/dossiers/w100-ap-cuarto-mundo.md L43)。番号に表の名前でない字が付く物もある）と、file が ledger.json の 2 行（root_additions[1756] など）。file を書き足すか",
   "ledger.json root_additions が消えた記録（claims 106・evidence 106）を指す。来歴として残すのが決まりか、跡（root_fixes_data）を足すか"
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2（段 2 の台本の範囲から §5 の検収の記録 content/reviews と staging を除いた物）。readers は目録 §4",
+  "include": [
+   "data/*.csv",
+   "data/dossiers/**",
+   "queue.json",
+   "ledger.json",
+   "content/**",
+   "site/src/credits/*.json",
+   "site/src/credit-versions/versions.json",
+   "lab.yaml"
+  ],
+  "exclude": [
+   "content/reviews/**"
+  ],
+  "readers": [
+   {
+    "example": "§4-1 credit-paths.ts の heldCreditNote・shownCreditNote（組の出し口・行の status・held_kind）",
+    "files": [
+     "site/src/credits/*.json"
+    ],
+    "fields": {
+     "credit": [
+      "public",
+      "public_song",
+      "role",
+      "rows"
+     ]
+    }
+   },
+   {
+    "example": "§4-2 credit-paths.ts の labShown（出典の行を出すか）",
+    "files": [
+     "site/src/credits/*.json"
+    ],
+    "fields": {
+     "credit": [
+      "rows",
+      "rules"
+     ]
+    }
+   },
+   {
+    "example": "§4-3 ledger.ts の曲の頁（queue.json の全曲・頁が読む 9 欄と仕事の進みが同居）",
+    "files": [
+     "queue.json"
+    ],
+    "fields": {
+     "song": [
+      "seed_id",
+      "research_order",
+      "title",
+      "artists",
+      "album",
+      "duration",
+      "liked_added_date",
+      "liked_added_display",
+      "date_basis",
+      "research_status"
+     ]
+    }
+   },
+   {
+    "example": "§4-4 ledger.ts の検索に戻す曲（build の日に依る）",
+    "files": [
+     "data/restored_songs.csv"
+    ],
+    "fields": {
+     "restored_song": [
+      "seed_id",
+      "restore_on"
+     ]
+    }
+   },
+   {
+    "example": "§4-5 scripts/credit_paths.py check（照合台帳と台帳の食い違いで止める）",
+    "files": [
+     "site/src/credits/*.json",
+     "data/claims.csv",
+     "data/evidence.csv"
+    ]
+   }
+  ]
+ },
+ "outside": [
+  {
+   "place": [
+    "content/sns/**"
+   ],
+   "why": "SNS の投稿の下書き・画像・試作（99 枚）。頁は読まない（ほかのメディアの data/sns と同じく器の外）。器に入れるかはレーンに聞く",
+   "gap": false
+  }
  ]
 }

@@ -126,5 +126,75 @@
   "J-20: established の条件「人が原文を確かめた」は、今は根拠の extraction_status の語（human_checked）で持つ。判断（judged）に移すかはレーンの決め",
   "J-7: null の頭（era・motif・work）は、台本は [a-z0-9-]+、器は slug（-a・a--b を断る）。今の実物で差 0",
   "J-18・J-27: 台本は startswith('http')（httpfoo も通る）。器は http:// か https:// で始まる形で見る（今の実物では差 0）"
- ]
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1（段 2 の台本の範囲から §5 の検収の記録を除き、§1.1 の stories/ を足した）。readers は目録 §4",
+  "include": [
+   "data/*.csv",
+   "lab.yaml",
+   "drafts/article-*.md",
+   "images/files/*",
+   "stories/**"
+  ],
+  "readers": [
+   {
+    "example": "§4-1 articles.ts（記事の [claim-XXXX]・(lead-XXXX) を注とリンクに）",
+    "files": [
+     "drafts/article-*.md",
+     "data/claims.csv",
+     "data/leads.csv"
+    ],
+    "fields": {
+     "claim": [
+      "claim_type"
+     ]
+    },
+    "uninspected_why": "記事の .md は bytes で置く（本文の中の番号は器が読まない・媒体の札の器の不足 J-36）"
+   },
+   {
+    "example": "§4-2 checkLevel（支える根拠の中の最大の段）",
+    "files": [
+     "data/evidence.csv",
+     "data/claims.csv"
+    ],
+    "fields": {
+     "evidence": [
+      "claim_id",
+      "relation",
+      "extraction_status"
+     ]
+    }
+   },
+   {
+    "example": "§4-3 reader_audit.py gate（data/*.csv を行の番号と commit で）",
+    "files": [
+     "data/*.csv"
+    ]
+   },
+   {
+    "example": "§4-4 /images の頁（図版の種類で出す欄を変える）",
+    "files": [
+     "data/images.csv",
+     "data/image_basis.csv",
+     "images/files/*"
+    ],
+    "fields": {
+     "image": [
+      "image_kind",
+      "holder",
+      "rights_status",
+      "review_status"
+     ]
+    },
+    "uninspected_why": "画像のファイルは bytes で置く"
+   },
+   {
+    "example": "§4-5 stories.ts（公開の写し stories/ を読む）",
+    "files": [
+     "stories/**"
+    ],
+    "uninspected_why": "短編と札は bytes で置く（物語の中身は器の外・設計 §8.1）"
+   }
+  ]
+ }
 }

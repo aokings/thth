@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "doi",
+ "place": "data/doi.json",
+ "format": "json",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "note": "段 9 (a) で足した（目録 §1.2 で「入れる」とした物で、宣言に無かった）。Zenodo の DOI（pages/data/index.astro が読む）"
+}

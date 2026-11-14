@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "schema_file",
+ "place": "schema/*",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "段 9 (a) で足した（目録 §1.2 で「入れる」とした物で、宣言に無かった）。schema.sql と data-dictionary.md（憲法と種類の宣言の元・データの束に同梱）。中を読まない"
+}

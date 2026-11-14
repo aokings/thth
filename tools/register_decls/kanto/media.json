@@ -76,5 +76,100 @@
   "K-A7・K-F8・K-F14・K-F18 など: 値の型（整数か・数か）と範囲を見る部品が無い。shape の positive_int は字の \"2026\" も通す",
   "K-F1 後半: ファイル名の番号と中の school_id が同じかを見る部品が無い",
   "K-F18（回の日付が ISO）: 内側の単位の欄の形を数える部品が無い（count の where は語と空だけ）"
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2（段 2 の台本の範囲を kanto_type からの道に直し、§5 の監査の記録を除いた物）。readers は目録 §4",
+  "include": [
+   "*/[0-9]*.json",
+   "boshu_henkou/2027/[0-9]*.json",
+   "submission_docs/2027/[0-9]*.json",
+   "knowledge/insights/*.yaml",
+   "school_master/_targets.csv",
+   "hensachi/school_hensachi.csv",
+   "admission_results.csv",
+   "admission_results_summary.csv",
+   "school_master.csv",
+   "features_school_subject.csv",
+   "types_school_subject.csv",
+   "human_review_ledger.csv",
+   "high_school_admissions.csv",
+   "shinro_disclosure.csv",
+   "round_alias.csv"
+  ],
+  "readers": [
+   {
+    "example": "§4-1 kanto_site_build.py の入試結果の表（回の capacity をそのまま行に出す）",
+    "files": [
+     "admission_results/[0-9]*.json"
+    ],
+    "fields": {
+     "admission_result": [
+      "school_id",
+      "years"
+     ]
+    }
+   },
+   {
+    "example": "§4-2 同じ生成器の要項の表（field_years と prev）",
+    "files": [
+     "fees/[0-9]*.json"
+    ]
+   },
+   {
+    "example": "§4-3 build_school_records.py（9 つの出所を合わせて 1 校 1 枚）",
+    "files": [
+     "school_master/[0-9]*.json",
+     "admission_results/[0-9]*.json",
+     "hensachi/school_hensachi.csv",
+     "disclosure/[0-9]*.json",
+     "events/[0-9]*.json",
+     "commute/[0-9]*.json",
+     "round_times/[0-9]*.json",
+     "fees/[0-9]*.json",
+     "school_records/[0-9]*.json"
+    ],
+    "fields": {
+     "hensachi": [
+      "school_id",
+      "source",
+      "year",
+      "value"
+     ]
+    }
+   },
+   {
+    "example": "§4-4 出所を直に読む台本（入試結果 10 本・マスタ 8 本）",
+    "files": [
+     "admission_results/[0-9]*.json",
+     "school_master/[0-9]*.json"
+    ]
+   },
+   {
+    "example": "§4-5 封 build_seal.py（kanto_type を丸ごと入力に数える）",
+    "files": [],
+    "why": "読み手は全バイトの封で、器の読みの確かめの外（器の依る所の指紋に替える話は設計 §5.6）"
+   },
+   {
+    "example": "§4-6 features_book.csv（git の外のサイトの入力）",
+    "files": [],
+    "why": "置き場が kanto_type の外（research/results/kanto_type/full/）で、札の outside に書いた"
+   }
+  ]
+ },
+ "outside": [
+  {
+   "place": [
+    "admission_results.csv",
+    "admission_results_summary.csv",
+    "school_master.csv"
+   ],
+   "why": "1 校 1 枚の JSON から guard の台本（admission_results_guard.py・school_master_guard.py）が作る平らな写し。正本の JSON は種類で読む。器に入れるなら生成の物として内の道具の出し口に回す（レーンに聞く）",
+   "gap": false
+  },
+  {
+   "place": [],
+   "why": "research/results/kanto_type/full/*.csv（git の外の生成物・サイトの入力）は宣言の置き場 kanto_type の外。器の範囲に入れるかは目録 §4 で未決（レーンに聞く）",
+   "gap": false
+  }
  ]
 }

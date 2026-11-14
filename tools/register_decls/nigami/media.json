@@ -45,7 +45,12 @@
    "en_text": 17283,
    "en_pair_sha": 8182,
    "en_search_title": 6,
-   "en_search_noindex": 60
+   "en_search_noindex": 60,
+   "doi": 1,
+   "love_brewery": 81,
+   "love_cacao": 29,
+   "love_readme": 1,
+   "schema_file": 2
   },
   "dangling": {
    "claim.subject_entity_id": 0,
@@ -337,5 +342,106 @@
   "pair-shas.(file, row) の指し: file は表の道で、問いのフォルダの表（data/questions/<問い>/<表>.csv）が 140 余りあり、to_by の map（64 個まで）に入らない。row は表ごとに作り方が違い（比べの表は row_id/comparison、問いの表は問いの番号）、先の番号そのものでない行が 1,091 ある。to_by の file の map では書けない",
   "台帳をまたぐ指し: sister-links.url（こぴちゃの頁）（宿題に回した物: 指示 §6）",
   "ファイルを指す欄: entity-media.path・media-manifest.path・observations.media_path・entity-figures.path・lab-recipe-figures の path 系・entity-notes.note_path（宿題に回した物: 指示 §6）"
- ]
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2 で「入れる」とした物（段 2 の台本の範囲から §5 の検収の記録を除き、§1.2 の data/loves と data/doi.json を足した）。readers は目録 §4",
+  "include": [
+   "data/*.csv",
+   "data/*.json",
+   "data/questions/**",
+   "data/i18n/en/*.csv",
+   "data/loves/*",
+   "schema/*"
+  ],
+  "readers": [
+   {
+    "example": "§4-1 site/src/lib/kb.ts（data/*.csv を 30 枚近く。表ごとに除き方が違う）",
+    "files": [
+     "data/*.csv"
+    ],
+    "fields": {
+     "overview": [
+      "editorial_status"
+     ],
+     "figure": [
+      "review_status"
+     ],
+     "point": [
+      "search_visibility",
+      "lifecycle_status"
+     ],
+     "claim": [
+      "claim_status"
+     ],
+     "pretreatment": [
+      "status"
+     ],
+     "prep_reading": [
+      "editorial_status"
+     ],
+     "lab_recipe": [
+      "status"
+     ],
+     "crossing": [
+      "status"
+     ]
+    }
+   },
+   {
+    "example": "§4-2 scripts/make_dataset_bundle.py（表 14 枚と schema.sql の配布）",
+    "files": [
+     "data/entities.csv",
+     "data/names.csv",
+     "data/sources.csv",
+     "data/claims.csv",
+     "data/evidence.csv",
+     "data/entity-overviews.csv",
+     "data/entity-overview-evidence.csv",
+     "data/measurements.csv",
+     "data/recipes.csv",
+     "data/entity-media.csv",
+     "data/entity-figures.csv",
+     "data/source-checks.csv",
+     "data/source-licenses.csv",
+     "data/studies.csv",
+     "schema/schema.sql"
+    ],
+    "uninspected_why": "schema.sql は宣言の元の文で、器は bytes のまま置く（中の決まりは種類の宣言に写した）"
+   },
+   {
+    "example": "§4-3 英語の頁の SOURCE_SHA（site/src/pages/en/** の 122 枚）と英訳の表",
+    "files": [
+     "data/i18n/en/*.csv"
+    ],
+    "fields": {
+     "en_pair_sha": [
+      "file",
+      "row"
+     ],
+     "en_text": []
+    }
+   },
+   {
+    "example": "§4-4 比べの頁（data/questions/<問い>/ の 6 枚の組）",
+    "files": [
+     "data/questions/**"
+    ],
+    "fields": {
+     "q_results": [
+      "claim_id",
+      "evidence_id"
+     ],
+     "q_comparability": [
+      "usable"
+     ],
+     "q_scope": [
+      "decision"
+     ],
+     "q_readings": [
+      "row_ids"
+     ]
+    }
+   }
+  ]
+ }
 }
