@@ -94,7 +94,7 @@ def test_6_1_途中に引用符が1つある表にrow_addしても開いた引�
     assert after[:len(before)] == before and after[-1] == ["t-4", "D", "w"] and len(after) == len(before) + 1
 
 
-def _old_split(text: str) -> list:
+def _old_split(text: str, delimiter=None) -> list:
     """段 6 の検収の時点の器の分け方（引用符を見るたびに中・外を入れ替える。csv の部品と食い違う）。"""
     rows, start, quoted, i, n = [], 0, False, 0, len(text)
     while i < n:
@@ -454,3 +454,41 @@ def test_線引き_publishedはpreviousかno_previousのどちらかを言わせ
 def P_published(led, listed, **kw):
     from thth.register import published as P
     return P.published(str(led), "site", str(listed), G.NOW, **kw)
+
+
+# ------------------------------------------------------------------ 6-5 のつなぎ: 止まった入れ替えの間は出口も差も断る
+
+def test_6_5_止まった入れ替えの間はexportとacceptとverifyとdiffの今が断る(keyed, monkeypatch):
+    """器の読み（`open_vessel`）の断りは段 4 の書き手の持ち分。ここでは、材料を出す道と差の「今」が、そのまま断る
+    ことを 1 つずつ見る（前でも後でもない半分の姿を材料にしない）。"""
+    env = keyed
+    led = X._ledger(env)
+    site = env / "site"
+    X.judge_all(led)
+    X.accept(led, "site", site)
+
+    def broken(tmp, target):
+        raise RuntimeError("落ちた")
+    monkeypatch.setattr(K, "_replace", broken)
+    with pytest.raises(RuntimeError):
+        A.row_set(str(led), "shop:s2", {"price": "201"}, by="a", at=AT)
+    monkeypatch.undo()
+    assert K.pending(str(led)) is not None
+    for go in (lambda: R.export(str(led), "site", str(site), X.AT, check=True),
+               lambda: R.accept_plan(str(led), "site", str(site), X.AT),
+               lambda: R.verify(str(led), "site", str(site), X.NOW, no_previous=True),
+               lambda: A.diff(str(led), "first..now")):
+        with pytest.raises(RegisterRefused) as exc:
+            go()
+        assert exc.value.code == "register_batch_pending"
+
+
+@pytest.mark.parametrize("text,hit", [("脚注＊＊", False), ("脚注**", True)])
+def test_中_記号だけの内部の語は字のまま比べ全角の脚注の印を拾わない(keyed, text, hit):
+    """染めと化学の実物で、`**`（書きかけの太字の印）が NFKC で全角の `＊＊`（脚注の印）に当たった。記号だけの語は
+    そろえずに比べる（字か数を含む語だけ NFKC・小文字にそろえる）。"""
+    env = keyed
+    led = _rc_ledger(env, words=("**",), body="plain")
+    shops = led / "data/shops.csv"
+    shops.write_text(shops.read_text().replace("紹介 {{note:n1.body}}", text), encoding="utf-8")
+    assert bool(RC.red(RC.check(str(led)))) is hit

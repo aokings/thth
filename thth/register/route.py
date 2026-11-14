@@ -1311,7 +1311,7 @@ def _edit_record(root: str, kind: V.Kind, rec: V.Record, blank: set, repl: dict,
                 data = f.read()
             text = data.decode("utf-8")
             text = text[1:] if text.startswith("﻿") else text
-            rows = V.split_csv_rows(text)
+            rows = V.split_csv_rows(text, kind.delimiter)
             raw_cache[rec.path] = (_csv_cells(rows[0]) if rows else [],
                                    {V.bytes_version(r.encode("utf-8")): r for r in rows[1:]})
         header, by_version = raw_cache[rec.path]

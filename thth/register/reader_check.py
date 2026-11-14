@@ -65,6 +65,11 @@ def fold(text: str) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
+def _wordlike(word: str) -> bool:
+    """字（L）か数（N）を 1 つでも含む語か。"""
+    return any(unicodedata.category(ch)[0] in "LN" for ch in word)
+
+
 def _expand(vessel: V.Vessel, value):
     """差し込み `{{種類:番号.欄}}` を、先の記録の値（字か数）に置き換えた字（置き換えられない所は字のまま）。"""
     if not isinstance(value, str) or "{{" not in value:
@@ -151,7 +156,9 @@ def check(root: str, vessel: V.Vessel | None = None, *, loaded: dict | None = No
                 short += 1
             else:
                 ids.setdefault(fold(rec.id), rec.ref)
-    folded_words = [(word, fold(word)) for word in words]
+    # 字か数を含む語はそろえて比べる。記号だけの語（`**` など書きかけの印）はそろえずに字のまま比べる
+    # （NFKC で全角の `＊＊` 脚注の印まで当てない。染めと化学の実物で、脚注の `＊＊` を拾った）
+    folded_words = [(word, fold(word) if _wordlike(word) else None) for word in words]
     out = []
     for name in sorted(outlets):
         outlet = outlets[name]
@@ -202,13 +209,15 @@ def check(root: str, vessel: V.Vessel | None = None, *, loaded: dict | None = No
                             # 差し込みを受ける欄は、差し込んだあとの字でも見る（台帳の値と両方）
                             texts += [x for x in (_expand(vessel, values[field]), given.get(field))
                                       if isinstance(x, str)]
-                        texts = [fold(t) for t in texts]
+                        folded_texts = [fold(t) for t in texts]
                         for word, folded in folded_words:
-                            if folded and any(folded in t for t in texts):
+                            hit = any(folded in t for t in folded_texts) if folded else (
+                                folded is None and any(word in t for t in texts))
+                            if hit:
                                 w.bad(rec.kind, rec.ref, "internal_word", field=field, word=word, **extra)
                         if ids:
                             seen = []
-                            for t in texts:
+                            for t in folded_texts:
                                 for found in _ids_in(t, ids):
                                     if found not in seen:
                                         seen.append(found)

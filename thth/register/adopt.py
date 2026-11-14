@@ -393,7 +393,7 @@ def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
 # ------------------------------------------------------------------ 変えた跡
 
 def _side(root: str, name: str, tmp: str, decl: str | None = None):
-    """`(目録, 器として読んだ台帳, 端の説明)`。`now` は今（段取りが残っていれば前の姿）。控えの名は控えた目録。
+    """`(目録, 器として読んだ台帳, 端の説明)`。`now` は今（段取りが残っていれば断る・段 6 の 6-5）。控えの名は控えた目録。
     台帳が git の作業木なら、控えの名でない名を commit として取り出す（段 5 §2.1）。`decl` は宣言の置き場
     （既定は台帳の `.thth/`。commit と今の端に当てる。控えの端は控えた時点の宣言で読む）。"""
     kind = T.side_kind(root, name)
@@ -401,17 +401,11 @@ def _side(root: str, name: str, tmp: str, decl: str | None = None):
         K.check_thth(root)
 
         def read():
-            # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。
+            # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。途中で止まった入れ替えが
+            # 残っていれば、「今」は前でも後でもないので断る（続けるか戻すかを先に。控えの名どうしの差は読める）。
+            K.refuse_if_pending(root)
             entries = K._view_once(root)
-            if K.pending(root) is None:
-                return entries, V.open_vessel(root, decl_base=decl)
-            into = tempfile.mkdtemp(prefix="now-", dir=tmp)
-            for e in entries:
-                K.put_file(into, e["path"], K.view_bytes(root, e), False)
-            if decl is None:
-                for e in K.decl_entries(root, store=False):
-                    K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
-            return entries, V.open_vessel(into, decl_base=decl)
+            return entries, V.open_vessel(root, decl_base=decl)
 
         entries, vessel = K.consistent(root, read)
         return entries, vessel, {"side": "now", "snapshot": None}
@@ -456,6 +450,8 @@ def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict
     if not isinstance(spec, str) or spec.count("..") != 1:
         raise RegisterRefused("register_args_invalid", "range")
     left, right = spec.split("..")
+    if "now" in (left, right or "now"):
+        K.refuse_if_pending(root)   # 「今」は、止まった入れ替えが残る間は前でも後でもない（段 6 の 6-5）
     if decl is not None:
         decl = os.path.abspath(os.path.expanduser(decl))
     with tempfile.TemporaryDirectory(prefix="thth-diff-") as tmp:
@@ -611,7 +607,7 @@ def _screen(root: str, desired: dict) -> None:
             raise RegisterRefused("register_merge_refused", "id_overlap", records=overlap[:20])
 
 
-def _row_numbers(vessel: V.Vessel, path: str) -> dict:
+def _row_numbers(vessel: V.Vessel, path: str, kind_name: str) -> dict:
     """表の行の番号（見出しを 1 行め。空の行も数える）: 行の版 → 番号の並び。"""
     out = {}
     try:
@@ -620,7 +616,7 @@ def _row_numbers(vessel: V.Vessel, path: str) -> dict:
         text = data[3:].decode("utf-8") if data.startswith(b"\xef\xbb\xbf") else data.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return out
-    for number, raw in enumerate(V.split_csv_rows(text), start=1):
+    for number, raw in enumerate(V.split_csv_rows(text, vessel.kinds[kind_name].delimiter), start=1):
         out.setdefault(V.bytes_version(raw.encode("utf-8")), []).append(number)
     return out
 
@@ -642,7 +638,7 @@ def _screen_inspections(after: V.Vessel, paths: set) -> None:
 
     def where(rec):
         if rec.path not in numbers:
-            numbers[rec.path] = _row_numbers(after, rec.path)
+            numbers[rec.path] = _row_numbers(after, rec.path, rec.kind)
         got = numbers[rec.path].get(rec.version) or []
         index = used.get((rec.path, rec.version), 0)
         used[(rec.path, rec.version)] = index + 1
@@ -741,15 +737,11 @@ def _join_row(cells: list, eol: str, delimiter: str = ",") -> str:
 
 
 def split_mismatch(text: str, delimiter: str = ",") -> bool:
-    """器の行の分け方（`V.split_csv_rows`）と、Python の `csv` の部品が表の全部を読んだ行とが食い違うか（段 6 の
-    6-1。読みの問題 `row_split_mismatch`）。行の数と、行ごとのセルの並びを比べる（空の行も 1 行）。`csv` の部品で
-    読めない表（大きすぎるセルなど）も、食い違うとして扱う（書く口は書かない側に倒す）。"""
-    try:
-        whole = list(csv.reader(io.StringIO(text, newline=""), strict=False, delimiter=delimiter))
-    except csv.Error:
-        return True
-    split = [V._parse_csv_line(raw, delimiter) for raw in V.split_csv_rows(text)]
-    return whole != split
+    """器の行の分け方（`V.split_csv_rows`）と、Python の `csv` の部品の数え方（`V.csv_row_count`）が食い違うか
+    （段 6 の 6-1。読みの問題 `row_split_mismatch` と同じ比べ）。書いたあとの字（書く前は器の読みの印）に当てる。
+    `csv` の部品で読めない字も、食い違うとして扱う（書く口は書かない側に倒す）。"""
+    count = V.csv_row_count(text, delimiter)
+    return count is None or count != len(V.split_csv_rows(text, delimiter))
 
 
 def _records_by_csv(text: str, delimiter: str) -> int:
@@ -766,11 +758,11 @@ def _table(root: str, kind: V.Kind, rel: str):
         text = data[len(bom):].decode("utf-8")
     except UnicodeDecodeError:
         raise RegisterRefused("register_write_unsafe", "not_utf8") from None
-    lines = V.split_csv_rows(text)
+    lines = V.split_csv_rows(text, kind.delimiter)
     if "".join(lines) != text or not lines:
         raise RegisterRefused("register_write_unsafe", "table_shape")
-    if split_mismatch(text, kind.delimiter):
-        # 器の分け方と csv の部品の数え方が食い違う表（セルの途中の引用符など）: 器から見えない行を呑むので書かない。
+    if any("row_split_mismatch" in r.problems for r in V._read_csv(rel, text, kind)):
+        # 器の分け方と csv の部品の数え方が食い違う表（器の読みの問題 row_split_mismatch）: 書かない。
         raise RegisterRefused("register_write_unsafe", "row_split_mismatch", path=rel)
     return data, bom, lines
 
