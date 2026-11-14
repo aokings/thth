@@ -431,36 +431,71 @@ def intakes_between(root: str, a_sid: str | None, b_sid: str | None) -> list:
     return out
 
 
-def _version_in(root: str, snap: dict, rec: V.Record) -> str | None:
-    """控えた時点の、その記録の版（記録のある 1 枚と宣言だけを一時の置き場に書いて読む）。"""
-    entry = next((e for e in snap["files"] if e["path"] == rec.path), None)
+def _versions_of(root: str, snap: dict, path: str, cache: dict | None = None) -> dict | None:
+    """控えた時点の、1 枚の全部の記録の版 `{ref: [版…]}`（その枚と宣言だけを一時の置き場に書いて読む）。
+    読めなければ None。`cache` を渡すと (枚の道, 枚の中身, 宣言の中身) ごとに 1 回だけ読む（メモリの中だけ）。"""
+    entry = next((e for e in snap["files"] if e["path"] == path), None)
     if entry is None or not entry.get("sha256"):
         return None
+    key = ("versions", path, entry["sha256"],
+           tuple((e.get("path"), e.get("sha256")) for e in snap.get("decl", [])))
+    if cache is not None and key in cache:
+        return cache[key]
     with tempfile.TemporaryDirectory(prefix="thth-trail-") as tmp:
         try:
-            K.put_file(tmp, rec.path, K.get_object(root, entry["sha256"]), False)
+            K.put_file(tmp, path, K.get_object(root, entry["sha256"]), False)
             for e in snap.get("decl", []):
                 K.put_file(tmp, f"{K.THTH}/{e['path']}", K.get_object(root, e["sha256"]), False)
             vessel = V.open_vessel(tmp)
         except RegisterRefused:
-            return None
-        same = [r for r in vessel.all_records if r.ref == rec.ref]
-        return same[0].version if len(same) == 1 else None
+            versions = None
+        else:
+            versions = {}
+            for r in vessel.all_records:
+                versions.setdefault(r.ref, []).append(r.version)
+    if cache is not None:
+        cache[key] = versions
+    return versions
 
 
-def entered(root: str, rec: V.Record) -> dict:
+def _version_in(root: str, snap: dict, rec: V.Record, cache: dict | None = None) -> str | None:
+    """控えた時点の、その記録の版（同じ番号の記録がちょうど 1 つのときだけ）。"""
+    versions = _versions_of(root, snap, rec.path, cache)
+    same = (versions or {}).get(rec.ref, [])
+    return same[0] if len(same) == 1 else None
+
+
+def entered(root: str, rec: V.Record, cache: dict | None = None) -> dict:
     """今の版の記録が、どの控え（取り込み）で入ったか。跡を後ろからたどり、今と同じ版が続くいちばん前の控え。
-    最後の控えの版が今と違えば、控えのあとに直に書かれた版（`kept: False`）。"""
-    hist = _history(root)
-    now_sha = K.sha256(K.read_file(root, rec.path)) if os.path.isfile(K.full(root, rec.path)) else None
+    最後の控えの版が今と違えば、控えのあとに直に書かれた版（`kept: False`）。
+    `cache`（空の dict）を渡すと、跡・控え・今の枚の中身・控えの枚の版をその中に覚え、同じ台帳の多くの記録を
+    続けて引くときに読み直さない（答えは渡さないときと同じ。台帳が変わる間をまたいで使わない）。"""
+    if cache is None:
+        hist = _history(root)
+    else:
+        if ("history",) not in cache:
+            cache[("history",)] = _history(root)
+        hist = cache[("history",)]
+    now_key = ("now", rec.path)
+    if cache is not None and now_key in cache:
+        now_sha = cache[now_key]
+    else:
+        now_sha = K.sha256(K.read_file(root, rec.path)) if os.path.isfile(K.full(root, rec.path)) else None
+        if cache is not None:
+            cache[now_key] = now_sha
     found, same_at = None, {}
     for h in reversed(hist):
         sid = h["snapshot"]
         if sid not in same_at:
-            snap = _load(root, sid)
+            if cache is None:
+                snap = _load(root, sid)
+            else:
+                if ("snap", sid) not in cache:
+                    cache[("snap", sid)] = _load(root, sid)
+                snap = cache[("snap", sid)]
             entry = None if snap is None else next((e for e in snap["files"] if e["path"] == rec.path), None)
             same = snap is not None and entry is not None and (
-                entry.get("sha256") == now_sha or _version_in(root, snap, rec) == rec.version)
+                entry.get("sha256") == now_sha or _version_in(root, snap, rec, cache) == rec.version)
             same_at[sid] = (same, snap)
         same, snap = same_at[sid]
         if not same:
