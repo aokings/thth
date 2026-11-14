@@ -41,7 +41,9 @@
    "index_essay": 416,
    "index_guide": 6,
    "index_feature": 123,
-   "shelf_song": 1168
+   "shelf_song": 1168,
+   "feature_figure": 19,
+   "timeline_event": 188
   },
   "dangling": {
    "name.entity_id": 0,

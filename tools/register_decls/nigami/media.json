@@ -45,7 +45,12 @@
    "en_text": 17283,
    "en_pair_sha": 8182,
    "en_search_title": 6,
-   "en_search_noindex": 60
+   "en_search_noindex": 60,
+   "doi": 1,
+   "love_brewery": 81,
+   "love_cacao": 29,
+   "love_readme": 1,
+   "schema_file": 2
   },
   "dangling": {
    "claim.subject_entity_id": 0,

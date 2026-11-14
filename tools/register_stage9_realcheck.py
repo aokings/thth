@@ -60,7 +60,7 @@ AT = "2026-11-14T12:00:00+09:00"            # 受け入れの日時
 NOW_BEFORE = "2026-11-20T12:00:00+09:00"    # 期限の前
 UNTIL = "2026-12-31"                         # e2 の判断の「いつまで」
 NOW_AFTER = "2027-01-10T12:00:00+09:00"     # 期限の後
-STAGE1_KANTO = {"records": {"admission_result": 265}, "result_rows": 7460, "ambiguous_groups": 37,
+STAGE1_KANTO = {"result_rows": 7460, "ambiguous_groups": 37,
                 "ambiguous_units": 74, "ambiguous_same_content": 0, "capacity_scope_undeclared": 2876,
                 "field_years_rounds": 1510, "field_years_mixed": 207}   # 指示 段 1 §5
 GIT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1",
@@ -202,6 +202,8 @@ def stage13(work: pathlib.Path, developer: pathlib.Path, replay: str | None, pre
         got = json.loads(r.stdout)
         kanto = got.get("kanto", {})
         bad = [k for k, v in STAGE1_KANTO.items() if kanto.get(k) != v]
+        if (kanto.get("records") or {}).get("admission_result") != 265:
+            bad.append("records.admission_result")
         out["vessel"] = {"rc": r.returncode, "media": ["kanto", "kopicha", "mmr", "nigami"],
                          "ok": r.returncode == 0 and not bad, "differs": bad, "kanto": {k: kanto.get(k) for k in STAGE1_KANTO}}
     except ValueError:
