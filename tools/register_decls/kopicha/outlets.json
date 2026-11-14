@@ -1,0 +1,19 @@
+{
+ "schema": "thth.outlets/1",
+ "note": "こぴちゃの出し口（段 7 の実物の確かめ・tools/register_stage7_realcheck.py）。読む物は目録 docs/目録_台帳の器_こぴちゃ_2026-11-13.md §1.1 の「サイトが読むか」、内部の層は §3 の K-8。書き出し先の名前（dest）は叩き台で、実際の置き場は各メディアの向き替え（段 10・11）で決める",
+ "outlets": {
+  "site": {
+   "audience": "reader",
+   "kinds": ["article", "origin", "producer", "shop", "term", "variety", "tea", "claim", "evidence", "source", "title_name_rule"],
+   "fact": [{"question": "may_publish@site", "conclusion": "good"}],
+   "dest": ".",
+   "note": "頁が読む物: src/content/ の 296 枚（content collections）と data/knowledge/ の claims・evidence・sources（knowledgeFacts.mjs）・title-name-rules（observedNodes.mjs）。今の決まりは状態で除かずに全部出す（K-4）ので、基準の判断で今の版を全部受ける"
+  },
+  "tools": {
+   "audience": "internal",
+   "kinds": ["hypothesis", "lead", "mention", "point", "name", "article_claim", "source_title_check"],
+   "dest": "internal",
+   "note": "内の道具が読む表: 仮説・問いと作り手の言説（leads）・言及・点・名前・来歴の控え・出典の題の点検。頁には出さない（K-8）。選ばずに書く"
+  }
+ }
+}
