@@ -9,6 +9,29 @@
  },
  "checks": [
   {
+   "check": "columns",
+   "id": "k4_1_point",
+   "required": [
+    "id",
+    "entity_type",
+    "subtype",
+    "canonical_name",
+    "page_path",
+    "domain",
+    "notes"
+   ],
+   "allowed": [
+    "id",
+    "entity_type",
+    "subtype",
+    "canonical_name",
+    "page_path",
+    "domain",
+    "notes"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
+  {
    "check": "unique",
    "id": "k4_2_point",
    "fields": [

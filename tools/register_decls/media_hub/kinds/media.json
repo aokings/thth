@@ -3,9 +3,12 @@
  "kind": "media",
  "place": "media.yaml",
  "format": "yaml",
- "records": "file",
+ "records": "rows",
+ "rows_at": [
+  "media"
+ ],
  "id": {
-  "name": true
+  "field": "id"
  },
- "note": "media: の並び（7 メディア）を 1 つずつの記録として読む口が YAML に無いので、1 枚の記録として置く"
+ "note": "media.yaml の media: の並び（1 メディア 1 行）。同じ枚の cloudflare_account・thth_stock などは hub に残る指揮の欄で読まない。status（live・launching）に検査の台本は無い（決まりの実物 §3。レーンに聞く物）"
 }

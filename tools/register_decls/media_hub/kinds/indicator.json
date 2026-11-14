@@ -1,0 +1,95 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "indicator",
+ "place": "hub/score/indicators.yaml",
+ "format": "yaml",
+ "records": "rows",
+ "rows_at": [],
+ "id": {
+  "field": "id"
+ },
+ "note": "参考: hub に残る指標の台帳（目録 §1.2。器へ移す物ではない）。hub/score.py の load の決まり M4-1〜M4-5 を言うために読む",
+ "checks": [
+  {
+   "check": "required",
+   "id": "m4_1",
+   "fields": [
+    "id"
+   ],
+   "note": "M4-1（hub/score.py 121〜124）。重なりは番号の重なり（読みの問題）と m4_1_unique"
+  },
+  {
+   "check": "unique",
+   "id": "m4_1_unique",
+   "fields": [
+    "id"
+   ],
+   "note": "M4-1（hub/score.py 122）"
+  },
+  {
+   "check": "words",
+   "id": "m4_2",
+   "field": "extractor",
+   "in": [
+    "sc_week_clicks",
+    "sc_week_impressions",
+    "cfa_visits7",
+    "cfa_vital_good",
+    "alerts",
+    "wait_over",
+    "wait_median_h",
+    "wait_max_h",
+    "promise_late",
+    "mail_ack_median_min",
+    "mail_unacked12",
+    "mail_to_unknown"
+   ],
+   "note": "M4-2（hub/score.py 125〜126。EXTRACTORS 104〜106 の関数名）"
+  },
+  {
+   "check": "words",
+   "id": "m4_3_status",
+   "field": "status",
+   "in": [
+    "trial",
+    "active",
+    "retired"
+   ],
+   "note": "M4-3（hub/score.py 127〜128）"
+  },
+  {
+   "check": "words",
+   "id": "m4_3_direction",
+   "field": "direction",
+   "in": [
+    "up",
+    "down"
+   ],
+   "note": "M4-3（hub/score.py 129〜130）"
+  },
+  {
+   "check": "required",
+   "id": "m4_4",
+   "fields": [
+    "born.date",
+    "born.why"
+   ],
+   "note": "M4-4（hub/score.py 131〜132）"
+  },
+  {
+   "check": "required",
+   "id": "m4_5",
+   "fields": [
+    "retired.why"
+   ],
+   "when": {
+    "status": {
+     "in": [
+      "retired"
+     ]
+    }
+   },
+   "note": "M4-5（hub/score.py 133〜134）"
+  }
+ ]
+}

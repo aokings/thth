@@ -9,6 +9,22 @@
  },
  "checks": [
   {
+   "check": "columns",
+   "id": "n4_41_q_cols",
+   "required": [
+    "question_id",
+    "title_ja",
+    "title_en",
+    "a_ja",
+    "a_en",
+    "b_ja",
+    "b_en",
+    "target_ja",
+    "target_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 110〜112 の列が無い）"
+  },
+  {
    "check": "required",
    "id": "n4_41_q_req",
    "fields": [

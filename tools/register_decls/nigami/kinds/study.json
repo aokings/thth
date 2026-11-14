@@ -12,9 +12,47 @@
    "field": "source_id",
    "meaning": "derived_from",
    "to": "source"
+  },
+  {
+   "field": "questions",
+   "meaning": "related",
+   "to": "q_question",
+   "split": ";",
+   "none": [
+    "-"
+   ],
+   "note": "問いのフォルダ（＝question_id）を ; で並べる。無しは '-'"
   }
  ],
  "checks": [
+  {
+   "check": "columns",
+   "id": "n4_41_study_cols",
+   "required": [
+    "study_id",
+    "source_id",
+    "label_ja",
+    "label_en",
+    "kind",
+    "depth",
+    "depth_note_ja",
+    "depth_note_en",
+    "samples_ja",
+    "samples_en",
+    "processing_ja",
+    "processing_en",
+    "serving_ja",
+    "serving_en",
+    "panel_ja",
+    "panel_en",
+    "group",
+    "license",
+    "checked_on",
+    "checked_by",
+    "questions"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 74 の列が無い）"
+  },
   {
    "check": "required",
    "id": "n4_41_study_req",
@@ -85,6 +123,5 @@
    "allow_blank": false,
    "note": "N4-41（scripts/gate_question_tables.py 83〜85）"
   }
- ],
- "note": "questions 欄は問いのフォルダを ; で並べ、無しを '-' と書く（'-' を無しと読む口が無いので指す欄にしない）"
+ ]
 }

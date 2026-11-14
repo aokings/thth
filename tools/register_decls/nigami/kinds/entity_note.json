@@ -16,6 +16,18 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_entity_note",
+   "required": [
+    "id",
+    "entity_id",
+    "note_path",
+    "label",
+    "label_en"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_entity_note",
    "field": "id",

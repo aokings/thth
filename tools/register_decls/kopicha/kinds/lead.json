@@ -38,6 +38,37 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "k4_1_lead",
+   "required": [
+    "id",
+    "subject_entity_id",
+    "title_ja",
+    "lead_text_ja",
+    "lead_type",
+    "origin_status",
+    "origin_note",
+    "verification_status",
+    "claim_id",
+    "source_id",
+    "updated_at"
+   ],
+   "allowed": [
+    "id",
+    "subject_entity_id",
+    "title_ja",
+    "lead_text_ja",
+    "lead_type",
+    "origin_status",
+    "origin_note",
+    "verification_status",
+    "claim_id",
+    "source_id",
+    "updated_at"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
+  {
    "check": "unique",
    "id": "k4_2_lead",
    "fields": [

@@ -32,6 +32,41 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "k4_1_claim",
+   "required": [
+    "id",
+    "subject_entity_id",
+    "predicate",
+    "object_entity_id",
+    "object_text_ja",
+    "statement_ja",
+    "claim_type",
+    "scope_ja",
+    "claim_status",
+    "as_of",
+    "valid_until",
+    "notes",
+    "updated_at"
+   ],
+   "allowed": [
+    "id",
+    "subject_entity_id",
+    "predicate",
+    "object_entity_id",
+    "object_text_ja",
+    "statement_ja",
+    "claim_type",
+    "scope_ja",
+    "claim_status",
+    "as_of",
+    "valid_until",
+    "notes",
+    "updated_at"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
+  {
    "check": "unique",
    "id": "k4_2_claim",
    "fields": [

@@ -16,6 +16,21 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_lab_recipe_figure",
+   "required": [
+    "id",
+    "recipe_id",
+    "slot",
+    "path",
+    "webp_720",
+    "alt_text",
+    "credit",
+    "sha256"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_lab_recipe_figure",
    "field": "id",

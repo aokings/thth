@@ -8,16 +8,30 @@
   "key": [
    "row_id",
    "comparison"
-  ]
+  ],
+  "scope": "folder"
  },
  "pointers": [
   {
    "field": "row_id",
    "meaning": "about",
-   "to": "q_results"
+   "to": "q_results",
+   "same_folder": true
   }
  ],
  "checks": [
+  {
+   "check": "columns",
+   "id": "n4_41_comp_cols",
+   "required": [
+    "row_id",
+    "comparison",
+    "usable",
+    "reason_ja",
+    "reason_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 110〜112 の列が無い）"
+  },
   {
    "check": "required",
    "id": "n4_41_comp_req",
@@ -54,5 +68,5 @@
    "note": "N4-41（scripts/gate_question_tables.py 29）"
   }
  ],
- "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る"
+ "note": "番号は問いの中でだけ一意（scope: folder。番号は <問いのフォルダ>.<番号>）"
 }

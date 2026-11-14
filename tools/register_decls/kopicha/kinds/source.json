@@ -20,6 +20,47 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "k4_1_source",
+   "required": [
+    "id",
+    "title",
+    "authors",
+    "publication_year",
+    "source_type",
+    "publication",
+    "doi",
+    "url",
+    "language",
+    "region",
+    "peer_reviewed",
+    "access_status",
+    "review_status",
+    "rights_status",
+    "retrieved_at",
+    "notes"
+   ],
+   "allowed": [
+    "id",
+    "title",
+    "authors",
+    "publication_year",
+    "source_type",
+    "publication",
+    "doi",
+    "url",
+    "language",
+    "region",
+    "peer_reviewed",
+    "access_status",
+    "review_status",
+    "rights_status",
+    "retrieved_at",
+    "notes"
+   ],
+   "note": "K4-1（scripts/lib/knowledge.mjs 101〜116 の checkColumns。COLUMNS 8〜30 と過不足なく同じ）"
+  },
+  {
    "check": "unique",
    "id": "k4_2_source",
    "fields": [

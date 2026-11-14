@@ -16,6 +16,20 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_crossing",
+   "required": [
+    "id",
+    "name_ja",
+    "reading",
+    "partner_entity_id",
+    "slug",
+    "definition",
+    "status"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_crossing",
    "field": "id",

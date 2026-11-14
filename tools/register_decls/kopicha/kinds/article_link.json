@@ -12,6 +12,19 @@
  },
  "checks": [
   {
+   "check": "columns",
+   "id": "l4_1_article",
+   "required": [
+    "page",
+    "target"
+   ],
+   "allowed": [
+    "page",
+    "target"
+   ],
+   "note": "L4-1（tests/article-links.test.mjs 19〜23。欄がちょうど 2 つ）"
+  },
+  {
    "check": "required",
    "id": "l4_2_article",
    "fields": [

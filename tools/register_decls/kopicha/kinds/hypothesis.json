@@ -42,6 +42,45 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "h4_1",
+   "required": [
+    "id",
+    "domain",
+    "subject_entity_ids",
+    "title_ja",
+    "mechanism_ja",
+    "premise_claim_ids",
+    "premises_unverified_ja",
+    "predictions_ja",
+    "tests_ja",
+    "status",
+    "result_ja",
+    "result_refs",
+    "created_at",
+    "updated_at",
+    "notes"
+   ],
+   "allowed": [
+    "id",
+    "domain",
+    "subject_entity_ids",
+    "title_ja",
+    "mechanism_ja",
+    "premise_claim_ids",
+    "premises_unverified_ja",
+    "predictions_ja",
+    "tests_ja",
+    "status",
+    "result_ja",
+    "result_refs",
+    "created_at",
+    "updated_at",
+    "notes"
+   ],
+   "note": "H4-1（tests/hypotheses.test.mjs 14〜15）。並びの順は見ない（順は固有）"
+  },
+  {
    "check": "unique",
    "id": "h4_2",
    "fields": [

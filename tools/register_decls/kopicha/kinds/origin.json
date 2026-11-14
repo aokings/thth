@@ -19,6 +19,16 @@
    "field": "article",
    "meaning": "related",
    "to": "article"
+  },
+  {
+   "field": "parent",
+   "meaning": "parent",
+   "to": "origin",
+   "none": [
+    "null",
+    "~"
+   ],
+   "note": "国の産地は parent: null（先なし）。region は国の産地を指す"
   }
  ],
  "checks": [
@@ -56,19 +66,23 @@
    "note": "Z4-2（src/content.config.ts の要る欄）"
   },
   {
-   "check": "required",
+   "check": "words",
    "id": "x4_5_parent",
-   "fields": [
-    "parent"
+   "field": "level",
+   "in": [
+    "country"
    ],
+   "allow_blank": true,
    "when": {
-    "level": {
+    "parent": {
      "in": [
-      "region"
-     ]
+      "null",
+      "~"
+     ],
+     "or_blank": true
     }
    },
-   "note": "X4-5 のうち「region の産地は parent が要る」（tests/explain-content.test.mjs 156〜185）。YAML の null を器が字の 'null' と読むので、null の region は見逃す（実物 0）"
+   "note": "X4-5 のうち「region の産地は parent が要る」（tests/explain-content.test.mjs 156〜185）を、「parent が null か空なら level は country（既定）」と言い換えた"
   }
  ]
 }

@@ -34,6 +34,17 @@
  ],
  "checks": [
   {
+   "check": "columns",
+   "id": "cols_point",
+   "required": [
+    "id",
+    "entity_type",
+    "canonical_name",
+    "lifecycle_status"
+   ],
+   "note": "scripts/validate_data.py 336〜350 の load（REQUIRED の欄が見出しに在る）。§4.6"
+  },
+  {
    "check": "shape",
    "id": "ids_point",
    "field": "id",

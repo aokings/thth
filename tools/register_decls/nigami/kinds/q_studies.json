@@ -5,7 +5,8 @@
  "format": "csv",
  "records": "rows",
  "id": {
-  "field": "study_id"
+  "field": "study_id",
+  "scope": "folder"
  },
  "pointers": [
   {
@@ -14,5 +15,5 @@
    "to": "study"
   }
  ],
- "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る"
+ "note": "番号は問いの中でだけ一意（scope: folder。番号は <問いのフォルダ>.<番号>）"
 }
