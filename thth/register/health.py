@@ -135,7 +135,10 @@ def _net(vessel: V.Vessel, graph: dict, root: str, thin_all: bool) -> dict:
     for kind in vessel.kinds.values():
         if kind.pointers:
             net_kinds.add(kind.name)
-            net_kinds.update(p["to"] for p in kind.pointers)
+            for p in kind.pointers:  # 先の種類は `to` か、G15 の `to_by`（頭・map の値の全部）
+                route = p.get("to_by") or {}
+                net_kinds.update([p["to"]] if p.get("to") else
+                                 list((route.get("prefix") or route.get("map") or {}).values()))
     degree = {}
     for e in graph["edges"]:
         degree[e["from"]] = degree.get(e["from"], 0) + 1
