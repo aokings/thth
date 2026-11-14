@@ -5478,6 +5478,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth register`: 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。網に出ない。
     from .register import cli as register_cli
     register_cli.register(sub)
+    # `thth project leave <メディア>`・`thth owner leave`（台帳の器 段 8・外す範囲の 2 つめと 3 つめ。段を進めるのは
+    # `thth/leave.py`・台帳の側は `thth/register/owner.py`）。
+    from . import leave as leave_mod
+    leave_mod.register_scope_parsers(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

@@ -1,0 +1,12 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "operator",
+  "place": "operator/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {"name": true},
+  "checks": [
+    {"check": "required", "id": "name", "fields": ["name"]}
+  ],
+  "note": "共通の台帳の備え付けの種類（台帳の器 段 8）。運営者の情報（名前・窓口・表記）。家族の名前は入れない。既定で全部の欄を出さない欄にする（種類の宣言には出さない欄の書き方が無いので、出し口の宣言が operator を kinds に挙げない限り材料に入らない）。thth register add <台帳> --common が写す"
+}

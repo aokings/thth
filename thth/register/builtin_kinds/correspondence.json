@@ -1,0 +1,15 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "correspondence",
+  "place": "correspondence/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {"name": true},
+  "checks": [
+    {"check": "required", "id": "both_sides", "fields": ["media_a", "id_a", "media_b", "id_b", "relation"],
+     "note": "対応の記録は、2 つのメディアの番号と関係の種類がそろって 1 件"},
+    {"check": "words", "id": "relation", "field": "relation", "in": ["same", "related", "broader", "narrower"],
+     "note": "関係の種類は same・related・broader・narrower のどれか（必須）"}
+  ],
+  "note": "共通の台帳の備え付けの種類（台帳の器 段 8）。対応の記録: メディアごとの番号（media_a と id_a、media_b と id_b）と関係の種類。thth register add <台帳> --common が写す"
+}

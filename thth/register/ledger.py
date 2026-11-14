@@ -1,11 +1,13 @@
 """THTH の側の控え（台帳そのものは持ち主の物で、THTH は預からない）。
 
 - 控え: `$THTH_ROOT/registers/<名前>.json`（`THTH_REGISTERS_DIR` で差し替え可・0600）。欄は
-  `register`・`project`・`path`（台帳のフォルダ・絶対の道）・`kind`（`media` か `store`）の 4 つだけ。
+  `register`・`project`・`path`（台帳のフォルダ・絶対の道）・`kind`（`media` か `store`）の 4 つと、共通の台帳だけが
+  持つ `role: common`（台帳の器 段 8・持ち主に 1 つ）。
 - 認めた記録: `$THTH_ROOT/register_state/<名前>/confirmed.json`（0600）。行の番号 → `{"digest", "at", "by"}`。
   台帳の頭の `confirmed: 本人が認めた` は手でも LLM でも書けるので、柵はこの記録の指紋で見る（計画 §8 の 6）。
 
-`thth register remove` と `thth leave`（その project の最後の口座）が控えと記録を消す。台帳のフォルダは消さない。
+`thth register remove`・`thth project leave <メディア>`（共通の台帳の控えは消さない）・`thth owner leave` が控えと記録を
+消す。台帳のフォルダは消さない。口座の `thth account leave` は、その project の最後の口座でも控えに触れない（段 8）。
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ from .errors import RegisterRefused
 REGISTERS_DIR_ENV = "THTH_REGISTERS_DIR"
 KINDS = ("media", "store")
 FIELDS = ("register", "project", "path", "kind")
+ROLE_FIELD = "role"
+COMMON = "common"
 CONFIRMED_FILE = "confirmed.json"
 CONFIRMED_SCHEMA = "thth.register_confirmed/1"
 
@@ -82,15 +86,23 @@ def check_outside_thth(path: str) -> str:
 
 
 def validate(name: str, data) -> None:
-    if (not isinstance(data, dict) or set(data) != set(FIELDS) or data.get("register") != name
+    if (not isinstance(data, dict) or set(data) - {ROLE_FIELD} != set(FIELDS) or data.get("register") != name
+            or (ROLE_FIELD in data and data[ROLE_FIELD] != COMMON)
             or data.get("kind") not in KINDS
             or not isinstance(data.get("project"), str) or not accounts.name_is_safe(data["project"])
             or not isinstance(data.get("path"), str) or not os.path.isabs(data["path"])):
         raise RegisterRefused("register_ledger_invalid")
 
 
-def build(name: str, *, project: str, path: str, kind: str) -> dict:
-    return {"register": name, "project": project, "path": path, "kind": kind}
+def build(name: str, *, project: str, path: str, kind: str, common: bool = False) -> dict:
+    data = {"register": name, "project": project, "path": path, "kind": kind}
+    if common:
+        data[ROLE_FIELD] = COMMON
+    return data
+
+
+def is_common(cfg: dict) -> bool:
+    return cfg.get(ROLE_FIELD) == COMMON
 
 
 def write_new(name: str, data: dict) -> str:
@@ -155,6 +167,31 @@ def of_project(project: str) -> list:
     for name in list_names():
         try:
             if load(name)["project"] == project:
+                out.append(name)
+        except RegisterRefused:
+            continue
+    return out
+
+
+def media_of(project: str) -> list:
+    """そのメディア（project）の台帳の控えの名前。**共通の台帳は入れない**（`project leave` が消さないように）。"""
+    out = []
+    for name in list_names():
+        try:
+            cfg = load(name)
+        except RegisterRefused:
+            continue
+        if cfg["project"] == project and not is_common(cfg):
+            out.append(name)
+    return out
+
+
+def common_names() -> list:
+    """`role: common` の控えの名前（持ち主に 1 つのはず）。読めない控えは数えない。"""
+    out = []
+    for name in list_names():
+        try:
+            if is_common(load(name)):
                 out.append(name)
         except RegisterRefused:
             continue

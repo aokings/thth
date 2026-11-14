@@ -507,9 +507,10 @@ def run(account,*,by,plaza_open='delete'):
             # 店を読む口（設計 ショップ §7）: その project の最後の account なら、店の台帳・写し・鍵も消す。
             # 地図と同じく止める前に消す。何度呼んでも同じ結果。
             _purge_stores(account,by)
-            # 台帳の機械（計画 実店舗 段 1）: その project の最後の account なら、台帳の控えと認めた記録を消す
-            # （台帳のフォルダは持ち主の物なので消さない）。何度呼んでも同じ結果。
-            _purge_registers(account,by)
+            # 台帳の機械: 口座の leave は、その project の最後の口座でも台帳の控えと判断に触れない（台帳の器 段 8・
+            # 設計 §6）。控えを外すのは `thth project leave <メディア>`。消す木の中に台帳のフォルダがあれば（またはその逆）、
+            # 何も止めずに断る（台帳のフォルダは持ち主の物）。
+            register_folder_guard(account)
             result=_run_locked(account,by=by)
             # 削除の段のあとに unit を止める（3.5.1 件 1）。止められなくても退出は完了のまま
             # ——台帳も秘密も消えていて、残った timer は空回りするだけ。記録に残して命令を渡す。
@@ -567,17 +568,46 @@ def _purge_stores(account,by):
     except (StoreRefused,OSError,admin_log.AdminLogError):raise ValueError('store_cleanup_incomplete') from None
 
 
-def _purge_registers(account,by):
-    from .register import cli as register_cli
+def register_folders():
+    """THTH が控えている全部の台帳のフォルダ（書かれた道と、追った先の両方・読めない控えは飛ばす）。"""
+    from .register import ledger as register_ledger
     from .register.errors import RegisterRefused
+    out=set()
+    for name in register_ledger.list_names():
+        try:cfg=register_ledger.load(name)
+        except RegisterRefused:continue
+        out.add(os.path.abspath(cfg['path']));out.add(os.path.realpath(cfg['path']))
+    return sorted(out)
+
+
+def _overlap(a,b):
+    a,b=os.path.realpath(a),os.path.realpath(b)
+    try:return os.path.commonpath([a,b]) in (a,b)
+    except ValueError:return False
+
+
+def register_folder_guard(account,cfg=None):
+    """口座の leave が消す所（state・管理する repo・口座の token と env のファイル）と台帳のフォルダが重なれば断る。
+
+    台帳のフォルダが消す木の中にある・消す木が台帳のフォルダの中にある・消すファイルが台帳のフォルダの中にある、
+    のどれも `owned_tree_contains_register_folder`。何も止めず、何も消さない（台帳の器 段 8・狭い側）。"""
     row=read(account)
-    if row and row['phase']=='completed':return []
-    if row:cfg=row['cfg']
-    else:
-        try:cfg=accounts.load_account(account)
-        except accounts.AccountError:return []
-    try:return register_cli.purge_for_leave(account,cfg.get('project'),by=by)
-    except (RegisterRefused,OSError,admin_log.AdminLogError):raise ValueError('register_cleanup_incomplete') from None
+    if row and row['phase']=='completed':return
+    if cfg is None:
+        if row:cfg=row['cfg']
+        else:
+            try:cfg=accounts.load_account(account)
+            except accounts.AccountError:return
+    folders=register_folders()
+    if not folders:return
+    clone,_=managed_repo.locations(account)
+    places=[str(Path(accounts.state_dir_for(account)).absolute())]
+    if cfg.get('repo_dir')==str(clone):places.append(str(clone))
+    files=[cfg.get(k) for k in ('token','env') if isinstance(cfg.get(k),str) and os.path.isabs(cfg.get(k))]
+    files.append(str(Path(accounts.accounts_dir()).absolute()/(account+'.json')))
+    for folder in folders:
+        if any(_overlap(folder,place) for place in places+files):
+            raise ValueError('owned_tree_contains_register_folder')
 
 
 def _run_locked(account,*,by):
@@ -683,10 +713,15 @@ def command(args):
     import sys
     from .lock import LockBusy
     try:
+        kept=_registers_kept(args.name)
         result=run(args.name,by=args.by,plaza_open=getattr(args,'plaza_open',None) or 'delete')
         if args.json:print(json.dumps(result,ensure_ascii=False))
         else:
             print('local_complete: '+args.name)
+            if kept:
+                # 台帳の器 段 8: 口座を外しても台帳の控えと判断は残る（その project の最後の口座でも）。
+                print(f'register_kept: 台帳の控え（{"・".join(kept[1])}）と判断は残りました。台帳ごと外すなら '
+                      f'thth project leave {kept[0]} --by <名前>（台帳のフォルダは、どちらでも消しません）')
             if result['remote']=='unconfirmed_shared':
                 for line in _shared_guide(args.name):print(line)
             if result['remote']=='unconfirmed_manual':
@@ -773,6 +808,20 @@ def _principal_token_line(principal,media):
     return text+' で消せます'
 
 
+def _registers_kept(account):
+    """口座の project と、その project の台帳の控えの名前（`(project, [名前])`）。無い・読めないなら None。"""
+    try:
+        row=read(account)
+        if row and row['phase']=='completed':return None
+        cfg=row['cfg'] if row else accounts.load_account(account)
+        project=cfg.get('project')
+        if not accounts.name_is_safe(project or ''):return None
+        from .register import ledger as register_ledger
+        names=register_ledger.media_of(project)
+    except (OSError,ValueError,accounts.AccountError):return None
+    return (project,names) if names else None
+
+
 def _incomplete_detail(exc):
     """`leave_incomplete` に添える理由の 1 行（3.14.3 穴 7）。3.14.2 までは理由を丸めて出さなかった。"""
     text=' '.join(str(exc).split())[:200] or type(exc).__name__
@@ -791,6 +840,219 @@ def _incomplete_detail(exc):
                 f'thth principal show {name} で「ある」を確かめてから、同じ leave をもう一度打ってください（続きから進みます。'
                 '止まったときの記録に残る前のパスは、そこにもう何も無ければ数えません）。'
                 'もっと良くするには、主体の鍵は thth principal add が書く既定の置き場に置くと、口座の出入りで鍵が巻き込まれません')
+    if str(exc)=='owned_tree_contains_register_folder':
+        return ('owned_tree_contains_register_folder 台帳のフォルダが、この口座の leave で消す所（state・管理する repo・'
+                '口座の台帳・token・env）と重なっていて、消すと台帳のフォルダの中の物まで消えるので、何も止めずに断りました。'
+                '通すには、台帳のフォルダを THTH の置き場の外へ移し、thth register remove <台帳> --by <名前> と '
+                'thth register add <台帳> --path <新しいフォルダ> ... で控え直してから、同じ leave をもう一度打ってください。'
+                'もっと良くするには、台帳は持ち主の repo に置き、THTH の置き場（$THTH_ROOT）の外にしておくと、口座の出入りに巻き込まれません')
     if str(exc)=='unsafe_owned_directory' and isinstance(where,str):
         return f'unsafe_owned_directory {where}（group/other が書けます。chmod -R go-w {where} で直してから）'
     return text
+
+
+# ------------------------------------------------------------------ 外す範囲の 2 つめと 3 つめ（台帳の器 段 8）
+# `thth project leave <メディア>`・`thth owner leave`。台帳の側（控え・重なりの点検・封の鍵・途中の記録・文）は
+# `thth/register/owner.py`。ここは口座を外す（上の `run` を 1 本ずつ）・主体を消す・段を進める所（台帳の機械は網の
+# 部品を import しないので、遠隔の取り消しのある口座の leave はこちらから呼ぶ）。
+
+def _accounts_by_project():
+    """口座の名前 → project（台帳の生の JSON・止めた口座も）。退出の途中で台帳がもう無い口座は、退出の記録の写しで。"""
+    out={}
+    d=accounts.accounts_dir()
+    for name in accounts.list_account_names():
+        if not accounts.name_is_safe(name):continue
+        try:
+            with open(os.path.join(d,name+'.json'),encoding='utf-8') as f:data=json.load(f)
+        except (OSError,ValueError):data=None
+        out[name]=data.get('project') if isinstance(data,dict) else None
+    for name in names():
+        if name in out:continue
+        try:row=read(name)
+        except ValueError:continue
+        if row and row['phase']!='completed' and isinstance(row.get('cfg'),dict):out[name]=row['cfg'].get('project')
+    return out
+
+
+def _principal_names():
+    """`([読める主体], [読めない主体])`。"""
+    from . import principals
+    good,bad=[],[]
+    try:entries=sorted(os.listdir(principals.principals_dir()))
+    except OSError:entries=[]
+    for entry in entries:
+        name=entry[:-5]
+        if not entry.endswith('.json') or not accounts.name_is_safe(name):continue
+        try:
+            principals.load_principal(name);good.append(name)
+        except (principals.PrincipalError,accounts.AccountError,OSError,ValueError):bad.append(name)
+    return good,bad
+
+
+def scope_plan(scope,target=None):
+    """消える物と残る物（数と名前）。何も書かない。"""
+    from .register import owner
+    from .register.errors import RegisterRefused
+    if scope not in owner.SCOPES:raise RegisterRefused('register_args_invalid','scope')
+    if scope=='project' and not accounts.name_is_safe(target or ''):raise RegisterRefused('register_args_invalid','project')
+    by_project=_accounts_by_project();reg=owner.register_plan(scope,target)
+    if scope=='project':
+        gone=sorted(n for n,p in by_project.items() if p==target)
+        principals_gone,principals_bad,key=[],[],False
+        other=sorted({p for p in by_project.values() if isinstance(p,str) and p!=target}|set(reg['other_projects']))
+    else:
+        gone=sorted(by_project);principals_gone,principals_bad=_principal_names()
+        from .register import seal
+        key=os.path.lexists(seal.key_path());other=[]
+    body={'scope':scope,'target':target,'accounts':gone,'registers':reg['registers'],'principals':principals_gone,'seal_key':bool(key)}
+    kept=reg['kept']+[{'what':'principal_unreadable','name':n} for n in principals_bad]
+    return {**body,'digest':owner.digest(body),
+            'remain':{'register_folders':reg['register_folders'],'register_files':reg['register_files'],
+                      'common':reg['common'] if scope=='project' else [],'other_media':other},
+            'kept':kept,'folders':reg['folders']}
+
+
+def _principal_places(name,cfg):
+    from . import principals
+    return [principals.path_for(name),principals.state_dir_for(name),principals.owner_state_dir(principals.owner_of(name,cfg))]
+
+
+def scope_preflight(p,guard):
+    """消す所と台帳のフォルダが重なれば `register_leave_overlap`（何も消さない・何も止めない）。"""
+    from . import principals
+    from .register import owner
+    from .register.errors import RegisterRefused
+    for name in p['accounts']:
+        try:register_folder_guard(name)
+        except ValueError:raise RegisterRefused('register_leave_overlap','account_tree',account=name) from None
+        # 退出の途中で台帳がもう無い口座も、state は見る。
+        if any(owner._overlap(folder,accounts.state_dir_for(name)) for folder in guard):
+            raise RegisterRefused('register_leave_overlap','account_tree',account=name)
+    owner.preflight_registers(p['registers'],guard)
+    for name in p['principals']:
+        cfg=principals.load_principal(name)
+        if any(owner._overlap(folder,place) for folder in guard for place in _principal_places(name,cfg)):
+            raise RegisterRefused('register_leave_overlap','principal',principal=name)
+
+
+def _thth_secret_dirs():
+    return [os.path.realpath(os.path.join(os.path.expanduser('~'),'.config','thth')),
+            os.path.realpath(os.path.join(accounts.thth_root(),'secrets'))]
+
+
+def remove_principal(name,guard,kept):
+    """主体の台帳・状態・owner の状態と、THTH の置き場（~/.config/thth・$THTH_ROOT/secrets）にある普通のファイルの
+    主体の鍵を消す。置き場の外・symlink・台帳のフォルダの中の鍵は残し、残したと記録する。"""
+    from . import principals
+    from .register import owner
+    done={'principals':0,'principal_state':0,'owner_state':0,'principal_tokens':0}
+    try:cfg=principals.load_principal(name)
+    except principals.PrincipalError as exc:
+        if exc.code=='principal_missing':return done
+        kept.append({'what':'principal_unreadable','name':name});return done
+    homes=_thth_secret_dirs()
+    for key in ('token','consumer'):
+        path=cfg.get(key)
+        if not isinstance(path,str) or not os.path.isabs(path) or not os.path.lexists(path):continue
+        if os.path.realpath(os.path.dirname(os.path.abspath(path))) not in homes or os.path.islink(path):
+            kept.append({'what':f'principal_{key}_outside_thth','name':name});continue
+        removed=owner.remove_file(path,guard)
+        if not removed:kept.append({'what':f'principal_{key}_kept','name':name})
+        done['principal_tokens']+=removed
+    done['principal_state']=owner.remove_tree(principals.state_dir_for(name),guard,kept,'principal_state',name)
+    done['owner_state']=owner.remove_tree(principals.owner_state_dir(principals.owner_of(name,cfg)),guard,kept,'owner_state',name)
+    done['principals']=owner.remove_file(principals.path_for(name),guard)
+    return done
+
+
+def _scope_continue(journal,by):
+    from .lock import LockBusy
+    from .register import owner
+    from .register.errors import RegisterRefused
+    guard=sorted(set(journal['folders'])|set(owner.folders()))
+    done=journal['done']
+    if journal['phase']=='accounts':
+        for name in journal['accounts']:
+            if name in done.setdefault('accounts',[]):continue
+            try:result=run(name,by=by)
+            except (OSError,ValueError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError,LockBusy) as exc:
+                journal['stopped_at_account']=name;owner.save(journal)
+                raise RegisterRefused('register_leave_incomplete','account',account=name,reason=_incomplete_detail(exc)) from None
+            if (result or {}).get('phase')!='completed':
+                journal['stopped_at_account']=name;owner.save(journal)
+                raise RegisterRefused('register_leave_incomplete','account',account=name)
+            done['accounts'].append(name);journal.pop('stopped_at_account',None)
+            owner.add(journal,{'accounts':1});owner.save(journal)
+        journal['phase']='registers';owner.save(journal)
+    if journal['phase']=='registers':
+        owner.remove_registers(journal,by,guard)
+        journal['phase']='principals' if journal['scope']=='owner' else 'completed';owner.save(journal)
+    if journal['phase']=='principals':
+        for name in journal['principals']:
+            if name in done.setdefault('principals',[]):continue
+            counts=remove_principal(name,guard,journal['kept'])
+            done['principals'].append(name);owner.add(journal,counts);owner.save(journal)
+        journal['phase']='seal_key';owner.save(journal)
+    if journal['phase']=='seal_key':
+        owner.remove_seal(journal,guard)
+        journal['phase']='completed';owner.save(journal)
+    if 'completed_at' not in journal:
+        journal['completed_at']=jst.iso();owner.save(journal)
+    return owner.public(journal)
+
+
+def scope_run(scope,target=None,*,by,confirm=None):
+    """1 回め（`confirm` なし）は見積りだけ。合う `confirm` で消す。途中の記録があれば、その digest で続きから。"""
+    from .register import owner
+    from .register.errors import RegisterRefused
+    try:by=admin_log.actor(by)
+    except ValueError:raise RegisterRefused('register_args_invalid','by') from None
+    if scope=='project' and not accounts.name_is_safe(target or ''):raise RegisterRefused('register_args_invalid','project')
+    with owner.journal_lock(scope,target):
+        journal=owner.read_journal(scope,target)
+        if journal and journal['phase']!='completed':
+            if confirm!=journal['digest']:raise RegisterRefused('register_leave_confirm','in_progress',digest=journal['digest'])
+            return {'stage':'done',**_scope_continue(journal,by)}
+        if journal and confirm is not None and confirm==journal['digest']:
+            return {'stage':'done',**owner.public(journal)}
+        p=scope_plan(scope,target)
+        scope_preflight(p,p['folders'])
+        if confirm is None:return {'stage':'plan',**p}
+        if confirm!=p['digest']:raise RegisterRefused('register_leave_confirm','changed',digest=p['digest'])
+        journal={'schema':owner.SCHEMA,'scope':scope,'target':target,'operation_id':secrets.token_urlsafe(16),
+                 'digest':p['digest'],'phase':'accounts','started_at':jst.iso(),'stopped_by':admin_log.clean(by),
+                 'accounts':p['accounts'],'registers':p['registers'],'principals':p['principals'],'seal_key':p['seal_key'],
+                 'folders':p['folders'],'done':{},'deleted':{},'kept':list(p['kept'])}
+        owner.save(journal)
+        return {'stage':'done',**_scope_continue(journal,by)}
+
+
+def scope_command(args,scope):
+    from .register import owner,seal
+    from .register.errors import RegisterRefused
+    target=getattr(args,'media',None) if scope=='project' else None
+    try:
+        if scope=='owner' and args.confirm and not args.json:
+            # 封の秘密の鍵を消す前の知らせ（指示 §5）。見積りの文にも同じ 1 行を出している。
+            try:journal=owner.read_journal(scope,target)
+            except RegisterRefused:journal=None
+            pending=journal.get('seal_key') and not journal['done'].get('seal_key') if journal else os.path.lexists(seal.key_path())
+            if pending:print('知らせ: '+owner.SEAL_NOTICE)
+        value=scope_run(scope,target,by=args.by,confirm=args.confirm)
+    except RegisterRefused as exc:
+        return owner.refuse(args,exc)
+    return owner.show(args,value)
+
+
+def register_scope_parsers(sub):
+    """`thth project leave <メディア>`・`thth owner leave`（`thth/cli.py` の `build_parser()` から 1 行で呼ぶ）。"""
+    for scope,help_text in (('project','メディア（project）の操作（leave: そのメディアの口座と台帳の控えを外す・二段）'),
+                            ('owner','持ち主の操作（leave: 全部の口座・台帳の控え・主体・封の鍵を消す・二段）')):
+        parent=sub.add_parser(scope,help=help_text)
+        verbs=parent.add_subparsers(dest=scope+'_command',required=True)
+        p=verbs.add_parser('leave',help='1 回めは見積りだけ。--confirm D で消す（台帳のフォルダは消さない）')
+        if scope=='project':p.add_argument('media',metavar='メディア')
+        p.add_argument('--by',required=True)
+        p.add_argument('--confirm',default=None,metavar='D')
+        p.add_argument('--json',action='store_true')
+        p.set_defaults(func=lambda args,scope=scope:scope_command(args,scope))

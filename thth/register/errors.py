@@ -33,6 +33,9 @@ REASONS = frozenset((
     "register_seal_unverified", "register_seal_key_missing", "register_seal_key_unsafe", "register_common_unusable",
     # 台帳の器 段 5: 消す求め。
     "register_erase_invalid", "register_erase_left",
+    # 台帳の器 段 8: 共通の台帳と、外す範囲（メディア・持ち主）。
+    "register_common_exists", "register_builtin_kind_exists", "register_leave_confirm", "register_leave_overlap",
+    "register_leave_incomplete",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 
