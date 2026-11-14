@@ -3,11 +3,10 @@
 
     python3 tools/register_decls/_probe_b.py jiangshi [sometokagaku mmr kanto] [--developer ~/Developer]
 
-- 宣言から `checks` を外した写しを、repo の外の作業の置き場（`--work`）に書き、`open_vessel(root, decl_base)` で
-  当てる。読めた記録の数・読みの問題・指す欄の「先が無い」の数を、`media.json` の `expected` と突き合わせる。
-- `checks` は器の部品（`thth/register/checks.py`）が届くまで器では回せないので、ここでは
-  (1) 形の点検（部品の名前・欄の名前・指す欄が宣言済みか）と、(2) この台本だけの**仮の数え**（部品の代わりではない。
-  宣言の書き誤りを早く見つけるため）をして、`expected.checks` と並べる。部品が届いたら、部品で数え直す。
+- 宣言（`tools/register_decls/<メディア>/`）をそのまま `open_vessel(root, decl_base)` で当て、`checks.run` で検査を回す。
+  読めた記録の数・読みの問題・指す欄の「先が無い」の数・検査ごとの違反の数を、`media.json` の `expected` と突き合わせる。
+- 欄の名前が実物に在るかの点検（`lint`）と、`--tentative` でこの台本の仮の数え（部品が届く前に使った物）を並べる。
+- `strip_checks` は部品が届く前の道（検査を外した写しを作業の置き場に書く）。今は使わない。
 """
 from __future__ import annotations
 
@@ -19,10 +18,11 @@ import pathlib
 import re
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from thth.register import vessel as V  # noqa: E402
+from thth.register import checks as C, vessel as V  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 WORK = "/Volumes/NexDev/Developer/thth-work/stage4/run-b/probe"
@@ -234,14 +234,18 @@ def tentative(v: V.Vessel, decls: dict) -> dict:
     return counts
 
 
-def probe(media: str, developer: pathlib.Path) -> dict:
+def probe(media: str, developer: pathlib.Path, tentative_too: bool = False) -> dict:
+    """宣言を検査つきでそのまま当てる（`open_vessel(root, decl_base)` と `checks.run`）。"""
     media_dir = HERE / media
     card = json.loads((media_dir / "media.json").read_text(encoding="utf-8"))
     root = developer / card["source"]
-    os.makedirs(WORK, exist_ok=True)
-    dest = pathlib.Path(tempfile.mkdtemp(prefix=f"{media}-", dir=WORK))
-    decls = strip_checks(media_dir, dest)
-    v = V.open_vessel(str(root), str(dest))
+    decls = {}
+    for path in sorted((media_dir / "kinds").glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        decls[data["kind"]] = data
+    started = time.monotonic()
+    v = V.open_vessel(str(root), str(media_dir))
+    read_s = time.monotonic() - started
     exp = card["expected"]
     by_kind = collections.Counter(r.kind for r in v.all_records)
     no_id = collections.Counter(r.kind for r in v.all_records if r.id is None)
@@ -255,10 +259,16 @@ def probe(media: str, developer: pathlib.Path) -> dict:
     rec_cmp = {k: [by_kind.get(k, 0), n, by_kind.get(k, 0) == n] for k, n in exp["records"].items()}
     extra_kinds = sorted(set(by_kind) - set(exp["records"]))
     dang_cmp = {k: [dangling.get(k, 0), n, dangling.get(k, 0) == n] for k, n in exp["dangling"].items()}
-    t = tentative(v, decls)
-    chk_cmp = {k: [t.get(k), n, t.get(k) == n] for k, n in exp["checks"].items()}
-    return {
-        "media": media, "work_copy": str(dest),
+    started = time.monotonic()
+    result = C.run(v)
+    check_s = time.monotonic() - started
+    got = {c["id"]: c for c in result["list"]}
+    chk_cmp = {k: [got[k]["violations"] if k in got else None, n, k in got and got[k]["violations"] == n]
+               for k, n in exp["checks"].items()}
+    side = {k: {w: c.get(w) for w in ("unverifiable", "unresolved", "not_inspected", "failed") if c.get(w)}
+            for k, c in got.items()}
+    out = {
+        "media": media,
         "records_ok": all(x[2] for x in rec_cmp.values()) and not extra_kinds,
         "records": {k: x for k, x in rec_cmp.items() if not x[2]} or "全部合う",
         "records_total": sum(by_kind.values()), "extra_kinds": extra_kinds,
@@ -269,21 +279,31 @@ def probe(media: str, developer: pathlib.Path) -> dict:
         "blank_pointers": len(graph["blank"]), "ambiguous": len(graph["ambiguous"]),
         "cycles": len(graph["cycles"]), "units": sum(len(r.units) for r in v.all_records),
         "lint": lint(decls, fields_seen),
-        "checks_total": len(exp["checks"]),
-        "checks_tentative_ok": all(x[2] for x in chk_cmp.values()),
-        "checks_tentative": {k: x for k, x in chk_cmp.items() if not x[2]} or "全部合う",
+        "checks_total": result["total"], "checks_expected": len(exp["checks"]),
+        "checks_unknown": sorted(set(got) - set(exp["checks"])),
+        "checks_ok": all(x[2] for x in chk_cmp.values()),
+        "checks": {k: x for k, x in chk_cmp.items() if not x[2]} or "全部合う",
+        "checks_side": {k: s for k, s in side.items() if s},
+        "red": len(C.red(result)), "warn": result["warn"], "failed": result["failed"],
+        "seconds": {"read": round(read_s, 2), "checks": round(check_s, 2)},
     }
+    if tentative_too:
+        t = tentative(v, decls)
+        out["tentative_differs"] = {k: [t.get(k), got[k]["violations"]] for k in got
+                                    if t.get(k) != got[k]["violations"]}
+    return out
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("media", nargs="+")
     ap.add_argument("--developer", default=os.path.expanduser("~/Developer"))
+    ap.add_argument("--tentative", action="store_true", help="この台本の仮の数えも並べる（部品との食い違いを見る）")
     args = ap.parse_args(argv)
     rc = 0
     for media in args.media:
         try:
-            out = probe(media, pathlib.Path(args.developer))
+            out = probe(media, pathlib.Path(args.developer), args.tentative)
         except Exception as exc:  # 確かめの台本なので、止まった所を出す
             out = {"media": media, "error": f"{type(exc).__name__}: {exc}"}
             rc = 1
