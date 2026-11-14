@@ -27,8 +27,10 @@
 """
 from __future__ import annotations
 
+import csv
 import fnmatch
 import functools
+import io
 import json
 import os
 import tempfile
@@ -288,8 +290,8 @@ def adopt(source: str, to: str, *, plan: dict, by: str, at: str, decl: str | Non
             continue
         if not select(rel):
             continue
-        if rel.split("/")[0] == K.THTH:
-            reserved.append(rel)
+        if K.reserved_path(rel):
+            reserved.append(rel)   # どの段の .thth・.git も（NFC・小文字にそろえて比べる・段 6 の 6-4）
     if links:
         raise RegisterRefused("register_adopt_unusable", "symlink", links=links[:20], count=len(links))
     if reserved:
@@ -391,7 +393,7 @@ def restore(root: str, to: str, *, at_snapshot: str | None = None) -> dict:
 # ------------------------------------------------------------------ 変えた跡
 
 def _side(root: str, name: str, tmp: str, decl: str | None = None):
-    """`(目録, 器として読んだ台帳, 端の説明)`。`now` は今（段取りが残っていれば前の姿）。控えの名は控えた目録。
+    """`(目録, 器として読んだ台帳, 端の説明)`。`now` は今（段取りが残っていれば断る・段 6 の 6-5）。控えの名は控えた目録。
     台帳が git の作業木なら、控えの名でない名を commit として取り出す（段 5 §2.1）。`decl` は宣言の置き場
     （既定は台帳の `.thth/`。commit と今の端に当てる。控えの端は控えた時点の宣言で読む）。"""
     kind = T.side_kind(root, name)
@@ -399,17 +401,11 @@ def _side(root: str, name: str, tmp: str, decl: str | None = None):
         K.check_thth(root)
 
         def read():
-            # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。
+            # 目録と器の読みを、同じ世代の中で取る（読み始めた直後の入れ替えと混ぜない）。途中で止まった入れ替えが
+            # 残っていれば、「今」は前でも後でもないので断る（続けるか戻すかを先に。控えの名どうしの差は読める）。
+            K.refuse_if_pending(root)
             entries = K._view_once(root)
-            if K.pending(root) is None:
-                return entries, V.open_vessel(root, decl_base=decl)
-            into = tempfile.mkdtemp(prefix="now-", dir=tmp)
-            for e in entries:
-                K.put_file(into, e["path"], K.view_bytes(root, e), False)
-            if decl is None:
-                for e in K.decl_entries(root, store=False):
-                    K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
-            return entries, V.open_vessel(into, decl_base=decl)
+            return entries, V.open_vessel(root, decl_base=decl)
 
         entries, vessel = K.consistent(root, read)
         return entries, vessel, {"side": "now", "snapshot": None}
@@ -457,6 +453,8 @@ def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict
     if not isinstance(spec, str) or spec.count("..") != 1:
         raise RegisterRefused("register_args_invalid", "range")
     left, right = spec.split("..")
+    if "now" in (left, right or "now"):
+        K.refuse_if_pending(root)   # 「今」は、止まった入れ替えが残る間は前でも後でもない（段 6 の 6-5）
     if decl is not None:
         decl = os.path.abspath(os.path.expanduser(decl))
     with tempfile.TemporaryDirectory(prefix="thth-diff-") as tmp:
@@ -529,18 +527,28 @@ def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None,
         raise RegisterRefused("register_adopt_unusable", "bundle")
     if _inside(bundle, root) or _inside(root, bundle):
         raise RegisterRefused("register_adopt_unusable", "inside")
-    desired = {}
-    for rel, path, is_link in K.walk(bundle):
+    desired, reserved = {}, []
+    # 束の根の .thth も見せて断る（黙って読み飛ばさない）。.git のフォルダは束の作り手の物として辿らない。
+    for rel, path, is_link in K.walk(bundle, skip_thth=False):
+        if K.reserved_path(rel):
+            reserved.append(rel)   # 器が書かない道（.thth・.git。どの段でも・NFC と小文字にそろえて。段 6 の 6-4）
+            continue
         if is_link:
             raise RegisterRefused("register_adopt_unusable", "symlink", links=[rel])
         K.safe_rel(rel)
         desired[rel] = K.read_entry(path, rel)[1]
+    if reserved:
+        raise RegisterRefused("register_merge_refused", "reserved_path", paths=sorted(reserved)[:20],
+                              count=len(reserved))
     if not desired:
         raise RegisterRefused("register_adopt_unusable", "bundle_empty")
     if checked_by is None and not unchecked:
         raise RegisterRefused("register_merge_refused", "unchecked")
-    if checked_by is not None and checked_by.strip() == by.strip():
-        raise RegisterRefused("register_merge_refused", "same_person")
+    if checked_by is not None:
+        if not person_key(checked_by) or not person_key(by):
+            raise RegisterRefused("register_args_invalid", "checked_by")
+        if same_person(checked_by, by):
+            raise RegisterRefused("register_merge_refused", "same_person")
     plan = K.pending(root)
     if base is not None and plan is None:
         now = K.catalog_fp(K.view(root))
@@ -556,6 +564,21 @@ def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None,
     T.note(root, result.get("snapshot"), what="merge", by=by, at=at, checked_by=checked_by, bundle_fp=bundle_fp)
     return {**result, "bundle_files": len(desired), "bundle_fp": bundle_fp, "checked_by": checked_by or None,
             "unchecked": checked_by is None, "bound": bound}
+
+
+def person_key(name) -> str:
+    """集めた者と検めた者を比べるときだけの名前の形（段 6 の 6-2）: NFKC・小文字・空白とゼロ幅の字（書式の字）を
+    全部除く・末尾の `.` を除く。記録（取り込みの跡）には書かれたとおりの名前を残す。"""
+    if not isinstance(name, str):
+        return ""
+    text = unicodedata.normalize("NFKC", name).lower()
+    text = "".join(ch for ch in text if not ch.isspace() and unicodedata.category(ch) != "Cf")
+    return text.rstrip(".")
+
+
+def same_person(a, b) -> bool:
+    """そろえた形が同じなら同じ者（`Masaru`・`ｍａｓａｒｕ`・`ma saru`・`masaru.`・ゼロ幅の字つきは `masaru` と同じ）。"""
+    return person_key(a) == person_key(b)
 
 
 def _after_view(root: str, desired: dict, into: str) -> V.Vessel:
@@ -577,6 +600,7 @@ def _screen(root: str, desired: dict) -> None:
     paths = set(desired)
     with tempfile.TemporaryDirectory(prefix="thth-merge-") as tmp:
         after = _after_view(root, desired, tmp)
+        _screen_inspections(after, paths)
         bad = sorted({j["source"] for j in J.inspections(after)
                       if _source_path(after, j) in paths and J.conclusion_of(after, j)[0] == "bad"})
         if bad:
@@ -587,6 +611,63 @@ def _screen(root: str, desired: dict) -> None:
         overlap = sorted(dup_after - dup_before)
         if overlap:
             raise RegisterRefused("register_merge_refused", "id_overlap", records=overlap[:20])
+
+
+def _row_numbers(vessel: V.Vessel, path: str, kind_name: str) -> dict:
+    """表の行の番号（見出しを 1 行め。空の行も数える）: 行の版 → 番号の並び。"""
+    out = {}
+    try:
+        with open(os.path.join(vessel.root, *path.split("/")), "rb") as f:
+            data = f.read()
+        text = data[3:].decode("utf-8") if data.startswith(b"\xef\xbb\xbf") else data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return out
+    for number, raw in enumerate(V.split_csv_rows(text, vessel.kinds[kind_name].delimiter), start=1):
+        out.setdefault(V.bytes_version(raw.encode("utf-8")), []).append(number)
+    return out
+
+
+def _screen_inspections(after: V.Vessel, paths: set) -> None:
+    """束の中の、検収の記録を持つ表（`inspects` の宣言）の行は、1 行でも検収の記録として読めなければ束ごと断る
+    （`inspection_unreadable`・行の番号つき）。語が憲法に無い行も断る（`verdict_unknown`。大文字違い・前後の空白
+    つきは「無い語」）。段 6 の 6-3。"""
+    rows = [r for r in after.all_records
+            if r.path in paths and after.kinds[r.kind].inspects is not None]
+    if not rows:
+        return
+    report = J.inspection_report(after)
+    made = {j["source"]: j for j in report["judgments"]}
+    reasons = {s["source"]: s["reason"] for s in report["skipped"]}
+    reasons.update({u["source"]: u["reason"] for u in report["unversioned"]})
+    numbers, used = {}, {}
+    unreadable, unknown = [], []
+
+    def where(rec):
+        if rec.path not in numbers:
+            numbers[rec.path] = _row_numbers(after, rec.path, rec.kind)
+        got = numbers[rec.path].get(rec.version) or []
+        index = used.get((rec.path, rec.version), 0)
+        used[(rec.path, rec.version)] = index + 1
+        return got[index] if index < len(got) else None
+    for rec in rows:
+        line = where(rec)
+        if rec.id is None or rec.values is None:
+            unreadable.append({"path": rec.path, "line": line, "record": None,
+                               "reason": (rec.problems or ["id_form"])[0]})
+            continue
+        j = made.get(rec.ref)
+        if j is None:
+            unreadable.append({"path": rec.path, "line": line, "record": rec.ref,
+                               "reason": reasons.get(rec.ref, "not_read")})
+            continue
+        if J.conclusion_of(after, j)[0] is None:
+            unknown.append({"path": rec.path, "line": line, "record": rec.ref,
+                            "word": (j.get("answer") or {}).get("word")})
+    if unreadable:
+        raise RegisterRefused("register_merge_refused", "inspection_unreadable", rows=unreadable[:20],
+                              count=len(unreadable))
+    if unknown:
+        raise RegisterRefused("register_merge_refused", "verdict_unknown", rows=unknown[:20], count=len(unknown))
 
 
 def _source_path(vessel: V.Vessel, j: dict):
@@ -661,16 +742,34 @@ def _join_row(cells: list, eol: str, delimiter: str = ",") -> str:
     return delimiter.join(cells) + eol
 
 
+def split_mismatch(text: str, delimiter: str = ",") -> bool:
+    """器の行の分け方（`V.split_csv_rows`）と、Python の `csv` の部品の数え方（`V.csv_row_count`）が食い違うか
+    （段 6 の 6-1。読みの問題 `row_split_mismatch` と同じ比べ）。書いたあとの字（書く前は器の読みの印）に当てる。
+    `csv` の部品で読めない字も、食い違うとして扱う（書く口は書かない側に倒す）。"""
+    count = V.csv_row_count(text, delimiter)
+    return count is None or count != len(V.split_csv_rows(text, delimiter))
+
+
+def _records_by_csv(text: str, delimiter: str) -> int:
+    """`csv` の部品で読んだレコードの数（見出しと空の行を除く）。"""
+    rows = list(csv.reader(io.StringIO(text, newline=""), strict=False, delimiter=delimiter))
+    return sum(1 for row in rows[1:] if row)
+
+
 def _table(root: str, kind: V.Kind, rel: str):
+    K.safe_rel(rel)
     data = K.read_file(root, rel)
     bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
     try:
         text = data[len(bom):].decode("utf-8")
     except UnicodeDecodeError:
         raise RegisterRefused("register_write_unsafe", "not_utf8") from None
-    lines = V.split_csv_rows(text)
+    lines = V.split_csv_rows(text, kind.delimiter)
     if "".join(lines) != text or not lines:
         raise RegisterRefused("register_write_unsafe", "table_shape")
+    if any("row_split_mismatch" in r.problems for r in V._read_csv(rel, text, kind)):
+        # 器の分け方と csv の部品の数え方が食い違う表（器の読みの問題 row_split_mismatch）: 書かない。
+        raise RegisterRefused("register_write_unsafe", "row_split_mismatch", path=rel)
     return data, bom, lines
 
 
@@ -690,6 +789,11 @@ def _csv_kind(vessel: V.Vessel, name: str) -> V.Kind:
 def _write_table(root: str, rel: str, kind: V.Kind, before_text: str, new_lines: list, bom: bytes, *,
                  target_id: str, values: dict, adding: bool, by: str, at: str, what: str) -> dict:
     new_text = "".join(new_lines)
+    if split_mismatch(new_text, kind.delimiter):
+        raise RegisterRefused("register_write_unsafe", "row_split_mismatch", path=rel)
+    # レコードの数（csv の部品の数え方）: 直すなら同じ・足すなら 1 つ増える。違えば書かない（段 6 の 6-1）。
+    if _records_by_csv(new_text, kind.delimiter) != _records_by_csv(before_text, kind.delimiter) + (1 if adding else 0):
+        raise RegisterRefused("register_write_unsafe", "other_rows", path=rel)
     before = _rows(rel, before_text, kind)
     after = _rows(rel, new_text, kind)
     others_before = [r for r in before if r[0] != target_id]

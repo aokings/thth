@@ -61,6 +61,17 @@ ENTRIES = {
                 "fix": "行の番号（頭の id の欄）を英小文字・数字・_・.・- のまま写して打ち直してください。番号は thth register show <台帳> の左の列にあります。",
                 "command": _SHOW,
                 "better": "行の番号は店の名前と種類をつなげた形（shop-hours・special-2026-12-29 など）にすると、番号だけで中身が分かります。"},
+            "previous": {
+                "fix": "thth register published には、前に配った控えの頭を --previous <置き場> で渡すか、初めて回すときだけ"
+                       " --no-previous を付けて打ち直してください。頭が無いと、控えの行を消して頭も書き直した控えを見抜けません。",
+                "command": "thth register published <台帳> --outlet <出し口> --list <一覧> --previous <前に配った控えの頭>",
+                "better": "CI の手順で、緑のときの --publish の置き場を公開の場所に置き、次の回はそこから --previous に渡すと、"
+                          "控えの書き直しが CI で分かります。"},
+            "checked_by": {
+                "fix": "--by と --checked-by には、人か道具の名前を字で入れて打ち直してください（空白・点・見えない字だけの"
+                       "名前は、集めた者と検めた者を比べられません）。",
+                "command": "thth register merge <台帳> <束> --by <集めた者> --checked-by <検めた者>",
+                "better": "名前は大文字小文字・全角・空白・末尾の点をそろえて比べます。別の者には、字の違う名前を付けてください。"},
         }),
     "register_name_taken": _entry(
         "その名前の台帳の控えが既にあります。上書きすると、前の台帳の認めた記録と取り違えるので、書きませんでした。",
@@ -420,19 +431,26 @@ ENTRIES = {
     "register_write_unsafe": _entry(
         "表の 1 行を書くと、触っていない行のバイトが変わるか、書いた行が読み直せない形になります（1 行目の（）の語: "
         "other_rows・no_final_newline・unknown_field・id_field・id_exists・id_form・row_width・not_table・which_table・"
-        "table_shape・not_utf8）。表には何も書いていません。",
+        "table_shape・not_utf8・row_split_mismatch・path）。row_split_mismatch は、器の行の分け方と csv の読み方が"
+        "食い違う表（セルの途中に引用符が 1 つある行など）で、書くと器から見えない行を消しかねません。path は器が"
+        "書かない道（.thth・.git。大文字小文字違いも）。表には何も書いていません。",
         "語に合わせて直してください: 最後の行に改行が無い表は、元の道具で改行を足してから・欄の名前は表の見出しのとおりに・"
-        "番号の欄は直さずに新しい行として足す・番号が重なるなら別の番号で。",
+        "番号の欄は直さずに新しい行として足す・番号が重なるなら別の番号で・row_split_mismatch は元の道具でセルの"
+        "途中の引用符を \"\" にするかセルを引用符で包んでから。",
         "thth register links <台帳> <種類:番号>",
         "1 行ずつ直すより、束をまとめて入れる（thth register merge）ほうが、止まっても前か後のどちらかに決まります。"),
     "register_merge_refused": _entry(
         "この束は入れていません（1 行目の（）の語）。unchecked は検めた者が無い・unchecked_once は --unchecked を"
         "1 度だけ言った・same_person は集めた者と検めた者が同じ・verdict_refused は束の中に判定が断りの検収の行がある"
-        "（--json の rows）・id_overlap は束を入れると同じ番号の記録が 2 つになる（--json の records）。台帳には何も"
-        "書いていません。",
+        "（--json の rows）・id_overlap は束を入れると同じ番号の記録が 2 つになる（--json の records）・"
+        "inspection_unreadable は束の中の検収の表に、検収の記録として読めない行がある（--json の rows に表の道・"
+        "行の番号・わけ）・verdict_unknown は検収の行の語が憲法に無い（大文字違い・前後の空白も無い語）・"
+        "reserved_path は束が器の置き場（.thth・.git。大文字小文字違いも）の道を持つ。台帳には何も書いていません。",
         "語に合わせて直してください: 集めた者と別の者に束を検めてもらい --checked-by <名前> を付けて打ち直す。"
         "検めずに入れると決めたなら --unchecked を 2 度並べて言う（取り込みの跡に「検めていない」と残ります）。"
-        "断りの判定の行は、その行と、断られた記録の直しを束から外すか直してから。重なる番号は、別の番号にしてから。",
+        "断りの判定の行は、その行と、断られた記録の直しを束から外すか直してから。重なる番号は、別の番号にしてから。"
+        "読めない検収の行は、幅・指す先・番号を直すか束から外してから。憲法に無い語は、憲法の語に書き直すか、"
+        "憲法に語を足してから。器の置き場の道は束から外してから。",
         "thth register merge <台帳> <束> --by <集めた者> --checked-by <検めた者>",
         "検めの結果の表を同じ束に入れると、版を示す検収の行は取り込みと同時に新しい版への判断として結ばれ、"
         "頁から外れる間を作らずに済みます。"),
@@ -444,6 +462,9 @@ ENTRIES = {
         "打ち直してください（出し口ごとに audience・kinds・requires・fact・reservation を書きます）。kinds を"
         "種類ごとの設定（private_fields・inserts・hide）で書くのは読者の出し口だけ・欄の名前は英数字と _ だけ・"
         "dest は台帳の外の相対の道で、内の道具の出し口と読者の出し口で同じにしない（語の dest_shared）。"
+        "private_fields に書いた欄の名前は、その種類の記録のどれかに在ること（語の private_missing。見出しの空白・"
+        "大文字違いで黙って出さないように断ります）・dest は .thth・.git を含まず、内の出し口と読者の出し口で"
+        "入れ子にもしない・"
         "reader_fields（読者に見える欄）も読者の出し口だけ・頭の internal_words は字のままの語の並び（512 語・"
         "1 語 64 字まで・空と改行は不可）・published（出した URL の関門）の redirects は from・to・status（数）、"
         "gone は url と reason_kind（英数字の語）、redirect_status は数の並び、duplicate と redirect_with_page は"
