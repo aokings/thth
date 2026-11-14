@@ -569,6 +569,34 @@ def test_7_7_内の道具の出し口は読者に見える欄を持てない_巨
     assert RC.red(got) == []
 
 
+def test_7_7_載る記録は渡した集まりか最後の封の項目_封が無ければ全部(keyed):
+    led = _ledger(keyed, shops=SHOPS.replace("Gamma", "Gamma 社内メモ"))
+    assert red_of(led)[("site", "shop", "reader_internal_words")]["scope"] == "all"     # 封が無い: 全部を見る
+    got = RC.check(str(led), loaded={"site": {"shop:s1", "shop:s2"}})
+    assert RC.red(got) == [] and {c["scope"] for c in got if c["outlet"] == "site"} == {"given"}
+    assert next(c for c in got if c["outlet"] == "site" and c["kind"] == "shop")["not_when"] == 1
+    for ref in ("shop:s1", "shop:s2", "note:n1", "item:i1"):        # s3 は判断が無く、載らない
+        judge(led, ref, "may_publish@site")
+    accept(led, "site", keyed / "site")
+    got = RC.check(str(led))
+    assert RC.red(got) == [] and {c["scope"] for c in got if c["outlet"] == "site"} == {"seal"}
+    judge(led, "shop:s3", "may_publish@site")
+    accept(led, "site", keyed / "site", AT2)                       # 載ると赤
+    c = red_of(led)[("site", "shop", "reader_internal_words")]
+    assert c["scope"] == "seal" and c["records"][0]["record"] == "shop:s3"
+    # 内側の単位: 封に載った単位だけを見る
+    card = {"rows": [{"seed": "a", "role": "TODO", "memo": "x", "status": "ok"},
+                     {"seed": "b", "role": "fine", "memo": "y", "status": "ok"}]}
+    (led / "cards/c1.json").write_text(json.dumps(card, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    units = {u.key["seed"]: u.pointer for u in V.open_vessel(str(led)).get("card:c1").units}
+    R.judge(str(led), "card:c1", "card_ok", unit=units["b"], by="m", at=AT, conclusion="good")
+    accept(led, "cards", keyed / "cards")
+    assert ("cards", "card", "reader_internal_words") not in red_of(led)
+    R.judge(str(led), "card:c1", "card_ok", unit=units["a"], by="m", at=AT, conclusion="good")
+    accept(led, "cards", keyed / "cards", AT2)
+    assert red_of(led)[("cards", "card", "reader_internal_words")]["records"][0]["unit"] == units["a"]
+
+
 def test_どの命令も記録を付けない限り台帳に書かない(keyed, capsys):
     led = _sealed_two(keyed)
     now_list = ("/", "/a/", "/new/", "/日本/")

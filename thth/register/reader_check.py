@@ -12,8 +12,10 @@
 を拾う。番号は、前後が英数字か `_` でない所に字として現れた物（`hyp-12` は `hyp-123` の中では拾わない）。4 字より
 短い番号は拾わない（どこにでも当たる。拾わなかった数を `short_ids_skipped` に出す）。
 
-点検する記録は、読者の出し口の種類の記録の**全部**（封や判断で今載るかは見ない。狭い側へ倒す: 載らない記録に内部の語が
-あっても赤になる）。検査の部品（段 4・`checks.py`）の出力の 1 件と同じ形で返すので、本線が `check` の `checks.list`
+点検する記録（「載る記録」）は、出し口ごとに次の順で決める（出力の `scope`）:
+`given`（呼ぶ側が `loaded` で渡した集まり。`compute` の項目など）→ `seal`（その出し口の最後の封の項目。封の署名は
+確かめない。封の確かめは `verify` の仕事で、ここで封を偽っても狭まるのは点検だけ）→ `all`（封が無ければ、その種類の
+記録の全部。狭い側へ倒す）。検査の部品（段 4・`checks.py`）の出力の 1 件と同じ形で返すので、本線が `check` の `checks.list`
 へ足せば、`checks.red` がそのまま赤を選ぶ。台帳にも THTH の側にも書かない。網に出ない。
 """
 from __future__ import annotations
@@ -84,9 +86,28 @@ class _Out:
             self.out["more"] += 1
 
 
-def check(root: str, vessel: V.Vessel | None = None) -> list:
+def _sealed_refs(root: str, outlet: str):
+    """最後の封の項目の記録（内側の単位は `記録#指し先`）。封が無い・読めなければ None。"""
+    try:
+        seal = R.read_seal(root, outlet)
+    except Exception:          # noqa: BLE001 — 読めない封は「封なし」（全部を見る）に倒す
+        return None
+    if seal is None or seal["body"].get("outlet") != outlet:
+        return None
+    out = set()
+    for key in seal["body"]["items"]:
+        if isinstance(key, str):
+            record, unit, _as = R._parse_item_key(key)
+            out.add(record)
+            if unit:
+                out.add(f"{record}#{unit}")
+    return out
+
+
+def check(root: str, vessel: V.Vessel | None = None, *, loaded: dict | None = None) -> list:
     """読者に見える欄の点検。返すのは `checks.py` の出力の 1 件と同じ形の並び（出し口と種類と検査ごとに 1 件。
-    足した鍵は `outlet` と、番号の検査の `short_ids_skipped`）。`reader_fields` を書いた種類が無ければ空の並び。"""
+    足した鍵は `outlet`・`scope` と、番号の検査の `short_ids_skipped`）。`reader_fields` を書いた種類が無ければ空の並び。
+    `loaded` は `{出し口: 記録の番号（内側の単位は "種類:番号#指し先" も可）の集まり}`。"""
     vessel = vessel or V.open_vessel(root)
     outlets = R.load_outlets(root, vessel)
     words = R.internal_words(root, vessel)
@@ -104,6 +125,11 @@ def check(root: str, vessel: V.Vessel | None = None) -> list:
         outlet = outlets[name]
         if outlet.audience != "reader":
             continue
+        if loaded is not None and name in loaded:
+            scope, only = "given", set(loaded[name])
+        else:
+            only = _sealed_refs(root, name)
+            scope = "all" if only is None else "seal"
         for kind in outlet.kinds:
             fields = outlet.kind_conf(kind).reader
             if not fields:
@@ -112,15 +138,22 @@ def check(root: str, vessel: V.Vessel | None = None) -> list:
             n = _Out(name, kind, IDS_ID, f"読者に見える欄（{', '.join(fields)}）に、読者の出し口に載らない種類"
                                          f"（{', '.join(hidden) or 'なし'}）の番号が無い")
             n.out["short_ids_skipped"] = short
+            w.out["scope"] = n.out["scope"] = scope
             for rec in vessel.all_records:
                 if rec.kind != kind or rec.id is None:
+                    continue
+                if only is not None and rec.ref not in only:
+                    w.out["not_when"] += 1
+                    n.out["not_when"] += 1
                     continue
                 if rec.values is None:
                     w.out["not_inspected"] += 1
                     n.out["not_inspected"] += 1
                     continue
                 if outlet.level == "unit":
-                    targets = [(u.pointer, u.item) for u in rec.units]
+                    whole = only is None or not any(x.startswith(rec.ref + "#") for x in only)
+                    targets = [(u.pointer, u.item) for u in rec.units
+                               if whole or f"{rec.ref}#{u.pointer}" in only]
                 else:
                     targets = [(None, rec.values)]
                 for pointer, values in targets:
