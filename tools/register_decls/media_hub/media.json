@@ -29,7 +29,7 @@
   "N 欄のうち 2 つ以上: 「1 行 = 1 つの同じもの」（3 つのメディアの列のうち 2 つ以上が埋まる）は one_of の at_least_one・exactly_one では言えない（人の文だけの決まり。§6 の直しの外）"
  ],
  "stage9": {
-  "note": "段 9 の受け入れの札。include は目録 §1.1（段 2 の台本の範囲）と、宣言にある指標の台帳。readers は目録 §4",
+  "note": "段 9 の受け入れの札。include は目録 §1.1（段 2 の台本の範囲）と、宣言にある指標の台帳。readers は目録 §4。bundle は e5（2 枚の束）に使う枚（出し口の表が 1 枚だけなので、対応表の説明の md を足した）",
   "include": [
    "registry/concepts.csv",
    "registry/README.md",
@@ -89,6 +89,10 @@
      ]
     }
    }
+  ],
+  "bundle": [
+   "registry/concepts.csv",
+   "registry/README.md"
   ]
  }
 }

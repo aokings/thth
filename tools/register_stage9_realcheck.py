@@ -5,6 +5,14 @@
         [--developer /Volumes/NexDev/Developer] [--media <名前>] [--only a,b,c,d,e,f] [--json]
         [--replay <こぴちゃの再演の置き場>] [--previous-adopt <段 2 の前の result.json>]
 
+別の者が同じ結果を出す 1 行（8 メディア全部・(a)〜(f)・段 1〜3 の確かめ込み。時間の目安は約 15 分、
+2026-11-14 の通しで 14 分 35 秒。関東と MMR が各 4 分強・こぴちゃ 2.5 分・残りは各 1 分強まで）:
+
+    python3 tools/register_stage9_realcheck.py --work /Volumes/NexDev/Developer/thth-work/stage9 --replay /Volumes/NexDev/Developer/thth-work/stage9/replay_kopicha --previous-adopt ~/Documents/THTH/shadow/20261114-055641/result.json
+
+再演の置き場は `git archive <commit>^` と `git show <commit>:<道>` で作る（`register_adopt_realcheck.REPLAY_EXPORT`）。
+無ければ (c) の段 2 の再演が「比べられない」になる。
+
 指示 `docs/指示_台帳の器_段9_受け入れ_2026-11-14.md`。メディアの名前は台本に書かない。
 `tools/register_decls/*/media.json` を順に読み、札の `stage9`（範囲・読み手・事を起こす種類）と `outside`（器の外）を使う。
 影・試しの鍵・THTH の根・一時の置き場は、毎回新しい `<work>/run-<日時>/` の下だけに作る（前の回の物は消さない）。
@@ -335,6 +343,10 @@ def check_d(V, vessel, media: dict) -> dict:
 
 # ------------------------------------------------------------------ (e)
 
+class Cannot(Exception):
+    """メディアの形のために起こせない事（「通る」にしない）。"""
+
+
 class Events:
     def __init__(self, mods, root: pathlib.Path, reg: pathlib.Path, place: pathlib.Path, media: dict,
                  guard: Guard, folder: pathlib.Path):
@@ -586,7 +598,7 @@ class Events:
     def e5(self):
         files = self.bundle_files()
         if len(files) < 2:
-            return {"2 枚以上の束を作れる": False}, {"files": files}
+            raise Cannot(f"中を変えて足せる枚（csv・md）が 2 つ無い {files}")
         desired = {}
         for rel in files:
             data = (self.reg / rel).read_bytes()
@@ -655,7 +667,7 @@ class Events:
                          and (self.reg / next(r.path for r in v.all_records if r.kind == n)).read_bytes().endswith(b"\n")),
                         None)
             if kind is None:
-                return {"試しの行を足せる表がある": False}, {}
+                raise Cannot("試しの行を足せる表（id の欄を持ち、改行で終わる csv）が出し口に無い")
             sample = next(r for r in v.all_records if r.kind == kind.name and r.values)
             idf = kind.id_rule["field"]
             text = next(f for f in sample.values if f != idf)
@@ -717,6 +729,9 @@ class Events:
                 ok = all(checks.values())
                 self.out["events"][name] = {"ok": ok, "checks": checks, "detail": detail,
                                             "seconds": round(time.monotonic() - started, 1)}
+            except Cannot as exc:
+                self.out["events"][name] = {"ok": None, "cannot": str(exc)}
+                continue
             except Exception as exc:  # noqa: BLE001
                 code = getattr(exc, "code", None)
                 self.out["events"][name] = {"ok": False, "error": f"{type(exc).__name__}: {code or ''} "
@@ -727,10 +742,17 @@ class Events:
                 fails.append(f"{name} {bad or self.out['events'][name].get('error')}")
         self.out["guard"] = self.guard.log
         skipped = [x for x in ("e1", "e2", "e3", "e4", "e5", "e6", "e7") if x not in EVENTS]
+        cannot = [x for x, ev in self.out["events"].items() if ev.get("ok") is None]
+        self.out["event_states"] = {x: ("未確認（打っていない）" if x not in self.out["events"] else
+                                        "起こせない" if self.out["events"][x]["ok"] is None else
+                                        "通る" if self.out["events"][x]["ok"] else "通らない")
+                                    for x in ("e1", "e2", "e3", "e4", "e5", "e6", "e7")}
         if fails:
             self.out["verdict"] = verdict("fail", "・".join(fails)[:400], cause="?")
-        elif skipped:
-            self.out["verdict"] = verdict("unconfirmed", f"{'・'.join(EVENTS)} は期待のとおり。{'・'.join(skipped)} は打っていない")
+        elif skipped or cannot:
+            self.out["verdict"] = verdict("unconfirmed", "期待のとおり: " + "・".join(x for x in EVENTS if x not in cannot)
+                                       + (f"。起こせない: {'・'.join(cannot)}" if cannot else "")
+                                       + (f"。打っていない: {'・'.join(skipped)}" if skipped else ""))
         else:
             self.out["verdict"] = verdict("pass", "e1〜e7 がどれも期待のとおり・元の repo は事ごとに同じ")
         return self.out
@@ -840,7 +862,7 @@ def say(results: list, s13) -> None:
                     print(f"      選び方: {r['picked'].get('rule')}・{r.get('outlets_from')}")
                 for name, ev in r.get("events", {}).items():
                     bad = [k for k, val in ev.get("checks", {}).items() if not val]
-                    print(f"      {name} {'期待のとおり' if ev['ok'] else '違う'}"
+                    print(f"      {name} {'起こせない ' + ev['cannot'] if ev['ok'] is None else '期待のとおり' if ev['ok'] else '違う'}"
                           + (f" {bad}" if bad else "") + (f" {ev['error']}" if ev.get("error") else ""))
     if s13:
         print("\n段 1〜3 の実物の確かめ（この回の置き場で打った）:")
