@@ -1,6 +1,8 @@
-"""`thth leave` で台帳の控えと認めた記録も消える（計画 実店舗 §2 の 6・段 1）。
+"""口座の `thth account leave` は、台帳の控えと認めた記録に触れない（台帳の器 段 8・設計 §6 の表）。
 
-その project の**最後の口座**が抜けるときだけ消す。台帳のフォルダ（持ち主の物）は消さない。網には出ない。
+5.19.0（計画 実店舗 §2 の 6・段 1）は、その project の**最後の口座**が抜けるとき控えと記録も消していた。段 8 で
+「口座を外しても、台帳には触れない。控えを外すのはメディアを外すとき（`thth project leave`）」に変えた（リリースノートと
+privacy に書く）。台帳のフォルダ（持ち主の物）は、どちらでも消さない。網には出ない。
 """
 from __future__ import annotations
 
@@ -23,17 +25,18 @@ def _register(name, project, tmp):
     return folder, [pathlib.Path(ledger.state_dir_for(name)), pathlib.Path(ledger.path_for(name))]
 
 
-def test_柵_最後の口座の退出で台帳の控えと記録が消え台帳のフォルダは残る(env, worker, tmp_path):
-    folder, gone = _register("alpha-store", "alpha", tmp_path)
+def test_柵_最後の口座の退出でも台帳の控えと記録と台帳のフォルダは残る(env, worker, tmp_path):
+    # 段 8 で書き直した（前は「最後の口座の退出で台帳の控えと記録が消え」を見ていた）。
+    folder, own = _register("alpha-store", "alpha", tmp_path)
     other_folder, kept = _register("beta-store", "beta", tmp_path)
-    assert all(p.exists() for p in gone + kept)
+    assert all(p.exists() for p in own + kept)
     result = leave.run("alpha", by="operator")
     assert result["phase"] == "completed"
-    assert not any(p.exists() for p in gone)
-    assert all(p.exists() for p in kept)
+    assert all(p.exists() for p in own + kept)
+    assert ledger.read_confirmed("alpha-store") == {"a": {"digest": "x", "at": "t", "by": "m"}}
     assert (folder / "行.md").exists() and (other_folder / "行.md").exists()
     events, _ = admin_log.read(account="alpha-store", event=ACTION_PREFIX + "removed")
-    assert len(events) == 1 and events[0]["by"] == "operator"
+    assert events == []
     assert leave.run("alpha", by="operator") == result
 
 

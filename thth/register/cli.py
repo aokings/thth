@@ -2,6 +2,8 @@
 
     thth register add <台帳> --path <フォルダ> --project <project> --kind media|store --by <名前>
                                        台帳のフォルダを THTH に控える（控えは 0600・台帳そのものは預からない）
+    thth register add <台帳> --path <フォルダ> --common --by <名前>
+                                       共通の台帳（持ち主に 1 つ）。備え付けの種類の宣言を .thth/kinds/ に写す（段 8）
     thth register check <台帳> [--json]
                                        全部の行の形を点検する（頭の 7 つの欄・印・見直し日・秘密らしい値・種類ごとの形）
     thth register kinds <台帳> [--json]
@@ -149,21 +151,77 @@ def _row_line(row: form.Row) -> list:
 
 # ------------------------------------------------------------------ 命令
 
+BUILTIN_KINDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "builtin_kinds")
+BUILTIN_KINDS = ("correspondence", "operator", "account")
+
+
+def _builtin_targets(root: str) -> list:
+    """共通の台帳に写す備え付けの種類の宣言の `(写し元, 写し先)`。`.thth`・`.thth/kinds` が symlink なら断り、
+    同じ名前の宣言がもうあれば上書きせずに断る（何も書かない）。"""
+    base = os.path.join(root, vessel.DECL_DIR)
+    kinds_dir = os.path.join(base, vessel.KINDS_DIR)
+    for place in (base, kinds_dir):
+        if os.path.islink(place) or (os.path.lexists(place) and not os.path.isdir(place)):
+            raise RegisterRefused("register_path_unusable", "kinds_dir")
+    out = []
+    for kind in BUILTIN_KINDS:
+        target = os.path.join(kinds_dir, f"{kind}.json")
+        if os.path.lexists(target):
+            raise RegisterRefused("register_builtin_kind_exists", kind)
+        out.append((os.path.join(BUILTIN_KINDS_DIR, f"{kind}.json"), target))
+    return out
+
+
+def _install_builtin(targets: list) -> list:
+    """備え付けの種類の宣言を写す（O_EXCL・symlink を追わない・0644）。写した種類の名前。"""
+    done = []
+    for source, target in targets:
+        with open(source, "rb") as f:
+            raw = f.read()
+        os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+        done.append(os.path.basename(target)[:-5])
+    return done
+
+
 def cmd_add(args) -> int:
     by = _by(args)
     name = ledger.check_name(args.register)
-    if not isinstance(args.project, str) or not ledger.accounts.name_is_safe(args.project):
+    common = bool(getattr(args, "common", False))
+    # 共通の台帳（台帳の器 段 8）: --project を省けば台帳の名前を project に置く（`project leave` は role で外す）。
+    project = args.project if args.project is not None or not common else name
+    kind = args.kind if args.kind is not None or not common else "media"
+    if not isinstance(project, str) or not ledger.accounts.name_is_safe(project):
         raise RegisterRefused("register_args_invalid", "project")
+    if kind not in ledger.KINDS:
+        raise RegisterRefused("register_args_invalid", "kind")
     path = ledger.check_outside_thth(ledger.check_path(args.path))
+    targets = []
+    if common:
+        others = ledger.common_names()
+        if others:
+            raise RegisterRefused("register_common_exists", others[0])
+        targets = _builtin_targets(path)
     _log_ready()
-    written = ledger.write_new(name, ledger.build(name, project=args.project, path=path, kind=args.kind))
-    _record("added", name, by, {"project": [None, args.project], "kind": [None, args.kind]})
+    written = ledger.write_new(name, ledger.build(name, project=project, path=path, kind=kind, common=common))
+    installed = _install_builtin(targets) if common else []
+    diff = {"project": [None, project], "kind": [None, kind]}
+    if common:
+        diff.update(role=[None, ledger.COMMON], builtin_kinds=[[], installed])
+    _record("added", name, by, diff)
     scanned = form.scan(path)
     value = {"register": name, "ledger": written, "rows": len(scanned["rows"]), "problems": len(scanned["problems"])}
+    if common:
+        value.update(role=ledger.COMMON, builtin_kinds=installed)
     if args.json:
         _print(value)
         return 0
     print(f"台帳 {name} を控えました（{written}）。行 {value['rows']} 枚・形の問題 {value['problems']} 件")
+    if common:
+        print(f"  共通の台帳です（持ち主に 1 つ）。備え付けの種類 {'・'.join(installed)} の宣言を "
+              f"{vessel.DECL_DIR}/{vessel.KINDS_DIR}/ に写しました")
     print(f"  次: thth {COMMAND} check {name} で形を点検します")
     return 0
 
@@ -663,29 +721,8 @@ def cmd_links(args) -> int:
 
 # ------------------------------------------------------------------ 退出
 
-def purge_for_leave(account: str, project, *, by: str) -> list:
-    """その project の最後の口座が抜けるとき、その project の台帳の控えと記録を消す（台帳のフォルダは消さない）。"""
-    from .. import accounts
-    if not accounts.name_is_safe(project or ""):
-        return []
-    names = ledger.of_project(project)
-    if not names:
-        return []
-    for other in accounts.list_account_names():
-        if other == account:
-            continue
-        try:
-            if accounts.load_account(other).get("project") == project:
-                return []
-        except accounts.AccountError:
-            return []
-    removed = []
-    for name in names:
-        done = remove_state(name)
-        admin_log.append(ACTION_PREFIX + "removed", name, {"media": "register"}, by=by,
-                         diff={"deleted": [[], done], "via": [None, "leave"]})
-        removed.append(name)
-    return removed
+# 口座の `thth account leave` は、その project の最後の口座でも台帳の控えに触れない（台帳の器 段 8・設計 §6 の表）。
+# 控えを外すのは `thth project leave <メディア>`・`thth owner leave`（`owner.py`）。5.19.0 の `purge_for_leave` は除いた。
 
 
 # ------------------------------------------------------------------ parser
@@ -699,11 +736,13 @@ def register(sub) -> None:
                             formatter_class=argparse.RawDescriptionHelpFormatter)
     verbs = parent.add_subparsers(dest="register_command", required=True)
 
-    p = verbs.add_parser("add", help="台帳のフォルダを控える")
+    p = verbs.add_parser("add", help="台帳のフォルダを控える（--common で共通の台帳）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("--path", required=True, metavar="フォルダ")
-    p.add_argument("--project", required=True)
-    p.add_argument("--kind", required=True, choices=ledger.KINDS)
+    p.add_argument("--project", default=None, help="メディア（--common のときは省ける）")
+    p.add_argument("--kind", default=None, choices=ledger.KINDS, help="--common のときは省ける（既定 media）")
+    p.add_argument("--common", action="store_true",
+                   help="共通の台帳にする（持ち主に 1 つ・備え付けの種類 correspondence・operator・account を写す）")
     p.add_argument("--by", required=True)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_run(cmd_add))
