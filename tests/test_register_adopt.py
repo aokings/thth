@@ -208,6 +208,12 @@ MEDIA = {"kopicha": _kopicha, "nigami": _nigami, "sometokagaku": _sometokagaku, 
          "kanto": _kanto, "media_hub": _hub}
 
 
+# 見本ごとの範囲の中の枚の数（見本の元の枚の数から、範囲の外と名指しした枚を引いた数。選び方と別に数えた物）。
+IN_SCOPE = {"kopicha": 15, "nigami": 7, "sometokagaku": 8, "jiangshi": 6, "mmr": 10, "kanto": 9, "media_hub": 5}
+LARGE_KINDS = {"kanto": [{"schema": "thth.kind/1", "kind": "school_record", "place": "kanto_type/school_records/[0-9]*.json",
+                          "format": "json", "id": {"name": True}, "max_bytes": 400000}]}
+
+
 def build(env, name):
     src = env["tmp"] / f"src-{name}"
     include, exclude, outside = MEDIA[name](src)
@@ -220,10 +226,22 @@ def build(env, name):
 @pytest.mark.parametrize("name", sorted(MEDIA))
 def test_試験2a_7つ全部で取り込み戻すと数と名前とsha256が全部同じで元には書かない(capsys, env, name):
     src, plan, outside = build(env, name)
-    expected = A.source_catalog(str(src), A.read_plan(str(plan)))
+    # 期待は器の選び方を使わずに作る: 元の全部の枚（pathlib で歩く）から、見本が範囲の外と名指しした枚を除いた物。
+    # 数は見本ごとに決めた数と比べる（範囲の中の欠けも、範囲の外の混入も、ここと台帳の差で見つかる）。
+    names = sorted(p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file() and not p.is_symlink())
+    assert set(outside) <= set(names)
+    want = sorted(set(names) - set(outside))
+    assert len(want) == IN_SCOPE[name]
+    expected = [K.read_entry(str(src / rel), rel)[0] for rel in want]
     before = stat_all(src)
     reg = env["tmp"] / "reg"
-    rc_, value, err = jrun(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan), "--by", "m")
+    decl = []
+    if name in LARGE_KINDS:  # 64 KB を超える枚は、種類の宣言で上限を言う（無ければ断る・下の試験）
+        for kind in LARGE_KINDS[name]:
+            write(env["tmp"] / "decl" / "kinds" / f"{kind['kind']}.json", json.dumps(kind))
+        decl = ["--decl", str(env["tmp"] / "decl")]
+    rc_, value, err = jrun(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan), *decl,
+                           "--by", "m")
     assert rc_ == 0, err
     assert stat_all(src) == before                        # 元には 1 バイトも書かない（範囲の外も・時刻も）
     assert value["same"] and value["fp"] == K.catalog_fp(expected) and not value["source_moved"]
@@ -232,7 +250,8 @@ def test_試験2a_7つ全部で取り込み戻すと数と名前とsha256が全�
     assert rc_ == 0, err
     assert restored["fp"] == value["source_fp"]
     got = K.dir_catalog(str(out))
-    assert len(got) == len(expected) and [e["path"] for e in got] == [e["path"] for e in expected]
+    assert [e["path"] for e in K.dir_catalog(str(reg))] == want          # 台帳: 欠けも余分も無い
+    assert len(got) == len(expected) and [e["path"] for e in got] == want  # 戻した物: 欠けも余分も無い
     assert [e["sha256"] for e in got] == [e["sha256"] for e in expected]
     assert [e["x"] for e in got] == [e["x"] for e in expected]
     for rel in outside:                                    # 範囲の外は入れない（レーンの答え）
@@ -275,22 +294,42 @@ def test_試験2a_gitの外のファイルも取り込み_gitの物は入れな�
 
 def test_試験2a_64KBを超える枚は宣言が無ければ断り宣言があれば通る(capsys, env):
     src, plan, _ = build(env, "kanto")
+    assert (src / "kanto_type/school_records/900.json").stat().st_size > 64 * 1024
     reg = env["tmp"] / "reg"
-    assert run(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan), "--by", "m")[0] == 0
-    assert (reg / "kanto_type/school_records/900.json").stat().st_size > 64 * 1024
+    # 宣言が無い: 取り込みの時点で断る（黙って切らない・何も書かない）。
+    rc_, value, _ = jrun(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan), "--by", "m")
+    assert rc_ != 0 and value["code"] == "register_adopt_unusable" and value["detail"] == "too_large"
+    assert value["files"] == [{"path": "kanto_type/school_records/900.json",
+                               "size": (src / "kanto_type/school_records/900.json").stat().st_size,
+                               "kind": None, "max_bytes": 64 * 1024}]
+    assert not reg.exists() or not any(reg.iterdir())
+    # 種類の宣言はあるが上限を書いていない: 種類の既定（64 KB）で断る。
     kind = {"schema": "thth.kind/1", "kind": "school_record", "place": "kanto_type/school_records/[0-9]*.json",
             "format": "json", "id": {"name": True}}
-    write(reg / ".thth/kinds/school_record.json", json.dumps(kind))
+    decl = env["tmp"] / "decl"
+    write(decl / "kinds/school_record.json", json.dumps(kind))
+    rc_, value, _ = jrun(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan),
+                         "--decl", str(decl), "--by", "m")
+    assert rc_ != 0 and value["detail"] == "too_large" and value["files"][0]["kind"] == "school_record"
+    assert not reg.exists() or not any(reg.iterdir())
+    # 宣言に上限を書けば通り、バイトのまま入る。
+    write(decl / "kinds/school_record.json", json.dumps(dict(kind, max_bytes=400000)))
+    rc_, value, err = jrun(capsys, "register", "adopt", str(src), "--to", str(reg), "--plan", str(plan),
+                           "--decl", str(decl), "--by", "m")
+    assert rc_ == 0, err
+    assert value["same"]
+    assert sha_of(reg / "kanto_type/school_records/900.json") == sha_of(src / "kanto_type/school_records/900.json")
     rc_, _out, err = run(capsys, "register", "add", "kanto", "--path", str(reg), "--project", "sample", "--kind",
                          "media", "--by", "m")
     assert rc_ == 0, err
-    rc_, value, _ = jrun(capsys, "register", "check", "kanto")
-    assert rc_ != 0 and value["code"] == "register_record_invalid"
-    assert any(w.startswith("too_large") for p in value["problems"] for w in p["words"])
-    write(reg / ".thth/kinds/school_record.json", json.dumps(dict(kind, max_bytes=400000)))
     rc_, value, err = jrun(capsys, "register", "check", "kanto")
     assert rc_ == 0, err
     assert value["records"]["school_record"] == 2
+    # あとで宣言から上限を外すと、読み手（check）も上限を超えた枚を断る。
+    write(reg / ".thth/kinds/school_record.json", json.dumps(kind))
+    rc_, value, _ = jrun(capsys, "register", "check", "kanto")
+    assert rc_ != 0 and value["code"] == "register_record_invalid"
+    assert any(w.startswith("too_large") for p in value["problems"] for w in p["words"])
 
 
 def test_試験2a_取り込み直しは片道で変わった物と消えた物だけを入れ替え前の版は控えに残る(capsys, env):

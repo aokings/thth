@@ -8,8 +8,9 @@
 
 - (a) 7 つとも、取り込み → 戻す → 数・名前・sha256 が全部同じ。元の範囲の物の sha256 と変えた時刻が、前と後で同じ
   （元に書いていない）。範囲は目録 7 枚の §1 とレーンの答え。
-- 範囲: 目録の数（`EXPECTED`）と、元を glob で数え直した数を比べ、見つかった枚が全部台帳に入ったかを見る
-  （範囲の JSON の選び方を使わずに確かめる）。
+- 範囲: 目録の数（`EXPECTED`）と、元を glob で数え直した数を比べ、glob で見つかった枚の和と台帳の枚を比べる
+  （範囲の中の欠けと、範囲の外の混入の両方。範囲の JSON の選び方を使わずに確かめる）。(a) の往復の比べも、
+  戻した物をこの一覧と元のバイトの sha256 に比べる。
 - (b) こぴちゃの 8ead0fc と 3398d6d28 の再演（`--replay <フォルダ>` に、各 commit の親の木と後の 3 枚を置く）:
   親の木を取り込んでから 3 枚を当て、3 枚だけが変わり、外れた判断が期待の集合と等しいかを見る。`--replay` が無いときは、代わりに表を読んで
   書き戻す道と YAML の 1 枚で確かめる（`b_substitute`。再演ではない）。関東の年度の置き換え
@@ -27,6 +28,7 @@ import argparse
 import collections
 import csv
 import datetime
+import hashlib
 import io
 import json
 import os
@@ -100,17 +102,21 @@ EXPECTED = {
         ("data/knowledge/staging/*/verify_input_t.csv", 77, "§5 検めに渡した中身 T"),
         ("data/knowledge/staging/*/central.csv", 226, "§5 中央の判断"),
         ("data/knowledge/staging/*/.merged", 215, "§5 束の取り込みの印"),
-        ("docs/knowledge/*_結果_*.md", None, "§5 結果の書（10 枚ほど・名前だけ）")]},
+        ("docs/knowledge/*_結果_*.md", None, "§5 結果の書（10 枚ほど・名前だけ）"),
+        ("data/sister-links.csv", 1, "期待する答え §3 (a)・問い 3"), ("data/article-links.csv", 1, "問い 3"),
+        ("data/hatena/bookmark-list.csv", 1, "問い 3")]},
     "nigami": {"source": "docs/目録_台帳の器_にがみラボ_2026-11-13.md", "groups": [
         ("data/*.csv", 33, "§1.1"), ("data/questions/**/*", 174, "§1.2"), ("data/i18n/en/*.csv", 4, "期待する答え §3 (a)"),
         ("schema/*", 2, "期待する答え §3 (a)"),
         ("data/staging/**/VERIFY.md", 109, "§5 束の検め"), ("data/staging/**/verify.json", 8, "§5 ほかの検め"),
         ("data/staging/**/verify_r*.json", 2, "§5 ほかの検め"), ("data/staging/**/AUDIT.md", 3, "§5 ほかの検め"),
-        ("data/staging/**/*.merged", 2, "§5 束の取り込みの印")]},
+        ("data/staging/**/*.merged", 2, "§5 束の取り込みの印")],
+        "skip_parts": ["node_modules"]},
     "sometokagaku": {"source": "docs/目録_台帳の器_染めと化学_2026-11-13.md", "groups": [
         ("data/*.csv", 8, "§1.1"), ("site/src/content/articles/*.md", 33, "§1.2"),
         ("site/src/content/pillars/*.md", 8, "§1.2"), ("site/src/content/pillars-en/*.md", 8, "§1.2"),
         ("site/src/lib/entity-page-rules.ts", 1, "§1.2"), ("site/owner-read.txt", 1, "§1.2・§5"),
+        ("site/photos.yaml", 1, "§1.2"),
         ("staging/*/verify.json", 83, "§5 独立の検証"), ("staging/*/recheck.json", 82, "§5 3 度目の読み"),
         ("staging/*/.merged", 18, "§5 取り込みの印"), ("docs/original-check-log.md", 1, "§5 原文確認の記録")]},
     "jiangshi": {"source": "docs/目録_台帳の器_キョンシーラボ_2026-11-13.md", "groups": [
@@ -122,7 +128,9 @@ EXPECTED = {
         ("data/*.csv", 15, "§0・§1.1"), ("queue.json", 1, "§1.1"), ("ledger.json", 1, "§1.1"),
         ("content/index.yaml", 1, "§1.1"), ("site/src/credits/*.json", 789, "§1.1"),
         ("site/src/credit-versions/versions.json", 1, "§1.1"), ("lab.yaml", 1, "§1.1"),
-        ("content/reviews/**/*", 414, "§5 記事の監査"), ("staging/credits/judg/*", 794, "§5 照合台帳の判定")]},
+        ("content/reviews/**/*", 414, "§5 記事の監査"), ("staging/credits/judg/*", 794, "§5 照合台帳の判定"),
+        ("content/**/*", None, "§1.1 記事の本文ほか（全部の数は目録に無い）"),
+        ("data/dossiers/**/*", None, "§1.1 調べの書（数は目録に無い）")]},
     "kanto": {"source": "docs/目録_台帳の器_関東_2026-11-13.md", "groups": [
         ("kanto_type/admission_results/[0-9]*.json", 265, "§1.1"), ("kanto_type/school_records/[0-9]*.json", 265, "§1.1"),
         ("kanto_type/school_master/[0-9]*.json", 265, "§1.1"), ("kanto_type/events/[0-9]*.json", 264, "§1.1"),
@@ -133,26 +141,57 @@ EXPECTED = {
         ("kanto_type/admission_results/_audit_2025/*", 265, "§5 入試結果の監査（2025 年度）"),
         ("kanto_type/admission_results/_audit_2024/*", 207, "§5 入試結果の監査（2024 年度）"),
         ("kanto_type/human_review_ledger.csv", 1, "§5 型の人の検収"),
-        ("kanto_type/events/_patrol_verified.json", 1, "§5 巡回の印")]},
+        ("kanto_type/events/_patrol_verified.json", 1, "§5 巡回の印"),
+        ("kanto_type/*/[0-9]*.json", None, "§1.1 面ごとの 1 校 1 枚（上の 5 つの面のほかも）"),
+        ("kanto_type/submission_docs/2027/[0-9]*.json", None, "§1.1"),
+        ("kanto_type/school_master/_targets.csv", 1, "§1.1"), ("kanto_type/hensachi/school_hensachi.csv", 1, "§1.1"),
+        ("kanto_type/admission_results.csv", 1, "§1.1"), ("kanto_type/admission_results_summary.csv", 1, "§1.1"),
+        ("kanto_type/school_master.csv", 1, "§1.1"), ("kanto_type/features_school_subject.csv", 1, "§1.1"),
+        ("kanto_type/types_school_subject.csv", 1, "§1.1"), ("kanto_type/high_school_admissions.csv", 1, "§1.1"),
+        ("kanto_type/shinro_disclosure.csv", 1, "§1.1"), ("kanto_type/round_alias.csv", 1, "§1.1"),
+        ("results/kanto_type/full/*.csv", None, "§1.1 結合した表")]},
     "media_hub": {"source": "docs/目録_台帳の器_media-hub_2026-11-13.md", "groups": [
         ("registry/concepts.csv", 1, "§1.1"), ("registry/README.md", 1, "§1.1"), ("media.yaml", 1, "期待する答え §3 (a)")]},
 }
 
 
-def scope_check(name: str, source: str, register: str) -> dict:
-    """目録の数と、範囲に入れた物を、器の選び方と別に比べる。"""
+def _glob(source: str, pattern: str, skip_parts=()) -> list:
     import glob as globmod
+    out = []
+    for p in globmod.glob(pattern, root_dir=source, recursive=True, include_hidden=True):
+        rel = p.replace(os.sep, "/")
+        path = os.path.join(source, p)
+        if os.path.isfile(path) and not os.path.islink(path) and not set(rel.split("/")) & set(skip_parts):
+            out.append(rel)
+    return sorted(out)
+
+
+def expected_files(name: str, source: str) -> list:
+    """範囲に入るはずの枚の名前の一覧。範囲の JSON（PLANS）と器の選び方を使わず、目録の型（EXPECTED）で元を glob した物の和。"""
+    skip = EXPECTED[name].get("skip_parts", ())
+    found = set()
+    for pattern, _count, _where in EXPECTED[name]["groups"]:
+        found.update(_glob(source, pattern, skip))
+    return sorted(found)
+
+
+def scope_check(name: str, source: str, register: str) -> dict:
+    """目録の数と、範囲に入れた物を、器の選び方と別に比べる。範囲の中の欠け（missing）と、範囲の外の混入（extra・
+    目録の型のどれにも当たらない台帳の枚）の両方を見る。"""
     inside = {e["path"] for e in K.dir_catalog(register)}
-    groups, missing_total = [], 0
+    skip = EXPECTED[name].get("skip_parts", ())
+    groups = []
     for pattern, expected, where in EXPECTED[name]["groups"]:
-        found = sorted(p for p in globmod.glob(pattern, root_dir=source, recursive=True, include_hidden=True)
-                       if os.path.isfile(os.path.join(source, p)) and not os.path.islink(os.path.join(source, p)))
-        missing = [p for p in found if p.replace(os.sep, "/") not in inside]
-        missing_total += len(missing)
+        found = _glob(source, pattern, skip)
+        missing = [p for p in found if p not in inside]
         groups.append({"glob": pattern, "where": where, "inventory": expected, "now": len(found),
                        "moved": None if expected is None else len(found) - expected,
                        "not_adopted": len(missing), "not_adopted_head": missing[:3]})
-    return {"inventory": EXPECTED[name]["source"], "groups": groups, "all_adopted": missing_total == 0}
+    want = set(expected_files(name, source))
+    missing, extra = sorted(want - inside), sorted(inside - want)
+    return {"inventory": EXPECTED[name]["source"], "groups": groups, "expected": len(want), "register": len(inside),
+            "missing": missing[:20], "missing_count": len(missing), "extra": extra[:20], "extra_count": len(extra),
+            "all_adopted": not missing and not extra}
 
 
 def write_decl(base: pathlib.Path, kinds: list) -> str:
@@ -167,6 +206,29 @@ def mtimes(source: str, plan: dict) -> dict:
     return {rel: os.stat(path).st_mtime_ns for rel, path, _l in K.walk(source, A.tops(plan)) if select(rel)}
 
 
+def _place_of(rel: str) -> str:
+    """種類の宣言の place に書ける字（英数と `_.-/`）だけの型。ほかの字は 1 字の `?` にする。"""
+    return "".join(c if (c.isascii() and (c.isalnum() or c in "_.-/")) else "?" for c in rel)
+
+
+def large_decl(base: pathlib.Path, source: str, plan: dict, kinds: list) -> tuple:
+    """取り込みは、どの種類の宣言にも当たらない 64 KB を超える枚を断る（期待する答え §3 (a)）。実物の確かめでは、
+    そういう枚を名指しした種類（中身を読まない bytes・フォルダごとに 1 つ）を、メディアの宣言に足して取り込む。
+    レーンが本当の種類を書くまでの代わり。返すのは `(宣言の置き場, 足した枚の数)`。"""
+    probe = write_decl(base / "probe", kinds)
+    declared = V.load_declarations(source, probe)["kinds"].values()
+    groups = {}
+    for e in A.source_catalog(source, plan):
+        if e["size"] > V.FILE_MAX_DEFAULT and not any(V._matches(k, e["path"]) for k in declared):
+            groups.setdefault(os.path.dirname(e["path"]), []).append(e)
+    extra = []
+    for i, (_folder, entries) in enumerate(sorted(groups.items()), 1):
+        extra.append({"schema": "thth.kind/1", "kind": f"large_{i}", "place": [_place_of(e["path"]) for e in entries],
+                      "format": "bytes", "id": {"name": True},
+                      "max_bytes": min(V.TABLE_MAX_DEFAULT, max(e["size"] for e in entries))})
+    return write_decl(base / "decl", kinds + extra), sum(len(v) for v in groups.values())
+
+
 def roundtrip(name: str, source: str, plan: dict, place: pathlib.Path, decl: str | None = None) -> dict:
     before = A.source_catalog(source, plan)
     times = mtimes(source, plan)
@@ -174,8 +236,10 @@ def roundtrip(name: str, source: str, plan: dict, place: pathlib.Path, decl: str
     restored = A.restore(str(place / "register"), str(place / "restored"))
     got = K.dir_catalog(str(place / "restored"))
     after = A.source_catalog(source, plan)
-    exp = {e["path"]: e["sha256"] for e in before}
     out = {e["path"]: e["sha256"] for e in got}
+    # 比べる相手は、器の選び方と別に作った名前の一覧（目録の型で glob）と、元のバイトから計った sha256。
+    exp = {rel: hashlib.sha256((pathlib.Path(source) / rel).read_bytes()).hexdigest()
+           for rel in expected_files(name, source)}
     endings = collections.Counter()
     for e in before:
         if e["path"].endswith(".csv"):
@@ -186,6 +250,7 @@ def roundtrip(name: str, source: str, plan: dict, place: pathlib.Path, decl: str
     return {"files": len(before), "bytes": sum(e["size"] for e in before), "source_fp": V.short(K.catalog_fp(before)),
             "register_fp": V.short(value["fp"]), "restored_fp": V.short(restored["fp"]),
             "same": K.catalog_fp(before) == value["fp"] == restored["fp"] and exp == out,
+            "independent_files": len(exp),
             "missing": sorted(set(exp) - set(out))[:5], "extra": sorted(set(out) - set(exp))[:5],
             "differ": sorted(p for p in set(exp) & set(out) if exp[p] != out[p])[:5],
             "source_unchanged": K.catalog_fp(after) == K.catalog_fp(before) and mtimes(source, plan) == times,
@@ -257,7 +322,7 @@ def kopicha_replay(base: pathlib.Path, replay: pathlib.Path) -> dict:
                            "export": REPLAY_EXPORT.format(dir=replay, c=commit)}
             continue
         place = base / f"replay-{commit}"
-        decl = write_decl(place / "decl", KOPICHA_KINDS)
+        decl, _large = large_decl(place, str(parent), plan, KOPICHA_KINDS)
         reg = place / "register"
         adopted = A.adopt(str(parent), str(reg), plan=plan, by=BY, at=AT, decl=decl)
         parent_shas = {e["path"]: e["sha256"] for e in A.source_catalog(str(parent), plan)}
@@ -522,15 +587,10 @@ def main(argv=None) -> int:
             continue
         plan = A.parse_plan({"schema": A.PLAN_SCHEMA, "include": include, "exclude": exclude})
         place = base / name
-        decl = None
-        if name == "kopicha":
-            decl = write_decl(base / "_decl" / name, KOPICHA_KINDS)
-        elif name == "mmr":
-            decl = write_decl(base / "_decl" / name, MMR_KINDS)
-        elif name == "kanto":
-            decl = write_decl(base / "_decl" / name, [KANTO_KIND])
+        kinds = {"kopicha": KOPICHA_KINDS, "mmr": MMR_KINDS, "kanto": [KANTO_KIND]}.get(name, [])
         try:
-            result = {"a": roundtrip(name, str(source), plan, place, decl)}
+            decl, large = large_decl(base / "_decl" / name, str(source), plan, kinds)
+            result = {"a": roundtrip(name, str(source), plan, place, decl), "large_declared": large}
             reg = place / "register"
             result["scope"] = scope_check(name, str(source), str(reg))
             if name == "kopicha":

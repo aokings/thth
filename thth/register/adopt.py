@@ -228,11 +228,16 @@ def _spelling(root: str, rel: str):
 
 
 def _too_large(kinds: dict, entries: list) -> list:
+    """上限を超える枚。種類の宣言に当たる枚はその上限で、どの宣言にも当たらない枚は既定の上限（64 KB）で見る
+    （宣言が無ければ断る・期待する答え §3 (a)）。"""
     out = []
     for e in entries:
-        for kind in kinds.values():
-            if V._matches(kind, e["path"]) and e["size"] > kind.max_bytes:
+        matched = [kind for kind in kinds.values() if V._matches(kind, e["path"])]
+        for kind in matched:
+            if e["size"] > kind.max_bytes:
                 out.append({"path": e["path"], "size": e["size"], "kind": kind.name, "max_bytes": kind.max_bytes})
+        if not matched and e["size"] > V.FILE_MAX_DEFAULT:
+            out.append({"path": e["path"], "size": e["size"], "kind": None, "max_bytes": V.FILE_MAX_DEFAULT})
     return out
 
 
@@ -429,9 +434,10 @@ def diff(root: str, spec: str) -> dict:
         changed, retired, units_gone = [], [], []
         for ref in sorted(set(ra) & set(rb)):
             before, after = ra[ref], rb[ref]
-            if sorted(r.version for r in before) != sorted(r.version for r in after):
-                units_a = {u.pointer for r in before for u in r.units}
-                units_b = {u.pointer for r in after for u in r.units}
+            # 内側の番号は、記録の版が同じでも比べる（宣言だけを変えると、中身が同じまま番号が変わる）。
+            units_a = {u.pointer for r in before for u in r.units}
+            units_b = {u.pointer for r in after for u in r.units}
+            if sorted(r.version for r in before) != sorted(r.version for r in after) or units_a != units_b:
                 item = {"record": ref, "path": after[0].path}
                 if units_a or units_b:
                     item["units"] = {"added": len(units_b - units_a), "vanished": len(units_a - units_b)}

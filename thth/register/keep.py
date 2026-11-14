@@ -9,7 +9,9 @@
   台帳が git の外にあっても（MMR）、器が控えた時点の前の版を取り出せる。控えより前と、控えと控えの間の版は
   「取り出せない」と言う（設計 §5.5）。
 - **まとめての入れ替え**（`Batch`）: 複数のファイルを 1 つのまとまりとして入れ替える。先に新旧の中身を控えに置き、
-  段取り（`.thth/batch/pending.json`）を書いてから 1 枚ずつ置き換え、最後に段取りを「済み」へ移す。
+  段取り（`.thth/batch/plans/<世代>.json`）を「無ければ置く」で置いてから 1 枚ずつ置き換え、最後に済んだ記録
+  （`.thth/batch/ended/<世代>.json`）を「無ければ置く」で置く。段取りのファイルは置いたら書き換えも退かしもしない
+  ので、どの瞬間で止まっても、読み手は前か後のどちらかを見て、再開は段取りを読める。
   **段取りが残っている間、器の読み手（`view`）には入れ替えの前の姿を見せる**（置き換え済みの枚も、控えの前の中身で
   読む）。途中で止まっても、同じ命令を打ち直すか `resume --continue` で続け、`resume --rollback` で戻せる。
   別の者が打ち直してよい（段取りに書いてある中身だけを使う）。
@@ -42,7 +44,8 @@ OBJECTS = "objects"
 SNAPSHOTS = "snapshots"
 LOG = "log.jsonl"
 BATCH = "batch"
-PENDING = "pending.json"
+PLANS = "plans"          # 段取り: plans/<世代>.json（無ければ置く。置いたら書き換えない）
+ENDED = "ended"          # 済んだ（か戻した）記録: ended/<世代>.json（無ければ置く。1 つの段取りに 1 度だけ）
 SEQ = "seq"
 SNAPSHOT_SCHEMA = "thth.kept_snapshot/1"
 BATCH_SCHEMA = "thth.batch/1"
@@ -107,7 +110,7 @@ def check_thth(root: str) -> None:
     base = guard(root, thth_dir(root))
     if not os.path.isdir(base):
         return
-    for directory, dirs, files in os.walk(base, followlinks=False):
+    for directory, dirs, files in os.walk(base, followlinks=False, onerror=_walk_error(root)):
         for name in dirs + files:
             path = os.path.join(directory, name)
             if os.path.islink(path):
@@ -129,6 +132,18 @@ def _link_on_the_way(root: str, top: str):
     return None
 
 
+def _unreadable(root: str, path: str):
+    rel = os.path.relpath(path, root).replace(os.sep, "/") if path else "."
+    return RegisterRefused("register_adopt_unusable", "unreadable", path=rel)
+
+
+def _walk_error(root: str):
+    """`os.walk` は読めないフォルダを黙って飛ばす。飛ばすと、その下の枚を「消えた」と読んでしまうので断る。"""
+    def raise_(err: OSError):
+        raise _unreadable(root, getattr(err, "filename", None) or "") from None
+    return raise_
+
+
 def walk(root: str, tops=None, *, skip_thth: bool = True):
     """台帳（か元）の中のファイル: `(道, 絶対の道, symlink か)`。隠しの名前も含める。`.git/` は辿らない。
     台帳の根の `.thth/` は辿らない（器の物。元を歩くときは `skip_thth=False` で見せ、範囲に入れば断る）。
@@ -146,12 +161,18 @@ def walk(root: str, tops=None, *, skip_thth: bool = True):
                 yield link, full(root, link), True
                 continue
         base = full(root, top) if top else root
-        if os.path.isfile(base):
+        try:
+            mode = os.stat(base).st_mode  # 途中の symlink の段は上で返した（根そのものは辿る）
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            raise _unreadable(root, base) from None  # 途中の段が読めない（無いのか分からない）
+        if stat.S_ISREG(mode):
             yield top, base, False
             continue
-        if not os.path.isdir(base):
+        if not stat.S_ISDIR(mode):
             continue
-        for directory, dirs, files in os.walk(base, followlinks=False):
+        for directory, dirs, files in os.walk(base, followlinks=False, onerror=_walk_error(root)):
             rel_dir = os.path.relpath(directory, root).replace(os.sep, "/")
             rel_dir = "" if rel_dir == "." else rel_dir
             keep_dirs = []
@@ -174,10 +195,13 @@ def _is_x(mode: int) -> bool:
 
 
 def read_entry(path: str, rel: str) -> tuple:
-    """`(目録の 1 行, 中身)`。開いた 1 つの枚から、中身と実行の印を読む。"""
-    with open(path, "rb") as f:
-        data = f.read()
-        mode = os.fstat(f.fileno()).st_mode
+    """`(目録の 1 行, 中身)`。開いた 1 つの枚から、中身と実行の印を読む。権限で読めなければ断る（黙って飛ばさない）。"""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+            mode = os.fstat(f.fileno()).st_mode
+    except PermissionError:
+        raise RegisterRefused("register_adopt_unusable", "unreadable", path=rel or os.path.basename(path)) from None
     return {"path": rel, "size": len(data), "sha256": sha256(data), "x": _is_x(mode)}, data
 
 
@@ -291,7 +315,8 @@ def decl_entries(root: str, *, store: bool) -> list:
     return out
 
 
-def save_snapshot(root: str, entries: list, *, what: str, by: str, at: str, stored: bool = False) -> dict:
+def save_snapshot(root: str, entries: list, *, what: str, by: str, at: str, stored: bool = False,
+                  write_log: bool = True) -> dict:
     """目録を控える（中身も控えの置き場へ）。名は控えの名（目録と宣言の指紋）。同じ名がもうあれば、跡だけを足す。
     返すのは `{"fp": 目録の指紋, "snapshot": 控えの名}`。"""
     for e in entries if not stored else ():
@@ -306,7 +331,8 @@ def save_snapshot(root: str, entries: list, *, what: str, by: str, at: str, stor
     if not os.path.exists(path):
         _write_json(root, path, {"schema": SNAPSHOT_SCHEMA, "id": sid, "fp": fp, "files": entries, "decl": decl,
                                  "at": at, "by": by, "what": what})
-    log(root, {"at": at, "by": by, "what": what, "fp": fp, "snapshot": sid, "files": len(entries)})
+    if write_log:
+        log(root, {"at": at, "by": by, "what": what, "fp": fp, "snapshot": sid, "files": len(entries)})
     return {"fp": fp, "snapshot": sid}
 
 
@@ -389,19 +415,57 @@ def read_file(root: str, rel: str) -> bytes:
         return f.read()
 
 
-def pending(root: str) -> dict | None:
-    return _pending_file(root)
+def _plans_dir(root: str) -> str:
+    return os.path.join(thth_dir(root), BATCH, PLANS)
+
+
+def _plan_path(root: str, gen: int) -> str:
+    return guard(root, os.path.join(_plans_dir(root), f"{gen}.json"))
+
+
+def _end_path(root: str, plan: dict) -> str:
+    return guard(root, os.path.join(thth_dir(root), BATCH, ENDED, f"{int(plan.get('gen', 0))}.json"))
+
+
+def _gens(root: str) -> list:
+    directory = guard(root, _plans_dir(root))
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        raise RegisterRefused("register_adopt_unusable", "unreadable", path=f"{THTH}/{BATCH}/{PLANS}") from None
+    return sorted(int(n[:-5]) for n in names if n.endswith(".json") and n[:-5].isdigit())
 
 
 def _pending_file(root: str) -> dict | None:
-    """段取りのファイルそのもの（後始末の前に「まだ自分の段取りか」を確かめるときにも読む）。"""
-    path = guard(root, os.path.join(thth_dir(root), BATCH, PENDING))
-    if not os.path.exists(path):
+    """いちばん新しい段取り（済んでいても）。段取りは世代の名で置き、置いたら書き換えず、済んだかどうかは別の
+    記録（`ended/<世代>.json`）で言う。だから段取りを退かす瞬間が無く、どこで止まっても読み手は前か後のどちらかを見る。"""
+    for _ in range(READ_TRIES):
+        gens = _gens(root)
+        if not gens:
+            return None
+        path = _plan_path(root, gens[-1])
+        if not os.path.exists(path):
+            continue  # 読む間に片づけられた古い段取り（新しい物がもうある）: 並びを読み直す
+        value = _read_json(root, path, "batch")
+        if value.get("schema") != BATCH_SCHEMA or not isinstance(value.get("entries"), list) \
+                or value.get("gen") != gens[-1]:
+            raise RegisterRefused("register_kept_missing", "batch_broken")
+        return value
+    raise RegisterRefused("register_batch_conflict", "busy", tries=READ_TRIES)
+
+
+def _ended(root: str, plan: dict) -> bool:
+    return os.path.exists(_end_path(root, plan))
+
+
+def pending(root: str) -> dict | None:
+    """止まっている（まだ済んでも戻してもいない）段取り。無ければ None。"""
+    plan = _pending_file(root)
+    if plan is None or _ended(root, plan):
         return None
-    value = _read_json(root, path, "batch")
-    if value.get("schema") != BATCH_SCHEMA or not isinstance(value.get("entries"), list):
-        raise RegisterRefused("register_kept_missing", "batch_broken")
-    return value
+    return plan
 
 
 def _seq_path(root: str) -> str:
@@ -423,12 +487,14 @@ def _bump(root: str) -> None:
 
 def generation(root: str, *, end: bool = False) -> tuple:
     """読み手の世代: (世代の数, 段取りの名)。読み始めは数→段取り、読み終わりは段取り→数の順に読む。"""
+    def ident():
+        plan = _pending_file(root)
+        return (plan["id"], plan["gen"], _ended(root, plan)) if plan else None
     if end:
-        plan = pending(root)
-        return seq(root), plan["id"] if plan else None
+        now = ident()
+        return seq(root), now
     number = seq(root)
-    plan = pending(root)
-    return number, plan["id"] if plan else None
+    return number, ident()
 
 
 def consistent(root: str, read):
@@ -503,11 +569,6 @@ def _now_state(root: str, rel: str):
     return _state_at(guard(root, full(root, rel)))
 
 
-def _now_sha(root: str, rel: str):
-    state = _now_state(root, rel)
-    return state[0] if state else None
-
-
 def prepare(root: str, desired: dict, *, what: str, by: str, at: str, executable: dict | None = None) -> dict | None:
     """入れ替えの段取りを作る（まだ書かない）。`desired` は 道 → 新しい中身（bytes）か None（その道を除く）。
     `executable` は 道 → 実行の印（無い道は今の印のまま）。今と同じ中身・同じ印の道は段取りに入れない。
@@ -541,7 +602,7 @@ def prepare(root: str, desired: dict, *, what: str, by: str, at: str, executable
 
 def matches_pending(root: str, plan: dict, desired: dict, executable: dict | None = None) -> bool:
     """残っている段取りが、この求め（道 → 新しい中身）の続きか。段取りの全部の道で新しい中身（と実行の印）が
-    求めと同じで、段取りの外の求めは今と同じ中身なら、続きと見る。"""
+    求めと同じで、段取りの外の求めは今と同じ中身と同じ実行の印なら、続きと見る。"""
     want = {rel: (sha256(data) if data is not None else None) for rel, data in desired.items()}
     planned = {e["path"] for e in plan["entries"]}
     for e in plan["entries"]:
@@ -551,27 +612,43 @@ def matches_pending(root: str, plan: dict, desired: dict, executable: dict | Non
                 and bool(executable[e["path"]]) != bool(e.get("new_x", False)):
             return False
     for rel, digest in want.items():
-        if rel not in planned and _now_sha(root, rel) != digest:
+        if rel in planned:
+            continue
+        now = _now_state(root, rel)
+        if digest is None:
+            if now is not None:
+                return False
+            continue
+        # 段取りの外の求めは、今と同じ中身で、同じ実行の印（求めに印が無ければ今の印のまま）のときだけ続き。
+        if now is None or now[0] != digest or (executable and rel in executable and bool(executable[rel]) != now[1]):
             return False
     return True
 
 
 def begin(root: str, plan: dict) -> None:
-    """段取りを書く（ここから先は、止まっても続けるか戻すかが決まる）。読み手の世代を先に進める。"""
-    if pending(root) is not None:
+    """段取りを置く（ここから先は、止まっても続けるか戻すかが決まる）。段取りは次の世代の名で「無ければ置く」
+    （`link`）。同じ時に始めたほかの者と同じ世代を取り合えば、1 人だけが置ける。読み手の世代を先に進める。"""
+    last = _pending_file(root)
+    if last is not None and not _ended(root, last):
         refuse_if_pending(root)
+        raise RegisterRefused("register_batch_pending", "batch", batch=last["id"])
+    if last is not None:
+        _settle(root, last)  # 済んだ記録のあとで落ちていれば、控えの跡を先に足す
     _bump(root)
-    plan["gen"] = seq(root)  # 段取りの世代: 同じ名の段取りが後で始まっても、別の物として見分ける
-    path = os.path.join(thth_dir(root), BATCH, PENDING)
-    tmp = f"{path}.{os.getpid()}.new"
+    gen = (int(last["gen"]) + 1) if last is not None else 1
+    plan["gen"] = gen  # 段取りの世代: 同じ名の段取りが後で始まっても、別の物として見分ける
+    path = _plan_path(root, gen)
+    makedirs(root, os.path.dirname(path))
+    tmp = os.path.join(_tmpdir(root), f"plan-{gen}.{os.getpid()}.new")
     _write_json(root, tmp, plan)
     try:
-        os.link(tmp, guard(root, path))  # 無ければ置く: 同じ時に始めたほかの者の段取りを上書きしない
+        os.link(tmp, path)  # 無ければ置く: 同じ時に始めたほかの者の段取りを上書きしない
     except FileExistsError:
         os.unlink(tmp)
         refuse_if_pending(root)
         raise RegisterRefused("register_batch_pending", "batch") from None
     os.unlink(tmp)
+    # 済んだ前の段取りは片づけない（片づけると、遅れて始めた者が同じ世代の名で置けてしまう）。
 
 
 def _tmpdir(root: str) -> str:
@@ -666,37 +743,46 @@ def _step(root: str, plan: dict, index: int, frm, to) -> bool:
 
 
 def _mine(root: str, plan: dict) -> bool:
-    """段取りのファイルが、まだこの段取り（名と世代が同じ）か。"""
+    """いちばん新しい段取りが、まだこの段取り（同じ名と世代）で、済んでも戻してもいないか。"""
     now = _pending_file(root)
-    return now is not None and now.get("id") == plan["id"] and now.get("gen") == plan.get("gen")
+    return now is not None and now.get("id") == plan["id"] and now.get("gen") == plan.get("gen") \
+        and not _ended(root, plan)
 
 
 def _finish(root: str, plan: dict, state: str) -> bool:
-    """済んだ記録を書き、段取りのファイルが自分の世代のときだけ外す。ほかの者が先に済ませていれば、何も
-    消さずに False（そのあとに始まった別の段取りを消さない）。"""
-    batch = os.path.join(thth_dir(root), BATCH)
-    done = guard(root, os.path.join(batch, state, f"{plan['id']}-{plan.get('gen', 0)}.json"))
-    makedirs(root, os.path.dirname(done))
-    _write_json(root, done, plan)
-    path = guard(root, os.path.join(batch, PENDING))
-    held = guard(root, os.path.join(_tmpdir(root), f"pending-{plan['id']}-{os.getpid()}.taken"))
+    """済んだ（か戻した）記録を「無ければ置く」で置く。段取りのファイルには触らない（退かす瞬間を作らない）。
+    ほかの者が先に済ませて（か戻して）いれば、何も書かずに False。記録を置いた者だけが控えの跡を足す。"""
+    path = _end_path(root, plan)
+    makedirs(root, os.path.dirname(path))
+    tmp = os.path.join(_tmpdir(root), f"ended-{plan.get('gen', 0)}.{os.getpid()}.new")
+    _write_json(root, tmp, {**plan, "state": state})
     try:
-        os.rename(path, held)  # 段取りのファイルを 1 つに決めて取る
-    except FileNotFoundError:
-        return False
-    taken = _read_json(root, held, "batch")
-    if taken.get("id") == plan["id"] and taken.get("gen") == plan.get("gen"):
-        os.unlink(held)
-        _bump(root)
-        return True
-    # 取ったのは別の段取りだった: 元の場所へ戻す（戻せなければ、取った物を残して断る）。
-    try:
-        os.link(held, path)
+        os.link(tmp, path)
     except FileExistsError:
-        raise RegisterRefused("register_batch_conflict", "busy", batch=taken.get("id"),
-                              kept=os.path.relpath(held, root).replace(os.sep, "/")) from None
-    os.unlink(held)
-    return False
+        os.unlink(tmp)
+        return False
+    os.unlink(tmp)
+    _bump(root)
+    _settle(root, plan)
+    return True
+
+
+def _settle(root: str, plan: dict) -> None:
+    """済んだ記録に合わせて控えの跡（`log.jsonl`）を足し、足した印を置く。済んだ記録のあとで落ちても、次に
+    段取りを読んだ者（再開・次の入れ替え）が足す（同じ時に 2 人が足せば、跡は 2 行になりうる）。"""
+    end = _end_path(root, plan)
+    mark = end[:-len(".json")] + ".logged"
+    if not os.path.exists(end) or os.path.exists(mark):
+        return
+    record = _read_json(root, end, "batch")
+    if record.get("state") == "done":
+        done = record.get("done", {})
+        log(root, {"at": done.get("at"), "by": done.get("by"), "what": record.get("what"), "fp": done.get("fp"),
+                   "snapshot": done.get("snapshot"), "files": done.get("files"), "batch": record.get("id")})
+    else:
+        back = record.get("rolled_back", {})
+        log(root, {"at": back.get("at"), "by": back.get("by"), "what": "rollback", "batch": record.get("id")})
+    _atomic_write(root, mark, b"")
 
 
 def _from_to(e: dict, back: bool):
@@ -708,6 +794,9 @@ def _from_to(e: dict, back: bool):
 def apply(root: str, *, by: str, at: str) -> dict:
     """残っている段取りを最後まで進める（同じ命令の打ち直しと `resume --continue` が呼ぶ。別の者でよい）。
     置き換え済みの道は飛ばす。前でも後でもない中身の道があれば（ほかの者が書いた）、止めて断る。"""
+    last = _pending_file(root)
+    if last is not None:
+        _settle(root, last)
     plan = pending(root)
     if plan is None:
         return {"applied": 0}
@@ -720,8 +809,10 @@ def apply(root: str, *, by: str, at: str) -> dict:
     if not _mine(root, plan):
         return {"applied": applied, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
     entries = view_after(root)
-    kept = save_snapshot(root, entries, what=plan["what"], by=by, at=at)
-    plan["done"] = {"by": by, "at": at, **kept}
+    # 控えの中身と目録だけを先に置き（名で決まるので、ほかの者と同じ物になる）、跡は済んだ記録を置けた者だけが
+    # 足す（ほかの者が先に済ませ、次の束が始まったあとの混ざった姿を跡に残さない）。
+    kept = save_snapshot(root, entries, what=plan["what"], by=by, at=at, write_log=False)
+    plan["done"] = {"by": by, "at": at, "files": len(entries), **kept}
     if not _finish(root, plan, "done"):
         return {"applied": applied, **kept, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
     return {"applied": applied, **kept, "batch": plan["id"], "files": len(plan["entries"])}
@@ -729,6 +820,9 @@ def apply(root: str, *, by: str, at: str) -> dict:
 
 def rollback(root: str, *, by: str, at: str) -> dict:
     """残っている段取りを戻す（置き換え済みの道を前の中身に）。前でも後でもない道があれば止めて断る。"""
+    last = _pending_file(root)
+    if last is not None:
+        _settle(root, last)
     plan = pending(root)
     if plan is None:
         return {"restored": 0}
@@ -743,7 +837,6 @@ def rollback(root: str, *, by: str, at: str) -> dict:
     if not _finish(root, plan, "rolled_back"):
         return {"restored": restored, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True,
                 "fp": catalog_fp(view_after(root))}
-    log(root, {"at": at, "by": by, "what": "rollback", "batch": plan["id"]})
     return {"restored": restored, "batch": plan["id"], "files": len(plan["entries"]),
             "fp": catalog_fp(view_after(root))}
 

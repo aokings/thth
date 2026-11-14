@@ -330,10 +330,13 @@ ENTRIES = {
         "inside は片方がもう片方の中・not_empty は書き先が空でない・other_source は台帳が別の元から取り込まれた・"
         "symlink は範囲の中か範囲の道の途中か、書き先とその .thth/ に symlink がある・thth_in_source は範囲が .thth/ を"
         "含む・plan は範囲の JSON の形・spelling は範囲の道の綴りが実在の綴りと大文字小文字か Unicode の正規化で違う・"
-        "too_large は種類の宣言の上限（既定 64 KB）を超える枚がある）。元にも台帳にも何も書いていません。",
+        "too_large は種類の宣言の上限を超える枚か、どの種類の宣言にも当たらない 64 KB を超える枚がある・unreadable は"
+        "権限で読めないフォルダかファイルがある（読めない物を「消えた」と読まない）。元にも台帳にも何も書いていません。",
         "語に合わせて直してください: 書き先は新しい空のフォルダにする・元の repo の外に置く・symlink と .thth/ は"
         "範囲の exclude に足す（書き先の symlink は本物のフォルダにする）・spelling は --json の actual の綴りで範囲を"
-        "書く・too_large は --json の files の種類の宣言に max_bytes を書く・範囲は {\"schema\": \"thth.adopt_plan/1\", "
+        "書く・too_large は --json の files の種類の宣言に max_bytes を書く（kind が null の枚は、その道の種類を宣言して"
+        " max_bytes を書くか、範囲の exclude に足す）・unreadable は --json の path を読めるようにするか、範囲の exclude に"
+        "足す・範囲は {\"schema\": \"thth.adopt_plan/1\", "
         "\"include\": [...], \"exclude\": [...]} の形にする。",
         "thth register adopt <元> --to <新しいフォルダ> --plan <範囲.json> --by <名前>",
         "影の台帳は ~/Documents/THTH/shadow/<メディア>/ のように repo の外の決まった置き場に作ると、元と取り違えません。"),
