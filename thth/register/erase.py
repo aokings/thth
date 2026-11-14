@@ -31,6 +31,10 @@
 | `common`・`git_history`・`clones`・`pages`・`copies` | 確かめていない（器は書き換えない。持ち主の手） |
 | `self_check` 消し終わりの確かめ | 台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋がどこにも無いか |
 
+- **二次の指紋も残さない**（本線の決め 11/14）: 印の行の番号は乱数の番号（`x-`）に付け直し、その番号を指す結びも直す。
+  範囲の版を目録に持つ控えの名・目録の指紋・段取りの名・取り込みの記録の指紋は乱数に付け直し、跡の参照も直す
+  （古い名は書かない・対応表を作らない。付け直した数を結果に出す）。封の判断の記録の頭の指紋は外す。残る物は
+  結果の `second_fingerprints` に書く（公開の場所の配る物）。
 - 消す前に、範囲の版の中身・sha256・器の指紋の一覧を**メモリの中だけ**で作り（`_gather`）、確かめに使う。ファイルに
   書かない。前の版を除いたあとで止まり、打ち直したときは一覧を作り直せないので、確かめは「確かめていない」と言う。
 - 「確かめていない」が 1 つでも残る間、状態は「消し終わっていない」。持ち主が外の場所を確かめたら `done` で
@@ -44,6 +48,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 
 from . import adopt as A
 from . import judgment as J
@@ -82,6 +87,14 @@ OUTSIDE_NOTE = {
     "pages": "もう配った頁は器から見えない。持ち主が確かめる",
     "copies": "持ち出した写し（相手の手元）は器から見えない。持ち主が確かめる",
 }
+
+
+SECOND_FINGERPRINTS = [
+    "台帳の中: 行の番号・控えの名・目録の指紋・段取りの名は乱数に付け直し、封の判断の記録の頭の指紋"
+    "（judgments.sha256）は外した。古い名と指紋は台帳のどこにも書いていない（確かめの一覧に入れて見た）",
+    "公開の場所: 前に配った物（封と配った時の判断の記録の頭）には、消した行を含むバイトの指紋と行ごとの骨の指紋が"
+    "残る。CI の続きの比べに要るので器は消さない。当て直すには、消した行のほかの全バイト（ほかの欄と全部の行）が要る",
+]
 
 
 # ------------------------------------------------------------------ 置き場
@@ -197,6 +210,7 @@ class Range:
         self.current = False     # 今の版が範囲に入るか
         self.current_sha = None
         self.complete = True     # 一覧を全部作れたか（前の版を除いたあとで打ち直すと False）
+        self.names = set()       # 二次の指紋: 範囲の行の番号・控えの名・目録の指紋・段取りの名・判断の記録の頭
 
     def needles(self) -> tuple:
         """`(探す物の並び, 短くて探さなかった値の数)`。字は UTF-8 と JSON の逃がした形の両方。"""
@@ -214,6 +228,9 @@ class Range:
         for digest in self.shas | self.versions | self.depends | self.extra:
             if isinstance(digest, str) and len(digest) >= 32:
                 out.add(digest.encode("ascii"))
+        for name in self.names:
+            if isinstance(name, str) and len(name) >= 16:
+                out.add(name.encode("ascii", errors="ignore"))
         return sorted(out), short
 
 
@@ -382,6 +399,32 @@ def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
         for out_path, digest in (body.get("outputs") or {}).items():
             if _output_of(out_path, path, body.get("outlet")) and isinstance(digest, str):
                 rng.extra.add(digest)
+    # 二次の指紋（付け直す・外す前の物。確かめの一覧に入れる）
+    for full in _seal_files(root):
+        body = (_read_any(full) or {}).get("body") or {}
+        if any(isinstance(i, dict) and i.get("record") == reqb["record"] and i.get("version") in rng.versions
+               for i in body.get("inputs") or []):
+            for head in (body.get("judgments"), (body.get("previous") or {}).get("judgments")):
+                if isinstance(head, dict) and isinstance(head.get("sha256"), str):
+                    rng.names.add(head["sha256"])
+    raw = R.judgments_raw(root)
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        try:
+            item = json.loads(line) if line.strip() else None
+        except ValueError:
+            item = None
+        if isinstance(item, dict) and not J.is_erased(item) and _line_in_range(item, reqb, rng):
+            rng.names.add(item.get("id"))
+    for full in _snapshot_files(root):
+        snap = K._read_json(root, full, "snapshot")
+        if any(isinstance(e, dict) and e.get("sha256") in rng.shas for e in snap.get("files", [])):
+            rng.names.update(x for x in (snap.get("id"), snap.get("fp")) if isinstance(x, str))
+    for full in _batch_files(root):
+        plan = K._read_json(root, full, "batch")
+        if any(isinstance(e, dict) and (e.get("old") in rng.shas or e.get("new") in rng.shas)
+               for e in plan.get("entries", [])):
+            rng.names.add(plan.get("id"))
+    rng.names.discard(None)
     rng.complete = (done.get("kept_objects") or {}).get("state") not in FINISHED + ("running",)
     return rng
 
@@ -448,10 +491,16 @@ def _unit_from_erased(kind: V.Kind, unit: str, reqb: dict) -> bool:
     return reqb.get("field") in keys
 
 
-def marked(item: dict, req: str, reqb: dict, kind: V.Kind) -> dict:
+def new_line_id() -> str:
+    """印の行の新しい番号（乱数。中身の指紋でない。古い番号との対応表は作らない）。"""
+    return "x-" + secrets.token_hex(8)
+
+
+def marked(item: dict, req: str, reqb: dict, kind: V.Kind, line_id: str) -> dict:
     """判断の行の印の形（指示 §3.4）。残す: 番号・問い・対象の番号（と指し先）・結論にあたる語・日時・誰が・いつまで・
     結び。除く: 対象の版・依る所の指紋・確かめた中身・理由の説明の文（種類は残す）・照らし方・照らした物・`seen`。
-    足す: `erased`。決まった欄だけを写す（知らない欄は持ち越さない）。"""
+    足す: `erased`。決まった欄だけを写す（知らない欄は持ち越さない）。番号は乱数の番号 `line_id` に付け直す
+    （中身から作った番号は、1 行が短いので、ほかの欄が分かれば消した値を当て直せる）。"""
     t = item["target"]
     target = {"record": t["record"]}
     if t.get("unit"):
@@ -463,7 +512,7 @@ def marked(item: dict, req: str, reqb: dict, kind: V.Kind) -> dict:
                 target["value"] = t["value"]
     a = item.get("answer") if isinstance(item.get("answer"), dict) else {}
     reason = item.get("reason") if isinstance(item.get("reason"), dict) else {}
-    out = {"schema": item["schema"], "id": item["id"], "question": item["question"], "target": target,
+    out = {"schema": item["schema"], "id": line_id, "question": item["question"], "target": target,
            "answer": {"word": a.get("word"), "conclusion": a.get("conclusion")},
            "reason": {"kind": reason.get("kind")}, "by": item.get("by"), "at": item.get("at"),
            "until": item.get("until"), "path": item.get("path"), "carries": item.get("carries"),
@@ -575,36 +624,59 @@ def _new_result(req: str, reqb: dict, scopeb: dict) -> dict:
 
 
 def _place_judgments(root, req, reqb, rng, result, kind, by, at) -> dict:
+    """範囲の行を印の形にし、番号を乱数の番号に付け直す。その番号を指す結び（`carries`）も新しい番号に直す
+    （印でない行の結びを直すと、その行の番号も中身から作り直す。その行を指す結びも、続けて直す）。"""
     raw = R.judgments_raw(root)
     text = raw.decode("utf-8")
-    out, mine, rewritten = [], [], []
+    rows, mine, rewritten, renumber = [], [], [], {}
     for line in text.splitlines(keepends=True):
         body = line.rstrip("\r\n")
         if not body.strip():
-            out.append(line)
+            rows.append((line, None, ""))
             continue
         try:
             item = json.loads(body)
         except ValueError:
             raise RegisterRefused("register_judgment_invalid", "line") from None
+        tail = line[len(body):]
         if J.is_erased(item):
             if item["erased"].get("request") == req:
                 mine.append(item["id"])
-            out.append(line)
+            rows.append((line, item, tail))
             continue
         if isinstance(item, dict) and _line_in_range(item, reqb, rng):
-            rewritten.append(item["id"])
-            out.append(json.dumps(marked(item, req, reqb, kind), ensure_ascii=False, sort_keys=True)
-                       + line[len(body):])
+            fresh = new_line_id()
+            renumber[item["id"]] = fresh
+            rng.names.add(item["id"])
+            rewritten.append(fresh)
+            rows.append((None, marked(item, req, reqb, kind, fresh), tail))
         else:
-            out.append(line)
-    if rewritten:
-        # 結果に行の番号を先に置く（読む入口は、結果に載った印の行だけを受ける）。それから判断の記録を書き換える。
-        result["rewritten_lines"] = sorted(set(result["rewritten_lines"]) | set(rewritten))
-        _save(root, req, RESULT_FILE, result)
-        K._atomic_write(root, J.path_of(root), "".join(out).encode("utf-8"))
+            rows.append((line, item, tail))
+    if not rewritten:
+        count = len(mine)
+        return {"state": "erased" if count else "nothing", "lines": count}
+    changed = True
+    while changed:
+        changed = False
+        for n, (line, item, tail) in enumerate(rows):
+            if item is None or item.get("carries") not in renumber:
+                continue
+            item = dict(item, carries=renumber[item["carries"]])
+            if not J.is_erased(item):
+                old = item["id"]
+                item["id"] = J.new_id(item)
+                renumber[old] = item["id"]
+            rows[n] = (None, item, tail)
+            changed = True
+    out = [line if line is not None else json.dumps(item, ensure_ascii=False, sort_keys=True) + tail
+           for line, item, tail in rows]
+    # 結果に行の番号を先に置く（読む入口は、結果に載った印の行だけを受ける）。それから判断の記録を書き換える。
+    # 前の回に結果へ置いたが判断の記録に書けなかった番号は、ここで落とす（今の判断の記録にある物だけ）。
+    result["rewritten_lines"] = sorted(set(mine) | set(rewritten))
+    _save(root, req, RESULT_FILE, result)
+    K._atomic_write(root, J.path_of(root), "".join(out).encode("utf-8"))
     count = len(set(rewritten) | set(mine))
-    return {"state": "erased" if count else "nothing", "lines": count}
+    return {"state": "erased", "lines": count}
 
 
 def _write_seal(root: str, path: str, value: dict) -> None:
@@ -641,6 +713,10 @@ def _place_seals(root, req, reqb, rng, result, kind, by, at) -> dict:
                 if _output_of(out_path, reqb["path"], body.get("outlet")) and body["outputs"][out_path] is not None:
                     body["outputs"][out_path] = None
                     materials.add(out_path)
+            # 判断の記録の頭の指紋（消した行を含むバイトの指紋）も外す。署名はどうせ合わない。
+            for head in (body.get("judgments"), (body.get("previous") or {}).get("judgments")):
+                if isinstance(head, dict) and head.get("sha256") is not None:
+                    head["sha256"] = None
             body["erased"] = sorted(set(body.get("erased") or []) | {req})
             _write_seal(root, full, value)
         else:
@@ -738,8 +814,32 @@ def _gone(root: str, digest, rng: Range) -> bool:
     return isinstance(digest, str) and (digest in rng.shas or not os.path.exists(K.object_path(root, digest)))
 
 
+def _rewrite_log(root: str, change) -> None:
+    """控えの跡（`log.jsonl`）の行ごとに `change(行)` を当てて書き直す（付け直した名へ）。"""
+    path = K.guard(root, K._kept(root, K.LOG))
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    out = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            out.append(line)
+            continue
+        out.append(json.dumps(change(item) if isinstance(item, dict) else item, ensure_ascii=False, sort_keys=True))
+    K._atomic_write(root, path, ("\n".join(out) + ("\n" if out else "")).encode("utf-8"))
+
+
+def _renamed(value: dict, req: str) -> bool:
+    return req in (value.get("renamed") or [])
+
+
 def _place_batch(root, req, reqb, rng, result, kind, by, at) -> dict:
-    count = 0
+    """除いた中身の sha256 を段取りと済んだ記録から外し、外した段取りの名（中身の sha256 から作った名）を乱数の名に
+    付け直す。跡（`log.jsonl`）の参照も直す。古い名は書かない。"""
+    count, plans = 0, []
     for full in _batch_files(root):
         plan = K._read_json(root, full, "batch")
         if not K._ended(root, plan) and plan.get("what") != _what(req):
@@ -755,13 +855,32 @@ def _place_batch(root, req, reqb, rng, result, kind, by, at) -> dict:
                     e[f"{key}_erased"] = req
                     changed = True
                     count += 1
-        if changed:
-            K._write_json(root, full, plan)
-    return {"state": "erased" if count else "nothing", "entries": count}
+        marked_here = any(isinstance(e, dict) and req in (e.get("old_erased"), e.get("new_erased"))
+                          for e in plan.get("entries", []))
+        if changed or (marked_here and not _renamed(plan, req)):
+            plans.append((full, plan))
+    rename = {}
+    for _full, plan in plans:
+        if not _renamed(plan, req) and isinstance(plan.get("id"), str):
+            rng.names.add(plan["id"])
+            rename.setdefault(plan["id"], "b-" + secrets.token_hex(8))
+    if rename:
+        _rewrite_log(root, lambda h: dict(h, batch=rename.get(h.get("batch"), h.get("batch")))
+                     if h.get("batch") in rename else h)
+    for full, plan in plans:
+        if plan.get("id") in rename:
+            plan["id"] = rename[plan["id"]]
+            plan["renamed"] = sorted(set(plan.get("renamed") or []) | {req})
+        K._write_json(root, full, plan)
+    result.setdefault("renamed", {})
+    result["renamed"]["plans"] = result["renamed"].get("plans", 0) + len(rename)
+    return {"state": "erased" if count or rename else "nothing", "entries": count, "renamed": len(rename)}
 
 
 def _place_snapshots(root, req, reqb, rng, result, kind, by, at) -> dict:
-    count = 0
+    """控えの目録から除いた中身の sha256 と大きさを外して「消した」と記し、その目録の名と目録の指紋（範囲の版の
+    sha256 から作った物）を乱数に付け直す。跡・取り込みの記録・段取りの済んだ記録の参照も直す。古い名は書かない。"""
+    count, todo = 0, []
     for full in _snapshot_files(root):
         snap = K._read_json(root, full, "snapshot")
         changed = False
@@ -777,8 +896,52 @@ def _place_snapshots(root, req, reqb, rng, result, kind, by, at) -> dict:
         if changed:
             snap["files"] = files
             snap["erased"] = sorted(set(snap.get("erased") or []) | {req})
-            K.write_snapshot(root, os.path.basename(full)[:-5], snap)
-    return {"state": "erased" if count else "nothing", "entries": count}
+        if req in (snap.get("erased") or []) and not _renamed(snap, req):
+            todo.append((full, snap))
+    names, fps = {}, {}
+    for _full, snap in todo:
+        rng.names.update(x for x in (snap.get("id"), snap.get("fp")) if isinstance(x, str))
+        names[os.path.basename(_full)[:-5]] = secrets.token_hex(32)
+        if isinstance(snap.get("fp"), str):
+            fps.setdefault(snap["fp"], secrets.token_hex(32))
+    # 1) 新しい名で目録を置く 2) 参照を直す 3) 古い名の目録を除く（どこで止まっても、打ち直しが続ける）
+    for full, snap in todo:
+        new = names[os.path.basename(full)[:-5]]
+        snap = dict(snap, id=new, fp=fps.get(snap.get("fp"), snap.get("fp")),
+                    renamed=sorted(set(snap.get("renamed") or []) | {req}))
+        K.write_snapshot(root, new, snap)
+    if names:
+        def ref(h):
+            out = dict(h)
+            if out.get("snapshot") in names:
+                out["snapshot"] = names[out["snapshot"]]
+            if out.get("fp") in fps:
+                out["fp"] = fps[out["fp"]]
+            return out
+        _rewrite_log(root, ref)
+        adopt = os.path.join(K.thth_dir(root), A.ADOPT_FILE)
+        record = A.read_adopt(root)
+        if record is not None:
+            for item in record.get("adopted") or []:
+                if not isinstance(item, dict):
+                    continue
+                hit = item.get("snapshot") in names or item.get("fp") in fps
+                item.update(ref(item))
+                if hit and isinstance(item.get("source_fp"), str):
+                    # 元の目録の指紋も、範囲の版を含む目録から作った物なので付け直す（台帳と同じなら同じ名へ）
+                    item["source_fp"] = fps.get(item["source_fp"]) or secrets.token_hex(32)
+            K._write_json(root, adopt, record)
+        for full in _batch_files(root):
+            plan = K._read_json(root, full, "batch")
+            done = plan.get("done") if isinstance(plan.get("done"), dict) else None
+            if done is not None and (done.get("snapshot") in names or done.get("fp") in fps):
+                plan["done"] = ref(done)
+                K._write_json(root, full, plan)
+    for full, _snap in todo:
+        os.unlink(K.guard(root, full))
+    result.setdefault("renamed", {})
+    result["renamed"]["snapshots"] = result["renamed"].get("snapshots", 0) + len(names)
+    return {"state": "erased" if count or names else "nothing", "entries": count, "renamed": len(names)}
 
 
 def _place_trail(root, req, reqb, rng, result, kind, by, at) -> dict:
@@ -879,6 +1042,8 @@ def run(root: str, req: str, *, by: str, at: str) -> dict:
             result["places"][place] = dict(result["places"][place], state="not_erased")
     if (result["places"].get("self_check") or {}).get("state") != "kept" or check["state"] == "not_erased":
         result["places"]["self_check"] = dict(check, by=by, at=at)
+    result["second_fingerprints"] = SECOND_FINGERPRINTS
+    result.setdefault("renamed", {})
     result["runs"].append({"by": by, "at": at})
     result["state"] = _state(result)
     _save(root, req, RESULT_FILE, result)

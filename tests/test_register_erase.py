@@ -485,7 +485,7 @@ def test_重い穴f_消したあと受け入れ直す前はCIが赤_受け入れ
     led, site, published = setup_ledger(env, capsys)
     erase_all(capsys, led)
     rc, v = verify(capsys, led, "facts", site, "--previous", published["facts"])
-    assert rc != 0 and "signature" in words(v)                # 受け入れ直すまで封なし
+    assert rc != 0 and words(v) & {"signature", "seal_shape"}  # 受け入れ直すまで封なし（頭の指紋も外した）
     rc, u = use(capsys, led, MILK)
     assert rc != 0 and u["why"] == "seal_unverified"
     v = accept(capsys, led, "facts", site)
@@ -542,3 +542,135 @@ def test_JSONの内側の単位の欄を消す_ほかの単位と止めるは残
     for extra in (("--field", "no_such"), ("--unit", pointer, "--field", "no_such")):
         rc, v, err = jrun(capsys, "register", "erase", "request", led, ref, *extra, "--by", "masaru", "--why", "mistake")
         assert rc != 0 and v["code"] == "register_erase_invalid", v
+
+
+# ------------------------------------------------------------------ 二次の指紋（行の番号・控えの名・目録の指紋・判断の記録の頭）
+
+def second_needles(led: pathlib.Path) -> dict:
+    """消す前に集める二次の指紋: 範囲の記録への判断の行の番号・住所を含む版を目録に持つ控えの名と目録の指紋・
+    その段取りの名・封の判断の記録の頭の指紋。"""
+    out = {}
+    for j in J.read(str(led)):
+        if j["target"].get("record") == BRAZIL:
+            out[f"id:{j['id']}"] = j["id"].encode()
+    shas = {label.split(":", 1)[1] for label in needles(led) if label.startswith("file:")}
+    full = {v.decode() for k, v in needles(led).items() if k.startswith("file:")}
+    assert shas
+    renamed = set()
+    for path in (led / ".thth/kept/snapshots").glob("*.json"):
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        if any(e["sha256"] in full for e in snap["files"]):
+            out[f"snapshot:{snap['id'][:12]}"] = snap["id"].encode()
+            out[f"catalog:{snap['fp'][:12]}"] = snap["fp"].encode()
+            renamed.add(snap["id"])
+    for path in sorted((led / ".thth/batch").rglob("*.json")):
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        if any(e.get("old") in full or e.get("new") in full for e in plan.get("entries", [])):
+            out[f"plan:{plan['id']}"] = plan["id"].encode()
+    for seal in (led / ".thth" / "seals").glob("*.json"):
+        body = json.loads(seal.read_text(encoding="utf-8"))["body"]
+        out[f"head:{body['judgments']['sha256'][:12]}"] = body["judgments"]["sha256"].encode()
+    assert renamed
+    return out
+
+
+def test_消したあと古い行の番号と控えの名と目録の指紋と判断の記録の頭がどこにも無い(env, capsys):
+    led, site, published = setup_ledger(env, capsys)
+    judge(capsys, led, BRAZIL, "--stop", "--outlet", "facts")
+    old = second_needles(led)
+    assert scan(led, old)                                       # 消す前はある（空振りしていない）
+    req, v = erase_all(capsys, led)
+    assert scan(led, old) == [], scan(led, old)
+    marked = [j for j in J.read(str(led)) if J.is_erased(j)]
+    assert marked and all(J.X_ID.fullmatch(j["id"]) for j in marked)
+    assert sorted(j["id"] for j in marked) == v["rewritten_lines"]
+    assert v["renamed"]["snapshots"] >= 2 and v["renamed"]["plans"] >= 1
+    assert any("judgments.sha256" in line for line in v["second_fingerprints"])
+    # 控えの名を付け直しても、跡の名で控えを引ける（消した版は取り出せない）
+    for name in K.snapshots(str(led)):
+        snap = K.load_snapshot(str(led), name)
+        assert snap["id"] == name
+    for h in K.history(str(led)):
+        if h.get("snapshot"):
+            assert h["snapshot"] in K.snapshots(str(led))
+
+
+def test_骨は番号と誰がを持たず位置で比べる(env, capsys):
+    base = {"schema": J.SCHEMA, "id": "j-0000000000000000", "question": "stop@facts", "target": {"record": BRAZIL},
+            "answer": {"word": "stop", "conclusion": "bad"}, "by": "masaru", "at": "2027-03-20", "until": None}
+    same = dict(base, id="x-1111111111111111", by="someone")
+    assert R.line_skeleton(base) == R.line_skeleton(same)
+    assert R.line_skeleton(base) != R.line_skeleton(dict(base, answer={"word": "resume", "conclusion": "good"}))
+
+
+def test_重い穴e_消す求めを装って行の並びを入れ替えると赤(env, capsys):
+    led, site, published = setup_ledger(env, capsys)
+    judge(capsys, led, MILK, "--stop", "--outlet", "facts")
+    judge(capsys, led, BRAZIL, "--stop", "--outlet", "facts")
+    accept(capsys, led, "facts", site)
+    prev = publish(led, "facts", site, env / "published" / "facts2.json", previous=published["facts"])
+    erase_all(capsys, led)
+    lines = J.read(str(led))
+    i = next(n for n, j in enumerate(lines) if j["question"] == "stop@facts" and j["target"]["record"] == MILK)
+    lines[i], lines[i - 1] = lines[i - 1], lines[i]
+    _write_lines(led, lines)
+    accept(capsys, led, "facts", site)
+    rc, v = verify(capsys, led, "facts", site, "--previous", prev)
+    assert rc != 0 and "judgments_not_continued" in words(v), v
+
+
+def test_取り込み直しとdiffとrestoreは付け直したあとも動く_消した版は取り出せない(env, capsys):
+    src = env / "src"
+    shutil.copytree(FIX / "kopicha", src, ignore=shutil.ignore_patterns(".thth"))
+    led = env / "led"
+    plan = A.parse_plan(None)
+    A.adopt(str(src), str(led), plan=plan, by="masaru", at="2027-03-18T09:00:00+09:00",
+            decl=str(FIX / "kopicha" / ".thth"))
+    A.row_set(str(led), BRAZIL, {"notes": ADDR1}, by="masaru", at="2027-03-19T09:00:00+09:00")
+    A.row_set(str(led), BRAZIL, {"notes": ADDR2}, by="masaru", at="2027-03-19T09:10:00+09:00")
+    before = set(K.snapshots(str(led)))
+    adopted = json.loads((led / ".thth/adopt.json").read_text(encoding="utf-8"))["adopted"][0]["snapshot"]
+    erase_all(capsys, led)
+    names = set(K.snapshots(str(led)))
+    assert adopted in names                                     # 範囲の版を持たない控えは名を変えない
+    erased = [n for n in names if K.erased_entries(K.load_snapshot(str(led), n))]
+    assert erased and not (set(erased) & before)                # 範囲の版を持つ控えは新しい名
+    with pytest.raises(RegisterRefused) as got:
+        A.restore(str(led), str(env / "old"), at_snapshot=erased[0])
+    assert got.value.code == "register_kept_missing"
+    A.restore(str(led), str(env / "now"))
+    A.restore(str(led), str(env / "first"), at_snapshot=adopted)
+    v = A.diff(str(led), f"{adopted}..now")
+    assert not v["red"] and v["records"]["changed"] == []     # 欄を空にした今は、取り込んだ時の行と同じ
+    with pytest.raises(RegisterRefused):
+        A.diff(str(led), f"{erased[0]}..now")
+    # 取り込み直し（元は住所を持たない。元でほかの行を直した）: 入れ替えと控えが動く
+    claims = src / "data/knowledge/claims.csv"
+    claims.write_bytes(claims.read_bytes().replace("17.3%".encode(), "17.1%".encode()))
+    v = A.adopt(str(src), str(led), plan=plan, by="masaru", at="2027-03-23T09:00:00+09:00")
+    assert v["same"] and v["changed"] == 1
+    assert A.diff(str(led), "last..now")["red"] is False
+
+
+def test_止まった入れ替えがあれば消す求めは実行せず_続けたあとなら付け直しても次の入れ替えが動く(env, capsys, monkeypatch):
+    led, site, _ = setup_ledger(env, capsys)
+    rc, v, err = jrun(capsys, "register", "erase", "request", led, BRAZIL, "--field", "notes", "--by", "masaru",
+                      "--why", "personal")
+    req = v["request"]
+    est = E.scope(str(led), req, ["all"], by="masaru", at="2027-03-22T09:00:00+09:00")
+    E.scope(str(led), req, ["all"], by="masaru", at="2027-03-22T09:00:00+09:00", confirm=est["digest"])
+
+    def broken(tmp, target):
+        raise RuntimeError("落ちた")
+    monkeypatch.setattr(K, "_replace", broken)
+    with pytest.raises(RuntimeError):
+        A.row_set(str(led), MILK, {"notes": "別の直し"}, by="masaru", at="2027-03-22T09:05:00+09:00")
+    monkeypatch.undo()
+    with pytest.raises(RegisterRefused) as got:
+        E.run(str(led), req, by="masaru", at="2027-03-22T09:10:00+09:00")
+    assert got.value.code == "register_batch_pending"
+    K.apply(str(led), by="masaru", at="2027-03-22T09:11:00+09:00")      # resume --continue と同じ
+    result = E.run(str(led), req, by="masaru", at="2027-03-22T09:12:00+09:00")
+    assert result["places"]["self_check"]["state"] == "erased"
+    A.row_set(str(led), MILK, {"notes": "もう 1 つの直し"}, by="masaru", at="2027-03-22T09:20:00+09:00")
+    assert K.pending(str(led)) is None and K.load_snapshot(str(led), "last")["files"]

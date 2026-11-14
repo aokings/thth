@@ -39,8 +39,9 @@
 - **消す求めのあと**（段 5・`erase.py`）: 消す求めは封から項目の指紋を外すので、署名が合わず、受け入れ直すまで封なし。
   受け入れ直す口だけは、求めの結果がこの出し口の封を書き換えたと言う封から世代の番号を継ぐ（`erased_seal`）。
   受け入れ直した封は「消す求めの結果」（`erase`: 求め・書き換えた行の番号・前の封の判断の記録の頭）を持つ。配る物は
-  判断の行ごとの骨（`deployed.lines`）も持ち、CI は前に配った頭の続きでないとき、骨が同じで、印の形の行が署名の合った
-  封の言う行だけなら通す（`erase_continued`）。行が減る・載っていない行が変わる・印の行の結論が変わる、は赤。
+  判断の行ごとの骨（`deployed.lines`。問い・記録・指し先・語・結論・日時・いつまで。番号と誰がは入れない）も持ち、
+  CI は前に配った頭の続きでないとき、i 番めどうしの骨が同じで、印の形の行が署名の合った封の言う行だけなら通す
+  （`erase_continued`）。行が減る・並びが変わる・骨が変わる（印の行の結論も）、は赤。
 
 網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
 """
@@ -923,7 +924,7 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
         raise RegisterRefused("register_judgment_invalid", "no_final_newline")
     previous, state = trusted_seal(root, outlet.name)
     erased_prev = None
-    if state == "signature":
+    if state in ("signature", "shape"):
         # 消す求めで項目の指紋を外した封（署名は合わない）だけは、世代の番号を継いで受け入れ直せる（段 5 §3.7）。
         # 広げる向きには何も継がない（封の中の判断は今の全部を受け入れ直す）。ほかの署名の合わない封は今までどおり断る。
         erased_prev = erased_seal(root, outlet.name)
@@ -954,13 +955,18 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
 
 
 def erased_seal(root: str, outlet: str) -> dict | None:
-    """消す求めで項目の指紋を外した封（`body.erased` に求めの番号）。どの求めも、結果の記録で、この出し口の封を
-    書き換えたと言っているときだけ返す（言っていなければ None。ただの署名の合わない封として断る）。"""
-    try:
-        seal = read_seal(root, outlet)
-    except RegisterRefused:
+    """消す求めで項目の指紋と判断の記録の頭の指紋を外した封（`body.erased` に求めの番号）。どの求めも、結果の記録で、
+    この出し口の封を書き換えたと言っているときだけ返す（言っていなければ None。ただの崩れた封として断る）。"""
+    path = seal_path(root, outlet)
+    if not os.path.isfile(path) or os.path.islink(path):
         return None
-    if seal is None or seal["body"].get("outlet") != outlet:
+    try:
+        seal = _read_json(path, J.MAX_BYTES)
+    except (V.DeclarationError, OSError):
+        return None
+    if not isinstance(seal, dict) or not isinstance(seal.get("body"), dict) \
+            or seal["body"].get("outlet") != outlet or not isinstance(seal["body"].get("generation"), int) \
+            or not isinstance(seal["body"].get("judgments"), dict) or not isinstance(seal["body"].get("items"), list):
         return None
     requests = seal["body"].get("erased")
     if not isinstance(requests, list) or not requests:
@@ -1000,20 +1006,22 @@ def erase_block(root: str, erased_prev: dict | None, previous: dict | None) -> d
         requests.add(req)
         lines.update(x for x in result.get("rewritten_lines") or [] if isinstance(x, str))
     pj = erased_prev["body"]["judgments"]
+    # 前の封の判断の記録の頭の指紋は、消す求めが外した（消した行を含むバイトの指紋なので）。残るのはバイトの数だけ。
+    # 前に配った頭の指紋は公開の場所の配る物にあり、CI はそれと行ごとの骨で比べる。
     return {"requests": sorted(requests), "lines": sorted(lines),
             "previous": {"generation": erased_prev["body"]["generation"],
-                         "judgments": {"bytes": pj["bytes"], "sha256": pj["sha256"]}}}
+                         "judgments": {"bytes": pj.get("bytes"), "count": pj.get("count")}}}
 
 
 def line_skeleton(j: dict, with_unit: bool = True) -> str:
-    """判断の行の骨（番号・問い・対象の番号・結論・日時・誰が・いつまで）の指紋。消す求めで印の形にしても変わらない
-    欄だけから作る。CI は、前に配った頭の行ごとの骨（`deployed.lines`）と今の行を比べ、封の言う行だけを印の形の
-    書き換えとして通す（段 5 §3.7）。`with_unit=False` は指し先を除いた骨（消す求めで指し先を除いた行と比べる）。"""
+    """判断の行の骨（問い・対象の記録の番号・単位の指し先・語・結論・日時・いつまで）の指紋。消す求めで印の形にしても
+    変わらない欄だけから作る。**番号と「誰が」は入れない**（配る物は公開の場所に出るので、当てやすい名前を指紋に
+    混ぜない。番号は消す求めで付け直す）。CI は、前に配った頭の行ごとの骨（`deployed.lines`）と今の行を**位置で**
+    比べる（段 5 §3.7）。`with_unit=False` は指し先を除いた骨（消す求めで指し先を除いた行と比べる）。"""
     t = j.get("target") if isinstance(j.get("target"), dict) else {}
     a = j.get("answer") if isinstance(j.get("answer"), dict) else {}
-    body = {"id": j.get("id"), "question": j.get("question"), "record": t.get("record"), "ledger": t.get("ledger"),
-            "word": a.get("word"), "conclusion": a.get("conclusion"), "at": j.get("at"), "by": j.get("by"),
-            "until": j.get("until")}
+    body = {"question": j.get("question"), "record": t.get("record"), "word": a.get("word"),
+            "conclusion": a.get("conclusion"), "at": j.get("at"), "until": j.get("until")}
     if with_unit:
         body["unit"] = t.get("unit")
         body["value"] = t.get("value")
@@ -1036,7 +1044,9 @@ def line_skeletons(raw: bytes) -> list:
 
 def erase_continued(root: str, raw: bytes, dep: dict, erase) -> str | None:
     """前に配った頭（`dep`）の続きでないとき、消す求めの書き換えとして通せるか。通せれば None、通せなければ語。
-    行が減っていない・前に配った行ごとの骨が今と同じ・印の形の行は署名の合った封が言う行（と求め）だけ。"""
+    行が減っていない・前に配った i 番めの行の骨と今の i 番めの骨が同じ（印の行も、そうでない行も。並びが変われば
+    違う）・印の形の行は署名の合った封が言う行（と求め）だけ。印でない行は、番号が中身から作った物と合うことを
+    読む入口が見る。消す求めの無い回は、今までどおり頭のバイトの続きだけで比べる（ここは呼ばれない）。"""
     if not isinstance(erase, dict):
         return "no_erase"
     lines = dep.get("lines")

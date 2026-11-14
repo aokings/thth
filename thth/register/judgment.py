@@ -36,6 +36,7 @@ ERASE_DIR = "erase"                   # 消す求めの記録（`.thth/erase/<�
 ERASE_RESULT = "result.json"
 ERASE_SCOPE = "scope.json"
 ERASE_ID = re.compile(r"e-[0-9a-f]{16}\Z")
+X_ID = re.compile(r"x-[0-9a-f]{16}\Z")      # 印の行の番号（消す求めで付け直した乱数の番号。中身の指紋でない）
 PATHS = ("inspection", "acceptance", "carry")
 MAX_BYTES = 50 * 1024 * 1024
 
@@ -80,6 +81,8 @@ def erased_ok(root, item: dict) -> bool:
     `.thth/erase/<求め>/` に範囲の判断と結果があり、結果の「書き換えた判断の行」にこの行の番号があるときだけ真。
     印の行は、番号が中身から作った物と合うかを見ない（中身を除いたので）。代わりにこれを見る。"""
     mark = item.get("erased")
+    if not isinstance(item.get("id"), str) or not X_ID.fullmatch(item["id"]):
+        return False
     if root is None or not isinstance(mark, dict) or not isinstance(mark.get("request"), str) \
             or not ERASE_ID.fullmatch(mark["request"]):
         return False
