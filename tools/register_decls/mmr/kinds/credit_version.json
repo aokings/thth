@@ -43,6 +43,26 @@
  ],
  "checks": [
   {
+   "check": "empty",
+   "id": "m_w6",
+   "when": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "mb.verdict": {
+     "in": [
+      "別の録音を指す"
+     ]
+    }
+   },
+   "fields": [
+    "mb.verdict"
+   ],
+   "note": "V5: shown なら mb.verdict が「別の録音を指す」でない（816〜817 行）。when に合う行では mb.verdict が必ず空でないので、empty で「この組の行が無い」を言う"
+  },
+  {
    "check": "words",
    "id": "m_w4_status",
    "field": "status",

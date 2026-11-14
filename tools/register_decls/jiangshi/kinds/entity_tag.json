@@ -15,5 +15,43 @@
    "meaning": "about",
    "to": "entity"
   }
+ ],
+ "checks": [
+  {
+   "check": "prefixed_words",
+   "id": "j_7",
+   "field": "tag",
+   "sep": ":",
+   "allow_blank": false,
+   "prefixes": {
+    "pillar": [
+     "texts",
+     "regions",
+     "taoism",
+     "works",
+     "settings"
+    ],
+    "region": [
+     "cn",
+     "tw",
+     "hk",
+     "jp",
+     "global"
+    ],
+    "era": null,
+    "medium": [
+     "classical-text",
+     "film",
+     "tv",
+     "manga",
+     "game",
+     "novel",
+     "ritual"
+    ],
+    "motif": null,
+    "work": null
+   },
+   "note": "lab.yaml の facets（validate_data.py 197〜203 行）。null の頭は器が slug の形で見る（台本は [a-z0-9-]+）"
+  }
  ]
 }

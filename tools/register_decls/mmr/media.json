@@ -35,7 +35,13 @@
    "credit_version": 68,
    "shelf": 1,
    "lab": 1,
-   "site_urls": 1
+   "site_urls": 1,
+   "index_post": 69,
+   "index_dig": 4,
+   "index_essay": 416,
+   "index_guide": 6,
+   "index_feature": 123,
+   "shelf_song": 1168
   },
   "dangling": {
    "name.entity_id": 0,
@@ -64,7 +70,11 @@
    "ledger_addition.sources": 0,
    "ledger_addition.mood": 0,
    "ledger_addition.entities": 2,
+   "index_post.seed": 0,
+   "index_essay.seed": 0,
+   "index_feature.songs": 0,
    "credit.entity_id": 0,
+   "credit.seed": 0,
    "credit_version.claim": 0,
    "credit_version.seed": 0,
    "credit_version.subject": 0,
@@ -96,6 +106,7 @@
    "m_v3_name_id_confidence": 0,
    "m_v6_name": 0,
    "m_v7_language": 0,
+   "m_v7_tag": 0,
    "m_v1_claim": 0,
    "m_v2_claim": 0,
    "m_v3_claim_predicate": 0,
@@ -168,12 +179,22 @@
    "m_c13_kind": 0,
    "m_c13_reason": 0,
    "m_c23": 0,
+   "m_c18": 0,
+   "m_w6": 0,
    "m_w4_status": 0,
    "m_w4_shown": 0,
    "m_w4_held": 0
   }
  },
+ "vessel_gaps": [
+  "M-C22・M-W7: 欄の名を形（alias|legal|sort.?name|real.?name・大小を問わない）で、入れ子のどの段でも見る。columns は頭の段の欄の名をそのまま並べる形なので言えない",
+  "照合台帳の行の中の並び lab[]: 道は並びの中を読まない（M-C5・M-C7・M-C9・M-C14）",
+  "M-W2 V4・M-C8 R9: 行の seed の先（shelf.json の曲・G13 で shelf_song として読む）の identity_status を禁じる。seed は song（queue.json）を指す欄で、同じ欄に 2 つ目の先を書くと forbid_pair が断る（先の種類が 1 つに決まる欄だけ）。song から shelf_song への 2 段もたどれない",
+  "ファイルの道を指す欄: dossiers.path・index.yaml の file（M-V26 の後半。宿題: 指示 §6）",
+  "ledger.json の root_fixes_data の id は行ごとに先の種類が変わる（本線が直してから別に頼む）"
+ ],
  "ask_lane": [
+  "M-V7: null の頭（topic・region）は、台本は [a-z0-9-]+、器は slug（-a・a--b を断る）。今の実物で差 0",
   "M-V15・M-V16: 規則 E で廃止済み（レーンの答え）だが validate_data.py 231〜235 行に残っている。器は台本どおり書いた。消すなら台本と宣言を一緒に",
   "M-V17: 規則は廃止・台本は有効（レーンの答え）。器は台本どおり書いた",
   "M-V13・M-V28: 台本は startswith('http')。器は http:// か https:// で見る（今の実物で差 0）",

@@ -193,6 +193,40 @@
     "description_en"
    ],
    "note": "gate_publish.py 202〜204 行（警告: 英語頁を作らない）"
+  },
+  {
+   "check": "count",
+   "id": "s_g2",
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    },
+    "entity_type": {
+     "not_in": [
+      "compound",
+      "compound_class",
+      "mechanism",
+      "dye_class",
+      "property",
+      "phenomenon",
+      "concept",
+      "color_name",
+      "colorant",
+      "region",
+      "tradition",
+      "organization",
+      "dye_material"
+     ]
+    }
+   },
+   "from": {
+    "kind": "photos",
+    "via": "entity_id"
+   },
+   "min": 1,
+   "note": "gate_publish.py (b) 168〜198 行: 免除でない種類の index の点は photos.yaml に行が要る。写真のファイルが在るかは固有（S-G2 の後半）"
   }
  ]
 }

@@ -15,5 +15,41 @@
    "meaning": "about",
    "to": "entity"
   }
+ ],
+ "checks": [
+  {
+   "check": "prefixed_words",
+   "id": "s_v7",
+   "field": "tag",
+   "sep": ":",
+   "allow_blank": false,
+   "prefixes": {
+    "pillar": [
+     "covalent",
+     "complex",
+     "redox",
+     "ionic",
+     "disperse",
+     "in-situ",
+     "bind"
+    ],
+    "class": [
+     "reactive",
+     "vat",
+     "sulfur",
+     "acid",
+     "cationic",
+     "direct",
+     "disperse",
+     "naphthol",
+     "acid-mordant"
+    ],
+    "fiber": null,
+    "region": null,
+    "technique": null,
+    "topic": null
+   },
+   "note": "validate_data.py 148〜156 行。null の頭は器が slug の形で見る（台本は [a-z0-9-]+）"
+  }
  ]
 }

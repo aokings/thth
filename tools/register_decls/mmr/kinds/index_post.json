@@ -1,0 +1,21 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "index_post",
+ "place": "content/index.yaml",
+ "format": "yaml",
+ "rows_at": [
+  "posts"
+ ],
+ "id": {
+  "field": "seed"
+ },
+ "max_bytes": 1000000,
+ "records": "rows",
+ "pointers": [
+  {
+   "field": "seed",
+   "meaning": "about",
+   "to": "song"
+  }
+ ]
+}

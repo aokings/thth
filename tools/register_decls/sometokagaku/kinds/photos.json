@@ -3,9 +3,23 @@
  "kind": "photos",
  "place": "site/photos.yaml",
  "format": "yaml",
- "id": {
-  "name": true
- },
+ "records": "rows",
+ "rows_at": [
+  "photos"
+ ],
  "max_bytes": 262144,
- "note": "写真の台帳。今は photos: [] の 0 行。YAML の並びを行として読めない（records は file だけ）"
+ "id": {
+  "key": [
+   "entity_id",
+   "file"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  }
+ ],
+ "note": "写真の台帳の行（今は photos: [] の 0 行）"
 }
