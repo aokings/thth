@@ -10,5 +10,6 @@
    "row",
    "name"
   ]
- }
+ },
+ "note": "欄ごとの日本語と英語の sha256（scripts/gate_i18n_pairs.py）。file は道（data/questions/<問い>/<表>.csv が 140 余り）で、row は表ごとに作り方が違う（比べの表は row_id/comparison）ので、指す欄にしていない"
 }
