@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """台帳の器 段 3 を、こぴちゃと MMR の実物で一度だけ確かめる台本（各メディアの repo を**読むだけ**。何も書かない）。
 
-    python3 tools/register_route_realcheck.py [--developer ~/Developer] [--shadow ~/Documents/THTH/shadow]
+    python3 tools/register_route_realcheck.py [--developer ~/Developer]
+                                              [--shadow /Volumes/NexDev/Developer/thth-work/shadow] [--only kopicha]
 
 影の台帳・材料・試しの鍵は、repo の外の `<shadow>/route-<日時>/` に作る（毎回新しいフォルダ。前の回の物は消さない）。
+既定の置き場は `thth-work/` の下（大きな写しを iCloud の `~/Documents` に置かない。11/14 の決まり）。
+MMR の 2 つの出し口は、書き出し先を出し口ごとに分ける（段 7 の前半から、読む者の同じ出し口でも、別の出し口の封の
+材料が置いてある道へ違う中身を書くと断る。11/14 の段 7 の後半で直した）。
 宣言は `tests/fixtures/register_route/` の見本の物を使う。見る物（期待する答え `docs/期待する答え_台帳の器_段1〜3_2026-11-13.md` §4）:
 
 - こぴちゃ: 主張の表（`data/knowledge/claims.csv`）を、今の決まり（状態で除かずに全部出す）のまま基準で受けて封をすると、
@@ -37,7 +41,8 @@ def sha(path) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--developer", default="~/Developer")
-    ap.add_argument("--shadow", default="~/Documents/THTH/shadow")
+    ap.add_argument("--shadow", default="/Volumes/NexDev/Developer/thth-work/shadow")
+    ap.add_argument("--only", choices=("kopicha", "mmr"), default=None)
     args = ap.parse_args()
     dev = pathlib.Path(args.developer).expanduser()
     work = pathlib.Path(args.shadow).expanduser() / ("route-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -56,6 +61,8 @@ def main() -> int:
         return R.accept(str(led), outlet, str(to), AT, confirm=plan["digest"], at=AT)
 
     # ---- こぴちゃ
+    if args.only == "mmr":
+        return mmr(dev, work, R, V, accept, ok)
     src = dev / "kopicha/data/knowledge/claims.csv"
     led = work / "kopicha"
     (led / "data/knowledge").mkdir(parents=True)
@@ -80,7 +87,15 @@ def main() -> int:
     print(f"  文だけを直す（状態は据え置き）: 外れる {e['changes']['leaving']}・確かめ ok={r['ok']} "
           f"{[x['word'] for x in r['problems']]}")
 
-    # ---- MMR
+    if args.only == "kopicha":
+        print(f"置き場: {work}")
+        print("MMR は回していない（未確認）")
+        print("全部が期待のとおり" if ok else "期待と違う所がある")
+        return 0 if ok else 1
+    return mmr(dev, work, R, V, accept, ok)
+
+
+def mmr(dev, work, R, V, accept, ok) -> int:
     led = work / "mmr"
     shutil.copytree(FIX / "mmr/.thth", led / ".thth")
     shutil.copytree(dev / "music-research/site/src/credits", led / "site/src/credits")
@@ -93,13 +108,13 @@ def main() -> int:
           f"読めない枚 {sum(1 for r in vessel.all_records if r.problems)}")
     for outlet in ("song_page", "artist_page"):
         R.baseline(str(led), outlet, by="register_route_realcheck", at=AT)
-    site = work / "mmr-site"
-    for outlet in ("song_page", "artist_page"):
+    sites = {outlet: work / f"mmr-site-{outlet}" for outlet in ("song_page", "artist_page")}
+    for outlet, site in sites.items():
         accept(led, outlet, site)
-    song = json.loads((site / "materials/song_page.json").read_text())
-    artist = json.loads((site / "materials/artist_page.json").read_text())
+    song = json.loads((sites["song_page"] / "materials/song_page.json").read_text())
+    artist = json.loads((sites["artist_page"] / "materials/artist_page.json").read_text())
     res = [i for i in song if i["as"] == "reservation"]
-    plan = R.accept_plan(str(led), "song_page", str(site), AT)
+    plan = R.accept_plan(str(led), "song_page", str(sites["song_page"]), AT)
     out = collections.Counter(e["why"] for e in plan["result"]["excluded"])
     print(f"  曲の頁: 事実 {sum(1 for i in song if i['as'] == 'fact')}・留保 {len(res)} "
           f"{dict(collections.Counter(i['reason_kind'] for i in res))}・出ない {dict(out)}")
@@ -107,7 +122,7 @@ def main() -> int:
           f"{sum(1 for i in artist if i['as'] == 'reservation')}")
     ok &= len(res) == 85 and out.get("reason_kind_not_allowed") == 39
     for outlet in ("song_page", "artist_page"):
-        r = R.verify(str(led), outlet, str(site), "2026-11-15", no_previous=True)
+        r = R.verify(str(led), outlet, str(sites[outlet]), "2026-11-15", no_previous=True)
         ok &= r["ok"]
         print(f"  確かめ {outlet}: ok={r['ok']}")
     print(f"置き場: {work}")

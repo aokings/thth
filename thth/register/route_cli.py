@@ -22,6 +22,14 @@
                          [--common <共通の台帳>] [--publish <配る物の置き場>] [--json]
         公開の直前の確かめ（CI・手元の配信）。公開鍵は環境の変数 THTH_REGISTER_SEAL_PUBLIC_KEY か、手元の鍵だけ。
         緑なら --publish の置き場に、配る物（封と、配った時の判断の記録の頭）を書く（次の回の --previous）
+    thth register used <台帳> <種類:番号> [--json]
+        使った先（読むだけ）: どの出し口の・どの世代の材料に・何として載ったか・差し込みで使われたか（封から）と、
+        「から作った」で指す記録（来歴の控え）。今の版が最後の世代に載った版と違えば「材料が古い」
+    thth register published <台帳> --outlet <出し口> --list <一覧> [--record] [--now <日時>]
+                            [--previous <前に配った控えの頭>] [--publish <配る控えの頭の置き場>] [--json]
+        出した URL の関門（build のあとの一覧と、出し口ごとの追記だけの控え .thth/published/<出し口>.jsonl を比べる）。
+        前に出した URL が一覧に無い・許していない転送・転送先が無い・二重・控えの書き換えは赤（rc 1）。
+        --record を付けたときだけ、緑なら控えに足す（付けなければ台帳に書かない）
     thth register key init|show [--json]
         持ち主の鍵（秘密の鍵は ~/.config/thth/ に。値は出さない・出すのは公開鍵と指紋）
 
@@ -239,6 +247,54 @@ def cmd_verify(args) -> int:
     return 0
 
 
+def cmd_used(args) -> int:
+    value = R.used(root_of(args.register), args.record)
+    if args.json:
+        _print(value)
+        return 0
+    print(f"{value['record']}（今の版 {value['version'][:12]}）")
+    if not value["outlets"]:
+        print("  どの出し口の封にも載っていません")
+    for row in value["outlets"]:
+        if "generation" not in row:
+            print(f"  {row['outlet']}: 封の形が崩れていて読めません")
+            continue
+        what = [x["as"] + (f"（{x['unit']}）" if x.get("unit") else "") for x in row["loaded"]]
+        what += [f"{i['record']} へ差し込み（{', '.join(i['fields'])}）" for i in row["inserted_into"]]
+        if row["read_only"]:
+            what.append("入力として読んだが載らなかった")
+        if row["unconfirmed"]:
+            what.append("差し込んだ側が封のあとに変わり、差し込みは確かめられない")
+        print(f"  {row['outlet']} 世代 {row['generation']}（{row['as_of']}・封 {row['seal']}）: {'・'.join(what)}"
+              + ("　材料が古い（今の版と違う）" if row["stale"] else ""))
+    for d in value["derived_by"]:
+        print(f"  から作った: {d['record']}（{d['field']}）" + ("　来歴の控えが今の版と違う" if d.get("review") else ""))
+    return 0
+
+
+def cmd_published(args) -> int:
+    from . import published as P
+    value = P.published(root_of(args.register), args.outlet, args.list, args.now or P.now_default(),
+                        record=args.record, previous=args.previous, publish=args.publish)
+    if args.json:
+        _print(value)
+        return 0 if value["ok"] else 1
+    c = value["counts"]
+    print(f"出した URL の関門 {value['outlet']}: 一覧 {c['listed']}・控え {c['logged']}・転送 {c['redirected']}・"
+          f"消した {c['gone']}・新しい {c['new']}・赤 {c['problems']}・知らせ {c['warnings']}")
+    for w in value["warnings"]:
+        print(f"  知らせ {w['word']}: {w.get('url', '')}")
+    for p in value["problems"]:
+        print(f"  赤 {p['word']}: {p.get('url', p.get('why', ''))} — {P.FIX.get(p['word'], '')}")
+    if value["more"]:
+        print(f"  ほか {value['more']} 件（--json で）")
+    if value["ok"] and args.record:
+        print(f"  控えに {value['recorded']} 行足しました")
+    elif value["ok"] and c["new"]:
+        print("  新しい URL は控えに足していません（--record で足す）")
+    return 0 if value["ok"] else 1
+
+
 def cmd_key(args) -> int:
     if args.key_command == "init":
         value = S.init_key()
@@ -319,6 +375,23 @@ def register_parsers(verbs, run) -> None:
     p.add_argument("--publish", default=None, metavar="配る物の置き場")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_verify))
+
+    p = verbs.add_parser("used", help="使った先: どの出し口の・どの世代の材料に・何として載ったか（読むだけ）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("record", metavar="種類:番号")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=run(cmd_used))
+
+    p = verbs.add_parser("published", help="出した URL の関門（--record のときだけ控えに足す）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--outlet", required=True)
+    p.add_argument("--list", required=True, metavar="一覧")
+    p.add_argument("--record", action="store_true")
+    p.add_argument("--now", default=None, metavar="日時")
+    p.add_argument("--previous", default=None, metavar="前に配った控えの頭")
+    p.add_argument("--publish", default=None, metavar="配る控えの頭の置き場")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=run(cmd_published))
 
     p = verbs.add_parser("key", help="持ち主の封の鍵（作る・公開鍵を見る）")
     keys = p.add_subparsers(dest="key_command", required=True)

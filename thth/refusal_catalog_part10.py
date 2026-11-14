@@ -403,7 +403,11 @@ ENTRIES = {
         "thth register kinds <台帳> で種類の名前を確かめ、.thth/outlets.json の outlets に出し口を足すか直してから、"
         "打ち直してください（出し口ごとに audience・kinds・requires・fact・reservation を書きます）。kinds を"
         "種類ごとの設定（private_fields・inserts・hide）で書くのは読者の出し口だけ・欄の名前は英数字と _ だけ・"
-        "dest は台帳の外の相対の道で、内の道具の出し口と読者の出し口で同じにしない（語の dest_shared）。",
+        "dest は台帳の外の相対の道で、内の道具の出し口と読者の出し口で同じにしない（語の dest_shared）。"
+        "reader_fields（読者に見える欄）も読者の出し口だけ・頭の internal_words は字のままの語の並び（512 語・"
+        "1 語 64 字まで・空と改行は不可）・published（出した URL の関門）の redirects は from・to・status（数）、"
+        "gone は url と reason_kind（英数字の語）、redirect_status は数の並び、duplicate と redirect_with_page は"
+        " red か warn。",
         "thth register kinds <台帳>",
         "読者に出る出し口と内の道具が読む出し口を分けて宣言すると、出さない層が公開の材料へ混ざりません。"),
     "register_use_not_usable": _entry(
