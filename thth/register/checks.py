@@ -3,7 +3,10 @@
 宣言に書けるのは 9 つの部品（`unique`・`required`・`empty`・`one_of`・`words`・`shape`・`forbid_pair`・`count`・
 `judged`）と、決まった形の条件だけ。**式・正規表現・命令は受け取らない。** 値の形（`shape`）は THTH が備えた名前から
 選ぶ。宣言にどんな値を書かれても、例外を漏らさず `DeclarationError("checks")` にする。
-条件の `in`・`not_in` の語の並びの中の空の語 `""` は「空」（欠け・null・空白だけ・空の並びと辞書）を指す。
+比べは読み替えない（段 4 §9）: 読んだ値を型も込みで比べ、前後の空白を落とさない。語の並びは JSON のスカラー（字・整数・
+真偽・`null`。真偽と整数を同じにしない）。`null` の語は欄が無い・null に、`""` は長さ 0 の字にだけ当たる。空は、欄が
+無い・null・長さ 0 の字・空の並び・空の辞書（空白だけの字は空でない）。検査か条件に `trim: true` を書くと、その中だけ
+字の前後の空白を落としてから比べる・空を見る。
 
 回すときは、先に索引を作り、記録の数に比例する手間で終える（2 重の繰り返しにしない）。`forbid_pair` と `count` は
 宣言済みの指す欄を 1 段だけたどる。よその台帳を指す先（`<台帳>:<番号>`）は違反にせず「確かめられない」に数える。
@@ -48,7 +51,7 @@ _SHAPES = {
 SHAPES = tuple(_SHAPES)
 _PREFIX_ONLY = ("http_url", "https_url")  # 頭だけを見る形（match）。ほかは全体（fullmatch）
 
-_COMMON = ("check", "id", "level", "when", "note")
+_COMMON = ("check", "id", "level", "when", "note", "trim")
 _ARGS = {
     "unique": ("fields", "fold", "skip_blank"),
     "required": ("fields",),
@@ -111,29 +114,75 @@ def _fields(value, *, at_least=1, limit=FIELDS_MAX, name=None):
     return out
 
 
-def _words(value):
+class Word(tuple):
+    """語の並びの 1 つ（型の札と値の組）。比べは型も込み（真偽と整数の 1 を同じにしない）。字にすると元の語。"""
+
+    def __str__(self):
+        return self[1] if self[0] == "s" else json.dumps(self[1])
+
+
+INT_MAX = 2 ** 63  # 語に書ける整数の大きさ
+
+
+def _key(value, trim: bool = False):
+    """値の比べの鍵（型も込み）。辞書・並び・小数など、語として比べない物は None。"""
+    if value is None:
+        return Word(("n", None))
+    if isinstance(value, bool):
+        return Word(("b", value))
+    if isinstance(value, int):
+        return Word(("i", value))
+    if isinstance(value, str):
+        return Word(("s", value.strip() if trim else value))
+    return None
+
+
+def _words(value, *, scalars: bool = True):
+    """語の並び。`scalars` なら JSON のスカラー（字・整数・真偽・null）、偽なら字だけ。"""
     if not isinstance(value, list) or not 1 <= len(value) <= WORDS_MAX:
         raise _err()
     out = []
     for word in value:
-        if not isinstance(word, str) or len(word) > WORD_LEN_MAX or "\n" in word or "\r" in word:
+        if isinstance(word, str):
+            if len(word) > WORD_LEN_MAX or "\n" in word or "\r" in word:
+                raise _err()
+        elif not scalars or (isinstance(word, int) and not isinstance(word, bool) and abs(word) >= INT_MAX):
             raise _err()
-        out.append(word.strip())
+        elif word is not None and not isinstance(word, (bool, int)):
+            raise _err()
+        out.append(_key(word))
     return frozenset(out)
 
 
+def _texts(value):
+    """字だけの語の並び（`prefixed_words` の語）。"""
+    return frozenset(w[1] for w in _words(value, scalars=False))
+
+
+class Condition(dict):
+    """読んだ条件 `{欄: (op, 語, or_blank)}`。`trim` は `trim: true` を書いた欄の集まり。"""
+    trim = frozenset()
+
+
 def parse_condition(raw) -> dict:
-    """条件 `{"<欄>": {"in": [...]} | {"not_in": [...]} | {"blank": bool}, …}`（全部が合えば合う）。"""
+    """条件 `{"<欄>": {"in": [...]} | {"not_in": [...]} | {"blank": bool}, …}`（全部が合えば合う）。
+    欄ごとに `or_blank: true`（in・not_in と）・`trim: true`（字の前後の空白を落としてから比べる）を書ける。"""
     if not isinstance(raw, dict) or not 1 <= len(raw) <= COND_MAX:
         raise _err()
-    out = {}
+    out = Condition()
+    trims = set()
     for name, test in raw.items():
         _path(name)
         if not isinstance(test, dict):
             raise _err()
+        if "trim" in test:
+            if test["trim"] is not True and test["trim"] is not False:
+                raise _err()
+            if test["trim"]:
+                trims.add(name)
         has_or_blank = "or_blank" in test
         or_blank = test.get("or_blank")
-        rest = {k: v for k, v in test.items() if k != "or_blank"}
+        rest = {k: v for k, v in test.items() if k not in ("or_blank", "trim")}
         if len(rest) != 1:
             raise _err()
         (op, arg), = rest.items()
@@ -147,6 +196,7 @@ def parse_condition(raw) -> dict:
             out[name] = (op, arg, False)
         else:
             raise _err()
+    out.trim = frozenset(trims)
     return out
 
 
@@ -170,8 +220,10 @@ def _parse_one(raw, pointers: list) -> dict:
     note = raw.get("note")
     if note is not None and (not isinstance(note, str) or len(note) > NOTE_MAX):
         raise _err()
-    out = {"check": part, "id": cid, "level": level, "note": note,
+    out = {"check": part, "id": cid, "level": level, "note": note, "trim": _bool(raw.get("trim"), False),
            "when": parse_condition(raw["when"]) if raw.get("when") is not None else None}
+    if "trim" in raw and raw["trim"] is None:
+        raise _err()
     if part == "unique":
         out["fields"] = _fields(raw.get("fields"))
         fold = raw.get("fold")
@@ -260,7 +312,7 @@ def _parse_one(raw, pointers: list) -> dict:
             if not isinstance(head, str) or not 0 < len(head) <= 64 or sep in head or head != head.strip() \
                     or not head.isprintable():
                 raise _err()
-            out["prefixes"][head] = None if words is None else _words(words)
+            out["prefixes"][head] = None if words is None else _texts(words)
         out["allow_blank"] = _bool(raw.get("allow_blank"), True)
     elif part == "judged":
         q = raw.get("question")
@@ -334,44 +386,37 @@ def validate_refs(kinds: dict) -> str | None:
 
 # ------------------------------------------------------------------ 値の見方
 
-def _blank(value) -> bool:
+def _blank(value, trim: bool = False) -> bool:
+    """空: 欄が無い・null・長さ 0 の字・空の並び・空の辞書。空白だけの字は空でない（`trim` なら空）。"""
     if value is None:
         return True
     if isinstance(value, str):
-        return not value.strip()
+        return not (value.strip() if trim else value)
     if isinstance(value, (list, dict)):
         return not value
     return False
 
 
-def _text(value):
-    """比べる字（前後の空白を落とす）。辞書・並びは None（字として比べない）。欠け・null は ""。"""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, (int, float)):
-        return json.dumps(value)
-    return None
+def _trimmed(value, trim: bool):
+    return value.strip() if trim and isinstance(value, str) else value
 
 
 def match(cond: dict | None, values: dict) -> bool:
     if not cond:
         return True
+    trims = getattr(cond, "trim", frozenset())
     for name, (op, arg, or_blank) in cond.items():
         value = get(values, name)
-        if or_blank and _blank(value):
+        trim = name in trims
+        if or_blank and _blank(value, trim):
             continue
         if op == "blank":
-            if _blank(value) != arg:
+            if _blank(value, trim) != arg:
                 return False
             continue
-        # 空の値（欠け・null・空白だけ・空の並びと辞書）は空の語 "" として比べる（段 4 の足し 1）。
-        word = "" if _blank(value) else _text(value)
+        word = _key(value, trim)  # 型も込み（読み替えない）
         if word is None:
-            return False  # 中身のある辞書・並びには blank だけが使える
+            return False  # 辞書・並び（と小数）には blank だけが使える
         if op == "in" and word not in arg:
             return False
         if op == "not_in" and word in arg:
@@ -397,14 +442,14 @@ def _key_word(value, fold):
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _distinct_word(value):
-    """`distinct` で比べる語: 字は前後の空白を落とした字、辞書・並びは決まった書き方の JSON。"""
-    word = _text(value)
-    return ("t", word) if word is not None else ("j", _key_word(value, None))
+def _distinct_word(value, trim: bool = False):
+    """`distinct` で比べる語: 型も込みの値（`trim` なら字の前後の空白を落とす）。辞書・並びは決まった書き方の JSON。"""
+    return ("j", _key_word(_trimmed(value, trim), None))
 
 
 def shape_ok(c: dict, value) -> bool:
-    if isinstance(value, int) and not isinstance(value, bool):
+    """値の形。字だけを見る（`positive_int` だけは整数も受ける。名前の決まり）。"""
+    if c.get("shape") == "positive_int" and isinstance(value, int) and not isinstance(value, bool):
         value = str(value)
     if not isinstance(value, str):
         return False
@@ -437,17 +482,15 @@ def _targets(vessel, rec, via: str, to: str | None = None):
     """`via` の指す欄（`to` を渡せば、その先の種類の 1 本だけ）の先 `(種類, 番号)` の並び（重なりは 1 つ）と、
     空の要素の数。"""
     from . import vessel as V
-    out, blanks = [], 0
+    out, blanks = {}, 0  # 重なりは集合で除く（並びを引かない。段 4 §9）
     for spec in vessel.kinds[rec.kind].pointers:
         if spec.get("field") != via or (to is not None and spec.get("to") != to):
             continue
         got, empty = V.pointer_pieces(rec, spec)
         blanks += empty
         for target_id in got:
-            pair = (spec["to"], target_id)
-            if pair not in out:
-                out.append(pair)
-    return out, blanks
+            out.setdefault((spec["to"], target_id), None)
+    return list(out), blanks
 
 
 def _pointing(vessel, row, via: str, to: str | None = None):
@@ -501,10 +544,11 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
         live.append(rec)
     res.out["checked"] = len(live)
     part = c["check"]
+    trim = c.get("trim", False)
     if part == "unique":
         groups = {}
         for rec in live:
-            vals = [get(rec.values, f) for f in c["fields"]]
+            vals = [_trimmed(get(rec.values, f), trim) for f in c["fields"]]
             if c["skip_blank"] and all(_blank(v) for v in vals):
                 continue
             groups.setdefault(tuple(_key_word(v, c["fold"]) for v in vals), []).append(rec)
@@ -514,17 +558,17 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
                     res.bad(rec, "duplicate", same=len(members))
     elif part == "required":
         for rec in live:
-            missing = [f for f in c["fields"] if _blank(get(rec.values, f))]
+            missing = [f for f in c["fields"] if _blank(get(rec.values, f), trim)]
             if missing:
                 res.bad(rec, "blank", fields=missing)
     elif part == "empty":
         for rec in live:
-            filled = [f for f in c["fields"] if not _blank(get(rec.values, f))]
+            filled = [f for f in c["fields"] if not _blank(get(rec.values, f), trim)]
             if filled:
                 res.bad(rec, "not_blank", fields=filled)
     elif part == "one_of":
         for rec in live:
-            n = sum(1 for f in c["fields"] if not _blank(get(rec.values, f)))
+            n = sum(1 for f in c["fields"] if not _blank(get(rec.values, f), trim))
             if n == 0:
                 res.bad(rec, "none_filled")
             elif c["mode"] == "exactly_one" and n > 1:
@@ -532,18 +576,18 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
     elif part == "words":
         for rec in live:
             value = get(rec.values, c["field"])
-            if _blank(value):
+            if _blank(value, trim):
                 if not c["allow_blank"]:
                     res.bad(rec, "blank", field=c["field"])
                 continue
-            word = _text(value)
+            word = _key(value, trim)
             if word is None:
                 res.bad(rec, "not_text", field=c["field"])
             elif word not in c["in"]:
                 res.bad(rec, "word_not_allowed", field=c["field"])
     elif part == "shape":
         for rec in live:
-            value = get(rec.values, c["field"])
+            value = _trimmed(get(rec.values, c["field"]), trim)
             if _blank(value):
                 if not c["allow_blank"]:
                     res.bad(rec, "blank", field=c["field"])
@@ -584,7 +628,8 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
         for rec in live:
             rows = [r for r in rows_of(rec) if match(c["where"], r)]
             if c["distinct"]:
-                n = len({_distinct_word(get(r, c["distinct"])) for r in rows if not _blank(get(r, c["distinct"]))})
+                n = len({_distinct_word(get(r, c["distinct"]), trim) for r in rows
+                         if not _blank(get(r, c["distinct"]), trim)})
             else:
                 n = len(rows)
             if c["min"] is not None and n < c["min"]:
@@ -602,14 +647,13 @@ def _run_one(vessel, kind, c: dict, recs: list, by_kind: dict, judgments_fn) -> 
                 res.bad(rec, "column_forbidden", fields=sorted(present & c["forbidden"]))
     elif part == "prefixed_words":
         for rec in live:
-            value = get(rec.values, c["field"])
-            if _blank(value):
+            word = _trimmed(get(rec.values, c["field"]), trim)
+            if _blank(word):
                 if not c["allow_blank"]:
                     res.bad(rec, "blank", field=c["field"])
                 continue
-            word = _text(value)
-            if word is None:
-                res.bad(rec, "not_text", field=c["field"])
+            if not isinstance(word, str):
+                res.bad(rec, "not_text", field=c["field"])  # 数・真偽を字にしない
                 continue
             head, sep, tail = word.partition(c["sep"])
             if not sep:

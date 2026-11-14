@@ -395,7 +395,7 @@ def test_G12_md_yamlは頭の段の鍵を欄に_本文は_body(tmp_path):
                                                "articles/big.md": "---\ntitle: X\ncategory: tea\n---\n" + "字" * 30000})
     v = V.open_vessel(str(root))
     a = v.get("article:a")
-    assert a.inspected and a.values == {"title": "苦味の話", "category": "tea", "parent": "null",
+    assert a.inspected and a.values == {"title": "苦味の話", "category": "tea", "parent": None,  # 段 4 §9
                                         "_body": "本文の 1 行目\n\n2 行目\n"}
     assert a.version == V.bytes_version(MD_OK.encode("utf-8"))  # 版は全バイト
     assert V.problems(v) == []
@@ -782,35 +782,116 @@ def test_断りの語_前の版を取り出せないは専用の語_控えの名
     assert caught.value.code == "register_kept_missing" and caught.value.detail == "snapshot"
 
 
-# --- 段 4 の足し 1: 語の並びの中の空の語 "" は「空」（欠け・null・空白だけ・空の並び）を指す -----------------------
+# --- 段 4 §9 穴 2: 比べを読み替えない（足し 1 の「空の語 "" は空」を置き換える） ---------------------------------
 
-BLANKS = ({}, {"f": None}, {"f": "   "}, {"f": ""}, {"f": []}, {"f": {}})
-
-
-@pytest.mark.parametrize("values", BLANKS)
-def test_足し1_inに空の語があれば空の値は合う_無ければ合わない(values):
-    assert C.match(C.parse_condition({"f": {"in": ["a", ""]}}), values)
-    assert not C.match(C.parse_condition({"f": {"in": ["a"]}}), values)
+def _m(cond, values):
+    return C.match(C.parse_condition(cond), values)
 
 
-@pytest.mark.parametrize("values", BLANKS)
-def test_足し1_not_inに空の語があれば空の値は合わない_無ければ合う(values):
-    assert not C.match(C.parse_condition({"f": {"not_in": ["a", ""]}}), values)
-    assert C.match(C.parse_condition({"f": {"not_in": ["a"]}}), values)
+def test_穴2_条件は型も込みで比べる_関東K_A2の数の1と空の字():
+    tier = {"source_tier": {"not_in": ["1", "3", None]}}         # 元の台本 `x not in ("1", "3", None)`
+    assert _m(tier, {"source_tier": 1})                          # 数の 1 は字の "1" でない → 当たる（赤に数える）
+    assert _m(tier, {"source_tier": ""})                         # 長さ 0 の字は null でない → 当たる
+    assert _m(tier, {"source_tier": "2"})
+    assert not _m(tier, {"source_tier": None}) and not _m(tier, {})
+    assert not _m(tier, {"source_tier": "3"})
+    assert not _m({"f": {"in": [True]}}, {"f": 1}) and not _m({"f": {"in": [1]}}, {"f": True})
+    assert _m({"f": {"in": [1]}}, {"f": 1}) and _m({"f": {"in": [True]}}, {"f": True})
+    assert not _m({"f": {"in": ["1"]}}, {"f": 1}) and not _m({"f": {"in": ["true"]}}, {"f": True})
 
 
-def test_足し1_語の中と外の値は空の語があっても今までどおり():
-    for words in (["a", ""], ["a"]):
-        assert C.match(C.parse_condition({"f": {"in": words}}), {"f": " a "})
-        assert not C.match(C.parse_condition({"f": {"in": words}}), {"f": "b"})
-        assert not C.match(C.parse_condition({"f": {"not_in": words}}), {"f": "a"})
-        assert C.match(C.parse_condition({"f": {"not_in": words}}), {"f": "b"})
-    # or_blank は変わらない: in+or_blank は語か空・not_in+or_blank は語でないか空
-    assert C.match(C.parse_condition({"f": {"in": ["a"], "or_blank": True}}), {"f": None})
-    assert C.match(C.parse_condition({"f": {"not_in": ["a"], "or_blank": True}}), {"f": None})
-    assert not C.match(C.parse_condition({"f": {"not_in": ["a"], "or_blank": True}}), {"f": "a"})
-    # 中身のある辞書・並びは字として比べない（今までどおり合わない）
-    assert not C.match(C.parse_condition({"f": {"in": ["a", ""]}}), {"f": ["x"]})
+def test_穴2_nullと長さ0の字を分ける_or_blankは空の全部():
+    assert _m({"f": {"in": [None]}}, {}) and _m({"f": {"in": [None]}}, {"f": None})
+    assert not _m({"f": {"in": [None]}}, {"f": ""}) and not _m({"f": {"in": [""]}}, {"f": None})
+    assert _m({"f": {"in": [""]}}, {"f": ""}) and not _m({"f": {"in": [""]}}, {"f": " "})
+    for value in (None, "", [], {}):
+        assert _m({"f": {"in": ["a"], "or_blank": True}}, {"f": value}), value
+    assert _m({"f": {"in": ["a"], "or_blank": True}}, {})
+    assert not _m({"f": {"in": ["a"], "or_blank": True}}, {"f": "  "})  # 空白だけの字は空でない
+    assert not _m({"f": {"blank": True}}, {"f": "  "}) and _m({"f": {"blank": True}}, {"f": ""})
+
+
+def test_穴2_空白を落とさない_trimを書いた条件の中だけ落とす_こぴちゃK4_6():
+    assert not _m({"s": {"in": ["unverified"]}}, {"s": "unverified "})
+    assert _m({"s": {"in": ["unverified"], "trim": True}}, {"s": " unverified "})
+    assert _m({"s": {"blank": True, "trim": True}}, {"s": "  "})
+    assert _m({"s": {"in": ["a"], "or_blank": True, "trim": True}}, {"s": " \t"})
+    assert not _m({"s": {"in": ["1"], "trim": True}}, {"s": 1})          # trim は字だけ。数を字にしない
+
+
+def _one(tmp, checks, rows, header=None, fmt="json"):
+    k = kind("t", "t.json", "json", records="rows", rows_at=["rows"], id={"field": "id"}, checks=checks)
+    root = make_ledger(tmp / "l", [k], {"t.json": json.dumps({"rows": rows}, ensure_ascii=False)})
+    out = {}
+    for e in C.run(V.open_vessel(str(root)))["list"]:
+        assert not e.get("failed"), e
+        out[e["id"]] = sorted(r["record"].split(":", 1)[1] for r in e["records"])
+    return out
+
+
+def test_穴2_空白だけの字は空でない_MMR_M_C13_trimを書けば空(tmp_path):
+    rows = [{"id": "a", "r": " "}, {"id": "b", "r": ""}, {"id": "c", "r": None}, {"id": "d"}, {"id": "e", "r": "x"},
+            {"id": "f", "r": []}, {"id": "g", "r": {}}]
+    got = _one(tmp_path, [{"check": "required", "id": "req", "fields": ["r"]},
+                          {"check": "required", "id": "req_t", "fields": ["r"], "trim": True},
+                          {"check": "empty", "id": "emp", "fields": ["r"]},
+                          {"check": "one_of", "id": "one", "fields": ["r", "zz"]}], rows)
+    assert got["req"] == ["b", "c", "d", "f", "g"]
+    assert got["req_t"] == ["a", "b", "c", "d", "f", "g"]
+    assert got["emp"] == ["a", "e"]
+    assert got["one"] == ["b", "c", "d", "f", "g"]
+
+
+def test_穴2_wordsとuniqueとdistinctも型と空白を読み替えない(tmp_path):
+    rows = [{"id": "a", "s": "ok "}, {"id": "b", "s": "ok"}, {"id": "c", "s": 1}, {"id": "d", "s": True},
+            {"id": "e", "s": None}, {"id": "f", "s": "1"}]
+    got = _one(tmp_path, [{"check": "words", "id": "w", "field": "s", "in": ["ok", 1], "allow_blank": True},
+                          {"check": "words", "id": "w_t", "field": "s", "in": ["ok", 1, True, "1"], "trim": True},
+                          {"check": "unique", "id": "u", "fields": ["s"]},
+                          {"check": "unique", "id": "u_t", "fields": ["s"], "trim": True}], rows)
+    assert got["w"] == ["a", "d", "f"]
+    assert got["w_t"] == ["e"]                                     # 空は allow_blank が偽で赤
+    assert got["u"] == []                                          # "ok " と "ok"・1 と "1"・1 と True は別
+    assert got["u_t"] == ["a", "b"]
+
+
+def test_穴2_countのdistinctは型も込み_whereは条件の読み(tmp_path):
+    card = kind("card", "cards/*.json", "json", records="file", id={"name": True},
+                units={"groups": [], "items": ["rows", "*"], "key": ["k"]},
+                checks=[{"check": "count", "id": "d", "from": {"units": True}, "distinct": "v", "min": 3},
+                        {"check": "count", "id": "d_t", "from": {"units": True}, "distinct": "v", "min": 2,
+                         "trim": True},
+                        {"check": "count", "id": "w", "from": {"units": True},
+                         "where": {"p": {"in": [True]}}, "max": 0}])
+    root = make_ledger(tmp_path / "l", [card], {"cards/x.json": json.dumps({"rows": [
+        {"k": "1", "v": "a", "p": 1}, {"k": "2", "v": "a ", "p": "true"}, {"k": "3", "v": 1, "p": True},
+        {"k": "4", "v": "1", "p": None}]})})
+    got = {e["id"]: e["violations"] for e in C.run(V.open_vessel(str(root)))["list"]}
+    assert got == {"d": 0, "d_t": 0, "w": 1}                       # a・a ・1・"1" は 4 つ。trim で 3 つ。真は 1 行だけ
+
+
+@pytest.mark.parametrize("value,ok", [("12", True), (12, True), (" 12", False), (True, False), (12.0, False),
+                                      ("0", False), (0, False), ("012", False)])
+def test_穴2_positive_intは字と整数の両方を受ける_ほかの形は字だけ(value, ok):
+    c = {"shape": "positive_int", "prefix": None}
+    assert C.shape_ok(c, value) is ok
+    assert C.shape_ok({"shape": "slug", "prefix": None}, 12) is False
+    assert C.shape_ok({"shape": "slug", "prefix": None}, True) is False
+
+
+def test_穴2_語の並びはJSONのスカラーを受ける():
+    cond = C.parse_condition({"f": {"in": ["a", 1, True, None, ""]}})
+    assert cond["f"][0] == "in"
+    for words in ([1.5], [[]], [{}], ["a\n"], [float("nan")], ["x" * 300], [], [2 ** 80]):
+        with pytest.raises(V.DeclarationError):
+            C.parse_condition({"f": {"in": words}})
+    for trim in (1, "yes", None, [True]):
+        with pytest.raises(V.DeclarationError):
+            C.parse_condition({"f": {"in": ["a"], "trim": trim}})
+    parse_fails(kind("t", "t.csv", id={"field": "id"}, checks=[{"check": "required", "id": "x", "fields": ["a"],
+                                                                "trim": 1}]), "checks")
+    parse_fails(kind("t", "t.csv", id={"field": "id"}, checks=[{"check": "words", "id": "x", "field": "a",
+                                                                "in": [[1]]}]), "checks")
 
 
 # --- 段 4 の足し 2: 同じ欄に指す欄が 2 本あるとき、forbid_pair と count の via_to で先の種類を選ぶ ---------------
@@ -893,3 +974,245 @@ def test_足し2_to_byの指す欄にはvia_toでも使えない():
         checks=[{"check": "forbid_pair", "id": "x", "via": "seed", "via_to": "song",
                  "target": {"status": {"in": ["draft"]}}}])
     parse_fails(credit, "checks")
+
+
+# --- 段 4 §9 穴 3: YAML の引用していない null と真偽だけを型にする ----------------------------------------------
+
+YAML_TYPES = ("a: null\nb: ~\nc: Null\nd: NULL\ne:\nf: true\ng: True\nh: TRUE\ni: false\nj: False\nk: FALSE\n"
+              "l: 'null'\nm: \"true\"\nn: yes\no: no\np: on\nq: off\nr: 12\ns: 2026-08-27\nt: 1.5\nu: tRue\nv: nuLL\n"
+              "w: ''\nx: [null, true, 'false', '~', 3]\ny: {z: ~, zz: False}\nnull: 1\ntrue: 2\n")
+
+
+@yaml_needed
+def test_穴3_YAMLの引用していないnullと真偽だけを型にする_ほかは字():
+    value, problem, seen = V.yamlread.load(YAML_TYPES)
+    assert problem is None and seen
+    assert value == {"a": None, "b": None, "c": None, "d": None, "e": None,
+                     "f": True, "g": True, "h": True, "i": False, "j": False, "k": False,
+                     "l": "null", "m": "true", "n": "yes", "o": "no", "p": "on", "q": "off", "r": "12",
+                     "s": "2026-08-27", "t": "1.5", "u": "tRue", "v": "nuLL", "w": "",
+                     "x": [None, True, "false", "~", "3"], "y": {"z": None, "zz": False},
+                     "null": "1", "true": "2"}                     # 鍵は字のまま
+
+
+@yaml_needed
+def test_穴3_YAMLの断りは今までどおり():
+    for text, word in (("a: 1\na: 2\n", "key_duplicate:2"), ("a: &x 1\nb: *x\n", "anchor:1"),
+                       ("a: !!str 1\n", "tag:1"), ("<<: {a: 1}\n", "merge:1"), ("a: 1\n---\nb: 2\n", "multi_document:2")):
+        assert V.yamlread.load(text) == (None, word, True), text
+
+
+CHUJU = ("---\ntitle: 倍率\ndraft: {draft}\ndekiru: {dekiru}\nbranches:\n  - konkyo: {konkyo}\n    {extra}\n---\n本文\n")
+
+
+@yaml_needed
+@pytest.mark.parametrize("dekiru,konkyo,extra,draft,bad", [
+    ("できる", "あり", "next: x", "false", set()),
+    ("", "あり", "next: x", "false", {"pub"}),
+    ("null", "あり", "next: x", "false", {"pub"}),
+    ("~", "あり", "next: x", "false", {"pub"}),
+    ("できる", "null", "next: x", "false", {"konkyo"}),
+    ("できる", "あり", "terashi: true", "false", {"terashi"}),
+    ("できる", "あり", "terashi: True", "false", {"terashi"}),
+    ("できる", "あり", "terashi: 'true'", "false", set()),
+    ("できる", "あり", "next: x", "False", set()),
+    ("'null'", "あり", "next: x", "false", set()),
+])
+def test_穴3_中受の問の写しで元の型と同じ答え(tmp_path, dekiru, konkyo, extra, draft, bad):
+    toi = kind("toi", "toi/*.md", "md_yaml", units={"groups": [], "items": ["branches", "*"], "key": ["konkyo"]},
+               checks=[{"check": "required", "id": "pub", "fields": ["dekiru"],
+                        "when": {"draft": {"in": [False]}}},
+                       {"check": "words", "id": "draft_w", "field": "draft", "in": [True, False]},
+                       {"check": "count", "id": "konkyo", "from": {"units": True},
+                        "where": {"konkyo": {"blank": True}}, "max": 0},
+                       {"check": "count", "id": "terashi", "from": {"units": True},
+                        "where": {"terashi": {"in": [True]}}, "max": 0}])
+    root = make_ledger(tmp_path / "l", [toi], {"toi/a.md": CHUJU.format(dekiru=dekiru, konkyo=konkyo, extra=extra,
+                                                                         draft=draft)})
+    v = V.open_vessel(str(root))
+    assert V.problems(v) == []
+    got = {e["id"] for e in C.run(v, [])["list"] if e["violations"]}
+    assert got == bad
+
+
+@yaml_needed
+def test_穴3_鍵の辞書とYAMLの行にも効く(tmp_path):
+    rows = kind("r", "r.yaml", "yaml", records="rows", rows_at=["rows"], id={"field": "id"})
+    keyed = kind("kd", "k.yaml", "yaml", records="rows", rows_at=[], id={"from": "key"})
+    root = make_ledger(tmp_path / "l", [rows, keyed], {
+        "r.yaml": "rows:\n  - id: a\n    p: ~\n    q: TRUE\n  - id: b\n    p: 'null'\n",
+        "k.yaml": "x:\n  on: True\n  off: ~\n"})
+    v = V.open_vessel(str(root))
+    assert v.get("r:a").values == {"id": "a", "p": None, "q": True}
+    assert v.get("r:b").values == {"id": "b", "p": "null"}
+    assert v.get("kd:x").values["on"] is True and v.get("kd:x").values["off"] is None
+
+
+# --- 段 4 §9 穴 1: 1 行が指す先の数の手間・上限。ついで: 指す欄の値の NFC・置き場の型の re.error -----------------
+
+def _many(tmp, n, pointer, checks=(), dup=1):
+    ids = [f"c{i}" for i in range(n)]
+    claim = kind("claim", "claims.json", "json", records="rows", rows_at=["rows"], id={"field": "id"})
+    ev = kind("ev", "ev.json", "json", records="rows", rows_at=["rows"], id={"field": "id"},
+              pointers=[pointer], **({"checks": list(checks)} if checks else {}))
+    return make_ledger(tmp / "l", [claim, ev], {
+        "claims.json": json.dumps({"rows": [{"id": i, "status": "ok"} for i in ids]}),
+        "ev.json": json.dumps({"rows": [{"id": "e1", "claims": ids * dup}, {"id": "e2", "claims": ["c1"]}]})})
+
+
+FP = [{"check": "forbid_pair", "id": "fp", "via": "claims", "target": {"status": {"in": ["x"]}}}]
+TO = {"field": "claims", "to": "claim", "meaning": "supports"}
+TO_BY = {"field": "claims", "to_by": {"prefix": {"c": "claim"}}, "meaning": "supports"}
+
+
+@pytest.mark.parametrize("pointer,checks", [(TO, FP), (TO_BY, ())])
+def test_穴1_1つの欄が指す先は10000個まで_超えたら読みの問題too_many_targets(tmp_path, pointer, checks):
+    import time
+    root = _many(tmp_path, 80_000, pointer, checks)
+    start = time.monotonic()
+    v = V.open_vessel(str(root))
+    graph = V.links(v)
+    C.run(v, [])
+    assert time.monotonic() - start < 5
+    assert v.get("ev:e1").problems == ["too_many_targets"]
+    assert [e["from"] for e in graph["edges"]] == ["ev:e2"]        # 黙って切らない（その行の指しは数えない）
+    assert graph["dangling"] == [] and graph["unrouted"] == []
+
+
+@pytest.mark.parametrize("pointer,checks", [(TO, FP), (TO_BY, ())])
+def test_穴1_10000個の先は重なりを集合で除いて1秒ほど(tmp_path, pointer, checks):
+    import time
+    root = _many(tmp_path, 5_000, pointer, checks, dup=2)          # 10,000 個（重なり 5,000）
+    v = V.open_vessel(str(root))
+    start = time.monotonic()
+    graph = V.links(v)
+    C.run(v, [])
+    assert time.monotonic() - start < 2
+    assert v.get("ev:e1").problems == []
+    assert len({e["to"] for e in graph["edges"] if e["from"] == "ev:e1"}) == 5_000
+
+
+def test_穴1_内側の単位の指す欄も重なりを除いて上限を見る(tmp_path):
+    claim = kind("claim", "claims.csv", id={"field": "id"})
+    card = kind("card", "cards/*.json", "json", records="file", id={"name": True}, max_bytes=1_000_000,
+                units={"groups": [], "items": ["rows", "*"], "key": ["k"]},
+                pointers=[{"field": "c", "to": "claim", "meaning": "about", "in_units": True}])
+    many = [{"k": str(i), "c": [f"c{j}" for j in range(i * 3000, i * 3000 + 3000)]} for i in range(4)]
+    root = make_ledger(tmp_path / "l", [claim, card], {
+        "claims.csv": "id\nc1\n", "cards/a.json": json.dumps({"rows": [{"k": "1", "c": "c1"}, {"k": "2", "c": "c1"}]}),
+        "cards/big.json": json.dumps({"rows": many})})
+    v = V.open_vessel(str(root))
+    assert V.pointer_pieces(v.get("card:a"), v.kinds["card"].pointers[0]) == (["c1"], 0)
+    assert v.get("card:big").problems == ["too_many_targets"]       # 単位を合わせて 12,000 個
+    assert V.pointer_pieces(v.get("card:big"), v.kinds["card"].pointers[0]) == ([], 0)
+
+
+def test_ついで_指す欄の値もNFCにそろえて引く(tmp_path):
+    claim = kind("claim", "claims.csv", id={"field": "id"})
+    ev = kind("ev", "ev.csv", id={"field": "id"}, pointers=[{"field": "c", "to": "claim", "meaning": "about"}])
+    nfd = unicodedata.normalize("NFD", "が")
+    root = make_ledger(tmp_path / "l", [claim, ev], {"claims.csv": "id\nが\n", "ev.csv": f"id,c\ne1,{nfd}\n"})
+    graph = V.links(V.open_vessel(str(root)))
+    assert [e["to"] for e in graph["edges"]] == ["claim:が"] and graph["dangling"] == []
+
+
+def test_ついで_置き場の型の正規表現のre_errorは宣言の断り(tmp_path, monkeypatch):
+    import fnmatch
+    import re as _re
+    root = make_ledger(tmp_path / "l", [kind("a", "a/*/*.csv", id={"field": "id"}),
+                                        kind("b", "b/*/*.csv", id={"field": "id"})], {"a/x/t.csv": "id\n1\n"})
+    real = fnmatch.translate
+    monkeypatch.setattr(fnmatch, "translate", lambda p: "(?=(?P<g1>))" + real(p))   # 3.10 の同じ名前の組
+    assert sorted(refs(V.open_vessel(str(root)))) == ["a:1"]
+    monkeypatch.setattr(fnmatch, "translate", lambda p: "(")
+    with pytest.raises(RegisterRefused) as info:
+        V.open_vessel(str(root))
+    assert info.value.code == "register_kind_invalid"
+    del _re
+
+
+# --- 段 6・7 の検収 6-1: 表の行の分け方を csv の部品の読みと同じに（引用符が欄を開くのは欄の頭だけ） -----------------
+
+@pytest.mark.parametrize("delim", [",", "\t"])
+def test_6_1_途中の引用符は欄を開かない_後ろのレコードを飲み込まない(tmp_path, delim):
+    import csv as _csv
+    import io as _io
+    nl = "\r\n" if delim == "\t" else "\n"
+    text = nl.join(delim.join(r) for r in (["id", "title", "note"], ["t-1", "A", '5" pipe'], ["t-2", "B", "y"],
+                                            ["t-3", "C", "z"])) + nl
+    assert len(V.split_csv_rows(text, delim)) == 4
+    assert len(list(_csv.reader(_io.StringIO(text, newline=""), delimiter=delim))) == 4
+    extra = {"delimiter": delim} if delim != "," else {}
+    root = make_ledger(tmp_path / "l", [kind("t", "t.csv", id={"field": "id"}, **extra)], {"t.csv": text})
+    v = V.open_vessel(str(root))
+    assert refs(v) == ["t:t-1", "t:t-2", "t:t-3"] and V.problems(v) == []
+    assert v.get("t:t-1").values["note"] == '5" pipe'
+    assert v.get("t:t-2").version == V.bytes_version(f"t-2{delim}B{delim}y{nl}".encode("utf-8"))
+
+
+def test_6_1_欄の頭の引用符は今までどおり改行と区切りを含む():
+    text = 'id,note\na,"x\ny, ""q"""\nb,"z"w\nc,p\n'
+    assert V.split_csv_rows(text, ",") == ["id,note\n", 'a,"x\ny, ""q"""\n', 'b,"z"w\n', "c,p\n"]
+    assert V.split_csv_rows("a\tb\n\"x\ty\"\tz\n", "\t") == ["a\tb\n", "\"x\ty\"\tz\n"]
+
+
+def test_6_1_器の分け方とcsvの部品の数が食い違う表は読みの問題row_split_mismatch(tmp_path, monkeypatch):
+    root = make_ledger(tmp_path / "l", [kind("t", "t.csv", id={"field": "id"})], {"t.csv": "id,n\na,1\nb,2\n"})
+    real = V.split_csv_rows
+    monkeypatch.setattr(V, "split_csv_rows", lambda text, *a: real(text, *a)[:-1])   # 分け方が食い違った体
+    v = V.open_vessel(str(root))
+    assert all("row_split_mismatch" in r.problems for r in v.all_records) and v.all_records
+
+
+# --- 段 6・7 の検収 6-5: 途中で止まった入れ替えを、器の読み手が半分の姿で読まない ------------------------------
+
+def _halted(tmp_path, monkeypatch):
+    import subprocess
+    from tests import test_register_write as W
+    from thth.register import keep as K
+    for key, sub in (("THTH_ROOT", "root"), ("HOME", "home"), ("XDG_CONFIG_HOME", "config")):
+        (tmp_path / sub).mkdir()
+        monkeypatch.setenv(key, str(tmp_path / sub))
+    led = W.claim_ledger(tmp_path)
+    b = W.bundle_of(tmp_path, dict(W.claims_fix(), **{W.VERIFY: "id,claim_id,text,verdict\nv-1,c-1,茶はとても苦い,ok\n"}))
+    from thth import cli
+    assert cli.main(["register", "keep", str(led), "--by", "m"]) == 0
+    code = ("import os, sys\n" f"sys.path.insert(0, {str(W.ROOT)!r})\n" "from thth import cli\n"
+            "from thth.register import keep\nreal = keep._replace\ncount = [0]\n"
+            "def stop(a, b):\n    if count[0] == 1:\n        os._exit(9)\n    count[0] += 1\n    real(a, b)\n"
+            "keep._replace = stop\n"
+            f"cli.main(['register', 'merge', {str(led)!r}, {str(b)!r}, '--by', 'a', '--checked-by', 'b'])\n")
+    assert subprocess.run([sys.executable, "-c", code], env=dict(os.environ), capture_output=True).returncode == 9
+    assert K.pending(str(led)) is not None
+    return led
+
+
+def _cli(capsys, *argv):
+    from thth import cli
+    rc = cli.main([str(a) for a in argv] + ["--json"])
+    out, err = capsys.readouterr()
+    return rc, (json.loads(out) if out.strip() else None)
+
+
+def test_6_5_入れ替えの段取りが残る台帳は器の読み手が断る_resumeのあとは通る(tmp_path, monkeypatch, capsys):
+    led = _halted(tmp_path, monkeypatch)
+    from thth import cli
+    assert cli.main(["register", "add", "halted", "--path", str(led), "--project", "sample", "--kind", "media",
+                     "--by", "m"]) == 0
+    capsys.readouterr()
+    with pytest.raises(RegisterRefused) as info:
+        V.open_vessel(str(led))
+    assert info.value.code == "register_batch_pending"
+    assert V.open_vessel(str(led), allow_pending=True).kinds                    # 前の姿を自分で扱う口
+    from thth import refusal
+    fix = refusal.parts("register_batch_pending")["fix"]
+    assert "resume" in fix and "--continue" in fix and "--rollback" in fix
+    for argv in (("check", "halted"), ("health", led), ("links", "halted", "claim:c-1"), ("used", led, "claim:c-1")):
+        rc, value = _cli(capsys, "register", *argv)
+        assert rc != 0 and value and value["code"] == "register_batch_pending", argv
+    rc, value = _cli(capsys, "register", "resume", led, "--continue", "--by", "a")
+    assert rc == 0, value
+    assert V.open_vessel(str(led)).get("claim:c-1").values["text"] == "茶はとても苦い"
+    for argv in (("check", "halted"), ("health", led), ("links", "halted", "claim:c-1")):
+        rc, value = _cli(capsys, "register", *argv)
+        assert not (value and value.get("code") == "register_batch_pending"), argv
