@@ -442,9 +442,11 @@ def _retired(rec: V.Record) -> bool:
     return rec.kind == "thth_row" and rec.values is not None and rec.values.get("status") == form.RETIRED
 
 
-def diff(root: str, spec: str, *, decl: str | None = None, excused=frozenset()) -> dict:
+def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict:
     """`<前>..<後>`（どちらも控えた目録の指紋の頭・`first`・`last`・`now`。台帳が git の作業木なら commit も）。
-    `excused` は消す求めの結果に載った記録の番号（赤にしない・`trail.vanished` の差し込み口）。"""
+    `excused` は赤にしない記録の番号。既定は、台帳の消す求めの結果に載った番号（`trail.erase_excuses`）。"""
+    if excused is None:
+        excused = T.erase_excuses(root)["records"]
     if not isinstance(spec, str) or spec.count("..") != 1:
         raise RegisterRefused("register_args_invalid", "range")
     left, right = spec.split("..")

@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 
 import pytest
 
@@ -25,6 +26,7 @@ from thth.register import judgment as J
 from thth.register import keep as K
 from thth.register import route as R
 from thth.register import seal as S
+from thth.register import trail as T
 from thth.register import vessel as V
 from thth.register.errors import RegisterRefused
 
@@ -188,6 +190,11 @@ def erase_all(capsys, led, ref=BRAZIL, field="notes"):
 
 def test_通しの見本_住所を書いて訂正し判断と材料と封に載せてから消す(env, capsys):
     led, site, published = setup_ledger(env, capsys)
+    # 判断を足したあとで控える（跡の注に、判断の記録の今の中身が控えに入る。理由の文に住所がある・段 5 §2.2）
+    rc, kept, err = jrun(capsys, "register", "keep", led, "--by", "masaru")
+    assert rc == 0, err
+    note = K.load_snapshot(str(led), kept["snapshot"])["trail"][-1]
+    assert ADDR2.encode() in K.get_object(str(led), note["judgments"])
     wanted = needles(led)
     before = scan(led, wanted)
     # 消す前は、今の本文・前の版・判断の理由・封のどこにもある（見る物が空振りしていない）
@@ -674,3 +681,61 @@ def test_止まった入れ替えがあれば消す求めは実行せず_続け�
     assert result["places"]["self_check"]["state"] == "erased"
     A.row_set(str(led), MILK, {"notes": "もう 1 つの直し"}, by="masaru", at="2027-03-22T09:20:00+09:00")
     assert K.pending(str(led)) is None and K.load_snapshot(str(led), "last")["files"]
+
+
+# ------------------------------------------------------------------ 跡とつなぐ（段 5 §2.1・§2.2）
+
+GIT_ENV = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+
+
+def _git(repo, *args):
+    subprocess.run([T.git_binary(), "-C", str(repo), *args], capture_output=True, env=GIT_ENV, check=True)
+
+
+def test_跡_消したあとcheck_againstとdiffは結果に載った物だけを通し控えの判断の記録は取り出せない(env, capsys):
+    led, _site, _published = setup_ledger(env, capsys)
+    rc, kept, err = jrun(capsys, "register", "keep", led, "--by", "masaru")
+    assert rc == 0, err
+    _git(led, "init", "-q", "-b", "main")
+    _git(led, "add", "-A")
+    _git(led, "commit", "-q", "-m", "消す前")
+    prev = (led / ".thth/judgments.jsonl").read_bytes()
+    assert T.against(str(led), "HEAD")["continues"]
+    req, _v = erase_all(capsys, led, field=None)          # 記録ごと消す（番号が今の本文から消える）
+    now = (led / ".thth/judgments.jsonl").read_bytes()
+    excuses = T.erase_excuses(str(led))
+    assert excuses["requests"] == {req} and excuses["records"] == {BRAZIL} and excuses["lines"]
+    # 判断の記録: 結果に載った印の行だけを通す（骨で・位置で）。結果が無ければ赤
+    got = T.against(str(led), "HEAD")
+    assert got["continues"] and got["excused"]
+    assert not T.judgments_continue(prev, now)["continues"]
+    # 結果に載っていない書き換えは赤のまま（印の行の結論を変える・印でない行を変える）
+    lines = now.decode().splitlines(keepends=True)
+    marked = [i for i, l in enumerate(lines) if '"erased"' in l]
+    plain = [i for i, l in enumerate(lines) if '"erased"' not in l]
+    for i, swap in ((marked[0], ('"good"', '"bad"')), (plain[0], ('"masaru"', '"other"'))):
+        body = list(lines)
+        body[i] = body[i].replace(*swap) if swap[0] in body[i] else body[i].replace('"at": "', '"at": "1')
+        assert body[i] != lines[i]
+        assert not T.judgments_continue(prev, "".join(body).encode(), excuses)["continues"]
+    # 控えに置いた判断の記録（理由の文に住所があった）は除いた: その時点への比べは「取り出せない」
+    gone = [name for name in K.snapshots(str(led))
+            if any(n.get("judgments_erased") == req
+                   for n in K._read_json(str(led), K.snapshot_path(str(led), name), "snapshot").get("trail", []))]
+    assert gone, "控えの判断の記録を除いた目録がある"
+    with pytest.raises(RegisterRefused) as caught:
+        T.against(str(led), gone[0])
+    assert caught.value.code == "register_kept_missing" and caught.value.detail == "judgments_erased"
+    for name in K.snapshots(str(led)):
+        for note in K._read_json(str(led), K.snapshot_path(str(led), name), "snapshot").get("trail", []):
+            assert "judgments" not in note or note["judgments"] is None or \
+                ADDR2.encode() not in K.get_object(str(led), note["judgments"])
+    # 番号が消えた差: 結果に載った番号は赤にしない。結果を見なければ赤
+    v = A.diff(str(led), "HEAD..now")
+    assert v["records"]["vanished"] == [BRAZIL] and not v["red"] and v["excused"] == [BRAZIL]
+    assert A.diff(str(led), "HEAD..now", excused=frozenset())["red"]
+    # check に消し終わっていない求めの数が出る
+    from thth.register import vessel_cli
+    assert vessel_cli.check(str(led))["erase_unfinished"] == 1

@@ -9,14 +9,17 @@
   使い、PATH もシェルも使わない（`seal.py` の openssl と同じ決め方）。環境は空から作る（系と利用者の設定・
   置き換えの物・任意の錠を読まない）。commit の名は字の形を先に見て、`-` で始まる物・空白・`;`・`:`・`..` は
   git に渡さずに断る（`register_args_invalid`）。
-- **判断の記録は足すだけ**（§2.2）: 前の時点の `.thth/judgments.jsonl` の全バイトが、今の頭と同じか
-  （`judgments_continue`）。消す求めで書き換えた行を通す**差し込み口**は `excused_lines`（前の時点の行の番号・
-  1 から）。渡した行だけ、印の形（`erased`）で、前の行と骨（`BONES`）が同じなら通す。
+- **判断の記録は足すだけ**（§2.2）: 前の時点の `.thth/judgments.jsonl` の続きが今か（`judgments_continue`）。
+  行の位置で比べ、食い違った行は、消す求めの結果（`erase_excuses`）に載った印の行で、骨（`judgment.line_skeleton`。
+  CI の続きの比べ `route.erase_continued` と同じ骨）が前の行と同じときだけ通す。控えの名で比べるときは、控えの
+  目録の跡の注に置いた判断の記録の中身を読む（消す求めが除いたら「取り出せない」）。
 - **取り込みの跡**（§2.3）: 取り込み・束の取り込み・控えのたびに、控えの目録に跡を足す（`note`。集めた者・
   検めた者・束の目録の指紋・その時の判断の記録の中身の名）。`links` と `diff` は、その版がどの取り込みで入ったかを
   出す（`entered`・`intakes_between`）。
 - **判断から、版と元の記録へ**（§2.4）: `judgment_view`。元の記録は元のまま置き、器は索引だけを持つ。
-- 番号が消えたら赤。消す求めの結果に載った番号を赤にしない**差し込み口**は `vanished(…, excused=…)`。
+  対象の版を示していない検収の記録（日付と番号だけ）は判断に数えず、`unversioned_view` で元の表と行を引けるように
+  し、今の版に効くかは「言えない」と出す（無い物を「効く」と言わない）。
+- 番号が消えたら赤。消す求めの結果に載った番号（`erase_excuses` の `records`）は赤にしない（`vanished`）。
 
 網に出ない。
 """
@@ -42,8 +45,6 @@ TIMEOUT = 120
 REV = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./\-]{0,199}(?:[\^~][0-9]{0,4})*\Z")
 SNAPSHOT_WORDS = ("first", "last", "now")
 INTAKES = ("adopt", "readopt", "merge")
-# 消す求めで書き換えた行を通すとき、前の行と同じであることを見る骨（指示 §2.2「問い・対象の番号・結論・日時・番号」）。
-BONES = ("id", "question", "target.record", "answer.conclusion", "answer.word", "at")
 
 
 # ------------------------------------------------------------------ git（読むだけ）
@@ -232,11 +233,40 @@ def side_kind(root: str, name: str) -> str:
     return "commit"
 
 
-# ------------------------------------------------------------------ 番号が消えたら赤（差し込み口）
+# ------------------------------------------------------------------ 消す求めの結果（通す物）
+
+def erase_excuses(root: str) -> dict:
+    """台帳の消す求めの結果の記録（`.thth/erase/<求め>/result.json`）から、通す物を集める:
+    `requests`（結果のある求め）・`lines`（書き換えた判断の行の番号）・`records`（今の本文から除いた記録の番号）。
+    結果に載っていない消え・書き換えは、今までどおり赤。"""
+    out = {"requests": set(), "lines": set(), "records": set()}
+    base = os.path.join(K.thth_dir(root), J.ERASE_DIR)
+    if os.path.islink(base) or not os.path.isdir(base):
+        return out
+    for name in sorted(os.listdir(base)):
+        if not J.ERASE_ID.fullmatch(name):
+            continue
+        path = os.path.join(base, name, J.ERASE_RESULT)
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as f:
+                result = json.loads(f.read().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(result, dict) or result.get("request") != name:
+            continue
+        out["requests"].add(name)
+        out["lines"].update(x for x in result.get("rewritten_lines") or [] if isinstance(x, str))
+        out["records"].update(x for x in result.get("erased_records") or [] if isinstance(x, str))
+    return out
+
+
+# ------------------------------------------------------------------ 番号が消えたら赤
 
 def vanished(records: list, units: list, *, excused=frozenset()) -> dict:
     """消えた記録の番号と内側の番号のうち、赤にする物と通す物。`excused` は消す求めの結果に載った記録の番号
-    （`種類:番号`）。載った記録の内側の番号も通す。つなぐのは本線（消す求めの結果を読んで渡す）。"""
+    （`種類:番号`。`erase_excuses(root)["records"]`）。載った記録の内側の番号も通す。"""
     excused = frozenset(excused or ())
     return {"records": [r for r in records if r not in excused],
             "units": [u for u in units if u["record"] not in excused],
@@ -246,36 +276,35 @@ def vanished(records: list, units: list, *, excused=frozenset()) -> dict:
 
 # ------------------------------------------------------------------ 判断の記録は足すだけ
 
-def _bone(item: dict, dotted: str):
-    value = item
-    for part in dotted.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = value.get(part)
-    return value
+def _lines(data: bytes) -> list:
+    return [line for line in data.decode("utf-8", errors="replace").splitlines() if line.strip()]
 
 
-def _same_bones(before: bytes, after: bytes) -> bool:
+def _item(line: str) -> dict:
     try:
-        a, b = json.loads(before), json.loads(after)
+        item = json.loads(line)
     except (ValueError, RecursionError):
-        return False
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
-    if not isinstance(b.get("erased"), dict) or not isinstance(b["erased"].get("request"), str):
-        return False  # 印の形（指示 §3.4 の `erased`）になっていない
-    return all(_bone(a, key) == _bone(b, key) for key in BONES)
+        return {}
+    return item if isinstance(item, dict) else {}
 
 
-def judgments_continue(prev: bytes, now: bytes, excused_lines=()) -> dict:
-    """前の時点の判断の記録 `prev` が、今の `now` の頭と同じか（足しただけか）。
+def _only_renumbered(before: dict, after: dict) -> bool:
+    """印でない行が、消す求めの結びの付け直し（`carries` と、そこから作り直した番号）だけで変わったか。"""
+    drop = ("id", "carries")
+    return bool(before) and {k: v for k, v in before.items() if k not in drop} == \
+        {k: v for k, v in after.items() if k not in drop} and before.get("carries") != after.get("carries")
+
+
+def judgments_continue(prev: bytes, now: bytes, erase: dict | None = None) -> dict:
+    """前の時点の判断の記録 `prev` の続きが今の `now` か（足しただけか）。行の位置で比べる（空の行は数えない）。
     `{"continues": bool, "line": 最初に食い違った前の行の番号 or None, "why": 語 or None, "excused": [通した行]}`。
-    `excused_lines` は消す求めで書き換えた行の番号（1 から・前の時点の行）。その行だけ、今の行が印の形で、
-    骨（`BONES`）が前の行と同じなら通す（差し込み口。つなぐのは本線）。"""
+    `erase`（`erase_excuses` の形）があれば、消す求めの結果に載った印の行は、骨（`judgment.line_skeleton`。
+    CI の続きの比べと同じ）が前の行と同じなら通す。印でない行は、結びの付け直しだけの変化を通す。"""
     if now.startswith(prev):
         return {"continues": True, "line": None, "why": None, "excused": []}
-    excused = {int(n) for n in excused_lines or ()}
-    before, after = prev.splitlines(keepends=True), now.splitlines(keepends=True)
+    before, after = _lines(prev), _lines(now)
+    lines = set((erase or {}).get("lines") or ())
+    requests = set((erase or {}).get("requests") or ())
     passed = []
     for number, line in enumerate(before, start=1):
         if number > len(after):
@@ -283,9 +312,9 @@ def judgments_continue(prev: bytes, now: bytes, excused_lines=()) -> dict:
         other = after[number - 1]
         if line == other:
             continue
-        if number == len(before) and not line.endswith((b"\n", b"\r")) and other.rstrip(b"\r\n") == line:
-            continue  # 前の最後の行に改行が無く、今はそのあとに足してある
-        if number in excused and _same_bones(line, other):
+        a, b = _item(line), _item(other)
+        if erase and (J.is_erased(b) or _only_renumbered(a, b)) \
+                and J.line_continues(J.skeleton_pair(a), b, lines=lines, requests=requests) is None:
             passed.append(number)
             continue
         return {"continues": False, "line": number, "why": "rewritten", "excused": passed}
@@ -309,10 +338,14 @@ def previous_judgments(root: str, name: str) -> dict:
         raise RegisterRefused("register_args_invalid", "against")
     if kind == "snapshot":
         snap = snapshot_of(root, name)
-        notes = [n for n in snap.get("trail", []) if isinstance(n, dict) and "judgments" in n]
+        notes = [n for n in snap.get("trail", []) if isinstance(n, dict)
+                 and ("judgments" in n or "judgments_erased" in n)]
         if not notes:
             # 控えの目録に判断の記録の跡が無い（段 5 より前の控え）。commit の名で打ち直す。
             raise RegisterRefused("register_kept_missing", "no_judgments_kept", snapshot=snap["id"][:16])
+        if notes[-1].get("judgments_erased"):
+            # 消す求めが、その時点の判断の記録の控えを除いた（範囲の行を含んでいた）。取り出せない。
+            raise RegisterRefused("register_kept_missing", "judgments_erased")
         digest = notes[-1]["judgments"]
         return {"from": "snapshot", "name": snap["id"], "bytes": b"" if digest is None else K.get_object(root, digest)}
     top, _prefix = repo_of(root)
@@ -320,13 +353,14 @@ def previous_judgments(root: str, name: str) -> dict:
     return {"from": "commit", "name": resolve(top, name), "bytes": data or b""}
 
 
-def against(root: str, name: str, *, excused_lines=()) -> dict:
-    """`check --against <前>`: 判断の記録が前の時点の続きか。続きでなければ呼ぶ側が赤にする。"""
+def against(root: str, name: str) -> dict:
+    """`check --against <前>`: 判断の記録が前の時点の続きか（消す求めの結果に載った書き換えは通す）。
+    続きでなければ呼ぶ側が赤にする。"""
     prev = previous_judgments(root, name)
     now = _judgments_bytes(root)
-    result = judgments_continue(prev["bytes"], now, excused_lines)
+    result = judgments_continue(prev["bytes"], now, erase_excuses(root))
     return {"against": prev["name"], "from": prev["from"], **result,
-            "lines_before": len(prev["bytes"].splitlines()), "lines_now": len(now.splitlines())}
+            "lines_before": len(_lines(prev["bytes"])), "lines_now": len(_lines(now))}
 
 
 # ------------------------------------------------------------------ 取り込みの跡
@@ -421,6 +455,36 @@ def entered(root: str, rec: V.Record) -> dict:
 
 
 # ------------------------------------------------------------------ 判断から、版と元の記録へ
+
+def _depend_fields(vessel: V.Vessel, j: dict):
+    try:
+        kind = vessel.kinds[vessel.get(j["target"]["record"]).kind]
+    except RegisterRefused:
+        return None
+    q = V.question_of(kind, j["question"])
+    return q.depend_fields() if q else None
+
+
+def shows_version(vessel: V.Vessel, j: dict) -> bool:
+    """判断が対象の版を示しているか: 見た版の指紋か、問いの依る欄の全部を「確かめた中身」として持つか。
+    日付と番号だけの検収の記録（キョンシーの原文確認の記録の形）は示していない（効くとも古いとも言えない）。"""
+    if "content" not in j:
+        return bool((j.get("seen") or {}).get("version") or (j.get("seen") or {}).get("depend"))
+    fields = _depend_fields(vessel, j)
+    content = j.get("content") or {}
+    return bool(fields) and all(k in content for k in fields)
+
+
+def unversioned_view(vessel: V.Vessel, j: dict) -> dict:
+    """版を示していない検収の記録: 判断には数えず、元の表と行を引けるようにする。効くかは「言えない」。"""
+    source = j.get("source") if isinstance(j.get("source"), str) else ""
+    src = vessel.unique(source) if ":" in source else None
+    return {"question": j["question"], "record": (j.get("target") or {}).get("record"),
+            "table": source.split(":", 1)[0] if source else None,
+            "row": source.split(":", 1)[1] if ":" in source else None,
+            "file": src.path if src is not None else None, "content": sorted((j.get("content") or {})),
+            "fields_needed": _depend_fields(vessel, j), "state": "cannot_say", "why": "version_not_shown"}
+
 
 def judgment_view(vessel: V.Vessel, j: dict) -> dict:
     """判断 1 件の、対象の版・依る所の指紋・今の版に効くか・元の記録。"""

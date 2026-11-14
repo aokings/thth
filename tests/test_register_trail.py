@@ -287,26 +287,32 @@ def test_check_against_控えの名でも前の時点の判断の記録と比べ
     assert rc_ != 0 and value["code"] == "register_kept_missing" and value["detail"] == "not_git"
 
 
-def test_check_against_消す求めの印の行は渡した行だけ通す差し込み口(env):
+def test_check_against_消す求めの結果に載った印の行だけを骨で通す(env):
     a = json.dumps({"id": "j-1", "question": "says_so", "target": {"record": MILK}, "answer": {"conclusion": "good",
                     "word": None}, "at": AT, "seen": {"version": "v", "depend": "d"}}).encode() + b"\n"
     b = json.dumps({"id": "j-2", "question": "says_so", "target": {"record": "claim:x"},
                     "answer": {"conclusion": "bad", "word": None}, "at": AT}).encode() + b"\n"
-    marked = json.dumps({"id": "j-1", "question": "says_so", "target": {"record": MILK},
+    marked = json.dumps({"id": "x-0123456789abcdef", "question": "says_so", "target": {"record": MILK},
                          "answer": {"conclusion": "good", "word": None}, "at": AT,
                          "erased": {"request": "e-0123456789abcdef"}}).encode() + b"\n"
+    erase = {"requests": {"e-0123456789abcdef"}, "lines": {"x-0123456789abcdef"}}
     prev = a + b
     assert T.judgments_continue(prev, prev + b)["continues"]
-    assert not T.judgments_continue(prev, marked + b)["continues"]  # 渡さなければ赤
-    ok = T.judgments_continue(prev, marked + b + a, excused_lines=[1])
-    assert ok["continues"] and ok["excused"] == [1]
-    assert not T.judgments_continue(prev, marked + marked, excused_lines=[1])["continues"]  # 2 行めは渡していない
-    turned = marked.replace(b'"good"', b'"bad"')
-    assert not T.judgments_continue(prev, turned + b, excused_lines=[1])["continues"]  # 結論が変わった
-    not_marked = a.replace(b'"seen"', b'"seen2"')
-    assert not T.judgments_continue(prev, not_marked + b, excused_lines=[1])["continues"]  # 印の形でない
-    assert not T.judgments_continue(prev, marked, excused_lines=[1, 2])["continues"]  # 行が減った
-    assert T.judgments_continue(a.rstrip(b"\n"), a + b)["continues"]  # 前の最後の行に改行が無い
+    assert not T.judgments_continue(prev, marked + b)["continues"]           # 結果が無ければ赤
+    ok = T.judgments_continue(prev, marked + b + a, erase)
+    assert ok["continues"] and ok["excused"] == [1]                           # 番号は付け直してあってよい（骨に無い）
+    assert not T.judgments_continue(prev, marked + marked, erase)["continues"]  # 2 行めは結果に無い
+    assert not T.judgments_continue(prev, marked.replace(b'"good"', b'"bad"') + b, erase)["continues"]  # 結論
+    assert not T.judgments_continue(prev, marked.replace(b"x-0123", b"x-9999") + b, erase)["continues"]  # 番号
+    other = dict(erase, requests={"e-ffffffffffffffff"})
+    assert not T.judgments_continue(prev, marked + b, other)["continues"]     # 求めが結果に無い
+    assert not T.judgments_continue(prev, a.replace(b'"seen"', b'"seen2"') + b, erase)["continues"]  # 印でない
+    assert not T.judgments_continue(prev, marked, erase)["continues"]         # 行が減った
+    assert not T.judgments_continue(prev, b + marked, erase)["continues"]     # 並べ替え（位置で比べる）
+    assert T.judgments_continue(a.rstrip(b"\n"), a + b)["continues"]         # 前の最後の行に改行が無い
+    # 骨の定めは 1 か所（CI の続きの比べと同じ物）
+    from thth.register import route as R
+    assert R.line_skeleton is J.line_skeleton
 
 
 # ================================================================== §2.3 取り込みの跡
@@ -406,6 +412,29 @@ def test_links_判断から元の表の行と対象の版へたどれ中身を�
     rc_, out, err = run(capsys, "register", "links", "kop", MILK)
     assert rc_ == 0, err
     assert "元の表 central の行 e-milk-01" in out and "古い" in out and "命令で足した（v・" in out
+
+
+def test_links_版を示していない検収の記録は判断に数えず元の表の行を引け効くかは言えない(capsys, env):
+    root = env["tmp"] / "kop"
+    shutil.copytree(FIX / "kopicha", root)
+    # キョンシーの原文確認の記録の形: 日付と根拠の番号と誰がだけ（確かめた中身・版を持たない）
+    (root / ".thth/kinds/check_log.json").write_text(json.dumps({
+        "schema": "thth.kind/1", "kind": "check_log", "place": "data/knowledge/check-log.csv", "format": "csv",
+        "id": {"key": ["checked_at", "evidence_id"]},
+        "pointers": [{"field": "evidence_id", "meaning": "about", "to": "evidence"}],
+        "inspects": {"follow": ["evidence_id", "claim_id"], "question": "says_so", "by": "integrator",
+                     "content": {"claim_status": "verdict"}}}), encoding="utf-8")
+    (root / "data/knowledge/check-log.csv").write_text(
+        "checked_at,evidence_id,who,verdict\n2026-09-24,e-milk-01,human,supported\n", encoding="utf-8")
+    value = vessel_cli.links_of(str(root), MILK)
+    assert all(j["origin"].get("table") != "check_log" for j in value["judgments"])
+    [u] = value["unversioned"]
+    assert u["table"] == "check_log" and u["file"] == "data/knowledge/check-log.csv"
+    assert u["state"] == "cannot_say" and u["why"] == "version_not_shown"
+    assert "statement_ja" in u["fields_needed"] and "statement_ja" not in u["content"]
+    add_register(capsys, root, "kop")
+    rc_, out, err = run(capsys, "register", "links", "kop", MILK)
+    assert rc_ == 0, err and "版を示していない検収の記録: 元の表 check_log" in out and "言えない" in out
 
 
 def test_git_を呼ぶ部品はtrailだけで決まった場所の物を空の環境で使う():

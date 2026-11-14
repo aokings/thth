@@ -89,6 +89,12 @@ def _health(vessel: V.Vessel, graph: dict) -> dict:
     return {"contradicted_good": count}
 
 
+def _erase_unfinished(root: str) -> int:
+    """消し終わっていない消す求めの数（段 5 §3.5）。"""
+    from . import erase as E
+    return E.unfinished(root)
+
+
 def check(root: str, *, catalog: bool = False) -> dict:
     vessel = V.open_vessel(root)
     graph = V.links(vessel)
@@ -105,7 +111,8 @@ def check(root: str, *, catalog: bool = False) -> dict:
                        "review": graph["review"]},
              "observations": observations, "judgments": J.summary(vessel, judgments),
              "candidates": J.candidates(vessel, judgments), "ids_moves": V.ids_table_moves(vessel),
-             "health": _health(vessel, graph), "checks": C.run(vessel, judgments)}
+             "health": _health(vessel, graph), "checks": C.run(vessel, judgments),
+             "erase_unfinished": _erase_unfinished(root)}
     if catalog:
         value["catalog"] = vessel.catalog()
     return value
@@ -180,6 +187,8 @@ def cmd_check(args, root: str) -> int:
         for c in ch["list"]:
             if c["violations"] or c.get("unverifiable"):
                 _say_check(c)
+    if value["erase_unfinished"]:
+        print(f"  消し終わっていない消す求め {value['erase_unfinished']} 件（thth register erase status <台帳>）")
     if value["health"]["contradicted_good"]:
         print(f"  反する根拠を持つのに「よい」の語の記録 {value['health']['contradicted_good']} 件（語は上書きしていません）")
     return 0
@@ -238,7 +247,9 @@ def links_of(root: str, ref: str, *, unit=None, key=None, units=False) -> dict:
              "points_to": [e for e in graph["edges"] if e["from"] == ref],
              "pointed_by": [e for e in graph["edges"] if e["to"] == ref],
              "review": [e for e in graph["review"] if e["from"] == ref or e["to"] == ref],
-             "judgments": [T.judgment_view(vessel, j) for j in mine],
+             "judgments": [T.judgment_view(vessel, j) for j in mine if T.shows_version(vessel, j)],
+             # 対象の版を示していない検収の記録（判断に数えない・効くかは言えない）
+             "unversioned": [T.unversioned_view(vessel, j) for j in mine if not T.shows_version(vessel, j)],
              "entered": T.entered(root, rec)}
     if units:
         value["units"] = [{"pointer": u.pointer, "key": u.key, "ambiguous": u.ambiguous} for u in rec.units]
@@ -284,6 +295,9 @@ def cmd_links(args, root: str) -> int:
         seen = f"版 {V.short(j['version'])}" if j["version"] else "確かめた中身"
         depend = V.short(j["depend"]) if isinstance(j["depend"], str) else "-"
         print(f"  判断 {j['id']} {j['question']}: {_STATE_JA.get(j['state'], j['state'])}（{seen}・依る所 {depend}・{where}）")
+    for u in value["unversioned"]:
+        print(f"  版を示していない検収の記録: 元の表 {u['table']} の行 {u['row']}"
+              + (f"（{u['file']}）" if u.get("file") else "") + f" {u['question']}: 今の版に効くかは言えない")
     for e in value["review"]:
         print(f"  見直す: {e['from']} の控え {e['recorded']} が、今の {e['to']} と違います（今 {e['now']}）")
     if "unit" in value:

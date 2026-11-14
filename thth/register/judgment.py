@@ -102,6 +102,42 @@ def is_erased(item) -> bool:
     return isinstance(item, dict) and isinstance(item.get("erased"), dict)
 
 
+# ------------------------------------------------------------------ 行の骨と、続きの比べ（段 5 §2.2・§3.7）
+
+def line_skeleton(j: dict, with_unit: bool = True) -> str:
+    """判断の行の骨（問い・対象の記録の番号・単位の指し先・語・結論・日時・いつまで）の指紋。消す求めで印の形にしても
+    変わらない欄だけから作る。**番号と「誰が」は入れない**（配る物は公開の場所に出るので、当てやすい名前を指紋に
+    混ぜない。番号は消す求めで付け直す）。続きの比べ（CI の `route.erase_continued` と `check --against` の
+    `trail.judgments_continue`）は、前の行と今の行を**位置で**この骨で比べる。骨の定めはここ 1 か所。
+    `with_unit=False` は指し先を除いた骨（消す求めで指し先を除いた行と比べる）。"""
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    a = j.get("answer") if isinstance(j.get("answer"), dict) else {}
+    body = {"question": j.get("question"), "record": t.get("record"), "word": a.get("word"),
+            "conclusion": a.get("conclusion"), "at": j.get("at"), "until": j.get("until")}
+    if with_unit:
+        body["unit"] = t.get("unit")
+        body["value"] = t.get("value")
+    return hashlib.sha256(V.canonical(body).encode("utf-8")).hexdigest()[:32]
+
+
+def skeleton_pair(j: dict) -> list:
+    """`[指し先つきの骨, 指し先を除いた骨]`（前の行の側。CI に配る物の `deployed.lines` の 1 つ）。"""
+    j = j if isinstance(j, dict) else {}
+    return [line_skeleton(j, True), line_skeleton(j, False)]
+
+
+def line_continues(pair, j: dict, *, lines, requests) -> str | None:
+    """前の行（の骨の組 `pair`）の位置にある今の行 `j` が、続きとして通るか。通れば None、通らなければ語。
+    印の行（`erased`）は、消す求めの結果に載った番号（`lines`）と求め（`requests`）のときだけ、骨が前の行と同じなら
+    通す（指し先を除いた印の行は、指し先を除いた骨で比べる）。印でない行は、指し先つきの骨が同じなら通す。"""
+    if is_erased(j):
+        if j.get("id") not in lines or j["erased"].get("request") not in requests:
+            return "line_not_in_erase"
+        has_unit = bool((j.get("target") or {}).get("unit"))
+        return None if line_skeleton(j, has_unit) == (pair[0] if has_unit else pair[1]) else "line_changed"
+    return None if line_skeleton(j, True) == pair[0] else "line_changed"
+
+
 def _text(value) -> bool:
     return isinstance(value, str) and bool(value)
 

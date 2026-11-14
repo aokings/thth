@@ -8,7 +8,8 @@
 - **確かめに使う公開鍵は、repo の木の外からだけ取る**: 環境の変数 `THTH_REGISTER_SEAL_PUBLIC_KEY`（CI の変数・PEM か
   DER の base64）か、手元の秘密の鍵から作った公開鍵。repo の中の鍵のファイルは読まない（設計 §5.6・試験 3 (f)）。
 
-`subprocess` を使うのは、この部品と `draft.py` だけ（`tests/test_register_base.py` の `SUBPROCESS_ALLOWED`）。
+`subprocess` を使うのは、この部品と `draft.py` と `trail.py`（段 5 の跡。読むだけの git）だけ
+（`tests/test_register_base.py` の `SUBPROCESS_ALLOWED`）。
 """
 from __future__ import annotations
 
