@@ -1,0 +1,102 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "overview",
+ "place": "data/entity-overviews.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "publish",
+   "state": "editorial_status",
+   "depends": [
+    "body"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_overview",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_overview",
+   "fields": [
+    "id",
+    "entity_id",
+    "sort_order",
+    "body",
+    "editorial_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_overview_status",
+   "field": "editorial_status",
+   "in": [
+    "draft",
+    "published"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 719"
+  },
+  {
+   "check": "shape",
+   "id": "d_overview_updated_at",
+   "field": "updated_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 736"
+  },
+  {
+   "check": "unique",
+   "id": "n4_10_overview",
+   "fields": [
+    "entity_id",
+    "sort_order"
+   ],
+   "note": "N4-10（scripts/validate_data.py 730〜735）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_10_overview_order",
+   "field": "sort_order",
+   "shape": "positive_int",
+   "allow_blank": false,
+   "note": "N4-10（scripts/validate_data.py 722〜729）。台本は int() で読む（'01' も通す）"
+  },
+  {
+   "check": "count",
+   "id": "n4_15_overview",
+   "from": {
+    "kind": "overview_evidence",
+    "via": "overview_id"
+   },
+   "min": 1,
+   "when": {
+    "editorial_status": {
+     "in": [
+      "published"
+     ]
+    }
+   },
+   "note": "N4-15（scripts/validate_data.py 1049〜1053）"
+  }
+ ]
+}

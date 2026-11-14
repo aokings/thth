@@ -1,0 +1,103 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "evidence",
+ "place": "data/evidence.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim",
+   "meaning_from": "relation"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_evidence",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_evidence",
+   "fields": [
+    "id",
+    "claim_id",
+    "source_id",
+    "relation",
+    "finding_paraphrase",
+    "extraction_status"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_relation",
+   "field": "relation",
+   "in": [
+    "supports",
+    "contradicts",
+    "limits",
+    "contextualizes"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 1005〜1007"
+  },
+  {
+   "check": "words",
+   "id": "v_extraction_status",
+   "field": "extraction_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "full_text_checked",
+    "needs_verification"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 1005〜1007"
+  },
+  {
+   "check": "words",
+   "id": "v_evidence_type",
+   "field": "evidence_type",
+   "in": [
+    "animal_experiment",
+    "cell_or_tissue_experiment",
+    "chemical_analysis",
+    "computational_model",
+    "cultural_media",
+    "database_record",
+    "field_observation",
+    "human_observational",
+    "human_sensory",
+    "human_threshold",
+    "human_trial",
+    "instrumental_sensor",
+    "processing_chemistry",
+    "receptor_assay",
+    "reconstitution_omission_sensory",
+    "regulatory_document",
+    "review_synthesis",
+    "sensory_guided_fractionation",
+    "sensory_plus_chemistry",
+    "standard_document",
+    "systematic_review",
+    "time_intensity_sensory"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 1005〜1007"
+  }
+ ]
+}

@@ -1,0 +1,92 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "figure",
+ "place": "data/entity-figures.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "based_on_evidence_ids",
+   "meaning": "derived_from",
+   "to": "evidence",
+   "split": ";"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "n4_17_required",
+   "fields": [
+    "based_on_evidence_ids"
+   ],
+   "note": "N4-17（scripts/audit_entity_figures.py 50〜52）"
+  },
+  {
+   "check": "words",
+   "id": "n4_17_kind",
+   "field": "kind",
+   "in": [
+    "schematic",
+    "chart"
+   ],
+   "allow_blank": false,
+   "note": "N4-17（同 40〜41）"
+  },
+  {
+   "check": "words",
+   "id": "n4_17_review",
+   "field": "review_status",
+   "in": [
+    "draft",
+    "published"
+   ],
+   "allow_blank": false,
+   "note": "N4-17（同 42〜43）"
+  },
+  {
+   "check": "unique",
+   "id": "n4_17_path",
+   "fields": [
+    "path"
+   ],
+   "skip_blank": false,
+   "note": "N4-17（同 47〜49）"
+  },
+  {
+   "check": "words",
+   "id": "n4_17_mime",
+   "field": "mime_type",
+   "in": [
+    "image/png"
+   ],
+   "allow_blank": false,
+   "note": "N4-17（同 64〜65）"
+  },
+  {
+   "check": "words",
+   "id": "n4_17_license",
+   "field": "license_name",
+   "in": [
+    "CC BY 4.0"
+   ],
+   "allow_blank": false,
+   "note": "N4-17（同 66〜67）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_17_license_url",
+   "field": "license_url",
+   "shape": "https_url",
+   "allow_blank": false,
+   "note": "N4-17（同 66〜67）"
+  }
+ ]
+}

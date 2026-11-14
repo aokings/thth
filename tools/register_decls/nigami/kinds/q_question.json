@@ -1,0 +1,28 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "q_question",
+ "place": "data/questions/*/question.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "question_id"
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "n4_41_q_req",
+   "fields": [
+    "question_id",
+    "title_ja",
+    "title_en",
+    "a_ja",
+    "a_en",
+    "b_ja",
+    "b_en",
+    "target_ja",
+    "target_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 41 の REQUIRED）"
+  }
+ ]
+}

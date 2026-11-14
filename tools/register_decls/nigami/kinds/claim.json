@@ -1,0 +1,263 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "claim",
+ "place": "data/claims.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "says_so",
+   "state": "claim_status",
+   "depends": [
+    "predicate",
+    "object_entity_id",
+    "object_text",
+    "scope_text"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "object_entity_id",
+   "meaning": "related",
+   "to": "point",
+   "note": "述語 263 通りしだい。器は関わるとして数える"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_claim",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_claim",
+   "fields": [
+    "id",
+    "subject_entity_id",
+    "predicate",
+    "claim_type",
+    "claim_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_claim_type",
+   "field": "claim_type",
+   "in": [
+    "taxonomy",
+    "composition",
+    "mechanism",
+    "sensory",
+    "processing",
+    "culinary",
+    "cultural",
+    "safety",
+    "regulatory"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 673〜675"
+  },
+  {
+   "check": "words",
+   "id": "v_claim_status",
+   "field": "claim_status",
+   "in": [
+    "established",
+    "supported",
+    "preliminary",
+    "contested",
+    "contextual",
+    "observation",
+    "unverified"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 673〜675"
+  },
+  {
+   "check": "shape",
+   "id": "d_claim_updated_at",
+   "field": "updated_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 676〜677"
+  },
+  {
+   "check": "count",
+   "id": "n4_1",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "not_in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-1（scripts/validate_data.py 368〜381・1055〜1057）。relation を問わず数える（台本のまま）"
+  },
+  {
+   "check": "words",
+   "id": "n4_2_a",
+   "field": "claim_type",
+   "in": [
+    "taxonomy",
+    "cultural",
+    "culinary"
+   ],
+   "allow_blank": false,
+   "when": {
+    "claim_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-2 (a)（scripts/validate_data.py 395〜399）"
+  },
+  {
+   "check": "words",
+   "id": "n4_2_b",
+   "field": "predicate",
+   "in": [
+    "has_cultural_role_of",
+    "has_local_name",
+    "includes",
+    "is_a",
+    "is_a_type_of",
+    "is_consumed_in",
+    "is_documented_as_part_of",
+    "is_eaten_as",
+    "is_listed_as",
+    "is_name_candidate_for",
+    "is_prepared_by",
+    "is_prepared_from",
+    "is_prepared_with",
+    "is_presented_as",
+    "is_subtype_of",
+    "is_used_as",
+    "is_used_in",
+    "uses"
+   ],
+   "allow_blank": false,
+   "when": {
+    "claim_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-2 (b)（scripts/validate_data.py 400〜404）"
+  },
+  {
+   "check": "count",
+   "id": "n4_2_c",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "relation": {
+     "in": [
+      "supports"
+     ]
+    }
+   },
+   "max": 0,
+   "when": {
+    "claim_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-2 (c)（scripts/validate_data.py 405〜409）。unverified は supports の根拠を持たない"
+  },
+  {
+   "check": "count",
+   "id": "n4_4",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "relation": {
+     "in": [
+      "supports"
+     ]
+    },
+    "extraction_status": {
+     "in": [
+      "full_text_checked"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "in": [
+      "established"
+     ]
+    }
+   },
+   "note": "N4-4（scripts/validate_data.py 209〜223）。根拠の行の extraction_status を見る（出典の review_status・数は見ない）"
+  },
+  {
+   "check": "count",
+   "id": "n4_5",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "relation": {
+     "in": [
+      "contradicts",
+      "limits"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "in": [
+      "contested"
+     ]
+    },
+    "predicate": {
+     "not_in": [
+      "has_contested_identity_of_principal_bitter_compounds"
+     ]
+    }
+   },
+   "note": "N4-5（scripts/validate_data.py 253〜275）の has_contested でない側。述語の語の表（site/src/lib/predicates.ts）の has_contested で始まる語を not_in に並べた（今は 1 語）。has_contested の側は「または」なので固有"
+  },
+  {
+   "check": "one_of",
+   "id": "n4_8",
+   "fields": [
+    "object_entity_id",
+    "object_text"
+   ],
+   "mode": "at_least_one",
+   "note": "N4-8（scripts/validate_data.py 671〜672）。両方を許す"
+  }
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "schema": "thth.constitution/1",
+ "words": {
+  "says_so": {
+   "established": {
+    "conclusion": "good"
+   },
+   "supported": {
+    "conclusion": "good"
+   },
+   "contested": {
+    "conclusion": "pending",
+    "reason": "both_sides"
+   }
+  },
+  "publish": {
+   "published": {
+    "conclusion": "good"
+   },
+   "draft": {
+    "conclusion": "pending",
+    "reason": "draft"
+   }
+  }
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "en_text",
+ "place": "data/i18n/en/texts.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "file",
+   "id",
+   "field"
+  ]
+ },
+ "note": "(file, id) で data/<file>.csv の行を指す（組で、しかも種類が file 欄で決まるので指す欄にできない）"
+}

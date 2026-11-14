@@ -1,0 +1,42 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "observation",
+ "place": "data/observations.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "region_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "ingredient_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "dish_entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "words",
+   "id": "v_obs_confidence",
+   "field": "identification_confidence",
+   "in": [
+    "high",
+    "medium",
+    "low",
+    "unverified"
+   ],
+   "allow_blank": true,
+   "note": "scripts/validate_data.py 1110〜1112"
+  }
+ ]
+}

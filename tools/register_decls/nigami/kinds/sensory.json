@@ -1,0 +1,212 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "sensory",
+ "place": "data/sensory_measurements.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "ingredient_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "process_entity_id",
+   "meaning": "related",
+   "to": "point"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  },
+  {
+   "field": "reference_stimulus_entity_id",
+   "meaning": "related",
+   "to": "point"
+  },
+  {
+   "field": "reference_stimulus_source_id",
+   "meaning": "supports",
+   "to": "source"
+  },
+  {
+   "field": "linked_claim_id",
+   "meaning": "related",
+   "to": "claim"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_sensory",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_sensory",
+   "fields": [
+    "id",
+    "ingredient_entity_id",
+    "sample_description",
+    "method",
+    "evaluator_type",
+    "confidence_tag"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_scale",
+   "field": "scale_type",
+   "in": [
+    "category_5pt",
+    "category_9pt",
+    "vas_100mm",
+    "ranking"
+   ],
+   "allow_blank": true,
+   "note": "N4-38（scripts/validate_data.py 917〜918）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_evaluator",
+   "field": "evaluator_type",
+   "in": [
+    "self_calibration",
+    "household_n2",
+    "community_report"
+   ],
+   "allow_blank": false,
+   "note": "N4-38（scripts/validate_data.py 920〜921）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_tag",
+   "field": "confidence_tag",
+   "in": [
+    "anchored_to_reference",
+    "unanchored_self_report",
+    "multi_rater_agreement",
+    "community_unreviewed",
+    "community_reviewed"
+   ],
+   "allow_blank": false,
+   "note": "N4-38（scripts/validate_data.py 923〜924）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_community",
+   "field": "confidence_tag",
+   "in": [
+    "community_unreviewed",
+    "community_reviewed"
+   ],
+   "allow_blank": false,
+   "when": {
+    "evaluator_type": {
+     "in": [
+      "community_report"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 926〜927）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_not_community",
+   "field": "confidence_tag",
+   "in": [
+    "anchored_to_reference",
+    "unanchored_self_report",
+    "multi_rater_agreement"
+   ],
+   "allow_blank": true,
+   "when": {
+    "evaluator_type": {
+     "not_in": [
+      "community_report"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 928〜929）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_self_n",
+   "field": "evaluator_n",
+   "in": [
+    "1"
+   ],
+   "allow_blank": false,
+   "when": {
+    "evaluator_type": {
+     "in": [
+      "self_calibration"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 932〜933）。台本は isdigit と int（'01' も 1）"
+  },
+  {
+   "check": "words",
+   "id": "n4_38_house_n",
+   "field": "evaluator_n",
+   "in": [
+    "2"
+   ],
+   "allow_blank": false,
+   "when": {
+    "evaluator_type": {
+     "in": [
+      "household_n2"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 934〜935）"
+  },
+  {
+   "check": "required",
+   "id": "n4_38_anchor",
+   "fields": [
+    "reference_stimulus_entity_id"
+   ],
+   "when": {
+    "confidence_tag": {
+     "in": [
+      "anchored_to_reference"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 948〜949）"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "n4_38_ref_type",
+   "via": "reference_stimulus_entity_id",
+   "target": {
+    "entity_type": {
+     "not_in": [
+      "compound",
+      "compound_class"
+     ]
+    }
+   },
+   "note": "N4-38（scripts/validate_data.py 945〜946）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_38_session",
+   "field": "session_date",
+   "shape": "date",
+   "allow_blank": true,
+   "note": "N4-38（scripts/validate_data.py 952〜953）"
+  }
+ ]
+}

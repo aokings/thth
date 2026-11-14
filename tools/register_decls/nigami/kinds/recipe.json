@@ -1,0 +1,108 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "recipe",
+ "place": "data/recipes.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "dish_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_recipe",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_recipe",
+   "fields": [
+    "id",
+    "dish_entity_id",
+    "title",
+    "ingredients_text",
+    "method_text",
+    "verification_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_recipe_status",
+   "field": "verification_status",
+   "in": [
+    "supported",
+    "unverified"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 879〜881"
+  },
+  {
+   "check": "shape",
+   "id": "d_recipe_updated_at",
+   "field": "updated_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 898〜899"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "n4_32",
+   "via": "dish_entity_id",
+   "target": {
+    "entity_type": {
+     "not_in": [
+      "dish"
+     ]
+    }
+   },
+   "note": "N4-32（scripts/validate_data.py 877〜878）"
+  },
+  {
+   "check": "required",
+   "id": "n4_33_a",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "verification_status": {
+     "in": [
+      "supported"
+     ]
+    }
+   },
+   "note": "N4-33（scripts/validate_data.py 885〜886）"
+  },
+  {
+   "check": "empty",
+   "id": "n4_33_b",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "verification_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-33（scripts/validate_data.py 887〜888）"
+  }
+ ]
+}

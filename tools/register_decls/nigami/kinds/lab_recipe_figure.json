@@ -1,0 +1,55 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lab_recipe_figure",
+ "place": "data/lab-recipe-figures.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "recipe_id",
+   "meaning": "parent",
+   "to": "lab_recipe"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_lab_recipe_figure",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_lab_recipe_figure",
+   "fields": [
+    "id",
+    "recipe_id",
+    "slot",
+    "path",
+    "webp_720",
+    "alt_text",
+    "credit",
+    "sha256"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_fig_slot",
+   "field": "slot",
+   "in": [
+    "hero",
+    "why",
+    "keep",
+    "steps"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 854〜855"
+  }
+ ]
+}

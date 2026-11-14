@@ -1,0 +1,71 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lab_recipe",
+ "place": "data/lab-recipes.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "lead_entity_ids",
+   "meaning": "about",
+   "to": "point",
+   "split": ";"
+  },
+  {
+   "field": "based_on_source_ids",
+   "meaning": "derived_from",
+   "to": "source",
+   "split": ";"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_lab_recipe",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_lab_recipe",
+   "fields": [
+    "id",
+    "title",
+    "headline",
+    "lead_entity_ids",
+    "ingredients_text",
+    "why_bitter_text",
+    "keep_text",
+    "unknown_text",
+    "based_on_source_ids",
+    "construction_note",
+    "status"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_lab_status",
+   "field": "status",
+   "in": [
+    "published",
+    "draft"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 841〜842"
+  },
+  {
+   "check": "required",
+   "id": "n4_36",
+   "fields": [
+    "construction_note"
+   ],
+   "note": "N4-36（scripts/validate_data.py 849〜850）"
+  }
+ ]
+}

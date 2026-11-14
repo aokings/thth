@@ -1,0 +1,90 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "study",
+ "place": "data/studies.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "study_id"
+ },
+ "pointers": [
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "n4_41_study_req",
+   "fields": [
+    "study_id",
+    "source_id",
+    "label_ja",
+    "label_en",
+    "kind",
+    "depth",
+    "depth_note_ja",
+    "depth_note_en",
+    "samples_ja",
+    "samples_en",
+    "processing_ja",
+    "processing_en",
+    "serving_ja",
+    "serving_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 78〜82 の STUDIES_REQUIRED の前半 14 欄）"
+  },
+  {
+   "check": "required",
+   "id": "n4_41_study_req2",
+   "fields": [
+    "panel_ja",
+    "panel_en",
+    "group",
+    "license",
+    "checked_on",
+    "checked_by",
+    "questions"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 78〜82 の STUDIES_REQUIRED の後半 7 欄。fields は 16 欄までなので 2 つに分けた）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_study_kind",
+   "field": "kind",
+   "in": [
+    "sensory",
+    "composition"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 83〜85）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_study_depth",
+   "field": "depth",
+   "in": [
+    "full_text",
+    "full_text_thesis",
+    "abstract",
+    "unreachable"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 83〜85）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_study_checked_by",
+   "field": "checked_by",
+   "in": [
+    "llm_extracted_checked",
+    "human"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 83〜85）"
+  }
+ ],
+ "note": "questions 欄は問いのフォルダを ; で並べ、無しを '-' と書く（'-' を無しと読む口が無いので指す欄にしない）"
+}

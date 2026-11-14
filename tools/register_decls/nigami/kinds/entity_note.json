@@ -1,0 +1,39 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity_note",
+ "place": "data/entity-notes.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "related",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_entity_note",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_entity_note",
+   "fields": [
+    "id",
+    "entity_id",
+    "note_path",
+    "label",
+    "label_en"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  }
+ ]
+}

@@ -1,0 +1,87 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source_check",
+ "place": "data/source-checks.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "source_id",
+   "meaning": "about",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_source_check",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_source_check",
+   "fields": [
+    "id",
+    "source_id",
+    "scope",
+    "checked_by",
+    "basis"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "n4_25_scope",
+   "field": "scope",
+   "in": [
+    "全文",
+    "部分",
+    "抄録"
+   ],
+   "allow_blank": false,
+   "note": "N4-25（scripts/validate_data.py 449〜450）"
+  },
+  {
+   "check": "required",
+   "id": "n4_25_note",
+   "fields": [
+    "scope_note"
+   ],
+   "when": {
+    "scope": {
+     "in": [
+      "部分"
+     ]
+    }
+   },
+   "note": "N4-25（scripts/validate_data.py 451〜452）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_25_date",
+   "field": "checked_at",
+   "shape": "date",
+   "allow_blank": true,
+   "note": "N4-25（scripts/validate_data.py 453〜454）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_25_basis",
+   "field": "basis",
+   "prefix": "記録なし",
+   "allow_blank": false,
+   "when": {
+    "checked_at": {
+     "blank": true
+    }
+   },
+   "note": "N4-25（scripts/validate_data.py 455〜456）。日付が無いなら basis は「記録なし」で始まる"
+  }
+ ]
+}
