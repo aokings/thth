@@ -152,8 +152,7 @@ def check(root: str, *, catalog: bool = False) -> dict:
 
 
 def check_against(args, root: str) -> dict | None:
-    """`--against <前>`（段 5 §2.2）: 判断の記録が前の時点の続きでなければ赤（`register_judgment_invalid`・
-    judgments_rewritten）。続きなら結果を返す（無ければ None）。"""
+    """`--against <前>`（段 5 §2.2）: 判断の記録が前の時点の続きでなければ赤（`register_judgments_rewritten`）。続きなら結果を返す（無ければ None）。"""
     name = getattr(args, "against", None)
     if not name:
         return None
@@ -163,7 +162,7 @@ def check_against(args, root: str) -> dict | None:
             print(f"  判断の記録が前の時点（{result['from']} {result['against'][:12]}）の続きではありません: "
                   f"前の {result['line']} 行めが{'ありません' if result['why'] == 'shortened' else '書き換わっています'}",
                   file=sys.stderr)
-        raise RegisterRefused("register_judgment_invalid", f"judgments_rewritten line {result['line']}",
+        raise RegisterRefused("register_judgments_rewritten", f"line {result['line']}",
                               against=result)
     return result
 

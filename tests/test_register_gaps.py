@@ -738,3 +738,158 @@ def test_つなぎ_kindsに出し口ごとの読者に見える欄と内部の�
     assert value["outlets"] == [{"outlet": "site", "audience": "reader",
                                  "reader_fields": {"page": ["title"]}}]
     assert value["internal_words"] == 1
+
+
+# --- 段 4 §8 断りの語: 借り物の語から専用の語へ ---------------------------------------------------------------
+
+def test_断りの語_出したURLの関門の赤はrc1とverdictのまま専用の符丁と3つの文を載せる(tmp_path, monkeypatch, capsys):
+    from tests import test_register_gate as G
+    from thth.register import published as P
+    from thth import refusal
+    for key, sub in (("THTH_ROOT", "root"), ("HOME", "home"), ("XDG_CONFIG_HOME", "config")):
+        (tmp_path / sub).mkdir()
+        monkeypatch.setenv(key, str(tmp_path / sub))
+    env = tmp_path
+    led = G.seeded(env)
+    v = P.published(str(led), "site", str(G.lst(env, "/", "/new/", "/日本/")), G.NOW)
+    assert not v["ok"] and v["code"] == "register_published_gate"
+    assert v["why"] and v["fix"] and v["better"] and "published.redirects" in v["fix"]
+    assert refusal.parts("register_published_gate")
+    ok = P.published(str(led), "site", str(G.lst(env, "/", "/a/", "/new/", "/日本/")), G.NOW)
+    assert ok["ok"] and "code" not in ok
+
+
+def test_断りの語_3つの語は断りの理由と目録にある():
+    from thth import refusal
+    from thth.register import errors as E
+    for code in ("register_published_gate", "register_judgments_rewritten", "register_version_unavailable"):
+        assert code in E.REASONS, code
+        found = refusal.parts(code)
+        assert found and found["why"] and found["fix"] and found["better"], code
+    assert "not_git" in refusal.parts("register_version_unavailable")["why"]
+    assert "judgments_rewritten" not in refusal.parts("register_judgment_invalid")["why"]
+
+
+def test_断りの語_前の版を取り出せないは専用の語_控えの名の無いのは今までどおり(tmp_path):
+    from thth.register import trail as T
+    led = make_ledger(tmp_path / "led", [{"schema": "thth.kind/1", "kind": "a", "place": "a.csv", "format": "csv",
+                                          "id": {"field": "id"}}], {"a.csv": "id\nx\n"})
+    with pytest.raises(RegisterRefused) as caught:
+        T.against(str(led), "HEAD")
+    assert caught.value.code == "register_version_unavailable" and caught.value.detail == "not_git"
+    with pytest.raises(RegisterRefused) as caught:
+        T.against(str(led), "0123456789abcdef")
+    assert caught.value.code == "register_kept_missing" and caught.value.detail == "snapshot"
+
+
+# --- 段 4 の足し 1: 語の並びの中の空の語 "" は「空」（欠け・null・空白だけ・空の並び）を指す -----------------------
+
+BLANKS = ({}, {"f": None}, {"f": "   "}, {"f": ""}, {"f": []}, {"f": {}})
+
+
+@pytest.mark.parametrize("values", BLANKS)
+def test_足し1_inに空の語があれば空の値は合う_無ければ合わない(values):
+    assert C.match(C.parse_condition({"f": {"in": ["a", ""]}}), values)
+    assert not C.match(C.parse_condition({"f": {"in": ["a"]}}), values)
+
+
+@pytest.mark.parametrize("values", BLANKS)
+def test_足し1_not_inに空の語があれば空の値は合わない_無ければ合う(values):
+    assert not C.match(C.parse_condition({"f": {"not_in": ["a", ""]}}), values)
+    assert C.match(C.parse_condition({"f": {"not_in": ["a"]}}), values)
+
+
+def test_足し1_語の中と外の値は空の語があっても今までどおり():
+    for words in (["a", ""], ["a"]):
+        assert C.match(C.parse_condition({"f": {"in": words}}), {"f": " a "})
+        assert not C.match(C.parse_condition({"f": {"in": words}}), {"f": "b"})
+        assert not C.match(C.parse_condition({"f": {"not_in": words}}), {"f": "a"})
+        assert C.match(C.parse_condition({"f": {"not_in": words}}), {"f": "b"})
+    # or_blank は変わらない: in+or_blank は語か空・not_in+or_blank は語でないか空
+    assert C.match(C.parse_condition({"f": {"in": ["a"], "or_blank": True}}), {"f": None})
+    assert C.match(C.parse_condition({"f": {"not_in": ["a"], "or_blank": True}}), {"f": None})
+    assert not C.match(C.parse_condition({"f": {"not_in": ["a"], "or_blank": True}}), {"f": "a"})
+    # 中身のある辞書・並びは字として比べない（今までどおり合わない）
+    assert not C.match(C.parse_condition({"f": {"in": ["a", ""]}}), {"f": ["x"]})
+
+
+# --- 段 4 の足し 2: 同じ欄に指す欄が 2 本あるとき、forbid_pair と count の via_to で先の種類を選ぶ ---------------
+
+def _two_ways(tmp, song_checks=(), shelf_checks=(), credit_checks=()):
+    """MMR の credit_version.seed → song と shelf_song の形（同じ欄から 2 本）。"""
+    song = kind("song", "songs.csv", id={"field": "id"}, checks=list(song_checks))
+    shelf = kind("shelf_song", "shelf.csv", id={"field": "id"}, checks=list(shelf_checks))
+    credit = kind("credit", "credits.csv", id={"field": "id"}, checks=list(credit_checks), pointers=[
+        {"field": "seed", "to": "song", "meaning": "about"},
+        {"field": "seed", "to": "shelf_song", "meaning": "about"}])
+    for k in (song, shelf, credit):
+        if not k["checks"]:
+            del k["checks"]
+    return make_ledger(tmp / "l", [song, shelf, credit], {
+        "songs.csv": "id,status\ns1,draft\ns2,ok\ns3,ok\n",
+        "shelf.csv": "id,status\ns1,ok\n",
+        "credits.csv": "id,seed\nc1,s1\nc2,s2\n"})
+
+
+def _bad(vessel, check_id):
+    return sorted(r["record"] for e in C.run(vessel)["list"] if e["id"] == check_id for r in e["records"])
+
+
+def test_足し2_forbid_pairのvia_toで2本のうちの先を選ぶ(tmp_path):
+    fp = {"check": "forbid_pair", "id": "no_draft", "via": "seed", "via_to": "song",
+          "target": {"status": {"in": ["draft"]}}}
+    fp2 = {**fp, "id": "no_draft_shelf", "via_to": "shelf_song"}
+    vessel = V.open_vessel(str(_two_ways(tmp_path, credit_checks=[fp, fp2])))
+    assert _bad(vessel, "no_draft") == ["credit:c1"]
+    assert _bad(vessel, "no_draft_shelf") == []
+
+
+def test_足し2_countのvia_toで2本のうちの先を選ぶ(tmp_path):
+    cs = {"check": "count", "id": "credited", "from": {"kind": "credit", "via": "seed", "via_to": "song"}, "min": 1}
+    cf = {"check": "count", "id": "credited2", "from": {"kind": "credit", "via": "seed", "via_to": "shelf_song"},
+          "min": 2}
+    vessel = V.open_vessel(str(_two_ways(tmp_path, song_checks=[cs], shelf_checks=[cf])))
+    assert _bad(vessel, "credited") == ["song:s3"]
+    assert _bad(vessel, "credited2") == ["shelf_song:s1"]
+
+
+def test_足し2_via_toが無くて2本ならforbid_pairは断り_断りの文がvia_toを言う():
+    from thth import refusal
+    credit = kind("credit", "credits.csv", id={"field": "id"}, pointers=[
+        {"field": "seed", "to": "song", "meaning": "about"}, {"field": "seed", "to": "shelf_song", "meaning": "about"}],
+        checks=[{"check": "forbid_pair", "id": "x", "via": "seed", "target": {"status": {"in": ["draft"]}}}])
+    parse_fails(credit, "checks")
+    assert "via_to" in refusal.parts("register_kind_invalid")["fix"]
+
+
+@pytest.mark.parametrize("via_to", ["shelf", "", None, 1, ["song"], {"a": 1}, "Song", "../song", "s" * 300])
+def test_足し2_宣言の攻め_forbid_pairのvia_to(via_to):
+    credit = kind("credit", "credits.csv", id={"field": "id"}, pointers=[
+        {"field": "seed", "to": "song", "meaning": "about"}, {"field": "seed", "to": "shelf_song", "meaning": "about"}],
+        checks=[{"check": "forbid_pair", "id": "x", "via": "seed", "via_to": via_to,
+                 "target": {"status": {"in": ["draft"]}}}])
+    parse_fails(credit, "checks")
+
+
+@pytest.mark.parametrize("src", [
+    {"kind": "credit", "via": "seed"},                              # 2 本で via_to が無い
+    {"kind": "credit", "via": "seed", "via_to": "shelf_song"},      # この種類（song）でない先
+    {"kind": "credit", "via": "seed", "via_to": "nosuch"},
+    {"kind": "credit", "via": "seed", "via_to": ""},
+    {"kind": "credit", "via": "seed", "via_to": 3},
+    {"kind": "credit", "via": "seed", "via_to": None},
+    {"kind": "credit", "via": "seed", "via_to": "song", "x": 1},
+])
+def test_足し2_宣言の攻め_countのvia_to(tmp_path, src):
+    root = _two_ways(tmp_path, song_checks=[{"check": "count", "id": "c", "from": src, "min": 1}])
+    with pytest.raises(RegisterRefused) as info:
+        V.open_vessel(str(root))
+    assert info.value.code == "register_kind_invalid"
+
+
+def test_足し2_to_byの指す欄にはvia_toでも使えない():
+    credit = kind("credit", "credits.csv", id={"field": "id"}, pointers=[
+        {"field": "seed", "meaning": "about", "to_by": {"prefix": {"s": "song"}}}],
+        checks=[{"check": "forbid_pair", "id": "x", "via": "seed", "via_to": "song",
+                 "target": {"status": {"in": ["draft"]}}}])
+    parse_fails(credit, "checks")
