@@ -142,11 +142,6 @@ def check_kopicha(developer: pathlib.Path) -> list:
 
 # 宣言に検収の記録を持つ表（inspects）が書けない理由（器の不足）。宣言を曲げずに報告する。
 GAPS = {
-    "mmr": "訂正（ledger.json の root_fixes_data）は 1 枚の JSON の入れ子の並びで、(1) 先の番号 `id` の種類が行ごとに"
-           "違う（claim-…・mood-…・dos-…。指す欄は 1 つの種類しか指せない）、(2) 直した欄 `field` が行ごとに違い"
-           "（`scope_ja/scope_en` のように 2 つの欄を 1 つの字で）、(3) 旧い文・新しい文 `old`・`new` が欄の名を鍵にした"
-           "入れ子。inspects は「決まった 1 つの種類へたどる指す欄」と「決まった欄の対応」しか持てないので、訂正 1 つから"
-           "対象の記録の版へたどれない",
     "jiangshi": "原文確認の記録（docs/original-check-log.md）は表でなく、1 回 1 行の箇条書きの md（日付・誰が・根拠の"
                 "番号の並び・何のため）。器の形式（csv・json・yaml・頭つきの md・bytes）に、md の行を記録として読む形が"
                 "無い。読者監査（audits/reader/*.json）は commit（base）を持つが、確かめた物を「ファイルと行の番号」で指し、"

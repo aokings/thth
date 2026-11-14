@@ -54,6 +54,12 @@
    "meaning": "about",
    "to": "song",
    "in_units": true
+  },
+  {
+   "field": "seed",
+   "meaning": "about",
+   "to": "shelf_song",
+   "in_units": true
   }
  ],
  "checks": [

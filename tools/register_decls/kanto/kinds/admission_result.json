@@ -133,7 +133,7 @@
     }
    },
    "max": 0,
-   "note": "回の source_tier は \"1\"・\"3\"・null（admission_results_guard 50 行）。空を許すため not_in に空の語を入れた（or_blank は空を「合う」にするので、違反を数える条件には使えない）。年の段は固有"
+   "note": "回の source_tier は \"1\"・\"3\"・null（admission_results_guard 50 行）。not_in の空の語 \"\" は空（欠け・null）を指す（段 4 の足し 1）ので、空の回は数えない。年の段は固有"
   },
   {
    "check": "count",
