@@ -950,7 +950,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             with open(os.path.join(ctx.root, *path.split("/")), "rb") as f:
                 data = f.read()
             if kind.records == "rows" and kind.format == "csv":
-                files[path], tables[path] = _table_bytes(data, keep, row_edits.get(path))
+                files[path], tables[path] = _table_bytes(data, keep, row_edits.get(path), kind.delimiter)
             elif keep:
                 files[path] = file_edits.get(path, data)
         facts = [i for i in items if i["as"] == "reservation"]
@@ -985,6 +985,9 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                 excluded.append({"record": f"{COMMON}:{ref}", "why": "stopped"})
                 continue
             if rules.get(ref.split(":", 1)[0]) == "*":
+                # 運営者と、共通の出さない欄で記録ごと外した物は、封の入力の版の組にも載せない（材料に入れない物は、
+                # 封にも名前と版を出さない。段 8 の検収）
+                inputs.pop()
                 excluded.append({"record": f"{COMMON}:{ref}", "why": "shared_private"})
                 continue
             path = f"{COMMON}/{common_path(ctx.common, ref, common_known or {})}"
@@ -994,6 +997,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                 continue
             data, withheld = _shared_fence(ctx.common, ref, common_bytes(ctx.common, ref, version), rules)
             if data is None:
+                inputs.pop()                       # 記録ごと外した物は、封の入力にも載せない（同上）
                 excluded.append({"record": f"{COMMON}:{ref}", "why": withheld})
                 continue
             files[path] = data
@@ -1007,13 +1011,13 @@ def _json_bytes(value) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
 
 
-def _table_bytes(data: bytes, keep: set, edits: dict | None = None) -> tuple:
+def _table_bytes(data: bytes, keep: set, edits: dict | None = None, delimiter: str | None = None) -> tuple:
     """表から、使える行だけを元のバイトのまま残す（見出しと空の行はそのまま）。全部使えるなら元と同じバイト。
     段 7: `edits`（版 → 書き直した行）がある行だけ、その行の字に替える（出さない欄を空に・差し込みを置き換えた行）。
     `(バイト, 書いた行ごとの sha256 の並び)`。並びの頭は見出し（BOM を含む）。封の指紋（`fingerprints.tables`）に使う。"""
     bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
     text = data[len(bom):].decode("utf-8")
-    rows = V.split_csv_rows(text)
+    rows = V.split_csv_rows(text, delimiter)
     if not rows:
         return data, [sha(data)]
     out = [rows[0]]
@@ -1244,7 +1248,7 @@ def _edit_record(root: str, kind: V.Kind, rec: V.Record, blank: set, repl: dict,
                 data = f.read()
             text = data.decode("utf-8")
             text = text[1:] if text.startswith("﻿") else text
-            rows = V.split_csv_rows(text)
+            rows = V.split_csv_rows(text, kind.delimiter)
             raw_cache[rec.path] = (_csv_cells(rows[0]) if rows else [],
                                    {V.bytes_version(r.encode("utf-8")): r for r in rows[1:]})
         header, by_version = raw_cache[rec.path]

@@ -459,3 +459,20 @@ def test_7_1_前の写しが古い形なら赤で案内する(env, capsys):
     from thth import refusal_catalog
     detail = refusal_catalog.CATALOG["register_seal_unverified"]["by_detail"]["previous_old_form"]
     assert "配り直" in detail["fix"]
+
+
+# ================================================================== 段 8 の検収: 運営者の記録は封の入力にも載せない
+
+def test_段8_運営者と記録ごと外した共通の記録は封の入力の版の組にも載らない(env, capsys):
+    from tests.test_register_health import _private_setup
+    common, kop, _nig = _private_setup(env, capsys, False)
+    site = env / "op-site"
+    rc, v, err = jrun(capsys, "register", "accept", kop, "--outlet", "op", "--to", site, "--as-of", SEALED_AT,
+                      "--by", "masaru", "--common", common)
+    assert rc == 1, err
+    rc, v, err = jrun(capsys, "register", "accept", kop, "--outlet", "op", "--to", site, "--as-of", SEALED_AT,
+                      "--by", "masaru", "--common", common, "--confirm", v["digest"])
+    assert rc == 0, err
+    body = json.loads(pathlib.Path(R.seal_path(str(kop), "op")).read_text(encoding="utf-8"))["body"]
+    assert not [i for i in body["inputs"] if "operator" in i["record"]], body["inputs"]
+    assert "owner" not in json.dumps(body["inputs"])

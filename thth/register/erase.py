@@ -344,9 +344,16 @@ def _candidates(root: str, path: str) -> dict:
     return {d: s for d, s in out.items() if os.path.exists(K.object_path(root, d))}
 
 
+def _open_own(root: str, req: str) -> V.Vessel:
+    """器を開く。止まった入れ替えの段取りが残っていても、それが**この求めの**入れ替えなら続きのために開く
+    （ほかの者の止まった入れ替えは、今までどおり断る: `register_batch_pending`）。"""
+    plan = K.pending(root)
+    return V.open_vessel(root, allow_pending=plan is not None and plan.get("what") == _what(req))
+
+
 def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
     """範囲の版の一覧（メモリの中だけ）。"""
-    vessel = V.open_vessel(root)
+    vessel = _open_own(root, reqb["id"])
     kind = _kind_of(vessel, reqb["record"])
     path = reqb["path"]
     rng = Range()
@@ -395,7 +402,7 @@ def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
             rng.values.add(_field_value(rec, reqb))
         elif kind.format == "csv":
             text = V._decode(data) or ""
-            for raw in V.split_csv_rows(text)[1:]:
+            for raw in V.split_csv_rows(text, kind.delimiter)[1:]:
                 if V.bytes_version(raw.encode("utf-8")) == rec.version:
                     rng.rows.add(raw.rstrip("\r\n"))
         for q in kind.questions + [None]:
@@ -770,7 +777,7 @@ def _place_current(root, req, reqb, rng, result, kind, by, at) -> dict:
         return {"state": "erased", "continued": True}
     if not rng.current:
         return {"state": "nothing"}
-    vessel = V.open_vessel(root)
+    vessel = _open_own(root, req)
     rec = vessel.get(reqb["record"])
     rel = rec.path
     if kind.format == "csv":
@@ -1171,7 +1178,7 @@ def _prepare(root: str, req: str) -> tuple:
     if scopeb is None or scopeb.get("schema") != SCOPE_SCHEMA:
         raise RegisterRefused("register_erase_invalid", "scope_missing")
     reqb = dict(reqb, field=scopeb.get("field"))
-    vessel = V.open_vessel(root)
+    vessel = _open_own(root, req)
     return reqb, scopeb, _kind_of(vessel, reqb["record"])
 
 
