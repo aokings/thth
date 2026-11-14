@@ -1,0 +1,10 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "linernotes",
+ "place": "content/linernotes.json",
+ "format": "json",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 4000000
+}

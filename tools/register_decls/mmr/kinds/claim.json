@@ -1,0 +1,333 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "claim",
+ "place": "data/claims.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "says_so",
+   "state": "claim_status",
+   "depends": [
+    "subject_entity_id",
+    "predicate",
+    "object_entity_id",
+    "object_text_ja",
+    "object_text_en",
+    "scope_ja",
+    "scope_en"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "object_entity_id",
+   "meaning": "related",
+   "to": "entity"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_claim",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_claim",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v3_claim_predicate",
+   "field": "predicate",
+   "in": [
+    "is_a",
+    "includes",
+    "bonds_via",
+    "works_by",
+    "requires",
+    "applicable_to",
+    "soluble_in",
+    "insoluble_in",
+    "contains",
+    "causes",
+    "attributed_to",
+    "produces",
+    "used_in",
+    "found_in",
+    "differs_from",
+    "has_property",
+    "declined_because",
+    "regulated_by",
+    "performed_at",
+    "founded",
+    "worked_with",
+    "played_at",
+    "credited_artist",
+    "written_by",
+    "composed_by",
+    "arranged_by",
+    "produced_by",
+    "performed_by",
+    "vocals_by",
+    "mixed_by",
+    "mastered_by",
+    "remixed_by",
+    "edited_by",
+    "remix_of",
+    "released_by",
+    "member_of",
+    "uses_name",
+    "recorded_by",
+    "recorded_at",
+    "release_date",
+    "catalog_number",
+    "mixed_at",
+    "mastered_at",
+    "uses_equipment",
+    "active_in",
+    "associated_with_scene",
+    "sample_of",
+    "cover_of",
+    "edit_of",
+    "distributed_by",
+    "published_by",
+    "added_in_period"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_claim_claim_type",
+   "field": "claim_type",
+   "in": [
+    "classification",
+    "composition",
+    "mechanism",
+    "process",
+    "applicability",
+    "color",
+    "fastness",
+    "cultural",
+    "historical",
+    "safety",
+    "environmental",
+    "regulatory",
+    "credit",
+    "release_metadata",
+    "identity",
+    "membership",
+    "version_relation",
+    "equipment",
+    "scene",
+    "usage"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_claim_claim_status",
+   "field": "claim_status",
+   "in": [
+    "established",
+    "supported",
+    "preliminary",
+    "contested",
+    "contextual",
+    "observation",
+    "unverified"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "m_v4_claim_object_text_en",
+   "fields": [
+    "object_text_en"
+   ],
+   "when": {
+    "object_text_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_claim_object_text_ja",
+   "fields": [
+    "object_text_ja"
+   ],
+   "when": {
+    "object_text_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "m_v4_claim_scope_en",
+   "fields": [
+    "scope_en"
+   ],
+   "when": {
+    "scope_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_claim_scope_ja",
+   "fields": [
+    "scope_ja"
+   ],
+   "when": {
+    "scope_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "m_v8",
+   "fields": [
+    "object_text_ja"
+   ],
+   "when": {
+    "object_entity_id": {
+     "blank": true
+    }
+   }
+  },
+  {
+   "check": "shape",
+   "id": "m_v9_updated_at",
+   "field": "updated_at",
+   "shape": "date",
+   "allow_blank": false
+  },
+  {
+   "check": "shape",
+   "id": "m_v9_as_of",
+   "field": "as_of",
+   "shape": "date_partial"
+  },
+  {
+   "check": "shape",
+   "id": "m_v9_valid_until",
+   "field": "valid_until",
+   "shape": "date_partial"
+  },
+  {
+   "check": "count",
+   "id": "m_v14",
+   "when": {
+    "claim_status": {
+     "not_in": [
+      "unverified"
+     ]
+    }
+   },
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "min": 1
+  },
+  {
+   "check": "count",
+   "id": "m_v15",
+   "when": {
+    "claim_status": {
+     "in": [
+      "established"
+     ]
+    }
+   },
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "extraction_status": {
+     "in": [
+      "human_checked"
+     ]
+    }
+   },
+   "min": 1,
+   "note": "規則 E で廃止済みの書き残し（レーンの答え）。台本は有効なので宣言に書いた"
+  },
+  {
+   "check": "count",
+   "id": "m_v16",
+   "when": {
+    "claim_status": {
+     "in": [
+      "established"
+     ]
+    }
+   },
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "relation": {
+     "in": [
+      "supports"
+     ]
+    }
+   },
+   "distinct": "source_id",
+   "min": 2,
+   "note": "同じく書き残し。数えるのは違う番号"
+  },
+  {
+   "check": "count",
+   "id": "m_v17",
+   "when": {
+    "claim_status": {
+     "in": [
+      "established",
+      "supported"
+     ]
+    }
+   },
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "evidence_type": {
+     "not_in": [
+      "journalistic_report",
+      "database_record",
+      "label_note",
+      "reissue_label_note",
+      "user_contributed_record",
+      "vendor_profile",
+      "agency_profile",
+      "dj_chart"
+     ]
+    }
+   },
+   "min": 1,
+   "note": "言い換え（236〜238 行。規則は廃止・台本は有効）: 全部が上限の 8 種なら赤を「上限外の根拠が 1 つ以上」に"
+  }
+ ]
+}

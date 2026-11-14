@@ -1,0 +1,22 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "ref",
+ "place": "data/refs.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "subject_kind",
+   "subject",
+   "site",
+   "rel",
+   "url"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "same",
+   "to": "entity"
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "content_index",
+ "place": "content/index.yaml",
+ "format": "yaml",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 1000000,
+ "note": "posts・essays・features の並びは YAML の中なので行として読めない（records は file だけ）"
+}

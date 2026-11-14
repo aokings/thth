@@ -1,0 +1,28 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "song",
+ "place": "queue.json",
+ "format": "json",
+ "records": "rows",
+ "max_bytes": 5000000,
+ "id": {
+  "field": "seed_id"
+ },
+ "questions": [
+  {
+   "name": "song_page",
+   "depends": [
+    "seed_id",
+    "research_order",
+    "title",
+    "artists",
+    "album",
+    "duration",
+    "liked_added_date",
+    "liked_added_display",
+    "date_basis"
+   ]
+  }
+ ],
+ "note": "research_status はどの検査も見ない（目録 §3.3）"
+}

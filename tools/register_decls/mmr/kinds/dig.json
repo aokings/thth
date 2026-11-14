@@ -1,0 +1,57 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "dig",
+ "place": "data/digs.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "seed_id",
+   "meaning": "about",
+   "to": "song"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_dig",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "260〜261 行"
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_dig",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v19_dig",
+   "fields": [
+    "wave"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v25_item_type",
+   "field": "item_type",
+   "in": [
+    "find",
+    "gap",
+    "hint"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v25_text",
+   "fields": [
+    "text"
+   ]
+  }
+ ]
+}
