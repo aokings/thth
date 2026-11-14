@@ -360,6 +360,7 @@ def test_重い穴a_鍵なしで止めるの行を印の形にして消す求め
     lines = J.read(str(led))
     req = "e-" + "0" * 16
     stop = next(j for j in lines if j["question"] == "stop@facts")
+    seal_before = pathlib.Path(R.seal_path(str(led), "facts")).read_bytes()
     for change in ("same", "lift"):
         forged = _marked(stop, req)
         if change == "lift":
@@ -387,11 +388,8 @@ def test_重い穴a_鍵なしで止めるの行を印の形にして消す求め
                            SEALED_AT, "--by", "masaru")
         assert rc != 0 and "register_seal_unverified" in out + err
         _write_lines(led, lines)
-        shutil.copy(env / "published" / "facts2.json", env / "seal-backup.json")
-        # 封を元に戻す（次の回のため）: 配った物の封の部分を書き戻す
-        back = json.loads((env / "published" / "facts2.json").read_text(encoding="utf-8"))
-        pathlib.Path(R.seal_path(str(led), "facts")).write_text(
-            json.dumps({"body": back["body"], "signature": back["signature"]}, ensure_ascii=False), encoding="utf-8")
+        # 封を元に戻す（次の回のため）: 書き換える前の封のバイトを書き戻す
+        pathlib.Path(R.seal_path(str(led), "facts")).write_bytes(seal_before)
 
 
 def test_重い穴b_印の形にした止めるは効いたまま_材料に載れば赤(env, capsys):
@@ -705,6 +703,10 @@ def test_跡_消したあとcheck_againstとdiffは結果に載った物だけ�
     assert T.against(str(led), "HEAD")["continues"]
     req, _v = erase_all(capsys, led, field=None)          # 記録ごと消す（番号が今の本文から消える）
     now = (led / ".thth/judgments.jsonl").read_bytes()
+    # 結果の記録だけでは通さない: 受け入れ直して、署名の合った封に載ってから（段 5 の検収の穴 3）
+    assert T.erase_excuses(str(led))["requests"] == set() and T.erase_excuses(str(led))["unsealed"] == [req]
+    assert not T.against(str(led), "HEAD")["continues"] and A.diff(str(led), "HEAD..now")["red"]
+    accept(capsys, led, "facts", _site)
     excuses = T.erase_excuses(str(led))
     assert excuses["requests"] == {req} and excuses["records"] == {BRAZIL} and excuses["lines"]
     # 判断の記録: 結果に載った印の行だけを通す（骨で・位置で）。結果が無ければ赤

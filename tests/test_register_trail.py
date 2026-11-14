@@ -293,7 +293,7 @@ def test_check_against_消す求めの結果に載った印の行だけを骨で
     b = json.dumps({"id": "j-2", "question": "says_so", "target": {"record": "claim:x"},
                     "answer": {"conclusion": "bad", "word": None}, "at": AT}).encode() + b"\n"
     marked = json.dumps({"id": "x-0123456789abcdef", "question": "says_so", "target": {"record": MILK},
-                         "answer": {"conclusion": "good", "word": None}, "at": AT,
+                         "answer": {"conclusion": "good", "word": None}, "at": AT, "reason": {"kind": None},
                          "erased": {"request": "e-0123456789abcdef"}}).encode() + b"\n"
     erase = {"requests": {"e-0123456789abcdef"}, "lines": {"x-0123456789abcdef"}}
     prev = a + b

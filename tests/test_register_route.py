@@ -504,7 +504,8 @@ def _attacker_seal(env, led, site, monkeypatch):
     plan = R.accept_plan(str(led), "facts", str(site), "2027-03-22")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(other))
     body = dict(plan["body"], at="2027-03-22T00:00:00+09:00", public_key=info["fingerprint"])
-    sig = S.sign(V.canonical(body).encode("utf-8"), register_root=str(led))
+    # 署名は公開の写しの中身（台帳の塩を混ぜた要約）に作る（段 7 の検収 7-1）
+    sig = S.sign(R.seal_message(body, R.read_salt(str(led))), register_root=str(led))
     pathlib.Path(R.seal_path(str(led), "facts")).write_text(json.dumps({"body": body, "signature": sig}))
     # repo の中に、別の鍵の公開鍵のファイルを置く（どの名前でも読まれない）
     for name in ("seal_public.pem", "public_key.pem", "seal.pub"):

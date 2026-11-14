@@ -120,22 +120,62 @@ def line_skeleton(j: dict, with_unit: bool = True) -> str:
     return hashlib.sha256(V.canonical(body).encode("utf-8")).hexdigest()[:32]
 
 
-def skeleton_pair(j: dict) -> list:
-    """`[指し先つきの骨, 指し先を除いた骨]`（前の行の側。CI に配る物の `deployed.lines` の 1 つ）。"""
+def _salted(salt, text: str) -> str:
+    """骨に塩を混ぜる（公開の場所の写しに出す形。`salt` が None なら素の骨）。"""
+    return text if salt is None else hashlib.sha256(salt + text.encode("utf-8")).hexdigest()
+
+
+def skeleton_pair(j: dict, salt: bytes | None = None) -> list:
+    """`[指し先つきの骨, 指し先を除いた骨]`（前の行の側。CI に配る物の `deployed.lines` の頭の 2 つは、塩を混ぜた形）。"""
     j = j if isinstance(j, dict) else {}
-    return [line_skeleton(j, True), line_skeleton(j, False)]
+    return [_salted(salt, line_skeleton(j, True)), _salted(salt, line_skeleton(j, False))]
 
 
-def line_continues(pair, j: dict, *, lines, requests) -> str | None:
+# 印の行が持ってよい欄（`erase.marked` が書く形・指示 段 5 §3.4）。ほかの欄を持つ印の行は読む入口で断る。
+MARKED_KEYS = frozenset({"schema", "id", "question", "target", "answer", "reason", "by", "at", "until", "path",
+                         "carries", "erased", "source"})
+MARKED_TARGET = frozenset({"record", "unit", "value", "unit_dropped"})
+
+
+def marked_shape_problem(item: dict) -> str | None:
+    """印の行（`erased`）が決まった欄だけを持つか。合わない最初の語。`target` は記録・指し先・値・`unit_dropped`
+    だけ（`ledger` などを足して効き方を変えさせない）。`unit_dropped` は真だけで、指し先と一緒には持たない。
+    値の指し先は単位と一緒のときだけ。答えは語と結論だけ、理由は種類だけ。"""
+    if set(item) - MARKED_KEYS:
+        return "erased_shape"
+    t = item.get("target")
+    if not isinstance(t, dict) or set(t) - MARKED_TARGET:
+        return "erased_target"
+    if "unit_dropped" in t and (t["unit_dropped"] is not True or t.get("unit") or t.get("value")):
+        return "erased_target"
+    if t.get("value") and not t.get("unit"):
+        return "erased_target"
+    a, r, e = item.get("answer"), item.get("reason"), item.get("erased")
+    if not isinstance(a, dict) or set(a) - {"word", "conclusion"}:
+        return "erased_answer"
+    if not isinstance(r, dict) or set(r) - {"kind"}:
+        return "erased_reason"
+    if not isinstance(e, dict) or set(e) != {"request"}:
+        return "erased"
+    return None
+
+
+def line_continues(pair, j: dict, *, lines, requests, salt: bytes | None = None) -> str | None:
     """前の行（の骨の組 `pair`）の位置にある今の行 `j` が、続きとして通るか。通れば None、通らなければ語。
-    印の行（`erased`）は、消す求めの結果に載った番号（`lines`）と求め（`requests`）のときだけ、骨が前の行と同じなら
-    通す（指し先を除いた印の行は、指し先を除いた骨で比べる）。印でない行は、指し先つきの骨が同じなら通す。"""
+    印の行（`erased`）は、消す求めの結果に載った番号（`lines`）と求め（`requests`）のときだけ、印の形が決まった欄
+    だけで、骨が前の行と同じなら通す。指し先を外した印の行は `unit_dropped` を持つときだけ、指し先を除いた骨で
+    比べる（持たなければ指し先つきの骨で比べるので、前の行が単位への行なら合わない）。印でない行は、指し先つきの骨が
+    同じなら通す（CI は印でない行を全バイトで比べる。`route.erase_continued`）。`salt` は配る物の塩を混ぜた骨と
+    比べるとき。"""
     if is_erased(j):
         if j.get("id") not in lines or j["erased"].get("request") not in requests:
             return "line_not_in_erase"
-        has_unit = bool((j.get("target") or {}).get("unit"))
-        return None if line_skeleton(j, has_unit) == (pair[0] if has_unit else pair[1]) else "line_changed"
-    return None if line_skeleton(j, True) == pair[0] else "line_changed"
+        if marked_shape_problem(j):
+            return "line_shape"
+        if (j.get("target") or {}).get("unit_dropped"):
+            return None if _salted(salt, line_skeleton(j, False)) == pair[1] else "line_changed"
+        return None if _salted(salt, line_skeleton(j, True)) == pair[0] else "line_changed"
+    return None if _salted(salt, line_skeleton(j, True)) == pair[0] else "line_changed"
 
 
 def _text(value) -> bool:
@@ -163,8 +203,12 @@ def shape_problem(item: dict) -> str | None:
             return name
     if item.get("at") is not None and not isinstance(item["at"], str):
         return "at"
-    if "erased" in item and not (isinstance(item["erased"], dict) and isinstance(item["erased"].get("request"), str)):
-        return "erased"
+    if "erased" in item:
+        if not (isinstance(item["erased"], dict) and isinstance(item["erased"].get("request"), str)):
+            return "erased"
+        problem = marked_shape_problem(item)
+        if problem:
+            return problem
     siblings = item.get("siblings")
     if siblings is not None and not (isinstance(siblings, list) and all(isinstance(x, str) for x in siblings)):
         return "siblings"
