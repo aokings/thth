@@ -7,5 +7,5 @@
   "name": true
  },
  "max_bytes": 1000000,
- "note": "posts・essays・features の並びは YAML の中なので行として読めない（records は file だけ）"
+ "note": "出す記事の一覧の 1 枚。行は index_* の種類で読む（G6）"
 }

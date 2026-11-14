@@ -1,0 +1,15 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "shelf_song",
+ "place": "site/src/generated/shelf.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "seeds"
+ ],
+ "id": {
+  "from": "key"
+ },
+ "max_bytes": 4000000,
+ "note": "seeds の鍵の辞書を行として読む（G13）"
+}

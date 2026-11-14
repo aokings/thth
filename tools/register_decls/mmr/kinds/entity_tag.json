@@ -15,5 +15,26 @@
    "meaning": "about",
    "to": "entity"
   }
+ ],
+ "checks": [
+  {
+   "check": "prefixed_words",
+   "id": "m_v7_tag",
+   "field": "tag",
+   "sep": ":",
+   "allow_blank": false,
+   "prefixes": {
+    "pillar": [
+     "recording",
+     "people",
+     "credits",
+     "releases",
+     "connections"
+    ],
+    "topic": null,
+    "region": null
+   },
+   "note": "lab.yaml の facets（validate_data.py 177〜186 行）。null の頭は器が slug の形で見る（台本は [a-z0-9-]+）"
+  }
  ]
 }

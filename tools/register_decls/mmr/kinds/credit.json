@@ -48,6 +48,12 @@
    "field": "entity_id",
    "meaning": "about",
    "to": "entity"
+  },
+  {
+   "field": "seed",
+   "meaning": "about",
+   "to": "song",
+   "in_units": true
   }
  ],
  "checks": [
@@ -201,6 +207,27 @@
    },
    "min": 2,
    "note": "R6: 公開の組は shown の行が 2 つ以上（517〜518 行）"
+  },
+  {
+   "check": "count",
+   "id": "m_c18",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "status": {
+     "in": [
+      "shown"
+     ]
+    },
+    "mb.verdict": {
+     "in": [
+      "食い違う"
+     ]
+    }
+   },
+   "max": 0,
+   "note": "R10 の前半: shown の行の mb.verdict が「食い違う」でない（482〜484 行）。release_level_ja の字は固有"
   }
  ]
 }
