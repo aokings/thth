@@ -271,6 +271,7 @@ def _parse_kind(data, path: str) -> Kind:
     for one in places:
         if one.startswith("/") or ".." in one.split("/") or one.startswith(DECL_DIR):
             raise DeclarationError("place")
+        _place_regex(one)
     fmt = data.get("format")
     if fmt not in FORMATS:
         raise DeclarationError("format")
@@ -515,6 +516,29 @@ def _parse_to_by(raw) -> None:
         _name(to, "pointers")
 
 
+POINTER_TARGETS_MAX = 10_000  # 1 つの欄（内側の単位の指す欄なら単位を合わせて）が指す先の数（段 4 §9）
+
+
+def _target_count(values, spec: dict) -> int:
+    """欄が指す先の要素の数（重なりも空も数える。読みの問題 `too_many_targets` の見極め）。"""
+    if "field" not in spec or not isinstance(values, dict):
+        return 0
+    raw = values.get(spec["field"])
+    if isinstance(raw, list):
+        return len(raw)
+    if isinstance(raw, str) and spec.get("split"):
+        return raw.count(spec["split"]) + 1
+    return 1
+
+
+def too_many_targets(rec: Record, spec: dict) -> bool:
+    if "field" not in spec:
+        return False
+    if spec.get("in_units"):
+        return sum(_target_count(u.item, spec) for u in rec.units) > POINTER_TARGETS_MAX
+    return _target_count(rec.values, spec) > POINTER_TARGETS_MAX
+
+
 def route_kind(spec: dict, holder: dict, target_id: str) -> str | None:
     """指す欄の先の種類。`to` ならそれ。`to_by` は頭（長い頭を先に当てる）か別の欄の値で決める。決まらなければ None。"""
     if "to" in spec:
@@ -536,19 +560,20 @@ def pointer_refs(rec: Record, spec: dict) -> tuple:
     if "to_by" not in spec:
         targets, blanks = pointer_pieces(rec, spec)
         return [(spec["to"], t) for t in targets], blanks, []
+    if too_many_targets(rec, spec):
+        return [], 0, []  # 読みの問題 too_many_targets（その行の指しは数えない。黙って切らない）
     holders = [u.item for u in rec.units] if spec.get("in_units") else [rec.values or {}]
-    refs, blanks, unrouted = [], 0, []
+    refs, blanks, unrouted = {}, 0, {}  # 重なりは集合で除く（並びを引かない。段 4 §9）
     for holder in holders:
         got, empty = _pieces(holder, spec)
         blanks += empty
         for target_id in got:
             to = route_kind(spec, holder, target_id)
             if to is None:
-                if target_id not in unrouted:
-                    unrouted.append(target_id)
-            elif (to, target_id) not in refs:
-                refs.append((to, target_id))
-    return refs, blanks, unrouted
+                unrouted.setdefault(target_id, None)
+            else:
+                refs.setdefault((to, target_id), None)
+    return list(refs), blanks, list(unrouted)
 
 
 def _pointer_refs(kinds: dict) -> str | None:
@@ -694,27 +719,61 @@ def _matches(kind: Kind, rel: str) -> bool:
 def _matcher(kind: Kind):
     """置き場の型の振り分け（`fnmatchcase` と同じ型を、型ごとの正規表現を 1 つにまとめて当てる）。"""
     heads = tuple(_literal(p) for p in kind.places)
-    pattern = re.compile("|".join(f"(?:{fnmatch.translate(p)})" for p in kind.places))
-    return lambda rel: rel.startswith(heads) and pattern.match(rel) is not None
+    # 型ごとに別の正規表現にする（1 つにまとめると、Python 3.10 の translate の組の名前がぶつかる。段 4 §9）。
+    patterns = [_place_regex(p) for p in kind.places]
+    return lambda rel: rel.startswith(heads) and any(pt.match(rel) is not None for pt in patterns)
 
 
-def split_csv_rows(text: str) -> list:
+def _place_regex(pattern: str):
+    """置き場の型の正規表現。作れなければ宣言の断り（どの Python の版でも `re.error` を漏らさない）。"""
+    try:
+        return re.compile(fnmatch.translate(pattern))
+    except (re.error, RecursionError, OverflowError, ValueError):
+        raise DeclarationError("place") from None
+
+
+def split_csv_rows(text: str, delimiter: str | None = None) -> list:
     """表を、元の字のまま行に分ける（引用の中の改行は行を切らない。CRLF・LF・CR が混ざってもよい）。
-    行の終わりの改行も、その行の字に含める。"""
-    rows, start, quoted, i, n = [], 0, False, 0, len(text)
+    行の終わりの改行も、その行の字に含める。
+
+    引用符が欄を開くのは**欄の頭だけ**（Python の `csv` の部品の読みと同じ。段 6・7 の検収 6-1）。欄の途中の
+    引用符（`5" pipe`）は字。引用の中の `""` は引用符 1 つ。引用を閉じたあとの字は同じ欄の続き。
+    `delimiter` を渡さなければ、カンマとタブのどちらの後も欄の頭と見る（区切りを知らない呼び手のため）。"""
+    seps = (",", "\t") if delimiter is None else (delimiter,)
+    rows, start, i, n = [], 0, 0, len(text)
+    head, quoted = True, False
     while i < n:
         ch = text[i]
-        if ch == '"':
-            quoted = not quoted
-        elif not quoted and ch in "\r\n":
+        if quoted:
+            if ch == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    i += 2
+                    continue
+                quoted = False
+            i += 1
+            continue
+        if ch == '"' and head:
+            quoted, head = True, False
+        elif ch in "\r\n":
             end = i + 2 if ch == "\r" and i + 1 < n and text[i + 1] == "\n" else i + 1
             rows.append(text[start:end])
             start = i = end
+            head = True
             continue
+        else:
+            head = ch in seps
         i += 1
     if start < n:
         rows.append(text[start:])
     return rows
+
+
+def csv_row_count(text: str, delimiter: str = ",") -> int | None:
+    """同じ字を `csv` の部品で読んだ行の数（読めなければ None）。器の分け方の数と比べる（`row_split_mismatch`）。"""
+    try:
+        return sum(1 for _ in csv.reader(io.StringIO(text, newline=""), strict=False, delimiter=delimiter))
+    except csv.Error:
+        return None
 
 
 def _parse_csv_line(raw: str, delimiter: str = ",") -> list | None:
@@ -973,9 +1032,20 @@ def _json_pairs(pairs):
 
 
 def _read_csv(rel: str, text: str, kind: Kind) -> list:
-    lines = split_csv_rows(text)
+    lines = split_csv_rows(text, kind.delimiter)
     if not lines:
         return []
+    out = _read_csv_lines(rel, lines, kind)
+    if csv_row_count(text, kind.delimiter) != len(lines):
+        # 器の分け方と csv の部品の数え方が食い違う表（段 6・7 の検収 6-1）: 表の全部の記録に読みの問題を付ける
+        # （書く口はこれを見て断る）。
+        for rec in out:
+            if "row_split_mismatch" not in rec.problems:
+                rec.problems.append("row_split_mismatch")
+    return out
+
+
+def _read_csv_lines(rel: str, lines: list, kind: Kind) -> list:
     header = _parse_csv_line(lines[0], kind.delimiter)
     out = []
     if len(lines) - 1 > TABLE_ROWS_MAX:
@@ -1417,8 +1487,14 @@ def builtin_row_kind() -> Kind:
                 units=None, path="(備え付け)")
 
 
-def open_vessel(root: str, decl_base: str | None = None) -> Vessel:
-    """台帳を器として読む。宣言が無い台帳は、備え付けの種類（今の頭つきの .md）だけで読む。"""
+def open_vessel(root: str, decl_base: str | None = None, *, allow_pending: bool = False) -> Vessel:
+    """台帳を器として読む。宣言が無い台帳は、備え付けの種類（今の頭つきの .md）だけで読む。
+
+    途中で止まった入れ替えの段取りが残っている台帳は、既定で断る（`register_batch_pending`。半分の姿を読まない。
+    段 6・7 の検収 6-5）。前の姿を自分で扱う口だけが `allow_pending=True` で読む。"""
+    if not allow_pending:
+        from . import keep as _keep  # keep は vessel を読むので、ここで遅れて読む
+        _keep.refuse_if_pending(root)
     if decl_base is not None:
         decl = load_declarations(root, decl_base)
     elif has_declarations(root):
@@ -1431,6 +1507,11 @@ def open_vessel(root: str, decl_base: str | None = None) -> Vessel:
     for kind in decl["kinds"].values():
         all_records.extend(read_kind(root, kind, {k: v for k, v in decl["ids"].items()
                                                   if k.startswith(kind.name + ":")}, files))
+    for rec in all_records:
+        # 1 つの欄が指す先が多すぎる行は、読みの問題（段 4 §9）。指しは数えない（pointer_pieces が空を返す）。
+        if rec.values is not None and any(too_many_targets(rec, spec)
+                                          for spec in decl["kinds"][rec.kind].pointers):
+            rec.problems.append("too_many_targets")
     records = {}
     for rec in all_records:
         if rec.id is not None:
@@ -1449,15 +1530,18 @@ def pointer_pieces(rec: Record, spec: dict) -> tuple:
     空の要素（`["e", ""]`・`c||d`）は、指す先の一部の欠けなので数えて返す（黙って落とさない）。"""
     if "template" in spec:
         return [spec["template"].replace("{id}", rec.id or "")], 0
+    if too_many_targets(rec, spec):
+        return [], 0  # 読みの問題 too_many_targets（その行の指しは数えない。黙って切らない。段 4 §9）
     if spec.get("in_units"):
         # 内側の単位の欄が指す（段 4 G8）: 単位ごとの先を合わせる（記録からの指しとして数える。単位の指し先・
-        # 依る所は変えない）。
-        targets, blanks = [], 0
+        # 依る所は変えない）。重なりは集合で除く。
+        targets, blanks = {}, 0
         for unit in rec.units:
             got, empty = _pieces(unit.item, spec)
-            targets.extend(t for t in got if t not in targets)
+            for t in got:
+                targets.setdefault(t, None)
             blanks += empty
-        return _in_folder(rec, spec, targets), blanks
+        return _in_folder(rec, spec, list(targets)), blanks
     got, empty = _pieces(rec.values or {}, spec)
     return _in_folder(rec, spec, got), empty
 
@@ -1486,13 +1570,18 @@ def _pieces(values: dict, spec: dict) -> tuple:
         return [], 0
     if isinstance(raw, list):
         kept = [v for v in raw if not is_none(v)]
-        return [str(v) for v in kept if v not in (None, "")], sum(1 for v in kept if v in (None, ""))
+        return [_nfc(str(v)) for v in kept if v not in (None, "")], sum(1 for v in kept if v in (None, ""))
     raw = str(raw)
     if spec.get("split"):
         parts = [p.strip() for p in raw.split(spec["split"])]
         parts = [p for p in parts if not (nones and p in nones)]
-        return [p for p in parts if p], sum(1 for p in parts if not p)
-    return [raw], 0
+        return [_nfc(p) for p in parts if p], sum(1 for p in parts if not p)
+    return [_nfc(raw)], 0
+
+
+def _nfc(value: str) -> str:
+    """指す欄の値も、番号の側（G3）と同じく NFC にそろえて引く（段 4 §9）。ASCII はそのまま。"""
+    return value if value.isascii() else unicodedata.normalize("NFC", value)
 
 
 def recorded_hash(spec: dict, target: Record) -> str | None:
