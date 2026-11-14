@@ -1,0 +1,14 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "human_review",
+ "place": "human_review_ledger.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "school",
+   "subject",
+   "candidate_tag",
+   "review_group"
+  ]
+ }
+}

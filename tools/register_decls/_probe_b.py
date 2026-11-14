@@ -278,6 +278,7 @@ def probe(media: str, developer: pathlib.Path, tentative_too: bool = False) -> d
         "dangling_undeclared": {k: n for k, n in dangling.items() if k not in exp["dangling"]},
         "blank_pointers": len(graph["blank"]), "ambiguous": len(graph["ambiguous"]),
         "cycles": len(graph["cycles"]), "units": sum(len(r.units) for r in v.all_records),
+        "ambiguous_unit_groups": len(V.ambiguous_units(v)),
         "lint": lint(decls, fields_seen),
         "checks_total": result["total"], "checks_expected": len(exp["checks"]),
         "checks_unknown": sorted(set(got) - set(exp["checks"])),

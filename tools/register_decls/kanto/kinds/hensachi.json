@@ -1,0 +1,28 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "hensachi",
+ "place": "hensachi/school_hensachi.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "school_id",
+   "source",
+   "year",
+   "test_name",
+   "gender",
+   "round_label",
+   "exam_date",
+   "value_type",
+   "value",
+   "school_name_raw"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ],
+ "note": "鍵の組は未確認（決まりの実物 §1）。番号の重なりは読みの問題に出る"
+}
