@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "love_cacao",
+ "place": "data/loves/cacao-brands.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "note": "段 9 (a) で足した（目録 §1.2 で「入れる」とした物で、宣言に無かった）。カカオの銘柄"
+}

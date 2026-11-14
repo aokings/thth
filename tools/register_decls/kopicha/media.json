@@ -147,5 +147,83 @@
   "台帳をまたぐ指し: sister-links.entity_id→にがみラボの点は宣言できない（宿題に回した物: 指示 §6）",
   "ファイル・頁の道を指す欄: article-claims.file・shops.source（catalog）・entities.page_path・sister/article-links の page・target は宣言できない（宿題に回した物: 指示 §6）",
   "入れ子の並びの行: YAML の facts[]（X4-2・Z4-1 の facts[].level）は、点でつないだ道が並びの中を読まないので書けない（今 facts を持つ枚 0）"
- ]
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1 の器に入れる物（段 2 の台本の範囲から §5 の検収の記録を除いた物）。readers は目録 §4",
+  "include": [
+   "src/content/**",
+   "data/knowledge/*.csv",
+   "data/sister-links.csv",
+   "data/article-links.csv",
+   "data/hatena/bookmark-list.csv"
+  ],
+  "page": true,
+  "readers": [
+   {
+    "example": "§4-1 src/lib/knowledgeFacts.mjs の ledgerFactsFor（主張・根拠・出典。notes が頁に効く）",
+    "files": [
+     "data/knowledge/claims.csv",
+     "data/knowledge/evidence.csv",
+     "data/knowledge/sources.csv"
+    ],
+    "fields": {
+     "claim": [
+      "subject_entity_id",
+      "object_entity_id",
+      "claim_status",
+      "notes"
+     ]
+    }
+   },
+   {
+    "example": "§4-2 scripts/knowledge-article-claims.mjs（記事 → 主張の来歴の控え）",
+    "files": [
+     "data/knowledge/article-claims.csv",
+     "src/content/articles/*.md"
+    ],
+    "fields": {
+     "article_claim": [
+      "file",
+      "claim_id",
+      "statement_hash",
+      "status"
+     ]
+    }
+   },
+   {
+    "example": "§4-3 scripts/hatena-bookmark-list.mjs（出典・主張・仮説 → はてブの表）",
+    "files": [
+     "data/knowledge/sources.csv",
+     "data/knowledge/claims.csv",
+     "data/knowledge/hypotheses.csv",
+     "data/hatena/bookmark-list.csv"
+    ],
+    "fields": {
+     "bookmark": [
+      "source_id",
+      "status",
+      "claim_ids"
+     ]
+    }
+   },
+   {
+    "example": "§4-4 scripts/check-sister-links.mjs（姉妹リンク。相手は media-hub の対応表＝台帳をまたぐ指しは宿題）",
+    "files": [
+     "data/sister-links.csv"
+    ],
+    "fields": {
+     "sister_link": [
+      "page",
+      "entity_id",
+      "url"
+     ]
+    }
+   },
+   {
+    "example": "§4-5 配信の道（.github/workflows/observe.yml）",
+    "files": [],
+    "why": "データの読み手でなく手順。読みの確かめの外（出口の確かめは段 7 の後半）"
+   }
+  ]
+ }
 }

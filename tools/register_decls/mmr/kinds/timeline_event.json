@@ -1,0 +1,12 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "timeline_event",
+ "place": "content/timeline/events.json",
+ "format": "json",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "max_bytes": 1048576,
+ "note": "段 9 (a) で足した（目録 §1.1 の content/ の中で、宣言に無かった）。年表の出来事（188 行）"
+}

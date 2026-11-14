@@ -124,5 +124,81 @@
   "S-V13: 台本は startswith('http')。器は http:// か https:// で見る（今の実物で差 0）",
   "S-G3・S-G7・S-G8: gate_publish は index の点だけを見る（--preview の review は見ない）。器も when で index だけにした",
   "S-V18: permission_needed の出典（1 つ・根拠 2 行）を根拠に使ってよいかの決まりが台本に無い"
+ ],
+ "stage9": {
+  "note": "段 9 の受け入れの札。include は目録 §1.1・§1.2 で「入れる」とした物（段 2 の台本の範囲から §5 の検収の記録を除いた物）。readers は目録 §4",
+  "include": [
+   "data/*.csv",
+   "site/src/content/articles/*.md",
+   "site/src/content/pillars/*.md",
+   "site/src/content/pillars-en/*.md",
+   "site/src/lib/entity-page-rules.ts",
+   "site/photos.yaml",
+   "site/owner-read.txt"
+  ],
+  "readers": [
+   {
+    "example": "§4-1 記事と柱の本文（〔claim-0002〕で主張を番号だけで指す）",
+    "files": [
+     "site/src/content/articles/*.md",
+     "site/src/content/pillars/*.md",
+     "site/src/content/pillars-en/*.md",
+     "data/claims.csv"
+    ],
+    "fields": {
+     "claim": [
+      "claim_status",
+      "updated_at"
+     ]
+    },
+    "uninspected_why": "柱の .md は頭の YAML を持たないので bytes のまま（媒体の札の器の不足 G12 の外。本文の中の番号は器が読まない）"
+   },
+   {
+    "example": "§4-2 site/src/lib/entity-page-rules.ts の HIDDEN_CLAIM_IDS（台帳の外の止める）",
+    "files": [
+     "site/src/lib/entity-page-rules.ts"
+    ],
+    "uninspected_why": "TypeScript の一覧は器が読まない（bytes で置く。止めるは器の stop@<出し口> に移す宿題）"
+   },
+   {
+    "example": "§4-3 site/src/lib/kb.ts（頁になる点を search_visibility で選ぶ・主張は状態で除かない）",
+    "files": [
+     "data/*.csv"
+    ],
+    "fields": {
+     "entity": [
+      "search_visibility",
+      "lifecycle_status"
+     ],
+     "claim": [
+      "subject_entity_id",
+      "object_entity_id",
+      "claim_status"
+     ]
+    }
+   },
+   {
+    "example": "§4-4 scripts/gate_publish.py の点の更新日（主張の updated_at だけを見る）",
+    "files": [
+     "data/claims.csv",
+     "data/entities.csv"
+    ],
+    "fields": {
+     "claim": [
+      "updated_at",
+      "subject_entity_id"
+     ]
+    }
+   }
+  ]
+ },
+ "outside": [
+  {
+   "place": [
+    "site/src/content/*/_fixture.md"
+   ],
+   "why": "動作確認用のフィクスチャ（頭の title に「動作確認用フィクスチャ」）。台帳の記録でない",
+   "gap": false
+  }
  ]
 }
