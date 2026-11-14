@@ -906,9 +906,16 @@ def value_time(decl: dict, unit: Unit, name: str):
 
 
 def _label_word(value) -> str:
-    """札の語: 観測と同じ直し方で、前後の空白を落とす（尋ねる側も前後の空白を落として比べる。比べる両側を同じ形に）。"""
-    word = word_of(value)
-    return "" if word is None else word.strip()
+    """札の語: 観測と同じ直し方で、前後の空白を落とす（尋ねる側も前後の空白を落として比べる。比べる両側を同じ形に）。
+    辞書と並びは鍵の名前の順に並べた JSON で書く（読んだ辞書の鍵の並びだけで札を変えない。指紋と同じ並べ方）。
+    語の中の区切りの字（`\\`・`,`・`=`）は `\\` で逃がす（区切りを隣の軸へ動かしても同じ札にならない。札は範囲ごとに
+    1 つ。見せた札をそのまま尋ねれば合う）。"""
+    if isinstance(value, (dict, list)):
+        word = json.dumps(value, ensure_ascii=False, sort_keys=True).strip()
+    else:
+        word = word_of(value)
+        word = "" if word is None else word.strip()
+    return word.replace("\\", "\\\\").replace(",", "\\,").replace("=", "\\=")
 
 
 def scope_of(decl: dict, unit: Unit, name: str):

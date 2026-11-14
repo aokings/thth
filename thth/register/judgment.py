@@ -57,8 +57,42 @@ def read(root: str) -> list:
             raise RegisterRefused("register_judgment_invalid", f"line {number}")
         if V.value_problem(item):
             raise RegisterRefused("register_judgment_invalid", f"line {number}")
+        problem = shape_problem(item)
+        if problem:
+            raise RegisterRefused("register_judgment_invalid", f"line {number} {problem}")
         out.append(item)
     return out
+
+
+def _text(value) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def shape_problem(item: dict) -> str | None:
+    """判断の 1 行の欄の形を見る（読む所と評価する所が前提にする形）。合わない最初の欄の名前を返す。合えば None。
+    必須: `id`・`question`（1 字以上の字）、`target.record`（1 字以上の字）。在れば形を見る: `target.unit`・
+    `target.value`（字）、`answer`・`reason`・`seen`・`content`（辞書）、`at`（字）、`siblings`（字の並び）。"""
+    target = item.get("target")
+    if not isinstance(target, dict):
+        return "target"
+    if not _text(item.get("id")):
+        return "id"
+    if not _text(item.get("question")):
+        return "question"
+    if not _text(target.get("record")):
+        return "target.record"
+    for name in ("unit", "value"):
+        if target.get(name) is not None and not isinstance(target[name], str):
+            return f"target.{name}"
+    for name in ("answer", "reason", "seen", "content"):
+        if item.get(name) is not None and not isinstance(item[name], dict):
+            return name
+    if item.get("at") is not None and not isinstance(item["at"], str):
+        return "at"
+    siblings = item.get("siblings")
+    if siblings is not None and not (isinstance(siblings, list) and all(isinstance(x, str) for x in siblings)):
+        return "siblings"
+    return None
 
 
 def append(root: str, items: list) -> None:
@@ -108,6 +142,13 @@ def _locate(vessel: V.Vessel, target: dict, *, strict: bool = False):
 
 
 def _same_time(a, b) -> bool:
+    """指し先の時点の比べ。依る所の指紋と同じ正規化（改行を LF に・辞書は鍵の順）を通した書き方で比べる
+    （指紋が同じなのに時点だけ別と読んで「消えた」にしない）。"""
+    return V.canonical(a) == V.canonical(b)
+
+
+def _asked_time(a, b) -> bool:
+    """尋ねる側の時点（`as_time`。命令からは字で来る）との比べ。字にして比べる（2026 と "2026" を同じに）。"""
     return (a is None and b is None) or (a is not None and b is not None and str(a) == str(b))
 
 
@@ -332,7 +373,7 @@ def answer_value(vessel: V.Vessel, judgments: list, ref: str, unit_pointer: str,
     conclusion, reason = conclusion_of(vessel, last)
     if conclusion is None:
         return {**base, "usable": False, "conclusion": "pending", "reason_kind": reason, "scope": scope}
-    if as_time is not None and not _same_time(value.time, as_time):
+    if as_time is not None and not _asked_time(value.time, as_time):
         return {**base, "usable": False, "conclusion": conclusion, "reason_kind": "time_mismatch", "scope": scope}
     if missing:
         # 欠けを読んだ判断（「ここは空で合っている」）は判断として残すが、値としては使えない。
@@ -368,7 +409,10 @@ def candidates(vessel: V.Vessel, judgments: list) -> list:
 
 
 def _family(pointer: str) -> str:
-    """同じ鍵の指し先の組（`k:<鍵>` と `kc:<鍵>.<姿>` は同じ組。ほかは点の前まで）。"""
+    """同じ鍵の指し先の組（`k:<鍵>` と `kc:<鍵>.<姿>` は同じ組）。`i:` の番号は点を含みうる（番号の字に点を許す）
+    ので割らず、番号そのものを組にする（別の番号は同じ鍵ではない）。"""
+    if pointer.startswith("i:"):
+        return pointer
     head = pointer.split(".")[0]
     return "k:" + head[3:] if head.startswith("kc:") else head
 

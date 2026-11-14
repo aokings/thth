@@ -193,8 +193,13 @@ def test_三1_札の区切りを動かしても同じ範囲にならない(env):
     v1 = V.open_vessel(str(root))
     label1 = next(x.scope for x in V.values_of(v1.get("t:a"), v1.kinds["t"], v1.get("t:a").units[0])
                   if x.name == "value")
-    assert label0 == label1 == "a=x,b=y,b=z"
+    # 札の語の中の区切りの字は逃がして書くので、2 つの札は違う字になる（宿題 1。札は範囲ごとに 1 つ）。
+    assert label0 == "a=x\\,b\\=y,b=z" and label1 == "a=x,b=y\\,b\\=z" and label0 != label1
     assert J.evaluate(v1, rj) == "stale"
+    # どちらの札で尋ねても、前の範囲への判断は今の値（別の範囲）に及ばない。
+    for asked in (label0, label1, "a=x,b=y,b=z"):
+        ans = J.answer_value(v1, [rj], "t:a", "i:r", "value", as_scope=asked)
+        assert ans["usable"] is False
 
 
 # ---- 三回めの 3（範囲の空と空白）・人が範囲を書ける所
