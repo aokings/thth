@@ -61,7 +61,12 @@
   - 旧い材料: 書き出し先の全部（`.` で始まるフォルダ・`node_modules`・フォルダの symlink も）を見る。見ないのは
     `ignore`（道の型）と、この出し口の配る物 `thth-seal.<出し口>.json` だけ。
 
-網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
+- **段 7 の後半**（§7.5〜7.7）: `used`（使った先。封から読むだけ）はこのファイルの末尾。出し口の宣言に足した欄は
+  `kinds.<種類>.reader_fields`（読者に見える欄。読者の出し口だけ）・頭の `internal_words`（字のままの内部の語）・
+  `outlets.<出し口>.published`（出した URL の関門の厳しさ。読むのは `published.py`）。点検は `reader_check.py`。
+
+網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ（出した URL の
+控え `.thth/published/` は `published.py` が `--record` のときだけ書く）。
 """
 from __future__ import annotations
 
@@ -95,8 +100,11 @@ MATERIALS_DIR = "materials"
 JST = datetime.timezone(datetime.timedelta(hours=9))
 QUESTION = re.compile(r"[a-z][a-z0-9_]{0,31}(@[a-z][a-z0-9_]{0,31})?\Z")
 _O_KEYS = ("audience", "kinds", "level", "requires", "fact", "reservation", "common", "on_narrow", "dest", "ignore",
-           "note")
-_K_KEYS = ("private_fields", "inserts", "hide", "note")
+           "published", "note")
+_K_KEYS = ("private_fields", "inserts", "hide", "reader_fields", "note")
+# 段 7 の後半（§7.7）: 出し口の宣言の頭の内部の語。字のまま比べる（正規表現は受けない）。
+INTERNAL_WORDS_MAX = 512
+INTERNAL_WORD_LEN = 64
 # 段 7: 伏せ方（§7.4）。使えなくなった物（止めた・期限が切れた・依る所が変わった）を、材料からどの粒で外すか。
 NARROW_WHYS = ("stopped", "expired", "against_changed", "no_inspection_for_new_version", "narrowed")
 # 欄だけを伏せるのは、記録の今の版が受けた判断の期限切れ・根拠の変わりのときだけ（止めたは記録ごと・中身が変わったは
@@ -117,6 +125,7 @@ class KindConf:
     inserts: tuple = ()        # 差し込みを受ける欄（§7.3）
     hide: str = "record"       # record・field・unit（§7.4）
     hide_fields: tuple = ()    # hide が field のとき、伏せる欄
+    reader: tuple = ()         # 読者に見える欄（§7.7。点検だけに使い、材料の書き方は変えない）
 
 
 @dataclass
@@ -133,6 +142,7 @@ class Outlet:
     conf: dict = None          # 種類 → KindConf（段 7）
     dest: str | None = None    # 書き出し先（宣言の上の名前。内の出し口と読者の出し口で同じなら断る。§7.1）
     ignore: tuple = ()         # 旧い材料の柵で見ない道の型（§7.8）
+    published: dict | None = None  # 出した物の関門の厳しさ（§7.6。形は `published.parse_rules`）
 
     def __post_init__(self):
         if self.conf is None:
@@ -158,6 +168,7 @@ def _kind_conf(raw, kind: V.Kind, level: str, word: str) -> KindConf:
         raise V.DeclarationError(word)
     private = _fields(raw.get("private_fields", []), word)
     inserts = _fields(raw.get("inserts", []), word)
+    reader = _fields(raw.get("reader_fields", []), word)
     hide_raw = raw.get("hide", "unit" if level == "unit" else "record")
     hide_fields = ()
     if isinstance(hide_raw, dict):
@@ -179,7 +190,7 @@ def _kind_conf(raw, kind: V.Kind, level: str, word: str) -> KindConf:
         raise V.DeclarationError(f"{word}:hide_unit")   # 枚の中の行を、元の形式のまま外す道は無い
     if inserts and level == "unit":
         raise V.DeclarationError(f"{word}:inserts_unit")
-    return KindConf(private, inserts, hide, hide_fields)
+    return KindConf(private, inserts, hide, hide_fields, reader)
 
 
 def _dest(raw, word) -> str:
@@ -210,9 +221,24 @@ def _conds(raw, word) -> list:
     return out
 
 
+def parse_internal_words(raw) -> tuple:
+    """`internal_words`（§7.7）: 字のまま比べる語の並び。512 語まで・1 語 1〜64 字・改行なし。正規表現としては読まない。"""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > INTERNAL_WORDS_MAX:
+        raise V.DeclarationError("internal_words")
+    for w in raw:
+        if (not isinstance(w, str) or not w.strip() or len(w) > INTERNAL_WORD_LEN
+                or any(c in w for c in "\r\n\x00")):
+            raise V.DeclarationError("internal_words")
+    return tuple(dict.fromkeys(raw))
+
+
 def parse_outlets(data, kinds: dict) -> dict:
-    if not isinstance(data, dict) or set(data) - {"schema", "outlets", "note"} or data.get("schema") != OUTLETS_SCHEMA:
+    if (not isinstance(data, dict) or set(data) - {"schema", "outlets", "internal_words", "note"}
+            or data.get("schema") != OUTLETS_SCHEMA):
         raise V.DeclarationError("outlets")
+    parse_internal_words(data.get("internal_words"))
     raw = data.get("outlets")
     if not isinstance(raw, dict):
         raise V.DeclarationError("outlets")
@@ -250,6 +276,10 @@ def parse_outlets(data, kinds: dict) -> dict:
             raise V.DeclarationError(f"outlets:{name}:ignore")
         if common is not None and (not isinstance(common, str) or not V.NAME.fullmatch(common)):
             raise V.DeclarationError(f"outlets:{name}")
+        published = None
+        if "published" in o:
+            from . import published as P   # 段 7 の後半（§7.6）。published.py が route を読むので、ここで読む
+            published = P.parse_rules(o["published"], f"outlets:{name}:published")
         if not names and common is None:
             raise V.DeclarationError(f"outlets:{name}")
         if level == "unit" and any(kinds[k].units is None for k in names):
@@ -266,7 +296,7 @@ def parse_outlets(data, kinds: dict) -> dict:
             res = {"question": q, "conclusion": c, "reason_kinds": list(kinds_ok)}
         out[name] = Outlet(name, audience, list(names), level, _conds(o.get("requires"), f"outlets:{name}"),
                            _conds(o.get("fact"), f"outlets:{name}"), res, common, on_narrow, confs, dest,
-                           tuple(ignore))
+                           tuple(ignore), published)
     # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）
     for a in out.values():
         for b in out.values():
@@ -305,6 +335,19 @@ def load_outlets(root: str, vessel: V.Vessel) -> dict:
         return {}
     try:
         return parse_outlets(_read_json(path), vessel.kinds)
+    except V.DeclarationError as exc:
+        raise RegisterRefused("register_outlet_unknown", f"outlets: {exc.word}"[:80]) from None
+
+
+def internal_words(root: str, vessel: V.Vessel) -> tuple:
+    """出し口の宣言の頭の `internal_words`（§7.7）。宣言の形は `load_outlets` と同じに確かめる。"""
+    path = os.path.join(root, V.DECL_DIR, OUTLETS_FILE)
+    if not os.path.exists(path):
+        return ()
+    try:
+        data = _read_json(path)
+        parse_outlets(data, vessel.kinds)
+        return parse_internal_words(data.get("internal_words"))
     except V.DeclarationError as exc:
         raise RegisterRefused("register_outlet_unknown", f"outlets: {exc.word}"[:80]) from None
 
@@ -1965,3 +2008,109 @@ def use(root: str, ref: str, outlet_name: str, as_: str, as_of, *, unit=None, co
     if seal is None and not usable:
         out["why"] = "no_seal" if state == "none" else "seal_unverified"
     return out
+
+
+# ------------------------------------------------------------------ 使った先（段 7 の後半 §7.5）
+
+def _parse_item_key(key: str) -> tuple:
+    """`item_key` を戻す: `(記録, 単位 | None, 何として)`。番号と種類の名前は `#`・`=` を含まない。"""
+    head, _, as_ = key.rpartition("=")
+    record, _, unit = head.partition("#")
+    return record, (unit or None), as_
+
+
+def _insert_refs(rec: V.Record, conf: KindConf, ref: str) -> list:
+    """記録の差し込みを受ける欄のうち、`ref` を指す差し込みがある欄（出さない欄は差し込まないので見ない）。"""
+    fields = []
+    for name in conf.inserts:
+        if name in conf.private:
+            continue
+        value = (rec.values or {}).get(name)
+        if not isinstance(value, str) or "{{" not in value:
+            continue
+        found = list(INSERT.finditer(value))[:INSERT_MAX]
+        if any(f"{m.group(1)}:{m.group(2)}" == ref for m in found):
+            fields.append(name)
+    return fields
+
+
+def used(root: str, ref: str) -> dict:
+    """§7.5（読むだけ）: その記録が、どの出し口の・どの世代の材料に・何として載ったか（封と材料の控えから）と、
+    どの記録が「から作った」（来歴の控え・`derived_from`）で指しているか。今の版が最後の世代の版と違えば `stale`。
+
+    封は出し口ごとに最後の世代だけを持つ（`.thth/seals/<出し口>.json`）ので、見えるのは出し口ごとの最後の世代。
+    差し込みで使われた先は、封の入力の版の組と、差し込んだ側の記録の今の中身から引く。差し込んだ側が封のあとに
+    変わっていれば、その差し込みは確かめられない（`unconfirmed`）。封の署名は確かめず、状態（`seal`）だけを出す。"""
+    vessel = V.open_vessel(root)
+    rec = vessel.get(ref)
+    outlets = load_outlets(root, vessel)
+    now_decl = decl_fp(root)
+    rows = []
+    for name in sorted(outlets):
+        outlet = outlets[name]
+        try:
+            seal = read_seal(root, name)
+        except RegisterRefused:
+            rows.append({"outlet": name, "seal": "shape"})
+            continue
+        if seal is None:
+            continue
+        body = seal["body"]
+        sealed_versions = {i.get("record"): i.get("version") for i in body.get("inputs") or [] if isinstance(i, dict)}
+        loaded = []
+        for key in body["items"]:
+            if not isinstance(key, str):
+                continue
+            record, unit, as_ = _parse_item_key(key)
+            if record == rec.ref:
+                loaded.append({"as": as_, **({"unit": unit} if unit else {})})
+        inserted, unconfirmed = [], False
+        if rec.ref in sealed_versions:
+            for key in body["items"]:
+                if not isinstance(key, str):
+                    continue
+                record, unit, _as = _parse_item_key(key)
+                if unit or record == rec.ref:
+                    continue
+                other = vessel.unique(record)
+                if other is None or other.kind not in outlet.kinds:
+                    continue
+                conf = outlet.kind_conf(other.kind)
+                if not conf.inserts:
+                    continue
+                if sealed_versions.get(record) != other.version:
+                    # 差し込んだ側が封のあとに変わった: 封のときの差し込みは今の中身から言えない
+                    if _insert_refs(other, conf, rec.ref) or rec.kind not in outlet.kinds:
+                        unconfirmed = True
+                    continue
+                fields = _insert_refs(other, conf, rec.ref)
+                if fields:
+                    inserted.append({"record": record, "fields": fields})
+        if not loaded and rec.ref not in sealed_versions:
+            continue
+        version = sealed_versions.get(rec.ref)
+        row = {"outlet": name, "audience": body.get("audience"), "generation": body["generation"],
+               "as_of": body.get("as_of"), "version": version, "loaded": loaded, "inserted_into": inserted,
+               "unconfirmed": unconfirmed,
+               "read_only": not loaded and not inserted and not unconfirmed,
+               "stale": bool((loaded or inserted) and version is not None and version != rec.version),
+               "decl_changed": body.get("decl") != now_decl}
+        rows.append(row)
+    state = {}
+    for row in rows:
+        if "generation" in row:
+            _seal, st = trusted_seal(root, row["outlet"])
+            row["seal"] = st
+            state[row["outlet"]] = st
+    derived = []
+    graph = V.links(vessel)
+    for edge in graph["edges"]:
+        if edge["meaning"] == "derived_from" and edge["to"] == rec.ref:
+            derived.append({"record": edge["from"], "field": edge.get("field")})
+    for item in graph["review"]:
+        if item["meaning"] == "derived_from" and item["to"] == rec.ref:
+            for d in derived:
+                if d["record"] == item["from"] and d["field"] == item.get("field"):
+                    d["review"] = {"recorded": item.get("recorded"), "now": item.get("now")}
+    return {"record": rec.ref, "version": rec.version, "outlets": rows, "derived_by": derived,
+            "stale": sorted(r["outlet"] for r in rows if r.get("stale"))}
