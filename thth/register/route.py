@@ -206,7 +206,20 @@ def _dest(raw, word) -> str:
     norm = os.path.normpath(norm).replace(os.sep, "/") if norm else ""
     if not norm or norm.startswith("/") or norm == ".." or norm.startswith("../") or not _DEST.fullmatch(norm):
         raise V.DeclarationError(word)
+    if K.reserved_path(norm):
+        raise V.DeclarationError(word)   # 器が書かない道（.thth・.git。NFC・小文字にそろえて。段 6 の 6-4）
     return norm
+
+
+def dest_key(dest: str) -> str:
+    """書き出し先の重なりを比べる形: NFC・小文字にそろえ、`.` と `..` を解いた道（`_dest` が解いた後の物に当てる）。"""
+    return "/".join(K.fold_name(p) for p in os.path.normpath(dest).replace(os.sep, "/").split("/") if p not in ("", "."))
+
+
+def dests_overlap(a: str, b: str) -> bool:
+    """同じ道か、片方がもう片方の中（入れ子）なら重なる（`site` と `site/tools`・`site` と `Site`）。"""
+    ka, kb = dest_key(a), dest_key(b)
+    return ka == kb or ka.startswith(kb + "/") or kb.startswith(ka + "/")
 
 
 def _conds(raw, word) -> list:
@@ -325,7 +338,8 @@ def parse_outlets(data, kinds: dict) -> dict:
     # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）
     for a in out.values():
         for b in out.values():
-            if a.audience == "internal" and b.audience == "reader" and a.dest is not None and a.dest == b.dest:
+            if a.audience == "internal" and b.audience == "reader" and a.dest is not None and b.dest is not None \
+                    and dests_overlap(a.dest, b.dest):
                 raise V.DeclarationError(f"outlets:{a.name}:dest_shared:{b.name}")
     return out
 
@@ -843,6 +857,12 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
     decided = {}
     row_edits, file_edits, raw_cache = {}, {}, {}
     seen_inputs = set()
+    inserted = {}           # 記録 → {欄: 差し込んだあとの値}（材料に書く直前の値。読者に見える欄の点検が見る・7-3）
+    rules = None
+    if reader:
+        _private_declared(vessel, outlet)
+        if any(outlet.kind_conf(k).inserts for k in outlet.kinds):
+            rules = shared_private(ctx.common)
 
     def decision(ref):
         if ref not in decided:
@@ -906,7 +926,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             item["reason_kind"] = got["reason_kind"]
         if reader and (conf.private or conf.inserts or got["as"] == "hidden"):
             blank = set(conf.private) | (set(conf.hide_fields) if got["as"] == "hidden" else set())
-            repl, bad, used = _resolve_inserts(ctx, outlet, rec, conf, blank, decision)
+            repl, bad, used = _resolve_inserts(ctx, outlet, rec, conf, blank, decision, rules)
             if bad:
                 excluded.append({"record": rec.ref, "why": "insert_unusable", "inserts": bad})
                 continue
@@ -923,8 +943,30 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                     if u["record"] not in seen_inputs:
                         seen_inputs.add(u["record"])
                         inputs.append({"record": u["record"], "version": u["version"]})
+            if repl:
+                inserted[rec.ref] = {field: new for field, (new, _tokens) in repl.items()}
         items.append(item)
         by_path.setdefault(rec.path, set()).add(rec.version)
+    if reader:
+        # 7-2: 差し込みの先は、この出し口の材料に（事実として）載る記録だけ。先が外れたら、差し込む側も記録ごと外す
+        # （外れた記録の欄を、別の記録が差し込んで材料に出さない）。外すたびに見直す。
+        while True:
+            shown = {i["record"] for i in items if i["as"] == "fact" and "unit" not in i}
+            out = [i for i in items if any(u["record"] not in shown for u in i.get("inserts", []))]
+            if not out:
+                break
+            for item in out:
+                items.remove(item)
+                inserted.pop(item["record"], None)
+                kind = vessel.kinds[vessel.unique(item["record"]).kind] if vessel.unique(item["record"]) else None
+                by_path.get(item["path"], set()).discard(item["version"])
+                if kind is not None and kind.records == "rows":
+                    row_edits.get(item["path"], {}).pop(item["version"], None)
+                else:
+                    file_edits.pop(item["path"], None)
+                excluded.append({"record": item["record"], "why": "insert_unusable",
+                                 "inserts": [{"insert": u["record"], "why": "not_in_material"}
+                                             for u in item["inserts"] if u["record"] not in shown]})
     # 記録ごとの表とファイル
     if outlet.level == "record":
         for path in sorted({rec.path for rec in vessel.all_records if rec.kind in outlet.kinds}):
@@ -983,7 +1025,30 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
             items.append({"record": f"{COMMON}:{ref}", "as": "fact", "version": version, "path": path})
     inputs.sort(key=lambda i: i["record"])
     return {"items": items, "files": files, "inputs": inputs, "excluded": excluded, "pending_takes": pending,
-            "tables": tables}
+            "tables": tables, "inserted": inserted}
+
+
+def _private_declared(vessel: V.Vessel, outlet: Outlet) -> None:
+    """出さない欄に宣言した名前が、その種類の記録（内側の単位の出し口なら単位）に 1 つも無ければ、黙って出さずに
+    宣言の断り（見出しの空白・大文字違いで、出さないつもりの欄がそのまま出るのを止める）。記録の無い種類は見ない。"""
+    for kind_name in outlet.kinds:
+        private = outlet.kind_conf(kind_name).private
+        if not private:
+            continue
+        names, any_record = set(), False
+        for rec in vessel.all_records:
+            if rec.kind != kind_name or rec.values is None:
+                continue
+            any_record = True
+            if outlet.level == "unit":
+                for unit in rec.units:
+                    names |= set(unit.item) if isinstance(unit.item, dict) else set()
+            else:
+                names |= set(rec.values) if isinstance(rec.values, dict) else set()
+        missing = [f for f in private if f not in names]
+        if any_record and missing:
+            raise RegisterRefused("register_outlet_unknown", f"outlets:{outlet.name}:{kind_name}:private_missing"[:80],
+                                  fields=missing)
 
 
 def _json_bytes(value) -> bytes:
@@ -1013,11 +1078,16 @@ def _table_bytes(data: bytes, keep: set, edits: dict | None = None) -> tuple:
 
 # ------------------------------------------------------------------ 段 7: 差し込みと、欄を書かない書き直し
 
-def _resolve_inserts(ctx: Ctx, outlet: Outlet, rec: V.Record, conf: KindConf, blank: set, decision) -> tuple:
+def _resolve_inserts(ctx: Ctx, outlet: Outlet, rec: V.Record, conf: KindConf, blank: set, decision,
+                     rules: dict | None = None) -> tuple:
     """`(置き換え {欄: (新しい値, [(差し込みの字, 値)])}, 使えない差し込み [...], 使った先 [{"record", "version"}])`。
-    置き換えてよいのは、この出し口で事実として使える記録の、出さない欄でない欄の値（字か整数）だけ。入れ子は読まない
-    （先の値の中の `{{…}}` は字のまま）。1 つの欄に `INSERT_MAX` か所まで。"""
+    置き換えてよいのは、**この出し口の `kinds` に挙げた種類**の、この出し口で事実として使える記録の、出さない欄でない
+    欄の値（字か整数）だけ（段 7 の 7-2）。運営者の種類と共通の出さない欄（`rules`。既定は運営者の種類を記録ごと）は、
+    どの出し口でも差し込めない。先の記録が材料に載ることは、`compute` が全部の記録を決めたあとで確かめる。
+    入れ子は読まない: 置き換えたあとの値に `{{` が残れば（先の値の中の差し込み・形の崩れた差し込み）、使えない
+    （`nested`・`malformed`。番号を字のまま材料に出さない）。1 つの欄に `INSERT_MAX` か所まで。"""
     repl, bad, used = {}, [], []
+    rules = SHARED_PRIVATE_ALWAYS if rules is None else rules
     for name in conf.inserts:
         if name in blank:
             continue
@@ -1028,14 +1098,24 @@ def _resolve_inserts(ctx: Ctx, outlet: Outlet, rec: V.Record, conf: KindConf, bl
         if len(found) > INSERT_MAX:
             bad.append({"field": name, "why": "too_many", "count": len(found)})
             continue
+        if "{{" in INSERT.sub("", value):
+            bad.append({"field": name, "why": "malformed"})   # 形の崩れた差し込み（字のまま出すと番号が出る）
+            continue
         parts, tokens, last, ok = [], [], 0, True
         for m in found:
             kind_name, rid, field_name = m.groups()
             token = f"{kind_name}:{rid}.{field_name}"
             target = ctx.vessel.unique(f"{kind_name}:{rid}") if V.RECORD_ID.fullmatch(rid) else None
             why, got = None, None
+            shared = rules.get(kind_name)
             if target is None:
                 why = "missing"
+            elif kind_name in SHARED_PRIVATE_ALWAYS or shared == "*":
+                why = "operator"                  # 運営者の種類（と記録ごと出さない共通の種類）はどの出し口でも
+            elif kind_name not in outlet.kinds:
+                why = "outside_outlet"            # 出し口の外の種類は材料に出さない（差し込みでも越えない）
+            elif isinstance(shared, frozenset) and field_name in shared:
+                why = "shared_private"
             elif target.problems or target.id is None:
                 why = "record_problem"
             elif decision(target.ref)["as"] != "fact":
@@ -1059,7 +1139,11 @@ def _resolve_inserts(ctx: Ctx, outlet: Outlet, rec: V.Record, conf: KindConf, bl
             if not any(u["record"] == target.ref for u in used):
                 used.append({"record": target.ref, "version": target.version})
         if ok:
-            repl[name] = ("".join(parts) + value[last:], tokens)
+            new = "".join(parts) + value[last:]
+            if "{{" in new:
+                bad.append({"field": name, "why": "nested"})   # 先の値の中の差し込みは読まない・字のまま出さない
+                continue
+            repl[name] = (new, tokens)
     return repl, bad, sorted(used, key=lambda u: u["record"])
 
 
@@ -1411,6 +1495,8 @@ def check_to(root: str, to) -> str:
     to = os.path.abspath(os.path.expanduser(to))
     if _inside(to, root):
         raise RegisterRefused("register_adopt_unusable", "inside")
+    if K.reserved_path(to.replace(os.sep, "/")):
+        raise RegisterRefused("register_args_invalid", "to")   # 書き出し先の道のどの段も .thth・.git でない（6-4）
     return to
 
 
@@ -1495,7 +1581,7 @@ def _file_sha(path: str) -> str:
 
 def write_files(to: str, files: dict) -> None:
     for rel, data in files.items():
-        if rel.startswith("/") or ".." in rel.split("/"):
+        if rel.startswith("/") or ".." in rel.split("/") or K.reserved_path(rel):
             raise RegisterRefused("register_write_unsafe", "path")
         path = os.path.join(to, *rel.split("/"))
         if os.path.islink(path):

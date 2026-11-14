@@ -26,7 +26,7 @@
         使った先（読むだけ）: どの出し口の・どの世代の材料に・何として載ったか・差し込みで使われたか（封から）と、
         「から作った」で指す記録（来歴の控え）。今の版が最後の世代に載った版と違えば「材料が古い」
     thth register published <台帳> --outlet <出し口> --list <一覧> [--record] [--now <日時>]
-                            [--previous <前に配った控えの頭>] [--publish <配る控えの頭の置き場>] [--json]
+                            (--previous <前に配った控えの頭> | --no-previous) [--publish <配る控えの頭の置き場>] [--json]
         出した URL の関門（build のあとの一覧と、出し口ごとの追記だけの控え .thth/published/<出し口>.jsonl を比べる）。
         前に出した URL が一覧に無い・許していない転送・転送先が無い・二重・控えの書き換えは赤（rc 1）。
         --record を付けたときだけ、緑なら控えに足す（付けなければ台帳に書かない）
@@ -274,8 +274,12 @@ def cmd_used(args) -> int:
 
 def cmd_published(args) -> int:
     from . import published as P
+    if args.previous is None and not args.no_previous:
+        # 前に配った控えの頭が無いと、控えの行を消して頭も書き直した控えを見抜けない（verify と同じ流儀で言わせる）
+        raise RegisterRefused("register_args_invalid", "previous")
     value = P.published(root_of(args.register), args.outlet, args.list, args.now or P.now_default(),
-                        record=args.record, previous=args.previous, publish=args.publish)
+                        record=args.record, previous=args.previous, publish=args.publish,
+                        no_previous=args.no_previous)
     if args.json:
         _print(value)
         return 0 if value["ok"] else 1
@@ -388,7 +392,9 @@ def register_parsers(verbs, run) -> None:
     p.add_argument("--list", required=True, metavar="一覧")
     p.add_argument("--record", action="store_true")
     p.add_argument("--now", default=None, metavar="日時")
-    p.add_argument("--previous", default=None, metavar="前に配った控えの頭")
+    prev = p.add_mutually_exclusive_group()
+    prev.add_argument("--previous", default=None, metavar="前に配った控えの頭")
+    prev.add_argument("--no-previous", action="store_true", help="前に配った控えの頭が無い（初回だけ）")
     p.add_argument("--publish", default=None, metavar="配る控えの頭の置き場")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_published))

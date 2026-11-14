@@ -279,9 +279,9 @@ def test_7_6_転送と例外を宣言どおりに通し新しい物は記録の�
     assert v["ok"], v
     assert v["counts"]["redirected"] == 1 and v["counts"]["gone"] == 1 and v["new"] == ["/c/", "/new/"]
     assert tree_sha(led) == before                                  # --record なしは書かない
-    rc, out, _ = run(capsys, "register", "published", led, "--outlet", "site", "--list", second, "--now", NOW)
+    rc, out, _ = run(capsys, "register", "published", led, "--outlet", "site", "--list", second, "--now", NOW, "--no-previous")
     assert rc == 0 and "--record で足す" in out and tree_sha(led) == before
-    rc, v, _ = jrun(capsys, "register", "published", led, "--outlet", "site", "--list", second, "--now", NOW,
+    rc, v, _ = jrun(capsys, "register", "published", led, "--outlet", "site", "--list", second, "--now", NOW, "--no-previous",
                     "--record")
     assert rc == 0 and v["recorded"] == 4                          # 新しい 2・扱いの変わった 2（転送・消した）
     rows = [json.loads(x) for x in (led / ".thth/published/site.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -444,10 +444,10 @@ def test_7_6_宣言の無い出し口は既定の厳しさで消えを赤にす�
 def test_7_6_CLIは赤でrc1と直し方(env, capsys):
     led = seeded(env)
     before = tree_sha(led)
-    rc, out, _ = run(capsys, "register", "published", led, "--outlet", "site", "--list", lst(env, "/"), "--now", NOW,
+    rc, out, _ = run(capsys, "register", "published", led, "--outlet", "site", "--list", lst(env, "/"), "--now", NOW, "--no-previous",
                      "--record")
     assert rc == 1 and "赤 missing: /a/" in out and "published.redirects" in out
-    rc, v, _ = jrun(capsys, "register", "published", led, "--outlet", "site", "--list", lst(env, "/"), "--now", NOW)
+    rc, v, _ = jrun(capsys, "register", "published", led, "--outlet", "site", "--list", lst(env, "/"), "--now", NOW, "--no-previous")
     assert rc == 1 and not v["ok"]
     assert tree_sha(led) == before
 
@@ -608,7 +608,7 @@ def test_どの命令も記録を付けない限り台帳に書かない(keyed, 
     v = P.published(str(led), "site", str(lst(keyed, *now_list, "/more/", name="m.txt")), NOW)    # 緑・新しい物あり
     assert v["ok"] and v["new"] == ["/more/"]
     for argv in (("used", led, "shop:s2"),
-                 ("published", led, "--outlet", "site", "--list", keyed / "m.txt", "--now", NOW)):
+                 ("published", led, "--outlet", "site", "--list", keyed / "m.txt", "--now", NOW, "--no-previous")):
         rc, _out, _err = run(capsys, "register", *argv)
         assert rc == 0
     assert tree_sha(led) == before
