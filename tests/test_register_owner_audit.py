@@ -192,13 +192,15 @@ def test_穴3_控えの道がスラッシュでも見積りと健康が止まる
     assert _kept(before, _tree(world["tmp"]))
 
 
-def test_穴3_歩くファイルが上限を超えたら断る(world, capsys, monkeypatch):
+def test_穴3_歩くファイルが上限を超えたら数えるのをやめるだけで断らない(world, capsys, monkeypatch):
     _guard_env(world)
     monkeypatch.setattr(ledger, "WALK_MAX", 10)
     for i in range(12):
         (world["folders"]["beta-media"] / f"f{i}.txt").write_text("x")
+    # 上限を超えても断らない（実物の台帳は大きい。数えるのをやめるだけ）。見積りは今までどおり返る。
+    assert ledger.check_walkable(str(world["folders"]["beta-media"])) == 11
     rc, value, _ = _json(capsys, "project", "leave", "alpha", "--by", "operator")
-    assert rc == 2 and value["code"] == "register_folder_too_wide" and value["detail"] == "files"
+    assert value.get("code") != "register_folder_too_wide"
 
 
 # ------------------------------------------------------------------ 中から直した物

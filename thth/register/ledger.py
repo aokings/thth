@@ -101,17 +101,23 @@ WALK_MAX = 200_000
 
 def check_walkable(root: str, limit: int | None = None) -> int:
     """台帳のフォルダを歩くのに上限を置く（段 8 の検収の穴 3: 控えの道が `/` に書き換えてあっても止まる）。
-    ファイルの数（symlink は追わない）を返す。`/` そのものか、`limit` を超えたら `register_folder_too_wide`。"""
+    ファイルの数（symlink は追わない）を返す。`/` かホームそのものなら `register_folder_too_wide`。`limit` を超えたら数えるのを
+    やめて `limit + 1` を返す（断らない）。"""
     if os.path.realpath(root) == os.path.realpath(os.sep):
         raise RegisterRefused("register_folder_too_wide", "root")
     if os.path.islink(root) or not os.path.isdir(root):
         return 0
+    home = os.path.realpath(os.path.expanduser("~"))
+    if os.path.realpath(root) == home:
+        raise RegisterRefused("register_folder_too_wide", "home")
     limit = WALK_MAX if limit is None else limit
     count = 0
     for _here, _dirs, files in os.walk(root, followlinks=False):
         count += len(files)
         if count > limit:
-            raise RegisterRefused("register_folder_too_wide", "files")
+            # 実物の台帳は大きい（MMR は 63 万ファイル）。数えるのをやめるだけで、断らない（11/14 本線。
+            # 断ると、大きな台帳の健康と外す命令が動かなくなる）。返すのは「上限より多い」を表す limit + 1。
+            return limit + 1
     return count
 
 
