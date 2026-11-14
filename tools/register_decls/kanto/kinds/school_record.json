@@ -1,0 +1,35 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "school_record",
+ "place": "school_records/[0-9]*.json",
+ "format": "json",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 400000,
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ],
+ "units": {
+  "groups": [
+   "admissions"
+  ],
+  "items": [
+   "rounds",
+   "*"
+  ],
+  "key": [
+   "round",
+   "date"
+  ],
+  "time": {
+   "per_field": "field_years"
+  }
+ },
+ "note": "結合したレコード（生成物・build_school_records.py）。値ごとの年度はここを記録として置く（#7719 問い 1）"
+}

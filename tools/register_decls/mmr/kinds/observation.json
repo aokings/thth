@@ -1,0 +1,75 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "observation",
+ "place": "data/observations.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "question_lead_id",
+   "meaning": "about",
+   "to": "lead"
+  }
+ ],
+ "note": "指す欄は台本が見ない。器は先が在るかを見る",
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_observation",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_observation",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v3_observation_confidence_tag",
+   "field": "confidence_tag",
+   "in": [
+    "single_run",
+    "with_control",
+    "replicated",
+    "third_party_replicated"
+   ],
+   "allow_blank": true
+  },
+  {
+   "check": "required",
+   "id": "m_v4_observation_result_en",
+   "fields": [
+    "result_en"
+   ],
+   "when": {
+    "result_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_observation_result_ja",
+   "fields": [
+    "result_ja"
+   ],
+   "when": {
+    "result_en": {
+     "blank": false
+    }
+   }
+  }
+ ]
+}

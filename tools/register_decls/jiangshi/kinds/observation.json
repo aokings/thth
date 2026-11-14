@@ -1,0 +1,113 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "observation",
+ "place": "data/observations.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "question_lead_id",
+   "meaning": "about",
+   "to": "lead"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  },
+  {
+   "field": "compared_source_id",
+   "meaning": "related",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "j_1_observation",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 134〜141 行（images は 284〜287 行）"
+  },
+  {
+   "check": "unique",
+   "id": "j_2_observation",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "j_3_observation_record_kind",
+   "field": "record_kind",
+   "in": [
+    "reading",
+    "collation",
+    "scene"
+   ],
+   "allow_blank": true
+  },
+  {
+   "check": "words",
+   "id": "j_3_observation_confidence_tag",
+   "field": "confidence_tag",
+   "in": [
+    "single_reader",
+    "second_reader",
+    "cross_edition"
+   ],
+   "allow_blank": true
+  },
+  {
+   "check": "required",
+   "id": "j_12",
+   "fields": [
+    "record_kind"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "j_13",
+   "fields": [
+    "source_id",
+    "locator"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "j_14_collation",
+   "when": {
+    "record_kind": {
+     "in": [
+      "collation"
+     ]
+    }
+   },
+   "fields": [
+    "compared_source_id"
+   ]
+  },
+  {
+   "check": "empty",
+   "id": "j_14_other",
+   "when": {
+    "record_kind": {
+     "not_in": [
+      "collation"
+     ]
+    }
+   },
+   "fields": [
+    "compared_source_id"
+   ]
+  }
+ ]
+}

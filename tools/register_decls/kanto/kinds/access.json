@@ -1,0 +1,29 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "access",
+ "place": "access/[0-9]*.json",
+ "format": "json",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 400000,
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "k_f2_access",
+   "level": "warn",
+   "fields": [
+    "_agent"
+   ],
+   "note": "access_fees_lint 282 行"
+  }
+ ]
+}

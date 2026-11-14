@@ -1,0 +1,13 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "site_urls",
+ "place": [
+  "site/published-urls.txt",
+  "site/gone-urls.txt"
+ ],
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 1048576
+}

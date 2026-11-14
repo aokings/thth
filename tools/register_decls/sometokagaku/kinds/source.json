@@ -1,0 +1,108 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source",
+ "place": "data/sources.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "shape",
+   "id": "s_v1_source",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 100〜107 行"
+  },
+  {
+   "check": "unique",
+   "id": "s_v2_source",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "s_v3_source_source_type",
+   "field": "source_type",
+   "in": [
+    "journal_article",
+    "review",
+    "book",
+    "thesis",
+    "government",
+    "testing_institute",
+    "standard",
+    "academic_database",
+    "manufacturer",
+    "retailer_technical",
+    "museum",
+    "ethnography",
+    "practitioner_record",
+    "community_forum",
+    "press",
+    "other"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_source_access_status",
+   "field": "access_status",
+   "in": [
+    "open",
+    "abstract_only",
+    "restricted",
+    "unknown"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_source_review_status",
+   "field": "review_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "machine_read",
+    "full_text_checked",
+    "needs_full_text"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_source_rights_status",
+   "field": "rights_status",
+   "in": [
+    "fact_only",
+    "open_license",
+    "public_domain",
+    "permission_needed",
+    "unknown"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "shape",
+   "id": "s_v13_url",
+   "field": "url",
+   "shape": "http_url",
+   "allow_blank": false,
+   "when": {
+    "doi": {
+     "blank": true
+    }
+   },
+   "note": "url が http で始まるか doi（187〜189 行）。台本は startswith('http')"
+  },
+  {
+   "check": "shape",
+   "id": "s_v13_retrieved_at",
+   "field": "retrieved_at",
+   "shape": "date",
+   "allow_blank": false
+  }
+ ]
+}

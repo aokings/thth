@@ -1,0 +1,71 @@
+{
+ "schema": "thth.constitution/1",
+ "note": "語の意味（叩き台。レーンの確認前）",
+ "words": {
+  "says_so": {
+   "established": {
+    "conclusion": "good"
+   },
+   "supported": {
+    "conclusion": "good"
+   },
+   "contested": {
+    "conclusion": "pending",
+    "reason": "both_sides"
+   },
+   "preliminary": {
+    "conclusion": "pending",
+    "reason": "preliminary"
+   },
+   "unverified": {
+    "conclusion": "pending",
+    "reason": "unverified"
+   }
+  },
+  "reads_right": {
+   "human_checked": {
+    "conclusion": "good"
+   }
+  },
+  "answered": {
+   "documented": {
+    "conclusion": "good"
+   },
+   "checked_unconfirmed": {
+    "conclusion": "pending",
+    "reason": "not_found_yet"
+   },
+   "unverified": {
+    "conclusion": "pending",
+    "reason": "unverified"
+   }
+  },
+  "credit_holds": {
+   "shown": {
+    "conclusion": "good"
+   },
+   "held": {
+    "conclusion": "pending",
+    "reason": "held"
+   }
+  },
+  "may_publish@artist_page": {
+   "true": {
+    "conclusion": "good"
+   },
+   "false": {
+    "conclusion": "pending",
+    "reason": "not_public"
+   }
+  },
+  "may_publish@song_page": {
+   "true": {
+    "conclusion": "good"
+   },
+   "false": {
+    "conclusion": "pending",
+    "reason": "not_public"
+   }
+  }
+ }
+}

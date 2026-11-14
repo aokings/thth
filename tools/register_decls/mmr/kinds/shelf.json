@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "shelf",
+ "place": "site/src/generated/shelf.json",
+ "format": "json",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 4000000,
+ "note": "生成物（git の外）。照合台帳の検査が読むので置く。seeds は鍵の辞書で行として読めない"
+}

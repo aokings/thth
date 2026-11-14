@@ -1,0 +1,98 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "mood",
+ "place": "data/mood.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "seed_id",
+   "meaning": "about",
+   "to": "song"
+  },
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_mood",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "260〜261 行"
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_mood",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v19_mood",
+   "fields": [
+    "wave"
+   ]
+  },
+  {
+   "check": "one_of",
+   "id": "m_v20",
+   "fields": [
+    "seed_id",
+    "entity_id"
+   ],
+   "mode": "exactly_one"
+  },
+  {
+   "check": "words",
+   "id": "m_v21_kind",
+   "field": "kind",
+   "in": [
+    "artist_words",
+    "label_blurb",
+    "review",
+    "usage_context",
+    "scene_context",
+    "other"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v21_about",
+   "field": "about",
+   "in": [
+    "this_track",
+    "this_release",
+    "artist_general",
+    "scene",
+    "label"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v22",
+   "fields": [
+    "source_url",
+    "summary_ja"
+   ]
+  },
+  {
+   "check": "shape",
+   "id": "m_v24",
+   "field": "language",
+   "shape": "lang"
+  }
+ ]
+}

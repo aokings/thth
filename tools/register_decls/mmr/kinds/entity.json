@@ -1,0 +1,127 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity",
+ "place": "data/entities.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_entity",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_entity",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v3_entity_entity_type",
+   "field": "entity_type",
+   "in": [
+    "musical_work",
+    "recording",
+    "release",
+    "person",
+    "artist_project",
+    "group",
+    "label",
+    "organization",
+    "studio",
+    "place",
+    "concept",
+    "equipment",
+    "scene",
+    "event"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_entity_lifecycle",
+   "field": "lifecycle_status",
+   "in": [
+    "active",
+    "candidate",
+    "deprecated"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_entity_visibility",
+   "field": "search_visibility",
+   "in": [
+    "index",
+    "review",
+    "noindex"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "m_v4_entity_canonical_name_en",
+   "fields": [
+    "canonical_name_en"
+   ],
+   "when": {
+    "canonical_name_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_entity_canonical_name_ja",
+   "fields": [
+    "canonical_name_ja"
+   ],
+   "when": {
+    "canonical_name_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "m_v4_entity_description_en",
+   "fields": [
+    "description_en"
+   ],
+   "when": {
+    "description_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_entity_description_ja",
+   "fields": [
+    "description_ja"
+   ],
+   "when": {
+    "description_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "m_v5_entity",
+   "fields": [
+    "canonical_name_ja",
+    "canonical_name_en"
+   ]
+  }
+ ]
+}

@@ -14,7 +14,8 @@
     thth register take <台帳> --common <共通の台帳> [--record <種類:番号> ...] --by <名前> [--json]
         共通の記録の今の版を、まとめて採る（受け入れるまで材料は変わらない）
     thth register export <台帳> --outlet <出し口> --to <先> --as-of <日時> [--common <共通の台帳>] [--check] [--json]
-        封の中の判断で材料を書く（鍵は使わない・狭める物は封を待たない・一覧に無い旧い材料があれば止まる）
+        封の中の判断で材料を書く（鍵は使わない・狭める物は封を待たない・一覧に無い旧い材料があれば止まる）。
+        読者に出る出し口では、出さない欄を書かず・差し込みを置き換え・伏せ方の粒で外す（出し口の宣言の kinds.<種類>）
     thth register accept <台帳> --outlet <出し口> --to <先> --as-of <日時> --by <名前> [--confirm D] [--common …] [--json]
         受け入れて封をする（二段: 1 回めは変わる物と印を見せる・2 回めに --confirm で材料を書いて封をする）
     thth register verify <台帳> --outlet <出し口> --material <先> [--now <日時>] (--previous <前に配った物> | --no-previous)
@@ -65,6 +66,10 @@ WHY_JA = {
     "unit_ambiguous": "内側の単位が 1 つに決まらない",
     "kind_not_in_outlet": "この出し口の種類の記録ではない",
     "no_seal": "この出し口はまだ受け入れて封をしていない",
+    "insert_unusable": "差し込みの先が、この出し口で事実として使えない（使えない・留保だけ・止めた・欄が無い・出さない欄）",
+    "private_unremovable": "出さない欄を、元の書き方のまま除けない（枚の書き方を、上の段の鍵ごとの形にする）",
+    "insert_unplaceable": "差し込みの値を、元の書き方のまま置けない",
+    "hidden_with_record": "伏せ方が記録ごとで、同じ記録の内側の単位が使えなくなった",
 }
 
 
@@ -142,6 +147,10 @@ def cmd_export(args) -> int:
     print(f"材料を{verb}: {value['outlet']}・世代 {value['generation']}・{value['files']} ファイル・"
           f"{value['items']} 件 → {value['to']}")
     _show_changes(value)
+    unusable = [e for e in value.get("excluded") or [] if e.get("why") == "insert_unusable"]
+    for e in unusable[:20]:
+        print(f"  差し込みが使えず外した {e['record']}: "
+              + "・".join(f"{i.get('insert', i['field'])}（{i['why']}）" for i in e.get("inserts") or []))
     if value["differs"]:
         print(f"  置いてある材料と違うファイル {len(value['differs'])}: " + "・".join(value["differs"][:10]))
     if not value["same_as_seal"]:
@@ -200,7 +209,8 @@ PROBLEM_JA = {
     "material_mismatch": "置いてある材料が、封の出力と合いません",
     "narrowed_after_seal": "封のあとで使えなくなった物が、材料に載っています（止めた・期限が切れた・中身が変わった）",
     "widened_after_seal": "封の中の判断では使えない物が、使える側に出ています",
-    "stale_material": "一覧に無い旧い材料が、書き出し先にあります",
+    "stale_material": "一覧に無い旧い材料が、書き出し先にあります（. で始まるフォルダの中も見ます。見ない物は出し口の宣言の ignore）",
+    "inputs_changed": "材料に載せた記録か差し込んだ先の版が、封のときから変わっています（受け入れて封をし直す）",
 }
 
 

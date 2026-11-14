@@ -1,0 +1,32 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "page_title",
+ "place": "data/page_titles.csv",
+ "format": "csv",
+ "id": {
+  "field": "entity_id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "j_5_title",
+   "fields": [
+    "page_title_ja"
+   ]
+  },
+  {
+   "check": "unique",
+   "id": "j_5_unique",
+   "fields": [
+    "entity_id"
+   ]
+  }
+ ]
+}

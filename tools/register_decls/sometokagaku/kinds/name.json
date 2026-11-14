@@ -1,0 +1,82 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "name",
+ "place": "data/names.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "s_v1_name",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 100〜107 行"
+  },
+  {
+   "check": "unique",
+   "id": "s_v2_name",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "s_v3_name_name_type",
+   "field": "name_type",
+   "in": [
+    "common",
+    "scientific",
+    "trade",
+    "colour_index",
+    "cas",
+    "local",
+    "transliteration",
+    "abbreviation",
+    "historical"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_name_id_confidence",
+   "field": "identification_confidence",
+   "in": [
+    "high",
+    "medium",
+    "low",
+    "unverified"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "s_v6_name",
+   "fields": [
+    "name",
+    "language"
+   ]
+  },
+  {
+   "check": "shape",
+   "id": "s_v6_language",
+   "field": "language",
+   "shape": "lang",
+   "note": "空は s_v6_name が赤にする"
+  }
+ ]
+}

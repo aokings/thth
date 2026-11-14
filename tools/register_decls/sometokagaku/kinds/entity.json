@@ -1,0 +1,198 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity",
+ "place": "data/entities.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "shape",
+   "id": "s_v1_entity",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 100〜107 行"
+  },
+  {
+   "check": "unique",
+   "id": "s_v2_entity",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "s_v3_entity_entity_type",
+   "field": "entity_type",
+   "in": [
+    "dye_class",
+    "dye_material",
+    "colorant",
+    "compound",
+    "compound_class",
+    "product",
+    "organism",
+    "fiber",
+    "auxiliary",
+    "mechanism",
+    "process",
+    "technique",
+    "phenomenon",
+    "property",
+    "color_name",
+    "region",
+    "tradition",
+    "organization",
+    "concept"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_entity_lifecycle",
+   "field": "lifecycle_status",
+   "in": [
+    "active",
+    "candidate",
+    "deprecated"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_entity_visibility",
+   "field": "search_visibility",
+   "in": [
+    "index",
+    "review",
+    "noindex"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "s_v4_entity_canonical_name_en",
+   "fields": [
+    "canonical_name_en"
+   ],
+   "when": {
+    "canonical_name_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（122〜126 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "s_v4_entity_canonical_name_ja",
+   "fields": [
+    "canonical_name_ja"
+   ],
+   "when": {
+    "canonical_name_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "s_v4_entity_description_en",
+   "fields": [
+    "description_en"
+   ],
+   "when": {
+    "description_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（122〜126 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "s_v4_entity_description_ja",
+   "fields": [
+    "description_ja"
+   ],
+   "when": {
+    "description_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "s_v5_entity",
+   "fields": [
+    "canonical_name_ja",
+    "canonical_name_en"
+   ]
+  },
+  {
+   "check": "count",
+   "id": "s_g3",
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    },
+    "entity_type": {
+     "in": [
+      "compound",
+      "compound_class",
+      "mechanism",
+      "dye_class",
+      "property",
+      "phenomenon",
+      "concept",
+      "color_name",
+      "colorant",
+      "region",
+      "tradition",
+      "organization",
+      "dye_material"
+     ]
+    }
+   },
+   "from": {
+    "kind": "claim",
+    "via": "subject_entity_id"
+   },
+   "min": 3,
+   "note": "gate_publish.py (e2) 171〜173 行。gate は index の点だけを見る"
+  },
+  {
+   "check": "required",
+   "id": "s_g7",
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    }
+   },
+   "fields": [
+    "description_ja"
+   ],
+   "note": "gate_publish.py (c) 200〜201 行"
+  },
+  {
+   "check": "required",
+   "id": "s_g8",
+   "level": "warn",
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    }
+   },
+   "fields": [
+    "description_en"
+   ],
+   "note": "gate_publish.py 202〜204 行（警告: 英語頁を作らない）"
+  }
+ ]
+}

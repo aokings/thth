@@ -1,0 +1,150 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "evidence",
+ "place": "data/evidence.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "reads_right",
+   "state": "extraction_status",
+   "depends": [
+    "locator",
+    "finding_ja",
+    "finding_en"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim",
+   "meaning_from": "relation"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "m_v1_evidence",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false
+  },
+  {
+   "check": "unique",
+   "id": "m_v2_evidence",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "m_v3_evidence_relation",
+   "field": "relation",
+   "in": [
+    "supports",
+    "contradicts",
+    "limits",
+    "contextualizes"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_evidence_evidence_type",
+   "field": "evidence_type",
+   "in": [
+    "release_credit",
+    "artist_statement",
+    "label_catalog",
+    "liner_note",
+    "interview_statement",
+    "journalistic_report",
+    "database_record",
+    "label_note",
+    "reissue_label_note",
+    "scholarly_work",
+    "archival_record",
+    "user_contributed_record",
+    "vendor_profile",
+    "agency_profile",
+    "dj_chart"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "m_v3_evidence_extraction",
+   "field": "extraction_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "machine_read",
+    "integrator_checked",
+    "human_checked",
+    "needs_verification"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "m_v4_evidence_finding_en",
+   "fields": [
+    "finding_en"
+   ],
+   "when": {
+    "finding_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（151〜155 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "m_v4_evidence_finding_ja",
+   "fields": [
+    "finding_ja"
+   ],
+   "when": {
+    "finding_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "m_v5_evidence",
+   "fields": [
+    "finding_ja",
+    "finding_en"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "m_v10",
+   "fields": [
+    "locator"
+   ]
+  },
+  {
+   "check": "forbid_pair",
+   "id": "m_v18",
+   "via": "source_id",
+   "target": {
+    "rights_status": {
+     "in": [
+      "unknown"
+     ]
+    }
+   }
+  }
+ ]
+}

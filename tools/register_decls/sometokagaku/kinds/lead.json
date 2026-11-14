@@ -1,0 +1,169 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lead",
+ "place": "data/leads.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "answered",
+   "state": "verification_status",
+   "depends": [
+    "title_ja",
+    "title_en",
+    "lead_text_ja",
+    "lead_text_en"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "entity"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "s_v1_lead",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 100〜107 行"
+  },
+  {
+   "check": "unique",
+   "id": "s_v2_lead",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "s_v3_lead_lead_type",
+   "field": "lead_type",
+   "in": [
+    "research_question",
+    "reported_saying",
+    "transmitted_lore"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_lead_origin_status",
+   "field": "origin_status",
+   "in": [
+    "editorial",
+    "unrecorded",
+    "field_note",
+    "source_connected"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_lead_verification_status",
+   "field": "verification_status",
+   "in": [
+    "unverified",
+    "documented",
+    "checked_unconfirmed",
+    "retired"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "s_v3_lead_experiment",
+   "field": "experiment_candidate",
+   "in": [
+    "yes",
+    "no"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "s_v4_lead_title_en",
+   "fields": [
+    "title_en"
+   ],
+   "when": {
+    "title_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（122〜126 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "s_v4_lead_title_ja",
+   "fields": [
+    "title_ja"
+   ],
+   "when": {
+    "title_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "s_v4_lead_lead_text_en",
+   "fields": [
+    "lead_text_en"
+   ],
+   "when": {
+    "lead_text_ja": {
+     "blank": false
+    }
+   },
+   "note": "日英は両方埋めるか両方空（122〜126 行）を 2 本で"
+  },
+  {
+   "check": "required",
+   "id": "s_v4_lead_lead_text_ja",
+   "fields": [
+    "lead_text_ja"
+   ],
+   "when": {
+    "lead_text_en": {
+     "blank": false
+    }
+   }
+  },
+  {
+   "check": "required",
+   "id": "s_v5_lead",
+   "fields": [
+    "title_ja",
+    "title_en",
+    "lead_text_ja",
+    "lead_text_en"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "s_v11",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "origin_status": {
+     "in": [
+      "source_connected"
+     ]
+    }
+   }
+  }
+ ]
+}

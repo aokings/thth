@@ -1,0 +1,75 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity",
+ "place": "data/entities.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "shape",
+   "id": "j_1_entity",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 134〜141 行（images は 284〜287 行）"
+  },
+  {
+   "check": "unique",
+   "id": "j_2_entity",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "j_3_entity_entity_type",
+   "field": "entity_type",
+   "in": [
+    "text",
+    "story",
+    "work",
+    "work_series",
+    "being",
+    "motif",
+    "term",
+    "ritual",
+    "concept",
+    "region",
+    "organization"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_entity_lifecycle_status",
+   "field": "lifecycle_status",
+   "in": [
+    "active",
+    "candidate",
+    "deprecated"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_entity_search_visibility",
+   "field": "search_visibility",
+   "in": [
+    "index",
+    "review",
+    "noindex"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "j_4_entity",
+   "fields": [
+    "canonical_name_ja"
+   ],
+   "note": "languages: [ja] のため ja だけ必須"
+  }
+ ]
+}

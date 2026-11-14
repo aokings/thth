@@ -1,0 +1,19 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity_tag",
+ "place": "data/entity_tags.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "entity_id",
+   "tag"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "entity"
+  }
+ ]
+}

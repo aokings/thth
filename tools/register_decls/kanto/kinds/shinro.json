@@ -1,0 +1,16 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "shinro",
+ "place": "shinro_disclosure.csv",
+ "format": "csv",
+ "id": {
+  "field": "school_id"
+ },
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ]
+}

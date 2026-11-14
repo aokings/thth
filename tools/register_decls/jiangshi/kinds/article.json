@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "article",
+ "place": "drafts/article-*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "記事の下書き。出す物は site/src/lib/articles.ts の ARTICLES（サイトのコード）"
+}

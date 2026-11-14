@@ -1,0 +1,121 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "admission_result",
+ "place": "admission_results/[0-9]*.json",
+ "format": "json",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 400000,
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ],
+ "units": {
+  "groups": [
+   "years",
+   "*"
+  ],
+  "items": [
+   "rounds",
+   "*"
+  ],
+  "key": [
+   "group.year",
+   "round",
+   "date",
+   "time_of_day",
+   "gender",
+   "subject_type"
+  ],
+  "time": {
+   "group": "year"
+  },
+  "scope": {
+   "key_fields": [
+    "gender"
+   ],
+   "separate": [
+    "capacity"
+   ]
+  },
+  "sources": {
+   "list": "sources",
+   "field": "field",
+   "split": "/,",
+   "rest": "rounds",
+   "depends": [
+    "field",
+    "url",
+    "quote"
+   ]
+  }
+ },
+ "checks": [
+  {
+   "check": "count",
+   "id": "k_a10",
+   "level": "warn",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "min_score": {
+     "blank": false
+    },
+    "full_score": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "最低点があれば満点（74 行・警告）"
+  },
+  {
+   "check": "count",
+   "id": "k_a12",
+   "level": "warn",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "applicants": {
+     "blank": true
+    },
+    "examinees": {
+     "blank": true
+    },
+    "admitted": {
+     "blank": true
+    },
+    "min_score": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "志願・受験・合格・最低点のどれも無い回（77 行・警告）"
+  },
+  {
+   "check": "count",
+   "id": "k_x5",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "source_tier": {
+     "in": [
+      "3"
+     ]
+    },
+    "min_score": {
+     "blank": false
+    }
+   },
+   "max": 0,
+   "note": "回の source_tier が \"3\" なら最低点は禁じる（crosscheck E 81〜83 行）。年の値を継ぐ K-A11 は固有"
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "player",
+ "place": "data/players.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "seed_id"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "seed_id",
+   "meaning": "about",
+   "to": "song"
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "feature_row",
+ "place": "features_school_subject.csv",
+ "format": "csv",
+ "id": {
+  "key": [
+   "school",
+   "subject"
+  ]
+ },
+ "note": "校は名で書く（school_id の欄が無い）。名で結ぶので指す欄にしない"
+}

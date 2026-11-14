@@ -1,0 +1,141 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "evidence",
+ "place": "data/evidence.csv",
+ "format": "csv",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "reads_right",
+   "state": "extraction_status",
+   "depends": [
+    "locator",
+    "finding_ja"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim",
+   "meaning_from": "relation"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "j_1_evidence",
+   "field": "id",
+   "shape": "slug",
+   "allow_blank": false,
+   "note": "validate_data.py 134〜141 行（images は 284〜287 行）"
+  },
+  {
+   "check": "unique",
+   "id": "j_2_evidence",
+   "fields": [
+    "id"
+   ]
+  },
+  {
+   "check": "words",
+   "id": "j_3_evidence_relation",
+   "field": "relation",
+   "in": [
+    "supports",
+    "contradicts",
+    "limits",
+    "contextualizes"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_evidence_evidence_type",
+   "field": "evidence_type",
+   "in": [
+    "primary_text",
+    "translation",
+    "scholarly_study",
+    "reference_work",
+    "ethnographic",
+    "work_scene",
+    "official_work_info",
+    "creator_statement",
+    "promotional",
+    "journalistic_report",
+    "own_observation"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "words",
+   "id": "j_3_evidence_extraction_status",
+   "field": "extraction_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "machine_read",
+    "integrator_checked",
+    "human_reviewed",
+    "human_checked",
+    "needs_verification"
+   ],
+   "allow_blank": false
+  },
+  {
+   "check": "required",
+   "id": "j_4_evidence",
+   "fields": [
+    "finding_ja"
+   ]
+  },
+  {
+   "check": "required",
+   "id": "j_10",
+   "fields": [
+    "locator"
+   ]
+  },
+  {
+   "check": "forbid_pair",
+   "id": "j_11",
+   "when": {
+    "evidence_type": {
+     "in": [
+      "work_scene",
+      "promotional"
+     ]
+    }
+   },
+   "via": "claim_id",
+   "target": {
+    "claim_type": {
+     "in": [
+      "source_record"
+     ]
+    }
+   }
+  },
+  {
+   "check": "forbid_pair",
+   "id": "j_33",
+   "via": "source_id",
+   "target": {
+    "rights_status": {
+     "in": [
+      "unknown"
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,54 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "fees",
+ "place": "fees/[0-9]*.json",
+ "format": "json",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 400000,
+ "pointers": [
+  {
+   "field": "school_id",
+   "meaning": "about",
+   "to": "target"
+  }
+ ],
+ "units": {
+  "groups": [
+   "admissions_extra"
+  ],
+  "items": [
+   "rounds",
+   "*"
+  ],
+  "key": [
+   "group.year",
+   "round",
+   "date"
+  ],
+  "time": {
+   "group": "year"
+  },
+  "scope": {
+   "separate": [
+    "capacity"
+   ],
+   "fields": {
+    "capacity": "capacity_shared"
+   }
+  }
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "k_f2_fees",
+   "level": "warn",
+   "fields": [
+    "_agent"
+   ],
+   "note": "access_fees_lint 282 行"
+  }
+ ]
+}
