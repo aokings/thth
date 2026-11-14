@@ -33,6 +33,9 @@
     thth register judge|take|export|accept|verify|key …
                                        器の台帳 段 3: 判断を足す・共通を採る・材料・受け入れと封・公開の直前の確かめ・鍵
                                        （`route_cli.py` の頭の注）
+    thth register health [<台帳>] [--thin] [--across] [--all] [--as-of 日時] [--common 共通] [--json]
+    thth register sisters <メディアの台帳> [--common 共通] [--json]
+                                       器の台帳 段 8: 健康と姉妹リンクの候補（読むだけ。`health_cli.py` の頭の注）
     thth register confirm <台帳> <行> --by <名前> [--confirm D] [--json]
                                        本人が認めた（営業の時間と臨時は二段確認）
     thth register deny <台帳> <行> --by <名前> [--json]
@@ -72,7 +75,7 @@ import sys
 from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
-from . import adopt_cli, erase_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
+from . import adopt_cli, erase_cli, health_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -872,3 +875,5 @@ def register(sub) -> None:
     route_cli.register_parsers(verbs, _run)
     # 台帳の器 段 5: 消す求め（求め・範囲の判断・実行・結果と残り。`erase_cli.py`）。
     erase_cli.register_parsers(verbs, _run)
+    # 台帳の器 段 8: 健康・姉妹リンクの候補（読むだけ。`health_cli.py`）。
+    health_cli.register_parsers(verbs, _run)
