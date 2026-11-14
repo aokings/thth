@@ -1,0 +1,89 @@
+{
+ "name": "chuju",
+ "source": "chuju",
+ "expected": {
+  "records": {
+   "toi": 39,
+   "koyomi": 5,
+   "koyomi_ken": 6,
+   "koyomi_todofuken": 15,
+   "koukai_url": 44,
+   "kouho_taiou": 265
+  },
+  "dangling": {
+   "toi.next": 0,
+   "koyomi.toi": 0,
+   "koyomi_todofuken.ken": 0
+  },
+  "checks": {
+   "c4_1_toi": 0,
+   "c4_2_jiki": 0,
+   "c4_3_draft": 0,
+   "c4_4_pub": 0,
+   "c4_5_pub_sources": 0,
+   "c4_6_pub_branches": 0,
+   "c4_7_pub_konkyo": 0,
+   "c4_8_pub_exit": 0,
+   "c4_9_pub_rows": 0,
+   "c4_10_terashi": 0,
+   "c4_11_branch_state": 0,
+   "c4_12_branch_next": 0,
+   "c4_19_kotae": 0,
+   "c4_13_taishou": 0,
+   "c4_14_table": 0,
+   "c4_15_terashi": 0,
+   "c4_16_ima": 0,
+   "c4_17_shougou": 0,
+   "c4_18_bangou": 0,
+   "c4_20_koyomi": 0,
+   "c4_21_grade": 0,
+   "c4_22_month": 0,
+   "c4_23_draft": 0,
+   "c4_24_pub_toi": 0,
+   "c4_30_ken": 0,
+   "c4_31_todofuken": 0,
+   "c4_32_shurui": 0,
+   "c4_33_shiritsu": 0,
+   "c4_34_wakaranai": 0,
+   "c4_35_hajimari": 0,
+   "c4_36_kimari": 0,
+   "c4_37_yomitori": 0,
+   "c4_38_not_kimari": 0,
+   "c4_39_url": 0,
+   "c4_40_tashikame": 0,
+   "c4_41_kouritsu_gakko": 0,
+   "c4_41_kouritsu_kensa": 0,
+   "c4_41_kouritsu_dashita": 0,
+   "c4_41_kouritsu_url": 0,
+   "c4_41_kouritsu_tashikametahi": 0,
+   "c4_50_koukai": 0,
+   "c4_51_path": 0,
+   "c4_52_ima": 0,
+   "c4_53_hi": 0,
+   "c4_60_code": 0,
+   "c4_61_code": 0
+  },
+  "problems": 0
+ },
+ "outside": [
+  "関東の写し src/data/dougu/*.json 9 本は器の外（asmon が正本。scripts/import-kanto.mjs が asmon.ai/kanto/data/ の公開の写しから作る。2027 年 3 月以降に学校台帳へ移る予定）",
+  "通学の目安の網 src/data/dougu/kayoeru-*.json・public/data/kayoeru・public/data/yubin は道具の材料で台帳でない（器の外）",
+  "道具の一覧 src/lib/dougu-list.ts・伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript で読まない（固有）",
+  "照合台帳 docs/照合台帳_*.md 47 枚は検収の記録の文書（器の判断の記録に写すかはレーンに聞く）",
+  "chuju_data/（repo の外・git でない・約 30 GB）と問いの受け口（D1）は器の外。触れない"
+ ],
+ "ask_lane": [
+  "頁の ima.validUntil と表の行の shimekiri は、器では観測として読むだけにした（判断の「いつまで」に結ばない）。器の言葉で「判断のいつまで」として受けるか、「記録の欄の観測」のままにするか",
+  "ima の無い頁（shutsugan-itsu・tetsuzuki-ennou）の行の shimekiri 11 行は、締切を過ぎても表から外れない。これは意図か",
+  "関東の写し 9 本を器の外（asmon が正本）に置いたままでよいか（2027 年 3 月に学校台帳へ移るときに、来歴で指す形にするか）",
+  "入試の暦の圏の台帳 koyomi-ken.json と、学校台帳がこれから作る制度の台帳（seido/）のどちらを正本にするか（整理の書 #19）",
+  "照合台帳の md（版を文で書く）を器の判断の記録に写すか、文書のまま置くか"
+ ],
+ "vessel_gaps": [
+  "値の差し込みの道: 本文と欄の {{koyomi:<都県>.<欄の道>}}（24 枚・231 か所・50 通り）は、入れ子の鍵と並びの添字（chiba.kouritsu.0.kensa）で台帳の値を引く。指す欄は欄の値を番号として読むだけで、本文の中の印や添字の道は宣言できない（C-T22・C-Y2。先が無い 0 は chuju の台本で数えた物）",
+  "入れ子の欄から指す: 指す欄の field は一番上の欄だけ。shougou.daichou（29 枚）は入れ子。先の照合台帳 docs/照合台帳_*.md は名前に漢字を含み、置き場（place）に書けない（ASCII だけ）ので種類にもできない",
+  "1 つの種類に内側の単位は 1 つ: 問いの頁は分かれ道（branches[] 167）を単位にしたので、表の行（table.rows[] 252）の source.kind・ken・shimekiri には検査を当てられない（C-T12・C-T13・C-T21 の語の一部）",
+  "並びの値の語と数: taishou.ken・jiki.grades（並び）には words が当たらない（字でないと not_text）。並びの長さの上限（next 3・dougu 4・wadai 3）も言えない。空の並びは required で空と読む（C-T2・C-T4・C-T7 はこれで書けた）",
+  "内側の単位の欄の形: 公立の行（kouritsu[]）の kensa・kensa2・happyou・tashikametaHi が YYYY-MM-DD かは、count の where に形の条件が無いので言えない（C-Y1 の一部）"
+ ]
+}

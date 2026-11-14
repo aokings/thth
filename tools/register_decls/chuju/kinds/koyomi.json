@@ -1,0 +1,86 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "koyomi",
+ "place": "src/content/koyomi/*.md",
+ "format": "md_yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "questions": [
+  {
+   "name": "publish",
+   "state": "draft",
+   "depends": [
+    "summary",
+    "toi"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "toi",
+   "meaning": "about",
+   "to": "toi",
+   "note": "そのマスの問いの頁"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_20_koyomi",
+   "fields": [
+    "grade",
+    "month",
+    "summary",
+    "updatedAt"
+   ],
+   "note": "暦のマスの欄（型 4-2）"
+  },
+  {
+   "check": "words",
+   "id": "c4_21_grade",
+   "field": "grade",
+   "in": [
+    "小3",
+    "小4",
+    "小5",
+    "小6"
+   ],
+   "note": "学年（型 grade）"
+  },
+  {
+   "check": "shape",
+   "id": "c4_22_month",
+   "field": "month",
+   "shape": "positive_int",
+   "note": "月（1〜12 の上限は言えない）"
+  },
+  {
+   "check": "words",
+   "id": "c4_23_draft",
+   "field": "draft",
+   "in": [
+    "true",
+    "false"
+   ],
+   "allow_blank": true
+  },
+  {
+   "check": "required",
+   "id": "c4_24_pub_toi",
+   "fields": [
+    "toi"
+   ],
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-K1: 公開のマスには問いの頁が 1 本以上"
+  }
+ ],
+ "note": "暦（学年 × 月の 1 マス）。今は 5 枚とも下書き。"
+}

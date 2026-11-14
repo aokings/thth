@@ -1,0 +1,32 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "kouho_taiou",
+ "place": "src/data/kouho-taiou.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "taiou"
+ ],
+ "id": {
+  "from": "key"
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_60_code",
+   "fields": [
+    "_value"
+   ],
+   "note": "C-Ko: 関東の番号ごとに学校コード"
+  },
+  {
+   "check": "unique",
+   "id": "c4_61_code",
+   "fields": [
+    "_value"
+   ],
+   "note": "C-Ko: 学校コードが重ならない"
+  }
+ ],
+ "note": "関東の学校番号 → 学校台帳の学校コード（taiou の鍵の辞書。値は字なので欄 _value）。import-taiou.mjs が gakko の taiou_kanto265.csv から作る写し（gakko への指しは台帳をまたぐので宣言しない）。"
+}

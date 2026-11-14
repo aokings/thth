@@ -1,0 +1,226 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "koyomi_todofuken",
+ "place": "src/data/koyomi-ken.json",
+ "format": "json",
+ "records": "rows",
+ "rows_at": [
+  "todofuken"
+ ],
+ "id": {
+  "from": "key"
+ },
+ "pointers": [
+  {
+   "field": "ken",
+   "meaning": "parent",
+   "to": "koyomi_ken",
+   "note": "都県が入る圏（check-koyomi 1）"
+  }
+ ],
+ "units": {
+  "items": [
+   "kouritsu",
+   "*"
+  ],
+  "key": [
+   "gakko"
+  ],
+  "note": "公立の中高一貫校の行（kouritsu[]）"
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_31_todofuken",
+   "fields": [
+    "na",
+    "ken",
+    "shiritsu"
+   ],
+   "note": "都県の欄"
+  },
+  {
+   "check": "words",
+   "id": "c4_32_shurui",
+   "field": "shiritsu.shurui",
+   "in": [
+    "決まり",
+    "慣行",
+    "分からない"
+   ],
+   "note": "C-Y1: 種類は 3 語"
+  },
+  {
+   "check": "required",
+   "id": "c4_33_shiritsu",
+   "fields": [
+    "shiritsu.dashita",
+    "shiritsu.url",
+    "shiritsu.tashikametaHi"
+   ],
+   "note": "C-Y1: 私立の出した所・URL・確かめた日"
+  },
+  {
+   "check": "empty",
+   "id": "c4_34_wakaranai",
+   "fields": [
+    "shiritsu.hajimari"
+   ],
+   "when": {
+    "shiritsu.shurui": {
+     "in": [
+      "分からない"
+     ]
+    }
+   },
+   "note": "C-Y1: 「分からない」なら始まりの日は null"
+  },
+  {
+   "check": "shape",
+   "id": "c4_35_hajimari",
+   "field": "shiritsu.hajimari",
+   "shape": "date",
+   "allow_blank": false,
+   "when": {
+    "shiritsu.shurui": {
+     "not_in": [
+      "分からない"
+     ]
+    }
+   },
+   "note": "C-Y1: そのほかは YYYY-MM-DD"
+  },
+  {
+   "check": "required",
+   "id": "c4_36_kimari",
+   "fields": [
+    "shiritsu.kimari"
+   ],
+   "when": {
+    "shiritsu.shurui": {
+     "in": [
+      "決まり"
+     ]
+    }
+   },
+   "note": "C-Y1: 決まりなら決まりの文"
+  },
+  {
+   "check": "required",
+   "id": "c4_37_yomitori",
+   "fields": [
+    "shiritsu.yomitori"
+   ],
+   "when": {
+    "shiritsu.shurui": {
+     "in": [
+      "慣行"
+     ]
+    }
+   },
+   "note": "C-Y1: 慣行なら読み取りの文"
+  },
+  {
+   "check": "empty",
+   "id": "c4_38_not_kimari",
+   "fields": [
+    "shiritsu.kimari"
+   ],
+   "when": {
+    "shiritsu.shurui": {
+     "not_in": [
+      "決まり"
+     ]
+    }
+   },
+   "note": "C-Y1: 決まりでないなら決まりの文は無い"
+  },
+  {
+   "check": "shape",
+   "id": "c4_39_url",
+   "field": "shiritsu.url",
+   "shape": "https_url",
+   "allow_blank": true,
+   "note": "C-Y1: 私立の URL は https"
+  },
+  {
+   "check": "shape",
+   "id": "c4_40_tashikame",
+   "field": "shiritsu.tashikametaHi",
+   "shape": "date",
+   "allow_blank": true,
+   "note": "C-Y1: 確かめた日は YYYY-MM-DD"
+  },
+  {
+   "check": "count",
+   "id": "c4_41_kouritsu_gakko",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "gakko": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "C-Y1: 公立の行の gakko が要る"
+  },
+  {
+   "check": "count",
+   "id": "c4_41_kouritsu_kensa",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "kensa": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "C-Y1: 公立の行の kensa が要る"
+  },
+  {
+   "check": "count",
+   "id": "c4_41_kouritsu_dashita",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "dashita": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "C-Y1: 公立の行の dashita が要る"
+  },
+  {
+   "check": "count",
+   "id": "c4_41_kouritsu_url",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "url": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "C-Y1: 公立の行の url が要る"
+  },
+  {
+   "check": "count",
+   "id": "c4_41_kouritsu_tashikametahi",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "tashikametaHi": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "C-Y1: 公立の行の tashikametaHi が要る"
+  }
+ ],
+ "note": "入試の暦の都県（todofuken の鍵の辞書。鍵が番号。段 4 G13）。正本をこれと学校台帳の制度の台帳のどちらにするかはレーンに聞く。"
+}

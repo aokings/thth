@@ -1,0 +1,335 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "toi",
+ "place": "src/content/toi/*.md",
+ "format": "md_yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "questions": [
+  {
+   "name": "publish",
+   "state": "draft",
+   "depends": [
+    "title",
+    "answer",
+    "taishou",
+    "table",
+    "branches",
+    "sources",
+    "verify"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "next",
+   "meaning": "related",
+   "to": "toi",
+   "note": "次に読む問い（型の reference('toi')）"
+  }
+ ],
+ "units": {
+  "items": [
+   "branches",
+   "*"
+  ],
+  "key": [
+   "state"
+  ],
+  "note": "分かれ道（branches[]）の 1 つずつ。番号は無いので state で引く"
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "c4_1_toi",
+   "fields": [
+    "title",
+    "description",
+    "updatedAt",
+    "question",
+    "answer",
+    "jiki",
+    "verify"
+   ],
+   "note": "型で省けない欄（content.config.ts 51〜157 行）"
+  },
+  {
+   "check": "required",
+   "id": "c4_2_jiki",
+   "fields": [
+    "jiki.grades",
+    "jiki.months",
+    "jiki.text"
+   ],
+   "note": "段 2 の時期（型 jiki）"
+  },
+  {
+   "check": "words",
+   "id": "c4_3_draft",
+   "field": "draft",
+   "in": [
+    "true",
+    "false"
+   ],
+   "allow_blank": true,
+   "note": "下書きは真偽（既定 真）"
+  },
+  {
+   "check": "required",
+   "id": "c4_4_pub",
+   "fields": [
+    "publishedAt",
+    "dekiru",
+    "taishou"
+   ],
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-T3・C-T5・C-T11: 公開なら publishedAt・dekiru・taishou"
+  },
+  {
+   "check": "required",
+   "id": "c4_5_pub_sources",
+   "fields": [
+    "sources"
+   ],
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-T2: 公開なら出所が 1 つ以上（空の並びは空と読む）"
+  },
+  {
+   "check": "required",
+   "id": "c4_6_pub_branches",
+   "fields": [
+    "branches"
+   ],
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-T4: 公開なら分かれ道が 1 つ以上"
+  },
+  {
+   "check": "count",
+   "id": "c4_7_pub_konkyo",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "konkyo": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-T6: 公開なら分かれ道の全部に konkyo"
+  },
+  {
+   "check": "one_of",
+   "id": "c4_8_pub_exit",
+   "fields": [
+    "dougu",
+    "next"
+   ],
+   "mode": "at_least_one",
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    }
+   },
+   "note": "C-T7: 公開の頁の出口は dougu か next が 1 つ以上"
+  },
+  {
+   "check": "required",
+   "id": "c4_9_pub_rows",
+   "fields": [
+    "table.rows"
+   ],
+   "when": {
+    "draft": {
+     "in": [
+      "false"
+     ]
+    },
+    "table": {
+     "blank": false
+    }
+   },
+   "note": "C-T20: 公開の表に行が 1 つ以上"
+  },
+  {
+   "check": "count",
+   "id": "c4_10_terashi",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "terashi": {
+     "in": [
+      "true"
+     ]
+    }
+   },
+   "max": 0,
+   "when": {
+    "terashi": {
+     "blank": true
+    }
+   },
+   "note": "C-T16: 分かれ道が照らし合わせの表へ飛ぶなら、頁に terashi が要る"
+  },
+  {
+   "check": "count",
+   "id": "c4_11_branch_state",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "state": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "分かれ道の state は要る（型 min(1)）"
+  },
+  {
+   "check": "count",
+   "id": "c4_12_branch_next",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "next": {
+     "blank": true
+    }
+   },
+   "max": 0,
+   "note": "分かれ道の next は要る（型 min(1)）"
+  },
+  {
+   "check": "count",
+   "id": "c4_19_kotae",
+   "from": {
+    "units": true
+   },
+   "where": {
+    "toi": {
+     "blank": false
+    },
+    "toi.kotae": {
+     "not_in": [
+      "はい",
+      "いいえ"
+     ]
+    }
+   },
+   "max": 0,
+   "note": "流れの図の答えは scripts/zu-kotoba.mjs の KOTAE（はい・いいえ）。toi を書くなら kotae も要る"
+  },
+  {
+   "check": "required",
+   "id": "c4_13_taishou",
+   "fields": [
+    "taishou.ken",
+    "taishou.ie",
+    "taishou.atehamaranai"
+   ],
+   "when": {
+    "taishou": {
+     "blank": false
+    }
+   },
+   "note": "taishou を書くなら 3 つの欄"
+  },
+  {
+   "check": "required",
+   "id": "c4_14_table",
+   "fields": [
+    "table.caption",
+    "table.columns",
+    "table.rows"
+   ],
+   "when": {
+    "table": {
+     "blank": false
+    }
+   },
+   "note": "table を書くなら見出しと列と行の欄（公開の行の数は c4_9）"
+  },
+  {
+   "check": "required",
+   "id": "c4_15_terashi",
+   "fields": [
+    "terashi.midashi",
+    "terashi.jibun",
+    "terashi.aite",
+    "terashi.komoku"
+   ],
+   "when": {
+    "terashi": {
+     "blank": false
+    }
+   },
+   "note": "terashi を書くなら 4 つの欄"
+  },
+  {
+   "check": "required",
+   "id": "c4_16_ima",
+   "fields": [
+    "ima.checkedAt",
+    "ima.validUntil"
+   ],
+   "when": {
+    "ima": {
+     "blank": false
+    }
+   },
+   "note": "ima を書くなら確かめた日時と期限。期限は観測として読むだけで、判断の「いつまで」には結ばない"
+  },
+  {
+   "check": "required",
+   "id": "c4_17_shougou",
+   "fields": [
+    "shougou.at",
+    "shougou.daichou"
+   ],
+   "when": {
+    "shougou": {
+     "blank": false
+    }
+   },
+   "note": "shougou を書くなら照合の日と台帳"
+  },
+  {
+   "check": "shape",
+   "id": "c4_18_bangou",
+   "field": "bangou",
+   "shape": "positive_int",
+   "allow_blank": true,
+   "note": "問の番号（上限 999 は言えない）"
+  }
+ ],
+ "note": "問いの頁の原稿（頭つきの .md）。1 枚 = 1 記録、番号はファイル名。頁の ima.validUntil と表の行の shimekiri は観測として読むだけ（判断の「いつまで」には結ばない。器で伏せない。伏せるのは chuju の build）。dougu の先は TypeScript の一覧（src/lib/dougu-list.ts）で器の外。shougou.daichou は入れ子の欄で、先は docs の md（固有の一覧 C-T8・照合台帳）。"
+}

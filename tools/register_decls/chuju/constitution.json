@@ -1,0 +1,15 @@
+{
+ "schema": "thth.constitution/1",
+ "words": {
+  "publish": {
+   "false": {
+    "conclusion": "good"
+   },
+   "true": {
+    "conclusion": "pending",
+    "reason": "draft"
+   }
+  }
+ },
+ "note": "叩き台（設計 §5.3）。問いは「出してよいか」1 つ。欄 draft の false を出してよい、true を下書きとして待ちに読む。"
+}
