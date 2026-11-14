@@ -1,0 +1,84 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source",
+ "place": "data/knowledge/sources.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "read_full",
+   "state": "review_status",
+   "depends": [
+    "url",
+    "doi",
+    "title"
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "k4_2_source",
+   "fields": [
+    "id"
+   ],
+   "note": "K4-2（scripts/lib/knowledge.mjs 160〜164）"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_review_status",
+   "field": "review_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "full_text_checked",
+    "needs_full_text"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_rights_status",
+   "field": "rights_status",
+   "in": [
+    "fact_only",
+    "open_license",
+    "public_domain",
+    "permission_needed",
+    "unknown"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_access_status",
+   "field": "access_status",
+   "in": [
+    "open",
+    "abstract_only",
+    "restricted",
+    "unknown"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "words",
+   "id": "k4_13",
+   "field": "review_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "full_text_checked"
+   ],
+   "allow_blank": true,
+   "level": "warn",
+   "note": "K4-13（scripts/lib/knowledge.mjs 271〜273）。needs_full_text なら知らせる"
+  }
+ ]
+}

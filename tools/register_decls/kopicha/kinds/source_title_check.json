@@ -1,0 +1,20 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source_title_check",
+ "place": "data/knowledge/source-title-checks.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "source_id",
+   "key"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "source_id",
+   "meaning": "about",
+   "to": "source"
+  }
+ ]
+}

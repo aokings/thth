@@ -1,0 +1,39 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "tea",
+ "place": "src/content/teas/*.yaml",
+ "format": "yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "checks": [
+  {
+   "check": "words",
+   "id": "z4_1_tea_type",
+   "field": "type",
+   "in": [
+    "緑茶",
+    "白茶",
+    "黄茶",
+    "青茶",
+    "紅茶",
+    "黒茶"
+   ],
+   "note": "Z4-1（src/content.config.ts 25）"
+  },
+  {
+   "check": "required",
+   "id": "z4_2_tea",
+   "fields": [
+    "name",
+    "type",
+    "country",
+    "summary",
+    "updated"
+   ],
+   "note": "Z4-2"
+  }
+ ]
+}

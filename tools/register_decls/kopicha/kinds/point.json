@@ -1,0 +1,38 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "point",
+ "place": "data/knowledge/entities.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "checks": [
+  {
+   "check": "unique",
+   "id": "k4_2_point",
+   "fields": [
+    "id"
+   ],
+   "note": "K4-2（scripts/lib/knowledge.mjs 160〜164）"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_entity_type",
+   "field": "entity_type",
+   "in": [
+    "origin",
+    "term",
+    "producer",
+    "shop",
+    "variety",
+    "process",
+    "sensation",
+    "compound",
+    "concept"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  }
+ ]
+}

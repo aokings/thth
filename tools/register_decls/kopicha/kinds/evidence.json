@@ -1,0 +1,149 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "evidence",
+ "place": "data/knowledge/evidence.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim",
+   "meaning_from": "relation"
+  },
+  {
+   "field": "source_id",
+   "meaning": "derived_from",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "k4_2_evidence",
+   "fields": [
+    "id"
+   ],
+   "note": "K4-2（scripts/lib/knowledge.mjs 160〜164）"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_relation",
+   "field": "relation",
+   "in": [
+    "supports",
+    "contradicts",
+    "context"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_evidence_type",
+   "field": "evidence_type",
+   "in": [
+    "standard",
+    "government",
+    "statistics",
+    "academic",
+    "book",
+    "industry_body",
+    "encyclopedia",
+    "press",
+    "maker",
+    "retailer",
+    "own_observation"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_extraction_status",
+   "field": "extraction_status",
+   "in": [
+    "seeded",
+    "collected",
+    "verified",
+    "rechecked",
+    "not_found",
+    "mismatch"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "required",
+   "id": "k4_4_blank",
+   "fields": [
+    "claim_id",
+    "source_id"
+   ],
+   "note": "K4-4 のうち「evidence の 2 欄は空も赤」（scripts/lib/knowledge.mjs 195〜196）。先が在るかは指す欄で見る"
+  },
+  {
+   "check": "required",
+   "id": "k4_7",
+   "fields": [
+    "locator"
+   ],
+   "when": {
+    "extraction_status": {
+     "not_in": [
+      "not_found",
+      "seeded"
+     ]
+    }
+   },
+   "note": "K4-7（scripts/lib/knowledge.mjs 229〜237）"
+  },
+  {
+   "check": "required",
+   "id": "k4_7_warn",
+   "fields": [
+    "locator"
+   ],
+   "level": "warn",
+   "when": {
+    "extraction_status": {
+     "in": [
+      "seeded"
+     ]
+    }
+   },
+   "note": "K4-7 の警告の段（locator_pending）"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "k4_8",
+   "via": "source_id",
+   "target": {
+    "rights_status": {
+     "in": [
+      "unknown"
+     ]
+    }
+   },
+   "note": "K4-8（scripts/lib/knowledge.mjs 239〜245）。空の rights_status は見ない（台本のまま）"
+  },
+  {
+   "check": "words",
+   "id": "k4_11",
+   "field": "extraction_status",
+   "in": [
+    "collected",
+    "verified",
+    "rechecked",
+    "not_found",
+    "mismatch"
+   ],
+   "allow_blank": true,
+   "level": "warn",
+   "note": "K4-11（scripts/lib/knowledge.mjs 265〜267）。seeded なら知らせる"
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "schema": "thth.constitution/1",
+ "words": {
+  "says_so": {
+   "supported": {
+    "conclusion": "good"
+   },
+   "contested": {
+    "conclusion": "pending",
+    "reason": "both_sides"
+   }
+  },
+  "mention_ok": {
+   "confirmed": {
+    "conclusion": "good"
+   },
+   "rejected": {
+    "conclusion": "bad"
+   }
+  }
+ }
+}

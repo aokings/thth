@@ -1,0 +1,34 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "article_link",
+ "place": "data/article-links.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "page",
+   "target"
+  ]
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "l4_2_article",
+   "fields": [
+    "page",
+    "target"
+   ],
+   "note": "L4-2（tests/article-links.test.mjs 25〜30）"
+  },
+  {
+   "check": "unique",
+   "id": "l4_3_article",
+   "fields": [
+    "page",
+    "target"
+   ],
+   "note": "L4-3（同 32〜39）"
+  }
+ ],
+ "note": "page・target は頁の道（記事の slug でも build の出力でもあり、指す欄として宣言できない）"
+}

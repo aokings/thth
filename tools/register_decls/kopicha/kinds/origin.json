@@ -1,0 +1,74 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "origin",
+ "place": "src/content/origins/*.yaml",
+ "format": "yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "pointers": [
+  {
+   "template": "origin-{id}",
+   "meaning": "same",
+   "to": "point",
+   "note": "枚と台帳の点の暗黙の結び（頁が <接頭>-<ファイル名> で点を引く）"
+  },
+  {
+   "field": "article",
+   "meaning": "related",
+   "to": "article"
+  }
+ ],
+ "checks": [
+  {
+   "check": "words",
+   "id": "z4_1_origin_domain",
+   "field": "domain",
+   "in": [
+    "coffee",
+    "tea"
+   ],
+   "allow_blank": false,
+   "note": "Z4-1（src/content.config.ts の z.enum）"
+  },
+  {
+   "check": "words",
+   "id": "z4_1_origin_level",
+   "field": "level",
+   "in": [
+    "country",
+    "region"
+   ],
+   "allow_blank": true,
+   "note": "Z4-1（src/content.config.ts の z.enum）"
+  },
+  {
+   "check": "required",
+   "id": "z4_2_origin",
+   "fields": [
+    "name",
+    "domain",
+    "summary",
+    "updated"
+   ],
+   "note": "Z4-2（src/content.config.ts の要る欄）"
+  },
+  {
+   "check": "required",
+   "id": "x4_5_parent",
+   "fields": [
+    "parent"
+   ],
+   "when": {
+    "level": {
+     "in": [
+      "region"
+     ]
+    }
+   },
+   "note": "X4-5 のうち「region の産地は parent が要る」（tests/explain-content.test.mjs 156〜185）。YAML の null を器が字の 'null' と読むので、null の region は見逃す（実物 0）"
+  }
+ ]
+}

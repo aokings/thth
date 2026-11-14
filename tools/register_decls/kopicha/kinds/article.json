@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "article",
+ "place": "src/content/articles/*.md",
+ "format": "bytes",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "note": "頭つき MD（Astro の frontmatter）は器の形式に無いので、版だけ取る（category などは見ない）"
+}

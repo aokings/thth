@@ -1,0 +1,23 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "bookmark",
+ "place": "data/hatena/bookmark-list.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "source_id"
+ },
+ "pointers": [
+  {
+   "field": "source_id",
+   "meaning": "about",
+   "to": "source"
+  },
+  {
+   "field": "claim_ids",
+   "meaning": "derived_from",
+   "to": "claim",
+   "split": ";"
+  }
+ ]
+}

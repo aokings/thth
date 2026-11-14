@@ -1,0 +1,207 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "claim",
+ "place": "data/knowledge/claims.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "says_so",
+   "state": "claim_status",
+   "depends": [
+    "statement_ja",
+    "object_text_ja"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "object_entity_id",
+   "meaning": "related",
+   "to": "point",
+   "note": "述語しだい（includes・located_in は含む・親）。意味は述語の中身で、器は関わるとして数える"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "k4_2_claim",
+   "fields": [
+    "id"
+   ],
+   "note": "K4-2（scripts/lib/knowledge.mjs 160〜164）"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_predicate",
+   "field": "predicate",
+   "in": [
+    "is_a",
+    "has_property",
+    "has_value",
+    "includes",
+    "differs_from",
+    "produces",
+    "causes",
+    "requires",
+    "regulated_by",
+    "attributed_to",
+    "found_in",
+    "used_in",
+    "works_by",
+    "grown_in",
+    "processed_by",
+    "graded_by",
+    "harvested_in",
+    "traded_as",
+    "named_after",
+    "operated_by",
+    "located_in",
+    "founded_in",
+    "brewed_by",
+    "served_as"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_claim_type",
+   "field": "claim_type",
+   "in": [
+    "definition",
+    "classification",
+    "quantity",
+    "history",
+    "geography",
+    "regulation",
+    "market",
+    "mechanism",
+    "organization"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_claim_status",
+   "field": "claim_status",
+   "in": [
+    "supported",
+    "contextual",
+    "contested",
+    "unverified"
+   ],
+   "allow_blank": true,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は許す"
+  },
+  {
+   "check": "one_of",
+   "id": "k4_5",
+   "fields": [
+    "object_entity_id",
+    "object_text_ja"
+   ],
+   "mode": "exactly_one",
+   "when": {
+    "predicate": {
+     "blank": false
+    }
+   },
+   "note": "K4-5（scripts/lib/knowledge.mjs 204〜211）"
+  },
+  {
+   "check": "count",
+   "id": "k4_6",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "not_in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "K4-6（scripts/lib/knowledge.mjs 213〜227）。relation を問わず根拠の行を数える（台本のまま）"
+  },
+  {
+   "check": "count",
+   "id": "k4_6_warn",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "min": 1,
+   "level": "warn",
+   "when": {
+    "claim_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "K4-6 の警告の段（no_evidence_unverified）"
+  },
+  {
+   "check": "count",
+   "id": "k4_9",
+   "from": {
+    "kind": "evidence",
+    "via": "claim_id"
+   },
+   "where": {
+    "evidence_type": {
+     "not_in": [
+      "encyclopedia",
+      "press",
+      "maker",
+      "retailer"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "claim_status": {
+     "in": [
+      "supported"
+     ]
+    }
+   },
+   "note": "K4-9（scripts/lib/knowledge.mjs 247〜254）。「全部が弱い 4 種なら赤」を「弱くない根拠が 1 つ以上」に言い換えた。根拠 0 の supported は k4_6 が別に赤にする。relation を問わない（台本のまま）"
+  },
+  {
+   "check": "shape",
+   "id": "k4_10_as_of",
+   "field": "as_of",
+   "shape": "date_partial",
+   "note": "K4-10（scripts/lib/knowledge.mjs 256〜262）"
+  },
+  {
+   "check": "shape",
+   "id": "k4_10_valid_until",
+   "field": "valid_until",
+   "shape": "date_partial",
+   "note": "K4-10"
+  },
+  {
+   "check": "required",
+   "id": "k4_12",
+   "fields": [
+    "claim_status"
+   ],
+   "level": "warn",
+   "note": "K4-12（scripts/lib/knowledge.mjs 268〜270）"
+  }
+ ]
+}
