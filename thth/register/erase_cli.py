@@ -103,6 +103,10 @@ def cmd_run(args) -> int:
         raise RegisterRefused("register_erase_left", "self_check", request=value["request"],
                               found_in=sorted(check.get("found_in") or {}), places={
                                   p: (v or {}).get("state") for p, v in value["places"].items()})
+    if check.get("state") == "not_checked" and check.get("why") == "list_rebuilt":
+        # 前の版を除いたあとで打ち直した: 値の一覧を作り直せないので、消し終わりを確かめていない（rc を 0 にしない）
+        raise RegisterRefused("register_erase_left", "list_rebuilt", request=value["request"], places={
+            p: (v or {}).get("state") for p, v in value["places"].items()})
     if args.json:
         _print(value)
         return 0

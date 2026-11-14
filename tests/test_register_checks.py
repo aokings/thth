@@ -126,7 +126,9 @@ def test_unique_組で比べ_skip_blankをfalseにすると空の組も重なり
 
 
 def test_required_whenに合う記録だけ見る(env):
-    chk = [{"check": "required", "id": "j_25", "when": {"status": {"in": ["established"]}}, "fields": ["url", "date"]}]
+    # 段 4 §9: 空白を落とすのは trim を書いたときだけ（条件にも検査にも書く）
+    chk = [{"check": "required", "id": "j_25", "when": {"status": {"in": ["established"], "trim": True}},
+            "fields": ["url", "date"], "trim": True}]
     rows = [{"claim_id": "ok", "status": "established", "url": "https://a", "date": "2026-01-01"},
             {"claim_id": "draft", "status": "draft"},
             {"claim_id": "ng", "status": " established ", "url": "https://a", "date": "   "}]
@@ -160,7 +162,9 @@ def test_words_語の中から_空は既定で赤(env):
     rows = [{"claim_id": "a", "status": " draft "}, {"claim_id": "b", "status": "Draft"}, {"claim_id": "c"}]
     root = claims_ledger(env["tmp"], chk, rows)
     r = result(root, "j_3")
-    assert {(x["record"], x["reason"]) for x in r["records"]} == {("claim:b", "word_not_allowed"), ("claim:c", "blank")}
+    # 段 4 §9: 空白を落とさない（" draft " は語の外）
+    assert {(x["record"], x["reason"]) for x in r["records"]} == {
+        ("claim:a", "word_not_allowed"), ("claim:b", "word_not_allowed"), ("claim:c", "blank")}
     assert result(root, "lang_words")["violations"] == 0
 
 
@@ -216,7 +220,8 @@ def test_forbid_pair_禁じた組を指す記録を赤にし_よその台帳は�
 def test_count_指してくる行の数と違う値の数(env):
     chk = [{"check": "count", "id": "j_19", "from": {"kind": "evidence", "via": "claim_id"}, "min": 1},
            {"check": "count", "id": "j_20", "when": {"status": {"in": ["established"]}},
-            "from": {"kind": "evidence", "via": "claim_id"}, "distinct": "source_id", "min": 2},
+            "from": {"kind": "evidence", "via": "claim_id"}, "distinct": "source_id", "min": 2,
+            "trim": True},  # 段 4 §9: 空白を落とすのは trim を書いたときだけ
            {"check": "count", "id": "cap", "from": {"kind": "evidence", "via": "claim_id"}, "max": 2}]
     root = claims_ledger(env["tmp"], chk, [{"claim_id": "c0", "status": "draft"},
                                            {"claim_id": "c1", "status": "established"},
@@ -391,7 +396,7 @@ _ATTACKS = [
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": "x"}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": "x"}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": []}}},
-    {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [1]}}},
+    {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [1.5]}}},  # 段 4 §9: 整数は語に書ける
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [["x"]]}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": [str(i) for i in range(1025)]}}},
     {"check": "required", "id": "a", "fields": ["t"], "when": {"s": {"in": ["x"], "not_in": ["y"]}}},
@@ -571,7 +576,7 @@ def test_G9_or_blankでこの語か空(env):
            {"check": "required", "id": "k_a6", "when": {"status": {"not_in": ["draft"], "or_blank": True}},
             "fields": ["title"]},
            {"check": "required", "id": "plain", "when": {"status": {"in": ["draft"]}}, "fields": ["title"]}]
-    rows = [{"claim_id": "d", "status": "draft"}, {"claim_id": "blank", "status": " "},
+    rows = [{"claim_id": "d", "status": "draft"}, {"claim_id": "blank", "status": ""},  # 段 4 §9: 空白だけは空でない
             {"claim_id": "e", "status": "established"}]
     root = claims_ledger(env["tmp"], chk, rows)
     assert bad_refs(root, "k_a2") == ["claim:blank", "claim:d"]

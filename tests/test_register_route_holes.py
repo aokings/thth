@@ -94,10 +94,11 @@ def test_穴1_配った物の控えが無い前の封は読まない(env, capsys
     bare = env / "public/bare.json"
     shutil.copy(R.seal_path(str(led), "facts"), bare)
     rc, v = verify(capsys, led, "facts", site, NOW, "--previous", bare)
-    assert rc != 0 and "previous_not_deployed" in words(v), v
+    # 封の細目をそのまま写した物は、公開の写しの古い形として断る（段 7 の検収 7-1。配り直しの案内つき）
+    assert rc != 0 and "previous_old_form" in words(v), v
     # 配った物の控えの頭を、今の封より短く書き換えても（封の頭より前へは）戻せない
     data = json.loads(pub2.read_text())
-    data["deployed"]["judgments"] = dict(data["body"]["judgments"])
+    data["deployed"]["judgments"] = dict(data["public"]["judgments"])
     data["deployed"]["judgments"]["bytes"] -= 1
     bad = env / "public/bad.json"
     bad.write_text(json.dumps(data))

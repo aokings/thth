@@ -20,6 +20,10 @@
   対象の版を示していない検収の記録（日付と番号だけ）は判断に数えず、`unversioned_view` で元の表と行を引けるように
   し、今の版に効くかは「言えない」と出す（無い物を「効く」と言わない）。
 - 番号が消えたら赤。消す求めの結果に載った番号（`erase_excuses` の `records`）は赤にしない（`vanished`）。
+- **通す物は署名を確かめた封から**（段 5 の検収の穴 3）: `erase_excuses` は `.thth/erase/<求め>/result.json` を
+  それだけでは信じない。その台帳のどれかの出し口の今の封で、署名が合う物の「消す求めの結果」（`erase`）に載った
+  求め・行・記録の番号だけを通す。受け入れ直す前・封の無い台帳では通さない（赤のまま。何が足りないかは
+  `unsealed`・`no_outlets` で言う）。
 
 網に出ない。
 """
@@ -236,29 +240,35 @@ def side_kind(root: str, name: str) -> str:
 # ------------------------------------------------------------------ 消す求めの結果（通す物）
 
 def erase_excuses(root: str) -> dict:
-    """台帳の消す求めの結果の記録（`.thth/erase/<求め>/result.json`）から、通す物を集める:
-    `requests`（結果のある求め）・`lines`（書き換えた判断の行の番号）・`records`（今の本文から除いた記録の番号）。
-    結果に載っていない消え・書き換えは、今までどおり赤。"""
-    out = {"requests": set(), "lines": set(), "records": set()}
+    """消す求めで通す物: `requests`（求め）・`lines`（印の形に書き換えた判断の行の番号）・`renumbered`（結びの
+    付け直しで番号の変わった行）・`records`（今の本文から除いた記録の番号）。**署名を確かめた封**（その台帳の
+    どれかの出し口の今の封・`route.trusted_seal`）の `erase` に載った物だけ。結果の記録（`result.json`）は、
+    それだけでは信じない（鍵を持たない者でも置けるので）。
+    加えて、結果の記録はあるが、署名の合う封にまだ載っていない求め（`unsealed`。受け入れ直す前）と、出し口が 1 つも
+    無い台帳か（`no_outlets`。封を作れないので、消したあとの差は確かめられない）を返す。通さない物は今までどおり赤。"""
+    from . import route as R
+    out = {"requests": set(), "lines": set(), "renumbered": set(), "records": set(), "unsealed": [],
+           "no_outlets": False}
+    try:
+        vessel = V.open_vessel(root)
+        outlets = R.load_outlets(root, vessel)
+    except (RegisterRefused, V.DeclarationError):
+        outlets = {}
+    out["no_outlets"] = not outlets
+    for name in sorted(outlets):
+        seal, state = R.trusted_seal(root, name)
+        block = (seal or {}).get("body", {}).get("erase") if state == "verified" else None
+        if not isinstance(block, dict):
+            continue
+        out["requests"].update(x for x in block.get("requests") or [] if isinstance(x, str))
+        out["lines"].update(x for x in block.get("lines") or [] if isinstance(x, str))
+        out["renumbered"].update(x for x in block.get("renumbered") or [] if isinstance(x, str))
+        out["records"].update(x for x in block.get("records") or [] if isinstance(x, str))
     base = os.path.join(K.thth_dir(root), J.ERASE_DIR)
-    if os.path.islink(base) or not os.path.isdir(base):
-        return out
-    for name in sorted(os.listdir(base)):
-        if not J.ERASE_ID.fullmatch(name):
-            continue
-        path = os.path.join(base, name, J.ERASE_RESULT)
-        if os.path.islink(path) or not os.path.isfile(path):
-            continue
-        try:
-            with open(path, "rb") as f:
-                result = json.loads(f.read().decode("utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
-            continue
-        if not isinstance(result, dict) or result.get("request") != name:
-            continue
-        out["requests"].add(name)
-        out["lines"].update(x for x in result.get("rewritten_lines") or [] if isinstance(x, str))
-        out["records"].update(x for x in result.get("erased_records") or [] if isinstance(x, str))
+    if not os.path.islink(base) and os.path.isdir(base):
+        out["unsealed"] = sorted(n for n in os.listdir(base) if J.ERASE_ID.fullmatch(n)
+                                 and os.path.isfile(os.path.join(base, n, J.ERASE_RESULT))
+                                 and n not in out["requests"])
     return out
 
 
@@ -313,7 +323,9 @@ def judgments_continue(prev: bytes, now: bytes, erase: dict | None = None) -> di
         if line == other:
             continue
         a, b = _item(line), _item(other)
-        if erase and (J.is_erased(b) or _only_renumbered(a, b)) \
+        renumbered = set((erase or {}).get("renumbered") or ())
+        moved = _only_renumbered(a, b) and b.get("id") in renumbered and b.get("carries") in lines | renumbered
+        if erase and (J.is_erased(b) or moved) \
                 and J.line_continues(J.skeleton_pair(a), b, lines=lines, requests=requests) is None:
             passed.append(number)
             continue
@@ -358,9 +370,15 @@ def against(root: str, name: str) -> dict:
     続きでなければ呼ぶ側が赤にする。"""
     prev = previous_judgments(root, name)
     now = _judgments_bytes(root)
-    result = judgments_continue(prev["bytes"], now, erase_excuses(root))
-    return {"against": prev["name"], "from": prev["from"], **result,
-            "lines_before": len(_lines(prev["bytes"])), "lines_now": len(_lines(now))}
+    excuses = erase_excuses(root)
+    result = judgments_continue(prev["bytes"], now, excuses)
+    out = {"against": prev["name"], "from": prev["from"], **result,
+           "lines_before": len(_lines(prev["bytes"])), "lines_now": len(_lines(now))}
+    if not result["continues"] and (excuses["unsealed"] or excuses["no_outlets"]):
+        # 消す求めの書き換えは、受け入れ直した封に載ってから通す（封の無い台帳は、消す前の控えの名を基準に替える）
+        out["erase_unsealed"] = excuses["unsealed"]
+        out["erase_no_outlets"] = excuses["no_outlets"]
+    return out
 
 
 # ------------------------------------------------------------------ 取り込みの跡

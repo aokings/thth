@@ -27,6 +27,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -154,7 +155,8 @@ def vessel_gate(led: pathlib.Path, decl: dict, logged: list, listed: list, run: 
     P.write_seed(str(led), "site", logged, at=NOW)
     list_path = run / f"{tag}.list.txt"
     list_path.write_text("".join(u + "\n" for u in listed), encoding="utf-8")
-    return P.published(str(led), "site", str(list_path), NOW)
+    # 写しの台帳は前に配った控えの頭を持たない（初回）。published は --previous か --no-previous を言わせる
+    return P.published(str(led), "site", str(list_path), NOW, no_previous=True)
 
 
 def red_urls(v: dict) -> set:
@@ -257,6 +259,16 @@ def vessel_reader(led: pathlib.Path, loaded=None) -> dict:
             "hidden_id_hits": [(r["record"], r["field"], r["found"]) for c in ids for r in c["records"]][:20]}
 
 
+ID_SHAPE = re.compile(r"[a-z]+-[a-z0-9-]+|w\d{2}[a-z]?")
+
+
+def vessel_only_ids(script_hits, v: dict) -> list:
+    """器の番号の点検が拾い、今の台本の番号の点検（同じ行・同じ欄）が拾わなかった物（「器だけが拾った」）。"""
+    script = {(rid, field) for _fn, rid, field, found in script_hits if any(ID_SHAPE.fullmatch(x) for x in found)}
+    return [{"record": rec, "field": field, "found": found} for rec, field, found in v["hidden_id_hits"]
+            if (rec.split(":", 1)[-1], field) not in script]
+
+
 def inject_csv(src: pathlib.Path, dst: pathlib.Path, field: str, word: str) -> str:
     """表の写しの、`field` が空でなく引用符を使わない最初の行の値の末尾に語を足す（ほかの行のバイトは変えない）。"""
     import csv
@@ -287,7 +299,11 @@ def check_jiangshi(dev: pathlib.Path, run: pathlib.Path) -> dict:
     v = vessel_reader(work / "led", loaded_of(repo / "data", JIANGSHI_FIELDS, jiangshi_skip))
     retired = sum(1 for row in __import__("csv").DictReader(open(repo / "data/leads.csv", encoding="utf-8"))
                   if row.get("verification_status") == "retired")
-    out["now"] = {"script_hits": len(hits), "vessel": v, "retired_leads_also_checked_by_vessel": retired}
+    script_ids = sum(1 for _fn, _rid, _f, found in hits if any(ID_SHAPE.fullmatch(x) for x in found))
+    out["now"] = {"script_hits": len(hits), "script_id_hits": script_ids, "vessel_hidden_ids": v["hidden_ids"],
+                  "vessel": v, "retired_leads_also_checked_by_vessel": retired}
+    # 番号の点検の数も比べる。器だけが拾った物（台本の番号の型に無い種類の番号）は「器だけが拾った」と出す
+    out["vessel_only"] = vessel_only_ids(hits, v)
     same = (len(hits) == 0) == (v["internal_words"] == 0)
     # 語を 1 つ足した写し: 台本は ROOT を写しに向ける（台本のファイルは変えない）
     root = work / "script-root"
@@ -322,7 +338,10 @@ def check_sometoka(dev: pathlib.Path, run: pathlib.Path) -> dict:
     reader_ledger(work / "led", repo / "data", SOMETOKA_FIELDS, SOMETOKA_WORDS, {"observation": "observations.csv"})
     v = vessel_reader(work / "led", loaded_of(repo / "data", SOMETOKA_FIELDS, sometoka_skip))
     out["build"] = f"手元の build の出力（site/dist・{mtime(dist)}）"
-    out["now"] = {"script_hits": len(found), "script_first": found[:3], "vessel": v}
+    out["now"] = {"script_hits": len(found), "script_first": found[:3], "vessel_hidden_ids": v["hidden_ids"],
+                  "vessel": v}
+    # 台本は build の頁を見る（行と欄に戻せない）ので、器の番号の点検が拾った物は全部「器だけが拾った」と出す
+    out["vessel_only"] = [{"record": r, "field": f, "found": x} for r, f, x in v["hidden_id_hits"]] if not found else []
     same = (len(found) == 0) == (v["internal_words"] == 0)
     # 語を 1 つ足した写し: 頁は 1 枚を写して本文に語を足す・台帳は表の写しの 1 欄に足す
     cdist = work / "dist-copy"
@@ -371,6 +390,8 @@ def main(argv=None) -> int:
         print(f"{r['media']} / {r['gate']}: {r['answer']}" + (f"（{r.get('build')}）" if r.get("build") else ""))
         if "now" in r:
             print("  今の入力: " + json.dumps(r["now"], ensure_ascii=False, default=str)[:600])
+        if r.get("vessel_only"):
+            print("  器だけが拾った（番号の点検）: " + json.dumps(r["vessel_only"], ensure_ascii=False)[:600])
         if "violation" in r:
             print("  違反を 1 つ足した写し: " + json.dumps(r["violation"], ensure_ascii=False))
     print(f"写しの置き場 {run}")

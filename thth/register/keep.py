@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import stat
+import unicodedata
 
 from . import vessel as V
 from .errors import RegisterRefused
@@ -74,12 +75,33 @@ def thth_dir(root: str) -> str:
     return os.path.join(root, THTH)
 
 
+RESERVED_NAMES = (THTH,) + SKIP_DIRS
+
+
+def fold_name(part: str) -> str:
+    """器が書かない道の比べに使う形（NFC・小文字）。置き場が大文字小文字や Unicode の正規化を区別しないとき
+    （macOS の既定）、`.THTH`・`.Thth`・NFD の綴りは `.thth` と同じ所を指すので。"""
+    return unicodedata.normalize("NFC", part).lower()
+
+
+def reserved_name(part: str) -> bool:
+    """フォルダ名（道の 1 段）が、器が書かない道（`.thth`・`.git`）に当たるか。NFC・小文字にそろえて比べる。"""
+    return isinstance(part, str) and fold_name(part) in RESERVED_NAMES
+
+
+def reserved_path(rel: str) -> bool:
+    """道（`/` 区切り）のどの段かが、器が書かない道に当たるか（段 6 の 6-4。束・取り込み・`row`・材料の書き出し先・
+    消す求めの全部が、この関数で比べる）。"""
+    return any(reserved_name(p) for p in str(rel).replace("\\", "/").split("/"))
+
+
 def safe_rel(rel) -> str:
-    """台帳の中の道（`/` 区切り・`..` なし・絶対でない・`.thth` と `.git` の中でない）。合わなければ断る。"""
+    """台帳の中の道（`/` 区切り・`..` なし・絶対でない・どの段も `.thth` と `.git` でない。比べは NFC・小文字）。
+    合わなければ断る。"""
     if not isinstance(rel, str) or not rel or rel.startswith("/") or "\\" in rel or "\x00" in rel:
         raise RegisterRefused("register_args_invalid", "path")
     parts = rel.split("/")
-    if any(p in ("", ".", "..") for p in parts) or parts[0] == THTH or any(p in SKIP_DIRS for p in parts):
+    if any(p in ("", ".", "..") for p in parts) or reserved_path(rel):
         raise RegisterRefused("register_args_invalid", "path")
     return rel
 
@@ -181,7 +203,7 @@ def walk(root: str, tops=None, *, skip_thth: bool = True):
             rel_dir = "" if rel_dir == "." else rel_dir
             keep_dirs = []
             for d in sorted(dirs):
-                if d in SKIP_DIRS or (skip_thth and not rel_dir and d == THTH):
+                if fold_name(d) in SKIP_DIRS or (skip_thth and not rel_dir and fold_name(d) == THTH):
                     continue
                 path = os.path.join(directory, d)
                 if os.path.islink(path):

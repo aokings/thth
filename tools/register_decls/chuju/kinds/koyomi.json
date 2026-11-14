@@ -61,8 +61,8 @@
    "id": "c4_23_draft",
    "field": "draft",
    "in": [
-    "true",
-    "false"
+    true,
+    false
    ],
    "allow_blank": true
   },
@@ -75,7 +75,7 @@
    "when": {
     "draft": {
      "in": [
-      "false"
+      false
      ]
     }
    },

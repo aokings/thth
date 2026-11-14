@@ -39,7 +39,7 @@ REASONS = frozenset((
     "register_merge_refused",
     # 台帳の器 段 8: 共通の台帳と、外す範囲（メディア・持ち主）。
     "register_common_exists", "register_builtin_kind_exists", "register_leave_confirm", "register_leave_overlap",
-    "register_leave_incomplete",
+    "register_leave_incomplete", "register_leave_changed", "register_folder_too_wide",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 

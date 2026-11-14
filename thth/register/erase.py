@@ -21,7 +21,7 @@
 | 場所 | すること |
 |---|---|
 | `judgments` 判断の記録 | 範囲の版を対象にした行を、印の形（`judgment.erased_ok` の注・指示 §3.4）に書き換える。行の数と順は変えない |
-| `seals` 封と材料の控え | 範囲の版を載せた封から、その記録の入力の版・項目の指紋・行の指紋・書いたファイルの sha256 を外す（署名は合わなくなり、受け入れ直すまで封なし） |
+| `seals` 封と材料の控え | 範囲の版を載せた封から、その記録の入力の版・項目の指紋・行の指紋・書いたファイルの sha256 と、**署名**を外す（署名は消す前の中身への物なので、公開鍵と台帳の塩から値を当て直せる。受け入れ直すまで封なし） |
 | `current_text` 今の本文 | 欄を空にする（表は変える行だけ・枚はまとめての入れ替え）か、記録を除く |
 | `kept_objects` 前の版 | 範囲の版の中身を、控えの置き場から除く（表は枚ごとの控えなので、ほかの行の前の版も道連れ） |
 | `batch` 段取りの控え | 除いた中身の sha256 を、段取りと済んだ記録から外す |
@@ -30,14 +30,21 @@
   （`trail.note`）が参照する判断の記録の控えのうち範囲を含む物を除き、参照と束の目録の指紋を外す |
 | `materials` 書き出した材料 | 器は書き出し先を知らない（台帳の中には置けない）: 確かめていない |
 | `common`・`git_history`・`clones`・`pages`・`copies` | 確かめていない（器は書き換えない。持ち主の手） |
-| `self_check` 消し終わりの確かめ | 台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋がどこにも無いか |
+| `self_check` 消し終わりの確かめ | 台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋がどこにも無いか。加えて、値の一覧に頼らない構造の確かめ（`structural_left`） |
 
 - **二次の指紋も残さない**（本線の決め 11/14）: 印の行の番号は乱数の番号（`x-`）に付け直し、その番号を指す結びも直す。
   範囲の版を目録に持つ控えの名・目録の指紋・段取りの名・取り込みの記録の指紋は乱数に付け直し、跡の参照も直す
   （古い名は書かない・対応表を作らない。付け直した数を結果に出す）。封の判断の記録の頭の指紋は外す。残る物は
   結果の `second_fingerprints` に書く（公開の場所の配る物）。
 - 消す前に、範囲の版の中身・sha256・器の指紋の一覧を**メモリの中だけ**で作り（`_gather`）、確かめに使う。ファイルに
-  書かない。前の版を除いたあとで止まり、打ち直したときは一覧を作り直せないので、確かめは「確かめていない」と言う。
+  書かない。前の版を除いたあとで止まり、打ち直したときは一覧を作り直せないので、確かめは「確かめていない」と言い、
+  命令の rc は 0 にしない（段 5 の検収の穴 2）。
+- 控えに置いた判断の記録（跡の注）を除く判定は、値の一覧に頼らない: 今の判断の記録で印の行になっている位置の行が、
+  控えの中で印でなければ範囲とみなして除く。この場所（`trail`）は打ち直しのたびに全部の控えを見直す（「済み」と
+  記録してあっても信じない。何度やっても同じ結果になる）。
+- 構造の確かめ（`structural_left`。値の一覧が無くても見られる物）: 印でない行を範囲の位置に持つ控えの判断の記録・
+  中身を除いた版の番号をまだ持つ目録と段取りと跡の注・署名の残った範囲の封。`erase done --place self_check` は、
+  器がその場でもう一度全部を読み（一覧を作れるなら一覧でも）、残りが無いときだけ「消した」を受ける。
 - 「確かめていない」が 1 つでも残る間、状態は「消し終わっていない」。持ち主が外の場所を確かめたら `done` で
   1 つずつ結果を付ける。全部に結果が付いて初めて「消し終わり」。`unfinished` が数を返す（`check`・`health` に出す物）。
 - 消したあと、「過去の判定を全部再現できる」とは言わない。再現できない世代は、その版を入力にしていた封の出し口ごとに
@@ -92,9 +99,14 @@ OUTSIDE_NOTE = {
 
 SECOND_FINGERPRINTS = [
     "台帳の中: 行の番号・控えの名・目録の指紋・段取りの名は乱数に付け直し、封の判断の記録の頭の指紋"
-    "（judgments.sha256）は外した。古い名と指紋は台帳のどこにも書いていない（確かめの一覧に入れて見た）",
-    "公開の場所: 前に配った物（封と配った時の判断の記録の頭）には、消した行を含むバイトの指紋と行ごとの骨の指紋が"
-    "残る。CI の続きの比べに要るので器は消さない。当て直すには、消した行のほかの全バイト（ほかの欄と全部の行）が要る",
+    "（judgments.sha256）と範囲の封の署名は外した（受け入れ直すまで封なし）。古い名・指紋・署名は台帳のどこにも"
+    "書いていない（確かめの一覧に入れて見た）。台帳の塩（.thth/seals/salt）は変えずに残す",
+    "公開の場所: 前に配った写しには、記録の番号・版・素の指紋は無い。あるのは塩を混ぜた要約（入力の版の組・項目・"
+    "項目と行の指紋・出力・封の細目）と、判断の記録の頭と行ごとの組（塩を混ぜた骨・行の全バイト・番号と結びを除いた"
+    "欄）。消す前に配った写しの中の、消した行を含む物も残る（CI の続きの比べに要るので器は消さない）",
+    "当て直せる者: 塩を知らない者は、公開の写しと材料から当て直せない。塩を知る者（台帳を持つ者）は、配った封の"
+    "入力の版が行のバイトの sha256 なので、その行のほかの欄（今の本文に残っている）が分かれば、短い値を当て直せる。"
+    "行ごとの組の全バイトも同じ。台帳そのもの（塩を含む）を公開している場合は、誰でも塩を知る者と同じ",
 ]
 
 
@@ -232,6 +244,8 @@ class Range:
         for name in self.names:
             if isinstance(name, str) and len(name) >= 16:
                 out.add(name.encode("ascii", errors="ignore"))
+                if "/" in name:
+                    out.add(name.replace("/", "\\/").encode("ascii", errors="ignore"))   # JSON の逃がした形
         return sorted(out), short
 
 
@@ -330,9 +344,16 @@ def _candidates(root: str, path: str) -> dict:
     return {d: s for d, s in out.items() if os.path.exists(K.object_path(root, d))}
 
 
+def _open_own(root: str, req: str) -> V.Vessel:
+    """器を開く。止まった入れ替えの段取りが残っていても、それが**この求めの**入れ替えなら続きのために開く
+    （ほかの者の止まった入れ替えは、今までどおり断る: `register_batch_pending`）。"""
+    plan = K.pending(root)
+    return V.open_vessel(root, allow_pending=plan is not None and plan.get("what") == _what(req))
+
+
 def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
     """範囲の版の一覧（メモリの中だけ）。"""
-    vessel = V.open_vessel(root)
+    vessel = _open_own(root, reqb["id"])
     kind = _kind_of(vessel, reqb["record"])
     path = reqb["path"]
     rng = Range()
@@ -381,7 +402,7 @@ def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
             rng.values.add(_field_value(rec, reqb))
         elif kind.format == "csv":
             text = V._decode(data) or ""
-            for raw in V.split_csv_rows(text)[1:]:
+            for raw in V.split_csv_rows(text, kind.delimiter)[1:]:
                 if V.bytes_version(raw.encode("utf-8")) == rec.version:
                     rng.rows.add(raw.rstrip("\r\n"))
         for q in kind.questions + [None]:
@@ -400,14 +421,17 @@ def _gather(root: str, reqb: dict, scopeb: dict, result: dict | None) -> Range:
         for out_path, digest in (body.get("outputs") or {}).items():
             if _output_of(out_path, path, body.get("outlet")) and isinstance(digest, str):
                 rng.extra.add(digest)
-    # 二次の指紋（付け直す・外す前の物。確かめの一覧に入れる）
+    # 二次の指紋（付け直す・外す前の物。確かめの一覧に入れる）。範囲の封の署名も（消す前の中身への署名なので）
     for full in _seal_files(root):
-        body = (_read_any(full) or {}).get("body") or {}
+        value = _read_any(full) or {}
+        body = value.get("body") or {}
         if any(isinstance(i, dict) and i.get("record") == reqb["record"] and i.get("version") in rng.versions
                for i in body.get("inputs") or []):
             for head in (body.get("judgments"), (body.get("previous") or {}).get("judgments")):
                 if isinstance(head, dict) and isinstance(head.get("sha256"), str):
                     rng.names.add(head["sha256"])
+            if isinstance(value.get("signature"), str):
+                rng.names.add(value["signature"])
     raw = R.judgments_raw(root)
     for line in raw.decode("utf-8", errors="replace").splitlines():
         try:
@@ -657,6 +681,7 @@ def _place_judgments(root, req, reqb, rng, result, kind, by, at) -> dict:
         count = len(mine)
         return {"state": "erased" if count else "nothing", "lines": count}
     changed = True
+    moved = set()
     while changed:
         changed = False
         for n, (line, item, tail) in enumerate(rows):
@@ -667,6 +692,8 @@ def _place_judgments(root, req, reqb, rng, result, kind, by, at) -> dict:
                 old = item["id"]
                 item["id"] = J.new_id(item)
                 renumber[old] = item["id"]
+                moved.discard(old)
+                moved.add(item["id"])
             rows[n] = (None, item, tail)
             changed = True
     out = [line if line is not None else json.dumps(item, ensure_ascii=False, sort_keys=True) + tail
@@ -674,6 +701,8 @@ def _place_judgments(root, req, reqb, rng, result, kind, by, at) -> dict:
     # 結果に行の番号を先に置く（読む入口は、結果に載った印の行だけを受ける）。それから判断の記録を書き換える。
     # 前の回に結果へ置いたが判断の記録に書けなかった番号は、ここで落とす（今の判断の記録にある物だけ）。
     result["rewritten_lines"] = sorted(set(mine) | set(rewritten))
+    # 結びの付け直しで番号の変わった印でない行（受け入れ直した封に載り、CI はその行だけ番号と結びの違いを通す）
+    result["renumbered_lines"] = sorted(set(result.get("renumbered_lines") or []) | moved)
     _save(root, req, RESULT_FILE, result)
     K._atomic_write(root, J.path_of(root), "".join(out).encode("utf-8"))
     count = len(set(rewritten) | set(mine))
@@ -719,9 +748,15 @@ def _place_seals(root, req, reqb, rng, result, kind, by, at) -> dict:
                 if isinstance(head, dict) and head.get("sha256") is not None:
                     head["sha256"] = None
             body["erased"] = sorted(set(body.get("erased") or []) | {req})
+            # 署名も外す: 署名は消す前の中身（の塩を混ぜた要約）への物なので、公開鍵と台帳の塩から、候補の値で中身を
+            # 作り直して署名を確かめれば、消した値を当て直せる（段 5 の検収の穴 1）。受け入れ直すまで封なし。
+            value.pop("signature", None)
             _write_seal(root, full, value)
         else:
             materials.update(p for p, d in (body.get("outputs") or {}).items() if d is None)
+            if "signature" in value:
+                value.pop("signature")
+                _write_seal(root, full, value)
         touched.append({"outlet": body.get("outlet"), "generations": [1, body.get("generation")], "at_most": True})
     result["seals"] = sorted(set(result["seals"]) | {t["outlet"] for t in touched})
     known = {u["outlet"]: u for u in result["unreproducible"]}
@@ -742,7 +777,7 @@ def _place_current(root, req, reqb, rng, result, kind, by, at) -> dict:
         return {"state": "erased", "continued": True}
     if not rng.current:
         return {"state": "nothing"}
-    vessel = V.open_vessel(root)
+    vessel = _open_own(root, req)
     rec = vessel.get(reqb["record"])
     rel = rec.path
     if kind.format == "csv":
@@ -945,8 +980,27 @@ def _place_snapshots(root, req, reqb, rng, result, kind, by, at) -> dict:
     return {"state": "erased" if count or names else "nothing", "entries": count, "renamed": len(names)}
 
 
-def _judgments_in_range(data: bytes, reqb: dict, rng: Range, needles: list) -> bool:
-    """控えた判断の記録の中身が、範囲の行（範囲の版を対象にした・理由の文に消す値がある）か範囲の中身を含むか。"""
+def _nonblank(data: bytes) -> list:
+    return [line for line in data.decode("utf-8", errors="replace").splitlines() if line.strip()]
+
+
+def marked_positions(root: str) -> set:
+    """今の判断の記録で、印の行（`erased`）になっている位置（空の行を数えない）。"""
+    return {n for n, line in enumerate(_nonblank(R.judgments_raw(root))) if J.is_erased(_read_line(line))}
+
+
+def copy_in_range(data: bytes, marked: set) -> bool:
+    """控えた判断の記録が、今は印の行になっている位置に、印でない行を持つか（値の一覧に頼らない判定。判断の記録は
+    足すだけで、消す求めも行の数と順を変えないので、位置で比べられる）。"""
+    lines = _nonblank(data)
+    return any(n < len(lines) and not J.is_erased(_read_line(lines[n])) for n in marked)
+
+
+def _judgments_in_range(data: bytes, reqb: dict, rng: Range, needles: list, marked: set | None = None) -> bool:
+    """控えた判断の記録の中身が、範囲の行（今は印の位置にある印でない行・範囲の版を対象にした・理由の文に消す値が
+    ある）か範囲の中身を含むか。"""
+    if marked and copy_in_range(data, marked):
+        return True
     if any(n in data for n in needles):
         return True
     for line in data.decode("utf-8", errors="replace").splitlines():
@@ -969,6 +1023,7 @@ def _strip_trail_notes(root: str, req: str, reqb: dict, rng: Range) -> dict:
     （指紋を残さない: 名の代わりに `judgments_erased` を記す）。範囲の版を持っていた目録の注の束の目録の指紋も外す。
     除いた時点への `check --against` は「取り出せない」と言う。"""
     needles, _short = rng.needles()
+    marked = marked_positions(root)
     removed = notes_changed = 0
     for full in _snapshot_files(root):
         snap = K._read_json(root, full, "snapshot")
@@ -989,7 +1044,7 @@ def _strip_trail_notes(root: str, req: str, reqb: dict, rng: Range) -> dict:
                 if os.path.isfile(path):
                     with open(path, "rb") as f:
                         data = f.read()
-                if data is None or _judgments_in_range(data, reqb, rng, needles):
+                if data is None or _judgments_in_range(data, reqb, rng, needles, marked):
                     rng.names.add(digest)
                     if data is not None:
                         removed += K.remove_object(root, digest)
@@ -1038,10 +1093,57 @@ def _where(rel: str) -> str:
     return {J.FILE: "judgments", R.SEALS_DIR: "seals", K.BATCH: "batch"}.get(second, "self_check")
 
 
-def self_check(root: str, rng: Range) -> dict:
-    """台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋が無いか。"""
+def _looks_judgments(data: bytes) -> bool:
+    return data.lstrip().startswith(b"{") and b'"schema": "thth.judgment/1"' in data
+
+
+def structural_left(root: str, req: str, reqb: dict) -> dict:
+    """値の一覧に頼らない確かめ（場所 → 道の一覧）: 今は印の位置に印でない行を持つ控えの判断の記録・中身を除いた
+    版の番号（sha256）をまだ持つ控えの目録・段取り・跡の注・この求めで書き換えたのに署名の残った封。"""
+    hits = {}
+    marked = marked_positions(root)
+    base = K.guard(root, K._kept(root, K.OBJECTS))
+    if marked and os.path.isdir(base):
+        for directory, _dirs, files in os.walk(base):
+            for name in sorted(files):
+                full = os.path.join(directory, name)
+                if os.path.islink(full):
+                    continue
+                with open(full, "rb") as f:
+                    data = f.read()
+                if _looks_judgments(data) and copy_in_range(data, marked):
+                    hits.setdefault("trail", []).append(os.path.relpath(full, root).replace(os.sep, "/"))
+
+    def gone(digest) -> bool:
+        return isinstance(digest, str) and len(digest) == 64 and not os.path.exists(K.object_path(root, digest))
+    for full in _snapshot_files(root):
+        snap = K._read_json(root, full, "snapshot")
+        rel = os.path.relpath(full, root).replace(os.sep, "/")
+        if any(isinstance(e, dict) and e.get("path") == reqb["path"] and gone(e.get("sha256"))
+               for e in snap.get("files", [])):
+            hits.setdefault("snapshots", []).append(rel)
+        if any(isinstance(n, dict) and gone(n.get("judgments")) for n in snap.get("trail") or []):
+            hits.setdefault("trail", []).append(rel)
+    for full in _batch_files(root):
+        plan = K._read_json(root, full, "batch")
+        if any(isinstance(e, dict) and e.get("path") == reqb["path"] and (gone(e.get("old")) or gone(e.get("new")))
+               for e in plan.get("entries", [])):
+            hits.setdefault("batch", []).append(os.path.relpath(full, root).replace(os.sep, "/"))
+    for full in _seal_files(root):
+        value = _read_any(full) or {}
+        if req in ((value.get("body") or {}).get("erased") or []) and value.get("signature"):
+            hits.setdefault("seals", []).append(os.path.relpath(full, root).replace(os.sep, "/"))
+    return hits
+
+
+def self_check(root: str, rng: Range, req: str | None = None, reqb: dict | None = None) -> dict:
+    """台帳のフォルダ（`.git/` を除く・`.thth/` を含む）の全部のファイルを読み、範囲の中身と指紋が無いか。
+    `req` を渡すと、値の一覧に頼らない構造の確かめ（`structural_left`）も足す。"""
     needles, short = rng.needles()
     hits = {}
+    if req is not None and reqb is not None:
+        for place, paths in structural_left(root, req, reqb).items():
+            hits.setdefault(place, []).extend(paths)
     for directory, dirs, files in os.walk(root, followlinks=False):
         dirs[:] = sorted(d for d in dirs if d not in K.SKIP_DIRS)
         for name in sorted(files):
@@ -1070,19 +1172,24 @@ def _state(result: dict) -> str:
     return "unfinished"
 
 
-def run(root: str, req: str, *, by: str, at: str) -> dict:
-    """範囲の判断がある求めを実行する（場所の順に、1 つ済むたびに結果を置く。打ち直すと続きから）。"""
+def _prepare(root: str, req: str) -> tuple:
     reqb = _request(root, req)
     scopeb = _load(root, req, SCOPE_FILE)
     if scopeb is None or scopeb.get("schema") != SCOPE_SCHEMA:
         raise RegisterRefused("register_erase_invalid", "scope_missing")
+    reqb = dict(reqb, field=scopeb.get("field"))
+    vessel = _open_own(root, req)
+    return reqb, scopeb, _kind_of(vessel, reqb["record"])
+
+
+def run(root: str, req: str, *, by: str, at: str) -> dict:
+    """範囲の判断がある求めを実行する（場所の順に、1 つ済むたびに結果を置く。打ち直すと続きから）。"""
+    _request(root, req)
     K.check_thth(root)
     plan = K.pending(root)
     if plan is not None and plan.get("what") != _what(req):
         K.refuse_if_pending(root)
-    reqb = dict(reqb, field=scopeb.get("field"))
-    vessel = V.open_vessel(root)
-    kind = _kind_of(vessel, reqb["record"])
+    reqb, scopeb, kind = _prepare(root, req)
     result = _load(root, req, RESULT_FILE) or _new_result(req, reqb, scopeb)
     if _load(root, req, TARGETS_FILE) is None:
         _save(root, req, TARGETS_FILE, {"schema": TARGETS_SCHEMA, "request": req, "at": at, "by": by,
@@ -1091,6 +1198,15 @@ def run(root: str, req: str, *, by: str, at: str) -> dict:
     rng = _gather(root, reqb, scopeb, result)
     for place in RUN_ORDER:
         state = (result["places"].get(place) or {}).get("state")
+        if state in FINISHED and place == "trail":
+            # 控えの判断の記録は、打ち直しのたびに全部見直す（「済み」と記録してあっても信じない。何度でも同じ結果）
+            got = PLACE_FUNCS[place](root, req, reqb, rng, result, kind, by, at)
+            if got.get("state") == "nothing":
+                got["state"] = state
+            result["places"][place] = dict(result["places"][place], **{k: v for k, v in got.items() if k != "state"},
+                                           state=got["state"])
+            _save(root, req, RESULT_FILE, result)
+            continue
         if state in FINISHED:
             continue
         result["places"][place] = {"state": "running", "by": by, "at": at}
@@ -1106,7 +1222,7 @@ def run(root: str, req: str, *, by: str, at: str) -> dict:
             if place == "materials" and result["materials"]:
                 entry["outputs"] = result["materials"]
             result["places"][place] = entry
-    check = self_check(root, rng)
+    check = self_check(root, rng, req, reqb)
     for place in check.get("found_in", {}):
         if place in result["places"] and (result["places"][place] or {}).get("state") != "kept":
             result["places"][place] = dict(result["places"][place], state="not_erased")
@@ -1155,7 +1271,19 @@ def done(root: str, req: str, place: str, *, by: str, at: str, outcome: str) -> 
     now = (result["places"].get(place) or {}).get("state")
     if now in ("erased", "nothing") and place not in OUTSIDE:
         return dict(result, state=_state(result))
-    result["places"][place] = dict(result["places"].get(place) or {}, state=outcome, by=by, at=at, owner=True)
+    extra = {}
+    if place == "self_check" and outcome == "erased":
+        # 持ち主の言葉だけで「消した」にしない: 器がその場でもう一度全部のファイルを読み（一覧を作れるなら一覧でも、
+        # 作れなくても構造で見られる物を）、残りが無いと分かったときだけ受ける（段 5 の検収の穴 2）
+        reqb, scopeb, _kind = _prepare(root, req)
+        check = self_check(root, _gather(root, reqb, scopeb, result), req, reqb)
+        if check["state"] == "not_erased":
+            raise RegisterRefused("register_erase_left", "self_check", request=req,
+                                  found_in=sorted(check.get("found_in") or {}))
+        extra = {"checked_by_vessel": True, "list_complete": check.get("why") != "list_rebuilt",
+                 "files": check["files"], "short_values_not_scanned": check["short_values_not_scanned"]}
+    result["places"][place] = dict(result["places"].get(place) or {}, state=outcome, by=by, at=at, owner=True,
+                                   **extra)
     result["done"].append({"place": place, "result": outcome, "by": by, "at": at})
     result["state"] = _state(result)
     _save(root, req, RESULT_FILE, result)

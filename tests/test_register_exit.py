@@ -322,29 +322,21 @@ def test_7_3_差し込みは事実として使える記録の値に置き換え�
     assert not v["ok"] and "narrowed_after_seal" in words(v)
 
 
-def test_7_3_出し口の外の種類から差し込み先が依らない欄だけ変わっても材料の版の組が古いと赤(env):
-    """差し込み先（品）は出し口の種類に無いので、先が変わっても出し口の材料のバイトは変わらない。それでも、
-    差し込んだ先の版が入力の版の組に入っているので、封のときの組と違えば CI が赤（受け入れ直すまで）。"""
+def test_7_3_出し口の外の種類からは差し込まず記録ごと外す(env):
+    """検収 11/14 の 7-2: 差し込める先は、その出し口の `kinds` に挙げた種類の、材料に載る記録だけ。出し口の外の種類（品）
+    からの差し込みは、値を書かずに記録ごと外す（前は品の値を書き、品の版を入力の組に入れていた）。"""
     decl = outlets()
     decl["outlets"]["site"]["kinds"] = {k: v for k, v in SITE_KINDS.items() if k != "item"}
     led = _ledger(env, decl, shops=SHOPS.replace("Alpha sells {{note:n1.title}}", "Alpha sells {{item:i1.name}}"))
     site = env / "site"
     judge_all(led)
+    plan = R.accept_plan(str(led), "site", str(site), AT)
+    out = [e for e in plan["result"]["excluded"] if e["record"] == "shop:s1"]
+    assert out and out[0]["why"] == "insert_unusable" and out[0]["inserts"][0]["why"] == "outside_outlet"
     accept(led, "site", site)
-    assert rows(site / "data/shops.csv")[1] == "s1,Alpha,100,,Alpha sells Widget,2020-01-01,open\n"
-    seal = json.loads(pathlib.Path(R.seal_path(str(led), "site")).read_text())["body"]
-    i1 = V.open_vessel(str(led)).get("item:i1").version
-    assert {"record": "item:i1", "version": i1} in seal["inputs"]
+    assert b"Widget" not in (site / "data/shops.csv").read_bytes()
     assert R.verify(str(led), "site", str(site), NOW, no_previous=True)["ok"]
-    p = led / "items/i1.json"
-    p.write_text(p.read_text().replace('"price": 5', '"price": 6'))    # 品の判断は name にだけ依る
-    e = R.export(str(led), "site", str(site), AT, check=True)
-    assert e["same_as_seal"] and not e["differs"]                       # 材料のバイトは同じ
-    v = R.verify(str(led), "site", str(site), NOW, no_previous=True)
-    assert not v["ok"] and words(v) == {"inputs_changed"}, v
-    assert v["problems"][0]["items"] == ["shop:s1=fact"]
-    accept(led, "site", site)
-    assert R.verify(str(led), "site", str(site), NOW, no_previous=True)["ok"]
+    # 差し込み先の版の組が古いと赤になる確かめは test_7_3_差し込みは事実として… が出し口の中の種類で見ている
 
 
 @pytest.mark.parametrize("case", ["no_judgment", "stopped", "reservation_only", "private", "no_field", "missing"])
@@ -380,15 +372,18 @@ def test_重い穴_使えない先からの差し込みは値を書かず記録�
         assert b"s2," in got    # 先の記録そのものは、使えるなら載る（外すのは差し込みを持つ側）
 
 
-def test_7_3_入れ子は読まず字のまま_1つの欄に64か所まで(env):
+def test_7_3_入れ子は読まず記録ごと外す_1つの欄に64か所まで(env):
+    """検収 11/14: 置き換えたあとの値に `{{` が残れば（先の値の中の差し込み）、番号を字のまま出さずに記録ごと外す。"""
     nested = SHOPS.replace("s2,\"Beta, Ltd\"", "s2,\"Beta {{shop:s1.secret}}\"")
     led = _ledger(env, shops=nested)
     site = env / "site"
     judge_all(led)
+    plan = R.accept_plan(str(led), "site", str(site), AT)
+    out = [e for e in plan["result"]["excluded"] if e["record"] == "shop:s3"]
+    assert out and out[0]["why"] == "insert_unusable" and out[0]["inserts"][0]["why"] == "nested"
     accept(led, "site", site)
-    got = rows(site / "data/shops.csv")
-    assert got[3] == "s3,Gamma,300,,uses Beta {{shop:s1.secret}} here,,open\n"
-    assert b"SECRET-ALPHA" not in (site / "data/shops.csv").read_bytes()
+    got = (site / "data/shops.csv").read_bytes()
+    assert b"s3," not in got and b"SECRET-ALPHA" not in got
     for n, ok in ((64, True), (65, False)):
         env2 = env / f"n{n}"
         env2.mkdir()

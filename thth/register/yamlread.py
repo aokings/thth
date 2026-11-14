@@ -2,8 +2,10 @@
 
 - 自前の読み手は作らない。中を見るのは、追加の部品（PyYAML。`pip install 'thth[yaml]'`）を入れた機械だけ。
   入れていない機械では、YAML の記録は「置く・戻す・版を取る」までで、「中は見ていない」と言う（`inspected` が偽）。
-- 型を決めつけない読み: 全部を文字として読む（`BaseLoader`）。`updated: 2026-08-27` は字の `2026-08-27`、
-  `draft: false`・`parent: null` も字のまま。型は種類の宣言で見る。
+- 型を決めつけない読み: ほぼ全部を文字として読む（`BaseLoader`）。`updated: 2026-08-27` は字の `2026-08-27`、
+  `yes`・`no`・`on`・`off`・数も字のまま。型は種類の宣言で見る。
+  ただし 2 つだけ型にする（段 4 §9）: 引用していない `null`・`Null`・`NULL`・`~`・値の無い鍵は null、引用していない
+  `true`・`True`・`TRUE`・`false`・`False`・`FALSE` は真偽。引用した `"null"`・`'true'` は字。鍵はいつも字。
 - **範囲の外の書き方は、黙って読み違えずに断る**（語と行を返す）: 同じ段に同じ鍵が 2 回（`key_duplicate`）・
   別名の参照と錨（`&a`・`*a` → `anchor`・`alias`）・`---` で始まる 2 つめの文書（`multi_document`）・
   型の札（`!!str`・`!x` → `tag`）・`<<:`（`merge`）・鍵が字でない（`complex_key`）・読めない（`syntax`）。
@@ -77,12 +79,36 @@ def load(text: str):
         if problem:
             return None, problem, True
     try:
-        value = yaml.load(text, Loader=yaml.BaseLoader)
-    except yaml.YAMLError as exc:
-        return None, f"syntax:{_line(exc, text)}", True
-    except Exception:  # noqa: BLE001
+        value = _build(node, yaml) if node is not None else None
+    except Exception:  # noqa: BLE001 — 上で形を確かめた節だけを組む（念のため断りにする）
         return None, "syntax:0", True
     return value, None, True
+
+
+_NULLS = frozenset(("", "~", "null", "Null", "NULL"))
+_BOOLS = {"true": True, "True": True, "TRUE": True, "false": False, "False": False, "FALSE": False}
+
+
+def _scalar(node):
+    """引用していない（plain の）null と真偽だけを型にする。ほかは字のまま。"""
+    if node.style is None:
+        if node.value in _NULLS:
+            return None
+        if node.value in _BOOLS:
+            return _BOOLS[node.value]
+    return node.value
+
+
+def _build(node, yaml):
+    """節から値を組む（深さは DEPTH_MAX までに確かめてある）。鍵はいつも字。"""
+    if isinstance(node, yaml.ScalarNode):
+        return _scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return [_build(item, yaml) for item in node.value]
+    out = {}
+    for key, value in node.value:
+        out[key.value] = _build(value, yaml)
+    return out
 
 
 DEPTH_MAX = 64  # vessel.DEPTH_MAX と同じ（ここは vessel を読まない）

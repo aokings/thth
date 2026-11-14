@@ -644,6 +644,10 @@ def reader_fps(capsys, env, reg: pathlib.Path, tag: str) -> set:
     rc_, value, err = jrun(capsys, "register", "restore", str(reg), "--to", str(env["tmp"] / f"read-{tag}"))
     assert rc_ == 0, err
     rc_, diff, err = jrun(capsys, "register", "diff", str(reg), "first..now")
+    if K.pending(str(reg)) is not None:
+        # 段 6・7 の検収 6-5: 止まった入れ替えが残る間、差の「今」の側は前でも後でもないので断る
+        assert rc_ != 0 and diff["code"] == "register_batch_pending", err
+        return {value["fp"], K.catalog_fp(K.view(str(reg)))}
     assert rc_ == 0, err
     return {value["fp"], diff["to"], K.catalog_fp(K.view(str(reg)))}
 

@@ -155,6 +155,11 @@ COMMANDS += ['register judge', 'register take', 'register export', 'register acc
              'register key init', 'register key show']
 # 実店舗のレジ（計画 実店舗 段 5）: 鍵の広さと THTH が打つものを言う口（網に出ない・--json は 1 つの値）。
 COMMANDS += ['shop doctor']
+# 台帳の器 段 5・段 7・段 8: 消す求め（`erase_cli.py`）・使った先と出した URL の関門（`route_cli.py`）・健康と姉妹リンク
+# （`health_cli.py`）・メディアと持ち主の外し（`thth/leave.py`・二段）。網に出ない・--json は 1 つの値。
+COMMANDS += ['register erase request', 'register erase scope', 'register erase run', 'register erase status',
+             'register erase done', 'register used', 'register published', 'register health', 'register sisters',
+             'project leave', 'owner leave']
 
 
 def test_json_table_covers_every_parser():

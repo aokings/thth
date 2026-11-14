@@ -34,14 +34,16 @@ import shutil
 import stat
 import sys
 
-from .. import accounts, admin_log, draft_origin, secrets_fs
+from .. import accounts, admin_log, draft_origin, jst, secrets_fs
 from . import ACTION_PREFIX, ledger, seal
+from . import vessel as V
 from .errors import RegisterRefused
 
 JOURNAL_DIR = "register_leave"
 SCHEMA = "thth.register_leave/1"
 SCOPES = ("project", "owner")
-PHASES = ("accounts", "registers", "principals", "seal_key", "completed")
+PHASES = ("planned", "accounts", "registers", "principals", "seal_key", "completed", "changed")
+DONE_DIR = "done"            # 済んだ・やめた記録（名前に日時を付けて残す。次の回の邪魔をしない）
 COUNTS = ("accounts", "register_controls", "register_state", "principals", "principal_state", "owner_state",
           "principal_tokens", "seal_key")
 SEAL_NOTICE = ("封の秘密の鍵を消します。この鍵で封をした台帳は、ほかの機械で（公開鍵で）確かめ続けられますが、"
@@ -74,9 +76,43 @@ def read_journal(scope: str, target=None) -> dict | None:
             or not isinstance(value.get("deleted"), dict) or not isinstance(value.get("kept"), list)):
         raise RegisterRefused("register_leave_incomplete", "journal")
     for key in ("accounts", "registers", "principals"):
-        if not isinstance(value.get(key), list) or not all(accounts.name_is_safe(n) for n in value[key]):
+        if not isinstance(value.get(key), list) or not all(ledger.name_ok(n) for n in value[key]):
             raise RegisterRefused("register_leave_incomplete", "journal")
+    if not isinstance(value.get("account_meta", {}), dict) or not isinstance(value.get("register_meta", {}), dict):
+        raise RegisterRefused("register_leave_incomplete", "journal")
     return value
+
+
+def archive(journal: dict) -> None:
+    """済んだ（やめた）記録を `done/` へ、名前に日時と回の印を付けて移す（今の名前は次の回のために空ける）。"""
+    stamp = jst.iso().replace(":", "").replace("+", "p")
+    name = _journal_name(journal["scope"], journal["target"])[:-5] + f".{stamp}.{journal['operation_id'][:8]}.json"
+    secrets_fs.atomic_write_json(os.path.join(journal_dir(), DONE_DIR, name), journal, mode=0o600)
+    os.unlink(os.path.join(journal_dir(), _journal_name(journal["scope"], journal["target"])))
+
+
+def archived(scope: str, target, confirm) -> dict | None:
+    """`done/` の記録のうち、この範囲で digest が `confirm` の物（打ち直しで同じ結果を返すため）。"""
+    if not confirm:
+        return None
+    base = os.path.join(journal_dir(), DONE_DIR)
+    head = _journal_name(scope, target)[:-5] + "."
+    try:
+        entries = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.startswith(head) or not entry.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(base, entry), encoding="utf-8") as f:
+                value = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if (isinstance(value, dict) and value.get("scope") == scope and value.get("target") == target
+                and value.get("digest") == confirm):
+            return value
+    return None
 
 
 def save(journal: dict) -> None:
@@ -115,23 +151,56 @@ def _controls() -> tuple:
 
 
 def folders(controls: dict | None = None) -> list:
-    """全部の控えの台帳のフォルダ（書かれた道と追った先の両方）。消さない物の囲い。"""
+    """全部の控えの台帳のフォルダ（書かれた道と追った先の両方）。消さない物の囲い。**読めない控えも、生の JSON の
+    `path` を拾って入れる**（検収の穴 1: 読めない控えのフォルダが囲いから外れていた）。"""
     if controls is None:
         controls, _ = _controls()
     out = set()
-    for cfg in controls.values():
-        out.add(os.path.abspath(cfg["path"]))
-        out.add(_real(cfg["path"]))
+    paths = [cfg["path"] for cfg in controls.values()]
+    paths += [p for p in (ledger.raw_path(n) for n in ledger.list_names() if n not in controls) if p]
+    for path in paths:
+        out.add(os.path.abspath(path))
+        out.add(_real(path))
     return sorted(out)
 
 
 def _files_in(folder: str) -> int:
-    count = 0
-    if os.path.islink(folder) or not os.path.isdir(folder):
-        return 0
-    for _here, _dirs, files in os.walk(folder, followlinks=False):
-        count += len(files)
-    return count
+    """見積りのファイルの数（上限つき・`/` や上限を超える広さは `register_folder_too_wide`・検収の穴 3）。"""
+    return ledger.check_walkable(folder)
+
+
+def has_register_inside(path: str) -> bool:
+    """`path`（THTH が丸ごと消す木）の中に、台帳のフォルダらしい物（`.thth/` を持つフォルダ）が 1 つでもあるか。
+    控えが読めるかどうかに頼らず、構造で見る（検収の穴 1 の最後の柵）。symlink は追わない。歩く数に上限を置き、
+    超えたら「ある」とみなす（狭い側）。"""
+    if os.path.islink(path) or not os.path.isdir(path):
+        return False
+    seen = 0
+    for _here, dirs, files in os.walk(path, followlinks=False):
+        if V.DECL_DIR in dirs:
+            return True
+        seen += len(files) + len(dirs)
+        if seen > ledger.WALK_MAX:
+            return True
+    return False
+
+
+def control_meta(cfg: dict) -> dict:
+    """見積りのときの控えの所属（打ち直しで照らす）: 道・プロジェクト・役。"""
+    return {"path": cfg["path"], "project": cfg["project"], "role": cfg.get(ledger.ROLE_FIELD)}
+
+
+def check_control_same(name: str, meta) -> None:
+    """これから消す控えが、見積りのときと同じ道・プロジェクト・役か。違えば `register_leave_changed`（消さない）。
+    控えがもう無いのは「消す物が無い」で、照らさない。読めなければ違うとみなす（狭い側）。"""
+    if not os.path.lexists(ledger.path_for(name)):
+        return
+    try:
+        now = control_meta(ledger.load(name))
+    except RegisterRefused:
+        raise RegisterRefused("register_leave_changed", "register", register=name, was=meta, now=None) from None
+    if meta is None or now != meta:
+        raise RegisterRefused("register_leave_changed", "register", register=name, was=meta, now=now)
 
 
 def register_plan(scope: str, target=None) -> dict:
@@ -152,7 +221,8 @@ def register_plan(scope: str, target=None) -> dict:
         seen.add(real)
         count += 1
         files += _files_in(real)
-    return {"registers": gone, "common": common, "other_projects": others, "register_folders": count,
+    return {"registers": gone, "register_meta": {n: control_meta(controls[n]) for n in gone},
+            "common": common, "other_projects": others, "register_folders": count,
             "register_files": files, "kept": [{"what": "register_control_unreadable", "name": n} for n in unreadable],
             "folders": folders(controls)}
 
@@ -174,12 +244,15 @@ def _legacy_inside_state(name: str, guard: list) -> bool:
 
 
 def preflight_registers(names: list, guard: list) -> None:
-    """控えと記録の置き場が台帳のフォルダの中なら `register_leave_overlap`（何も消さない）。"""
+    """控えと記録の置き場が台帳のフォルダの中か、記録の置き場の中に台帳のフォルダらしい物があれば
+    `register_leave_overlap`（何も消さない）。"""
     for name in names:
         state, control = _register_places(name)
         for folder in guard:
             if _inside(state, folder) or _inside(control, folder):
                 raise RegisterRefused("register_leave_overlap", "register_state", register=name)
+        if not _legacy_inside_state(name, guard) and has_register_inside(state):
+            raise RegisterRefused("register_leave_overlap", "register_state", register=name)
 
 
 # ------------------------------------------------------------------ 消す（THTH の置き場の物だけ）
@@ -198,6 +271,9 @@ def remove_tree(path: str, guard: list, kept: list, what: str, name: str) -> int
     if os.path.islink(path) or not os.path.isdir(path) or any(_overlap(path, f) for f in guard):
         kept.append({"what": what + "_kept", "name": name})
         return 0
+    if has_register_inside(path):
+        # 最後の柵: 控えが読めなくても、中に台帳のフォルダらしい物があれば何も消さずに止まる。
+        raise RegisterRefused("register_leave_overlap", what, name=name)
     count = _tree_count(path)
     shutil.rmtree(path)
     return count
@@ -275,6 +351,7 @@ def remove_registers(journal: dict, by: str, guard: list) -> None:
     for name in journal["registers"]:
         if name in done.setdefault("registers", []):
             continue
+        check_control_same(name, journal.get("register_meta", {}).get(name))
         counts = remove_control(name, guard, journal["kept"])
         _log_removed(name, counts, journal, by)
         done["registers"].append(name)

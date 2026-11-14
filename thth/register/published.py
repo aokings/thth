@@ -2,7 +2,7 @@
 §7.6・「済み」の線の 4。設計 `docs/設計_台帳の器_2026-11-13.md` §5.6 の末尾）。
 
     thth register published <台帳> --outlet <出し口> --list <一覧> [--record] [--now <日時>]
-                            [--previous <前に配った控えの頭>] [--publish <配る控えの頭の置き場>] [--json]
+                            (--previous <前に配った控えの頭> | --no-previous) [--publish <配る控えの頭の置き場>] [--json]
 
 - **控え**（`.thth/published/<出し口>.jsonl`・追記だけ）: 1 行 = 出した URL（か道）・初めて出した世代と日時・今の扱い
   （`live` 出ている・`redirect` 転送・`gone` 消した）・この扱いを書いた日時。同じ URL の扱いが変われば、行を足す
@@ -404,7 +404,7 @@ def _write_head(path: str, outlet: str, raw: bytes) -> dict:
 
 
 def published(root: str, outlet_name: str, list_path, now, *, record: bool = False, previous=None,
-              publish=None) -> dict:
+              publish=None, no_previous: bool = False) -> dict:
     """§7.6 の関門。`{"ok", "problems", "warnings", "counts", "new", "recorded"}`。
     `record` が真で緑のときだけ控えに足す（と頭を書き直す）。`publish` を渡すと、緑のときだけ控えの頭をそこに書く
     （次の回の `previous`）。どちらも無ければ台帳に何も書かない。"""
@@ -418,6 +418,8 @@ def published(root: str, outlet_name: str, list_path, now, *, record: bool = Fal
     log_state, raw, problems = read_log(root, outlet.name, rules, previous)
     result = gate(rules, listed, log_state)
     problems = problems + result["problems"]
+    if previous is None and no_previous:
+        result["warnings"] = [{"word": "previous_skipped"}] + list(result["warnings"])
     out = {"outlet": outlet.name, "ok": not problems, "problems": problems[:SHOWN_MAX],
            "more": max(0, len(problems) - SHOWN_MAX), "warnings": result["warnings"][:SHOWN_MAX],
            "counts": dict(result["counts"], problems=len(problems)), "new": result["new"][:SHOWN_MAX],

@@ -80,7 +80,7 @@ from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
 DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger", "question",
-                          "answer_text", "private_needed", "inside_thth_state"))
+                          "answer_text", "private_needed", "inside_thth_state", "contains_thth_state"))
 
 
 def _refuse(args, exc: RegisterRefused) -> int:
@@ -196,13 +196,19 @@ def cmd_add(args) -> int:
     # 共通の台帳（台帳の器 段 8）: --project を省けば台帳の名前を project に置く（`project leave` は role で外す）。
     project = args.project if args.project is not None or not common else name
     kind = args.kind if args.kind is not None or not common else "media"
-    if not isinstance(project, str) or not ledger.accounts.name_is_safe(project):
+    if not isinstance(project, str) or not ledger.name_ok(project):
         raise RegisterRefused("register_args_invalid", "project")
     if kind not in ledger.KINDS:
         raise RegisterRefused("register_args_invalid", "kind")
     path = ledger.check_outside_thth(ledger.check_path(args.path))
     targets = []
     if common:
+        # 読めない控えが 1 つでもある間は断る（それが共通の台帳の控えかもしれず、2 つめを入れてしまうので・検収 中 6）。
+        for other in ledger.list_names():
+            try:
+                ledger.load(other)
+            except RegisterRefused:
+                raise RegisterRefused("register_ledger_invalid", f"unreadable:{other}") from None
         others = ledger.common_names()
         if others:
             raise RegisterRefused("register_common_exists", others[0])
