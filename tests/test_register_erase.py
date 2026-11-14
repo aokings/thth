@@ -505,3 +505,40 @@ def test_断りの符丁は目録に3つがそろう_段5():
     for code in ("register_erase_invalid", "register_erase_left"):
         entry = rc.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"], code
+
+
+def test_JSONの内側の単位の欄を消す_ほかの単位と止めるは残る(env, capsys):
+    """1 枚 = 1 記録の JSON の、内側の単位（行）の 1 つの欄を消す。枚はまとめての入れ替えで書き直す。"""
+    led = env / "mmr"
+    shutil.copytree(FIX / "mmr", led)
+    rel = "site/src/credits/ap-alex-gopher.mastered_by.json"
+    ref = "credit:ap-alex-gopher.mastered_by"
+    value = json.loads((led / rel).read_text(encoding="utf-8"))
+    value["rows"][2]["held_reason_ja"] = f"作り手の自宅 {ADDR1} の記載"
+    bundle = env / "bundle"
+    (bundle / rel).parent.mkdir(parents=True)
+    (bundle / rel).write_text(json.dumps(value, ensure_ascii=False, indent=1), encoding="utf-8")
+    A.merge(str(led), str(bundle), by="masaru", at="2027-03-19T09:00:00+09:00")
+    rec = V.open_vessel(str(led)).get(ref)
+    pointer = next(u.pointer for u in rec.units if u.item.get("seed") == "seed-liked-0443")
+    judge(capsys, led, ref, "--stop", "--unit", pointer)
+    wanted = {"addr": ADDR1.encode(), "file": K.sha256((led / rel).read_bytes()).encode()}
+    assert scan(led, wanted)
+    rc, v, err = jrun(capsys, "register", "erase", "request", led, ref, "--unit", pointer, "--field", "held_reason_ja",
+                      "--by", "masaru", "--why", "personal")
+    assert rc == 0, err
+    req = v["request"]
+    est = E.scope(str(led), req, ["all"], by="masaru", at="2027-03-22T09:00:00+09:00")
+    E.scope(str(led), req, ["all"], by="masaru", at="2027-03-22T09:00:00+09:00", confirm=est["digest"])
+    rc, v, err = jrun(capsys, "register", "erase", "run", led, req, "--by", "masaru")
+    assert rc == 0, err
+    assert scan(led, wanted) == []
+    after = json.loads((led / rel).read_text(encoding="utf-8"))
+    assert after["rows"][2]["held_reason_ja"] == "" and after["rows"][2]["status"] == "held"
+    assert after["rows"][3] == value["rows"][3]
+    stop = next(j for j in J.read(str(led)) if j["question"] == "stop")
+    assert J.is_erased(stop) and stop["target"]["unit"] == pointer       # 鍵の指し先は中身の指紋でないので残す
+    # 記録に無い欄・単位に無い欄は断る
+    for extra in (("--field", "no_such"), ("--unit", pointer, "--field", "no_such")):
+        rc, v, err = jrun(capsys, "register", "erase", "request", led, ref, *extra, "--by", "masaru", "--why", "mistake")
+        assert rc != 0 and v["code"] == "register_erase_invalid", v
