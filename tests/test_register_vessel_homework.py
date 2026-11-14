@@ -147,3 +147,28 @@ def test_宿4_番号の中の点を区切りと取り違えず別の番号を候
     assert J.evaluate(v1, j) == "vanished"
     [c] = J.candidates(v1, [j])
     assert c["appeared"] == [] and c["same_depend"] == []
+
+
+# ---- 1. 範囲の札は、語の中の区切りの字を逃がして書くので範囲ごとに 1 つ
+
+def test_宿1_札の区切りを語の中へ動かしても違う札になり相手の値には及ばない(env):
+    rows = [{"uid": "p", "a": "x,b=y", "b": "z", "value": 10}, {"uid": "q", "a": "x", "b": "y,b=z", "value": 10}]
+    root = _tiny3(env, [{"year": 2026, "rows": rows}], uid=True, scope={"key_fields": ["a", "b"]},
+                  depends=["value"])
+    v = V.open_vessel(str(root))
+    lp, lq = _value(v, "i:p").scope, _value(v, "i:q").scope
+    assert lp != lq
+    assert lp == "a=x\\,b\\=y,b=z" and lq == "a=x,b=y\\,b\\=z"
+    jp = _val_j(v, "i:p", "value")
+    assert J.answer_value(v, [jp], "t:a", "i:p", "value", as_scope=lp)["usable"] is True
+    ans = J.answer_value(v, [jp], "t:a", "i:p", "value", as_scope=lq)
+    assert ans["usable"] is False and ans["reason_kind"] == "scope_mismatch"
+    assert J.answer_value(v, [jp], "t:a", "i:p", "value", as_scope="a=x,b=y,b=z")["usable"] is False
+
+
+def test_宿1_札の語の中の逃がしの字も逃がす(env):
+    rows = [{"uid": "p", "a": "x\\", "b": "z", "value": 1}, {"uid": "q", "a": "x", "b": "\\z", "value": 1}]
+    root = _tiny3(env, [{"year": 2026, "rows": rows}], uid=True, scope={"key_fields": ["a", "b"]},
+                  depends=["value"])
+    v = V.open_vessel(str(root))
+    assert _value(v, "i:p").scope == "a=x\\\\,b=z" and _value(v, "i:q").scope == "a=x,b=\\\\z"
