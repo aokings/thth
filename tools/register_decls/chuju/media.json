@@ -8,12 +8,16 @@
    "koyomi_ken": 6,
    "koyomi_todofuken": 15,
    "koukai_url": 44,
-   "kouho_taiou": 265
+   "kouho_taiou": 265,
+   "dougu": 11,
+   "yoyaku_fuseru": 1,
+   "shougou_daichou": 47
   },
   "dangling": {
    "toi.next": 0,
    "koyomi.toi": 0,
-   "koyomi_todofuken.ken": 0
+   "koyomi_todofuken.ken": 0,
+   "toi.dougu": 0
   },
   "checks": {
    "c4_1_toi": 0,
@@ -83,21 +87,6 @@
    "gap": false
   },
   {
-   "place": [
-    "src/lib/dougu-list.ts",
-    "src/lib/yoyaku-fuseru.ts"
-   ],
-   "why": "道具の一覧 src/lib/dougu-list.ts（id つき 11 件・問いの頁の dougu[] から 72 本が指す）と伏せる行事 src/lib/yoyaku-fuseru.ts は TypeScript の一覧で、器が読めない（指す先の切れを器で見られない）。器の不足",
-   "gap": true
-  },
-  {
-   "place": [
-    "docs/照合台帳_*.md"
-   ],
-   "why": "照合台帳 docs/照合台帳_*.md 47 枚（shougou.daichou が指す）。名前に漢字を含み、器の置き場（place）に書けない（ASCII だけ）ので種類にできない。器の不足（器の判断の記録に写すかはレーンに聞く）",
-   "gap": true
-  },
-  {
    "place": [],
    "why": "chuju_data/（repo の外・git でない・約 30 GB）と問いの受け口（D1）は器の外。触れない",
    "gap": false
@@ -112,7 +101,7 @@
  ],
  "vessel_gaps": [
   "値の差し込みの道: 本文と欄の {{koyomi:<都県>.<欄の道>}}（24 枚・231 か所・50 通り）は、入れ子の鍵と並びの添字（chiba.kouritsu.0.kensa）で台帳の値を引く。指す欄は欄の値を番号として読むだけで、本文の中の印や添字の道は宣言できない（C-T22・C-Y2。先が無い 0 は chuju の台本で数えた物）",
-  "入れ子の欄から指す: 指す欄の field は一番上の欄だけ。shougou.daichou（29 枚）は入れ子。先の照合台帳 docs/照合台帳_*.md は名前に漢字を含み、置き場（place）に書けない（ASCII だけ）ので種類にもできない",
+  "入れ子の欄から指す: 指す欄の field は一番上の欄だけ。shougou.daichou（29 枚）は入れ子。先の照合台帳 docs/照合台帳_*.md は種類 shougou_daichou になった（段 9）が、入れ子の欄からは指せない",
   "1 つの種類に内側の単位は 1 つ: 問いの頁は分かれ道（branches[] 167）を単位にしたので、表の行（table.rows[] 252）の source.kind・ken・shimekiri には検査を当てられない（C-T12・C-T13・C-T21 の語の一部）",
   "並びの値の語と数: taishou.ken・jiki.grades（並び）には words が当たらない（字でないと not_text）。並びの長さの上限（next 3・dougu 4・wadai 3）も言えない。空の並びは required で空と読む（C-T2・C-T4・C-T7 はこれで書けた）",
   "内側の単位の欄の形: 公立の行（kouritsu[]）の kensa・kensa2・happyou・tashikametaHi が YYYY-MM-DD かは、count の where に形の条件が無いので言えない（C-Y1 の一部）"

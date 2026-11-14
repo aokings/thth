@@ -1,0 +1,15 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "dougu",
+ "place": "src/lib/dougu-list.ts",
+ "format": "ts_const",
+ "records": "rows",
+ "rows_at": [
+  "dougu"
+ ],
+ "id": {
+  "field": "id"
+ },
+ "max_bytes": 262144,
+ "note": "道具の一覧（TypeScript の export const dougu の並び）。1 つの道具 = 1 記録、番号は id。問いの頁の dougu[] が指す先"
+}

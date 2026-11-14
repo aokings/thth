@@ -2,10 +2,18 @@
  "schema": "thth.kind/1",
  "kind": "entity_page_rules",
  "place": "site/src/lib/entity-page-rules.ts",
- "format": "bytes",
+ "format": "ts_const",
  "id": {
   "name": true
  },
  "max_bytes": 262144,
- "note": "HIDDEN_CLAIM_IDS（図鑑に出さない主張 13）。TypeScript の一覧は器が読めない"
+ "pointers": [
+  {
+   "field": "HIDDEN_CLAIM_IDS",
+   "meaning": "limits",
+   "to": "claim",
+   "note": "図鑑に出さない主張（台帳には残る）"
+  }
+ ],
+ "note": "図鑑ページの表示の決まり（TypeScript の export const）。HIDDEN_CLAIM_IDS（図鑑に出さない主張）・ENTITY_PAGE_NOTES（断りの 1 文）など。段 9 で ts_const として読む"
 }

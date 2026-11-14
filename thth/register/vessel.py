@@ -42,7 +42,10 @@ KIND_SCHEMA = "thth.kind/1"
 CONSTITUTION_SCHEMA = "thth.constitution/1"
 IDS_SCHEMA = "thth.ids/1"
 
-FORMATS = ("csv", "json", "yaml", "thth_row", "bytes", "md_yaml")
+FORMATS = ("csv", "json", "yaml", "thth_row", "bytes", "md_yaml", "lines", "ts_const")
+# lines: 見出しの行の無い区切りの行（列の名は宣言の `columns`。`comment` の字から行末は注。段 9）
+# ts_const: TypeScript の `export const 名 = <値>` の値だけ（字・数・真偽・null・並び・辞書・`new Set([...])`・
+#           `new Date('...')`）。それ以外の値は読まない（欄 `_not_literal` に名を残す。段 9）
 DELIMITERS = (",", "\t")              # 表の区切り（段 4 G14）
 FILE_MAX_DEFAULT = 64 * 1024          # 1 枚の既定（今の台帳と同じ）
 TABLE_MAX_DEFAULT = 50 * 1024 * 1024  # 表の既定（叩き台: 50 MB）
@@ -52,7 +55,31 @@ DECL_MAX = 256 * 1024
 NAME = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 FIELD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 RECORD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-]{0,159}\Z")
-PLACE = re.compile(r"[A-Za-z0-9_.*?\[\]/\-]{1,200}\Z")
+_PLACE_ASCII = re.compile(r"[A-Za-z0-9_.*?\[\]/\-]{1,200}\Z")
+
+
+class _Place:
+    """置き場の型の字（段 9）: 前からの ASCII の字に加えて、ASCII でない字（Unicode の L・N・M）を受ける。
+    NFC でない型は受けない（台帳の枚の名と、そろえずに `fnmatch` で比べるため）。200 字まで。"""
+
+    @staticmethod
+    def fullmatch(value):
+        if not isinstance(value, str) or not value or len(value) > 200:
+            return None
+        if value.isascii():
+            return _PLACE_ASCII.fullmatch(value)
+        if unicodedata.normalize("NFC", value) != value:
+            return None
+        for ch in value:
+            if ch.isascii():
+                if not _PLACE_ASCII.fullmatch(ch):
+                    return None
+            elif unicodedata.category(ch)[0] not in "LNM":
+                return None
+        return True
+
+
+PLACE = _Place()
 TEMPLATE = re.compile(r"[A-Za-z0-9_.\-]{0,40}\{id\}[A-Za-z0-9_.\-]{0,40}\Z")
 MEANINGS = ("about", "supports", "contradicts", "limits", "contains", "parent", "replaces", "same", "related",
             "derived_from")
@@ -200,10 +227,13 @@ class Kind:
     inspects: dict | None = None  # 検収の記録を持つ表の宣言（`_parse_inspects`）
     checks: list = field(default_factory=list)  # 検査の部品（段 4。`checks.parse_checks`）
     delimiter: str = ","       # 表の区切り（`,` か タブ。段 4 G14）
+    columns: tuple = ()        # lines の列の名（段 9）
+    columns_min: int = 0       # lines の行に要る列の数（後ろの列は省ける）
+    comment: str | None = None  # lines の注の字（その字から行末を読まない）
 
 
 _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows_at", "id", "questions", "pointers",
-              "delimiter",
+              "delimiter", "columns", "columns_min", "comment",
               "units", "inspects", "checks", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
 _P_KEYS = ("field", "fields", "template", "meaning", "meaning_from", "to", "to_by", "split", "recorded_version", "none",
@@ -275,21 +305,37 @@ def _parse_kind(data, path: str) -> Kind:
     fmt = data.get("format")
     if fmt not in FORMATS:
         raise DeclarationError("format")
-    records = data.get("records", "rows" if fmt == "csv" else "file")
-    if records not in ("file", "rows") or (fmt == "csv" and records != "rows") or (
+    records = data.get("records", "rows" if fmt in ("csv", "lines") else "file")
+    if records not in ("file", "rows") or (fmt in ("csv", "lines") and records != "rows") or (
             fmt in ("thth_row", "bytes", "md_yaml") and records != "file"):
         raise DeclarationError("records")
-    delimiter = data.get("delimiter", ",")
-    if ("delimiter" in data and fmt != "csv") or not isinstance(delimiter, str) or delimiter not in DELIMITERS:
+    delimiter = data.get("delimiter", "\t" if fmt == "lines" else ",")
+    if ("delimiter" in data and fmt not in ("csv", "lines")) or not isinstance(delimiter, str) \
+            or delimiter not in DELIMITERS:
         raise DeclarationError("delimiter")
+    columns, columns_min, comment = (), 0, None
+    if fmt == "lines":
+        columns = tuple(_strs(data.get("columns"), FIELD, "columns"))
+        if len(set(columns)) != len(columns) or len(columns) > 64:
+            raise DeclarationError("columns")
+        columns_min = data.get("columns_min", len(columns))
+        if not isinstance(columns_min, int) or isinstance(columns_min, bool) or not 1 <= columns_min <= len(columns):
+            raise DeclarationError("columns_min")
+        comment = data.get("comment")
+        if comment is not None and comment != "#":
+            raise DeclarationError("comment")
+    elif any(k in data for k in ("columns", "columns_min", "comment")):
+        raise DeclarationError("columns")
     max_bytes = data.get("max_bytes", TABLE_MAX_DEFAULT if records == "rows" else FILE_MAX_DEFAULT)
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 0 < max_bytes <= TABLE_MAX_DEFAULT:
         raise DeclarationError("max_bytes")
     rows_at = _path_steps(data.get("rows_at", []), "rows_at")
-    if fmt == "md_yaml" and "rows_at" in data:
-        raise DeclarationError("rows_at")
+    if (fmt in ("md_yaml", "lines") and "rows_at" in data) or (fmt == "ts_const" and records == "rows" and not rows_at):
+        raise DeclarationError("rows_at")   # ts_const の並びは、頭の段に `export const` の名が要る
     id_rule = _only(data.get("id", {"name": True} if records == "file" else {}),
-                    ("name", "field", "key", "scope", "from"), "id")
+                    ("name", "field", "key", "scope", "from", "repeat"), "id")
+    if "repeat" in id_rule and (fmt != "lines" or id_rule["repeat"] != "count"):
+        raise DeclarationError("id")  # 書き足していく帳面（同じ行が何度も出る）だけ: 2 回目からは番号に `.2`・`.3`
     if records == "rows" and [("field" in id_rule), ("key" in id_rule), ("from" in id_rule)].count(True) != 1:
         raise DeclarationError("id")
     if "from" in id_rule and (records != "rows" or id_rule["from"] != "key"):
@@ -383,6 +429,8 @@ def _parse_kind(data, path: str) -> Kind:
         raise DeclarationError("pointers")  # 同じフォルダを引くのは、番号を置き場の中で取る種類だけ
     inspects = None
     if data.get("inspects") is not None:
+        if fmt in ("lines", "ts_const"):
+            raise DeclarationError("inspects")
         inspects = _parse_inspects(data["inspects"])
         if not all(any(p.get("field") == f for p in pointers) for f in inspects["follow"][:1]):
             raise DeclarationError("inspects")
@@ -392,7 +440,7 @@ def _parse_kind(data, path: str) -> Kind:
         checks = _checks.parse_checks(data["checks"], pointers)
     return Kind(name=name, places=places, format=fmt, records=records, max_bytes=max_bytes, rows_at=rows_at,
                 id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path, inspects=inspects,
-                checks=checks, delimiter=delimiter)
+                checks=checks, delimiter=delimiter, columns=columns, columns_min=columns_min, comment=comment)
 
 
 def _name(value, word):
@@ -903,6 +951,10 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
                        False, ["not_utf8"])]
     if kind.format == "csv":
         return _read_csv(rel, text, kind)
+    if kind.format == "lines":
+        return _read_lines(rel, text, kind)
+    if kind.format == "ts_const":
+        return _read_ts(rel, text, kind, version, name_id)
     if kind.format == "md_yaml":
         return [_read_md(rel, text, kind, version, name_id)]
     if kind.format == "thth_row":
@@ -951,6 +1003,72 @@ def _read_file(rel: str, full: str, kind: Kind, reverse: dict) -> list:
         _read_units(rec, kind)
         return [rec]
     return _read_rows(rel, value, kind, version)
+
+
+_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")
+
+
+def _read_lines(rel: str, text: str, kind: Kind) -> list:
+    """見出しの行の無い区切りの行（段 9）: 1 行 = 1 記録。列の名は宣言の `columns`。`comment` の字から行末は読まない
+    （その字を含む値は書けない形）。注を除いて空白だけの行は記録でない。欄の字は削らない。引用符は字のまま
+    （引用の決まりを持たない形）。`columns_min` より短い行と、`columns` より長い行は `row_width`。
+    版は行の元の字（注を含む）。"""
+    out, seen = [], {}
+    lines = _LINE.findall(text)
+    if len(lines) > TABLE_ROWS_MAX:
+        return [Record(kind.name, None, rel, "", None, False, ["too_many_rows"])]
+    for raw in lines:
+        body = raw.rstrip("\r\n")
+        if kind.comment is not None:
+            body = body.split(kind.comment, 1)[0]
+        if not body.strip():
+            continue
+        cells = body.split(kind.delimiter)
+        values = {name: cells[i] for i, name in enumerate(kind.columns) if i < len(cells)}
+        unread = tuple(name for i, name in enumerate(kind.columns) if i >= len(cells))
+        problems = [] if kind.columns_min <= len(cells) <= len(kind.columns) else ["row_width"]
+        if "field" in kind.id_rule:
+            rid = _id_ok(values.get(kind.id_rule["field"]))
+        else:
+            rid = "k-" + short(fp([values.get(k) for k in kind.id_rule["key"]]))
+        if rid is not None and kind.id_rule.get("repeat") == "count":
+            seen[rid] = seen.get(rid, 0) + 1
+            rid = rid if seen[rid] == 1 else _id_ok(f"{rid}.{seen[rid]}")
+        rec = Record(kind.name, rid, rel, bytes_version(raw.encode("utf-8")), values, True, problems, unread=unread)
+        if rid is None:
+            rec.problems.append("id_form")
+        out.append(rec)
+    return out
+
+
+def _read_ts(rel: str, text: str, kind: Kind, version: str, name_id: str) -> list:
+    """TypeScript の `export const` の値（段 9。読みは `tsread`）。1 枚 = 1 記録なら欄は定数の名。値として読めない
+    定数（関数・式）は欄 `_not_literal` に名だけ残す。並び（`rows_at` の頭の段が定数の名）は JSON と同じ読み。"""
+    from . import tsread
+    rid = _id_ok(name_id) if kind.id_rule.get("name") else None
+    consts, not_literal, problem = tsread.exports(text)
+    if problem is None:
+        problem = value_problem(consts)
+    if problem:
+        return [Record(kind.name, rid, rel, version, None, False, [f"ts:{problem}"])]
+    if kind.records == "rows":
+        head = kind.rows_at[0]
+        if head not in consts:
+            word = "ts_not_literal" if head in not_literal else "ts_const_missing"
+            return [Record(kind.name, None, rel, version, None, False, [word])]
+        return _read_rows(rel, consts, kind, version)
+    if "_not_literal" in consts or "_not_literal" in not_literal:
+        return [Record(kind.name, rid, rel, version, None, False, ["ts:name_reserved"])]
+    values = dict(consts)
+    if not_literal:
+        values["_not_literal"] = list(not_literal)
+    if "field" in kind.id_rule:
+        rid = _id_ok(values.get(kind.id_rule["field"]))
+    rec = Record(kind.name, rid, rel, version, values, True)
+    if rid is None:
+        rec.problems.append("id_form")
+    _read_units(rec, kind)
+    return [rec]
 
 
 def _read_md(rel: str, text: str, kind: Kind, version: str, name_id: str) -> Record:

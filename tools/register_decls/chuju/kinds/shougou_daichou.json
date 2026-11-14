@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "shougou_daichou",
+ "place": "docs/照合台帳_*.md",
+ "format": "bytes",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "note": "照合台帳（頭の YAML を持たない文書）。1 枚 = 1 記録、番号はファイル名（漢字を含む。段 4 G3）。版を文で書くので中は読まない。toi の shougou.daichou は入れ子の欄で、器はまだ指す欄として読めない（札の vessel_gaps）"
+}

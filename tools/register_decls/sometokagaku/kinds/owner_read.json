@@ -2,10 +2,22 @@
  "schema": "thth.kind/1",
  "kind": "owner_read",
  "place": "site/owner-read.txt",
- "format": "bytes",
+ "format": "lines",
+ "delimiter": "\t",
+ "columns": [
+  "path",
+  "read_on",
+  "memo"
+ ],
+ "columns_min": 2,
+ "comment": "#",
  "id": {
-  "name": true
+  "key": [
+   "path",
+   "read_on"
+  ],
+  "repeat": "count"
  },
  "max_bytes": 1048576,
- "note": "masaru が読んだ記録（パス<TAB>日<TAB>メモ）。タブ区切りは器が表として読めない"
+ "note": "masaru が公開前に読んだ記録（パス<TAB>読んだ日<TAB>メモ。# から行末は注で、scripts/gate_publish.py の読みと同じ）。書き足していく帳面なので、同じパスと日の 2 回目からは番号に .2・.3。器の lines は欄の字を削らない（gate_publish.py は前後の空白を削る）"
 }

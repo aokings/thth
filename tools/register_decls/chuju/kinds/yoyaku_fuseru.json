@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "yoyaku_fuseru",
+ "place": "src/lib/yoyaku-fuseru.ts",
+ "format": "ts_const",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 65536,
+ "note": "予約開始カレンダーで伏せる行事と学校（FUSERU_GYOUJI・FUSERU_GAKKO の並び）。関数 fuseru は値でないので欄 _not_literal に名だけ"
+}

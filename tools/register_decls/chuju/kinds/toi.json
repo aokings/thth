@@ -28,6 +28,12 @@
    "meaning": "related",
    "to": "toi",
    "note": "次に読む問い（型の reference('toi')）"
+  },
+  {
+   "field": "dougu",
+   "meaning": "related",
+   "to": "dougu",
+   "note": "問いの頁の出口の道具（段 9 で TypeScript の一覧を種類 dougu として読めるようになった）"
   }
  ],
  "units": {
@@ -331,5 +337,5 @@
    "note": "問の番号（上限 999 は言えない）"
   }
  ],
- "note": "問いの頁の原稿（頭つきの .md）。1 枚 = 1 記録、番号はファイル名。頁の ima.validUntil と表の行の shimekiri は観測として読むだけ（判断の「いつまで」には結ばない。器で伏せない。伏せるのは chuju の build）。dougu の先は TypeScript の一覧（src/lib/dougu-list.ts）で器の外。shougou.daichou は入れ子の欄で、先は docs の md（固有の一覧 C-T8・照合台帳）。"
+ "note": "問いの頁の原稿（頭つきの .md）。1 枚 = 1 記録、番号はファイル名。頁の ima.validUntil と表の行の shimekiri は観測として読むだけ（判断の「いつまで」には結ばない。器で伏せない。伏せるのは chuju の build）。dougu の先は種類 dougu（TypeScript の一覧 src/lib/dougu-list.ts）。shougou.daichou は入れ子の欄で、先は docs の md（固有の一覧 C-T8・照合台帳）。"
 }

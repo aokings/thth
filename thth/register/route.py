@@ -316,6 +316,9 @@ def parse_outlets(data, kinds: dict) -> dict:
             names = list(names)
         if not isinstance(names, list) or any(not isinstance(k, str) or k not in kinds for k in names):
             raise V.DeclarationError(f"outlets:{name}")
+        if level == "record" and any(kinds[k].format in ("lines", "ts_const") for k in names):
+            # 段 9: 枚を元の形で出す道しか無く、外れた行・注・ほかの定数まで丸ごと出る。内側の単位の出口（値の JSON）を使う
+            raise V.DeclarationError(f"outlets:{name}:format")
         dest = _dest(o["dest"], f"outlets:{name}:dest") if "dest" in o else None
         ignore = o.get("ignore", [])
         if not isinstance(ignore, list) or len(ignore) > IGNORE_MAX or any(
