@@ -24,6 +24,11 @@
 - **確かめ**（`verify`）: 封を、repo の外の公開鍵で確かめる → 判断の記録が封の続きか → 前に配った世代の封
   （`--previous`。公開の場所から CI の手順が取ってくる）の続きか・世代が戻っていないか → 宣言が封のときのままか →
   封の中の判断だけ（と、封を待たない狭める物）で今の日時に計算し直す → 置いてある材料と、封の出力と比べる。
+  緑なら、配る物（封と、配った時の判断の記録の頭）を `--publish` に書く。次の回は、判断の記録がその頭の続きでなければ
+  赤（封をし直さずに止めるで外して配った回も、行を消して戻せない）。封の出し口と確かめる出し口も照らす。
+- **手元でも封は確かめてから使う**（`use`・`export`・`accept`）: 署名が合わない・公開鍵が無い・別の出し口の封は、
+  封なしとして扱う（広げない。狭める物は効く）。
+- 同じ日時の判断の新しさは、判断の記録の中で後に足した物（番号の文字の順にはしない）。
 
 網に出ない。台帳に書くのは判断の記録（`judgments.jsonl`・足すだけ）と封（`.thth/seals/`）だけ。
 """
@@ -329,8 +334,10 @@ class Ctx:
         self.sealed_ids = {j.get("id") for j in self.sealed}
 
 
-def _key(j):
-    return (j.get("at") or "", j.get("id") or "")
+def _key(pair):
+    """`(位置, 判断)` の新しさ: 日時、同じ日時なら記録の中で後に足した物（番号の文字の順にはしない）。
+    封の中の判断は判断の記録の頭なので、位置は封の中でも全部でも同じ。"""
+    return (pair[1].get("at") or "", pair[0])
 
 
 def _against_ok(vessel: V.Vessel, j: dict) -> bool:
@@ -349,15 +356,15 @@ def conclusion_of(vessel: V.Vessel, j: dict):
 
 def answer(ctx: Ctx, js: list, match, question: str) -> dict:
     """1 つの問いへの答え（その判断の集まりの中で、効いている最後の判断）。"""
-    mine = [j for j in js if j.get("question") == question and match(j.get("target") or {})]
+    mine = [(n, j) for n, j in enumerate(js) if j.get("question") == question and match(j.get("target") or {})]
     if not mine:
         return {"conclusion": None, "why": "no_judgment"}
-    effective = [j for j in mine if J.evaluate(ctx.vessel, j) == "effective"]
+    effective = [p for p in mine if J.evaluate(ctx.vessel, p[1]) == "effective"]
     if not effective:
         return {"conclusion": None, "why": "no_inspection_for_new_version"}
     # 今の版に効く最後の判断が答え。それが期限切れ・根拠の変わりで効かないとき、前の判断へ戻らない
     # （前の判断を蘇らせると、期限を付け直した判断が切れた途端に、期限の無い古い判断で使えてしまう）。
-    last = max(effective, key=_key)
+    last = max(effective, key=_key)[1]
     if not _against_ok(ctx.vessel, last):
         return {"conclusion": None, "why": "against_changed", "judgment": last}
     if _passed(last, ctx.as_of):
@@ -410,21 +417,22 @@ def _stop_state(js_every: list, sealed_ids: set, vessel: V.Vessel | None, ref: s
                 as_of) -> dict | None:
     """止めているなら、その判断。止めるは封を待たない。止めないは封の中だけ。"""
     questions = {STOP, f"{STOP}@{outlet}"}
-    mine = [j for j in js_every if j.get("question") in questions and (j.get("target") or {}).get("record") == ref
+    mine = [(n, j) for n, j in enumerate(js_every) if j.get("question") in questions
+            and (j.get("target") or {}).get("record") == ref
             and (not (j.get("target") or {}).get("unit") or j["target"]["unit"] == pointer)]
     stops, lifts = [], []
-    for j in mine:
+    for n, j in mine:
         word = ((j.get("answer") or {}).get("conclusion"))
         if word == "bad" and not _passed(j, as_of):
-            stops.append(j)
+            stops.append((n, j))
         elif word == "good" and j.get("id") in sealed_ids:
-            lifts.append(j)
+            lifts.append((n, j))
     if not stops:
         return None
     last = max(stops, key=_key)
     if any(_key(l) > _key(last) for l in lifts):
         return None
-    return last
+    return last[1]
 
 
 def decide(ctx: Ctx, outlet: Outlet, ref: str, pointer=None) -> dict:
@@ -463,23 +471,22 @@ def _unit_note(kind: V.Kind, unit: V.Unit, question: str):
 def _takes(js: list) -> dict:
     """共通の記録ごとに、最後に採った版（`{ref: 判断}`）。"""
     out = {}
-    for j in js:
+    for n, j in enumerate(js):
         t = j.get("target") or {}
         if j.get("question") == TAKE and t.get("ledger") == COMMON and isinstance(t.get("record"), str):
-            if t["record"] not in out or _key(j) > _key(out[t["record"]]):
-                out[t["record"]] = j
-    return out
+            if t["record"] not in out or _key((n, j)) > _key(out[t["record"]]):
+                out[t["record"]] = (n, j)
+    return {ref: pair[1] for ref, pair in out.items()}
 
 
-def _common_stopped(ctx: Ctx, ref: str, take_j: dict, outlet: str):
+def _common_stopped(ctx: Ctx, ref: str, outlet: str):
+    """共通の台帳で止めているなら、その判断。メディアが後から採り直しても外れない（止めるのは共通の台帳だけが外せる）。
+    共通で「止めない」と言い直したとき、メディアの材料に戻るのは、メディアが受け入れて封をし直してから
+    （止めたあとの封には載っていないので、受け入れまでは「封の外で広がった」として赤）。"""
     if ctx.common is None:
         return None
-    stop = _stop_state(ctx.common.judgments, {j.get("id") for j in ctx.common.judgments}, None, ref, None, outlet,
+    return _stop_state(ctx.common.judgments, {j.get("id") for j in ctx.common.judgments}, None, ref, None, outlet,
                        ctx.as_of)
-    if stop is None:
-        return None
-    # 共通で「止めない」と言い直しても、そのあとメディアが受け入れて採り直すまでは止めたまま。
-    return stop if _key(take_j) <= _key(stop) else None
 
 
 def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> dict:
@@ -558,7 +565,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                 now = ctx.common.vessel.unique(ref)
                 if now is not None and now.version != version:
                     pending.append({"record": f"{COMMON}:{ref}", "taken": version, "now": now.version})
-            if _common_stopped(ctx, ref, take_j, outlet.name) is not None or _stop_state(
+            if _common_stopped(ctx, ref, outlet.name) is not None or _stop_state(
                     ctx.every, ctx.sealed_ids, None, f"{COMMON}:{ref}", None, outlet.name, ctx.as_of) is not None:
                 excluded.append({"record": f"{COMMON}:{ref}", "why": "stopped"})
                 continue
@@ -623,6 +630,36 @@ def check_seal_shape(value) -> dict:
             or not isinstance(body.get("items"), list)):
         raise RegisterRefused("register_seal_unverified", "seal_shape")
     return value
+
+
+SEAL_STATES = ("none", "verified", "shape", "other_outlet", "public_key", "signature")
+
+
+def trusted_seal(root: str, outlet: str) -> tuple:
+    """手元で封を使う前の確かめ（`use`・`export`・`accept`）。`(封 | None, 状態)`。
+    状態が `verified` のときだけ封を返す。形が崩れた・別の出し口の物・公開鍵が無い・署名が合わない封は、
+    封なしとして扱う（広げる判断は効かない。狭める物は封を待たないので、そのまま効く）。"""
+    try:
+        seal = read_seal(root, outlet)
+    except RegisterRefused:
+        return None, "shape"
+    if seal is None:
+        return None, "none"
+    if seal["body"].get("outlet") != outlet:
+        return None, "other_outlet"
+    try:
+        pem, _origin = S.trusted_public_pem()
+    except RegisterRefused:
+        return None, "public_key"
+    if not S.verify(V.canonical(seal["body"]).encode("utf-8"), seal["signature"], pem):
+        return None, "signature"
+    return seal, "verified"
+
+
+def _refuse_unverified(outlet: str, state: str):
+    if state == "none":
+        raise RegisterRefused("register_seal_missing", outlet)
+    raise RegisterRefused("register_seal_unverified", state, seal=state)
 
 
 def sealed_judgments(raw: bytes, seal: dict | None) -> list:
@@ -750,9 +787,9 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
     vessel = V.open_vessel(root)
     outlet = outlet_of(root, vessel, outlet_name)
     to = check_to(root, to)
-    seal = read_seal(root, outlet.name)
+    seal, state = trusted_seal(root, outlet.name)
     if seal is None:
-        raise RegisterRefused("register_seal_missing", outlet.name)
+        _refuse_unverified(outlet.name, state)
     raw = judgments_raw(root)
     ctx = context(root, as_of, common_root=common_root, raw=raw, seal=seal)
     result = compute(ctx, outlet, common_known=_known_paths(seal))
@@ -790,7 +827,9 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
     raw = judgments_raw(root)
     if raw and not raw.endswith(b"\n"):
         raise RegisterRefused("register_judgment_invalid", "no_final_newline")
-    previous = read_seal(root, outlet.name)
+    previous, state = trusted_seal(root, outlet.name)
+    if state != "none" and previous is None:
+        _refuse_unverified(outlet.name, state)   # 署名の合わない封から、世代と判断の頭を継がない
     if previous is not None:
         sealed_judgments(raw, previous)   # 封のあとで判断の記録の頭が書き換わっていれば、受け入れずに断る
     ctx = context(root, as_of, common_root=common_root, raw=raw, sealed_all=True)
@@ -834,14 +873,43 @@ def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, com
 # ------------------------------------------------------------------ 確かめ（公開の直前・CI）
 
 PROBLEMS = ("no_seal", "seal_shape", "public_key", "signature", "judgments_rewritten", "previous_unknown",
-            "previous_signature", "previous_other_outlet", "generation_back", "generation_reused",
+            "previous_signature", "previous_other_outlet", "previous_not_deployed", "seal_other_outlet",
+            "generation_back", "generation_reused",
             "judgments_not_continued", "decl_changed", "material_mismatch", "narrowed_after_seal",
             "widened_after_seal", "stale_material")
 
 
+def deployed_of(prev: dict) -> dict | None:
+    """前に配った物の控え（`deployed`）。形が合わなければ None。封の頭より短い頭は受けない。"""
+    pb, d = prev["body"], prev.get("deployed")
+    if not isinstance(d, dict) or d.get("outlet") != pb.get("outlet") or d.get("generation") != pb.get("generation"):
+        return None
+    dj = d.get("judgments")
+    if (not isinstance(dj, dict) or not isinstance(dj.get("bytes"), int) or not isinstance(dj.get("sha256"), str)
+            or dj["bytes"] < pb["judgments"]["bytes"]):
+        return None
+    return d
+
+
+def write_published(path: str, seal: dict, raw: bytes, now: datetime.datetime, dropped: list) -> None:
+    """配る物: 封（署名つき）と、配った時の判断の記録の頭（`deployed`）。次の回の CI が「前に配った物」として読む。
+    `deployed` は署名の外（CI は鍵を持たない）。守るのは、公開の場所へ置けるのがこの確かめを通った配りだけ、という事。"""
+    body = seal["body"]
+    value = {"body": body, "signature": seal["signature"],
+             "deployed": {"outlet": body["outlet"], "generation": body["generation"],
+                          "judgments": {"bytes": len(raw), "sha256": sha(raw)},
+                          "at": now.isoformat(timespec="seconds"), "dropped": dropped}}
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+    os.replace(tmp, path)
+
+
 def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no_previous: bool = False,
-           common_root=None) -> dict:
-    """公開の直前の確かめ。`{"ok", "problems": [{"word", ...}], "warnings": [...]}`。公開鍵は repo の外からだけ。"""
+           common_root=None, publish=None) -> dict:
+    """公開の直前の確かめ。`{"ok", "problems": [{"word", ...}], "warnings": [...]}`。公開鍵は repo の外からだけ。
+    `publish` を渡すと、緑のときだけ、配る物（封と配った時の判断の記録の頭）をそこに書く。"""
     problems, warnings = [], []
 
     def red(word, **extra):
@@ -867,6 +935,11 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     if not S.verify(V.canonical(body).encode("utf-8"), seal["signature"], pem):
         red("signature")
         return _verdict(problems, warnings, key=origin)
+    if body.get("outlet") != outlet.name:
+        red("seal_other_outlet", sealed_for=body.get("outlet"))
+        return _verdict(problems, warnings, key=origin)
+    if publish is not None and _inside(os.path.abspath(publish), root):
+        raise RegisterRefused("register_adopt_unusable", "inside")
     raw = judgments_raw(root)
     jm = body["judgments"]
     if len(raw) < jm["bytes"] or sha(raw[:jm["bytes"]]) != jm["sha256"]:
@@ -893,6 +966,15 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
                 pj = pb["judgments"]
                 if len(raw) < pj["bytes"] or sha(raw[:pj["bytes"]]) != pj["sha256"]:
                     red("judgments_not_continued", previous_bytes=pj["bytes"], now_bytes=len(raw))
+                # 封をし直さずに配った回（止めるで外した・期限で外した）の判断も、前に配った物の続きでなければ赤。
+                # 止めるの行を消して古い材料に戻すと、封の頭は続いていても、配った時の頭が続かない。
+                dep = deployed_of(prev)
+                if dep is None:
+                    red("previous_not_deployed")
+                else:
+                    dj = dep["judgments"]
+                    if len(raw) < dj["bytes"] or sha(raw[:dj["bytes"]]) != dj["sha256"]:
+                        red("judgments_not_continued", deployed_bytes=dj["bytes"], now_bytes=len(raw))
     elif not no_previous:
         red("previous_unknown")
     else:
@@ -935,8 +1017,12 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
                                                       if here.get(p) != sealed_outputs.get(p))[:50])
     elif not placed_sealed:
         red("material_mismatch", files=sorted(p for p in names | set(here) if here.get(p) != sealed_outputs.get(p))[:50])
-    return _verdict(problems, warnings, key=origin, generation=body["generation"],
-                    pending_takes=result["pending_takes"])
+    verdict = _verdict(problems, warnings, key=origin, generation=body["generation"],
+                       pending_takes=result["pending_takes"])
+    if publish is not None and verdict["ok"]:
+        write_published(publish, seal, raw, as_of, narrowed)
+        verdict["published"] = os.path.abspath(publish)
+    return verdict
 
 
 def _verdict(problems, warnings, **extra) -> dict:
@@ -1100,7 +1186,7 @@ def use(root: str, ref: str, outlet_name: str, as_: str, as_of, *, unit=None, co
         raise RegisterRefused("register_args_invalid", "as")
     vessel = V.open_vessel(root)
     outlet = outlet_of(root, vessel, outlet_name)
-    seal = read_seal(root, outlet.name)
+    seal, state = trusted_seal(root, outlet.name)
     ctx = context(root, as_of, common_root=common_root, seal=seal)
     rec = ctx.vessel.get(ref)
     if unit is not None and V.unit_at(rec, unit) is None:
@@ -1116,10 +1202,10 @@ def use(root: str, ref: str, outlet_name: str, as_: str, as_of, *, unit=None, co
     if not usable and got["as"] == "reservation":
         why = "only_reservation"
     out = {"record": rec.ref, "unit": unit, "outlet": outlet.name, "asked": as_, "as": got["as"], "usable": usable,
-           "why": None if usable else why, "sealed": seal is not None,
+           "why": None if usable else why, "sealed": seal is not None, "seal": state,
            "generation": seal["body"]["generation"] if seal else None}
     if got.get("reason_kind"):
         out["reason_kind"] = got["reason_kind"]
     if seal is None and not usable:
-        out["why"] = "no_seal"
+        out["why"] = "no_seal" if state == "none" else "seal_unverified"
     return out

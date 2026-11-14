@@ -17,9 +17,10 @@
         封の中の判断で材料を書く（鍵は使わない・狭める物は封を待たない・一覧に無い旧い材料があれば止まる）
     thth register accept <台帳> --outlet <出し口> --to <先> --as-of <日時> --by <名前> [--confirm D] [--common …] [--json]
         受け入れて封をする（二段: 1 回めは変わる物と印を見せる・2 回めに --confirm で材料を書いて封をする）
-    thth register verify <台帳> --outlet <出し口> --material <先> [--now <日時>] (--previous <前の封> | --no-previous)
-                         [--common <共通の台帳>] [--json]
-        公開の直前の確かめ（CI・手元の配信）。公開鍵は環境の変数 THTH_REGISTER_SEAL_PUBLIC_KEY か、手元の鍵だけ
+    thth register verify <台帳> --outlet <出し口> --material <先> [--now <日時>] (--previous <前に配った物> | --no-previous)
+                         [--common <共通の台帳>] [--publish <配る物の置き場>] [--json]
+        公開の直前の確かめ（CI・手元の配信）。公開鍵は環境の変数 THTH_REGISTER_SEAL_PUBLIC_KEY か、手元の鍵だけ。
+        緑なら --publish の置き場に、配る物（封と、配った時の判断の記録の頭）を書く（次の回の --previous）
     thth register key init|show [--json]
         持ち主の鍵（秘密の鍵は ~/.config/thth/ に。値は出さない・出すのは公開鍵と指紋）
 
@@ -190,6 +191,8 @@ PROBLEM_JA = {
     "previous_unknown": "前に配った世代の封を読んでいません（--previous か、初めてなら --no-previous）",
     "previous_signature": "前に配った世代の封を、持ち主の公開鍵で確かめられません",
     "previous_other_outlet": "前に配った世代の封が、別の出し口の物です",
+    "previous_not_deployed": "前に配った物に、配った時の判断の記録の頭がありません（封だけの写しは読みません）",
+    "seal_other_outlet": "封が、別の出し口に向けて署名された物です",
     "generation_back": "世代の番号が、前に配った世代より戻っています",
     "generation_reused": "前に配った世代と同じ番号で、中身が違う封です",
     "judgments_not_continued": "判断の記録が、前に配った世代の続きになっていません（行が消えたか書き換わった）",
@@ -205,10 +208,12 @@ def cmd_verify(args) -> int:
     root = root_of(args.register)
     now = args.now or _at()
     value = R.verify(root, args.outlet, args.material, now, previous_path=args.previous,
-                     no_previous=args.no_previous, common_root=args.common)
+                     no_previous=args.no_previous, common_root=args.common, publish=args.publish)
     if not args.json:
         if value["ok"]:
             print(f"確かめました: {args.outlet}・世代 {value.get('generation')}（公開鍵: {value.get('key')}）")
+            if value.get("published"):
+                print(f"配る物を置きました: {value['published']}（次の回の --previous）")
         for p in value["problems"]:
             print(f"  赤: {PROBLEM_JA.get(p['word'], p['word'])}"
                   + (f"（{'・'.join(str(i.get('item', i)) if isinstance(i, dict) else str(i) for i in (p.get('items') or p.get('files') or []))[:300]}）"
@@ -301,6 +306,7 @@ def register_parsers(verbs, run) -> None:
     prev.add_argument("--previous", default=None, metavar="前の封")
     prev.add_argument("--no-previous", action="store_true")
     p.add_argument("--common", default=None, metavar="共通の台帳")
+    p.add_argument("--publish", default=None, metavar="配る物の置き場")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_verify))
 

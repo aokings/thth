@@ -96,10 +96,11 @@ def baseline(capsys, led, outlet):
     return v
 
 
-def published(led, outlet, into: pathlib.Path) -> pathlib.Path:
-    """「配った」: 今の封を、公開の場所に置いた写しとして控える（CI の手順が公開の場所から取ってくる物）。"""
+def published(led, outlet, into: pathlib.Path, site) -> pathlib.Path:
+    """「配った」: CI の台本のとおり確かめて、緑なら配る物（封と配った時の判断の記録の頭）を公開の場所に置く。"""
     into.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(pathlib.Path(R.seal_path(str(led), outlet)), into)
+    v = R.verify(str(led), outlet, str(site), "2027-03-21", no_previous=True, publish=str(into))
+    assert v["ok"], v
     return into
 
 
@@ -297,7 +298,7 @@ def test_試験3c_材料と控えと判断の行を一緒に書き換えても�
     led, site = ledger(env, "kopicha"), env / "site"
     baseline(capsys, led, "facts")
     accept(capsys, led, "facts", site)
-    prev = published(led, "facts", env / "published/facts.json")
+    prev = published(led, "facts", env / "published/facts.json", site)
     _rewrite_together(env, led, site)
     rc, v = verify(capsys, led, "facts", site, "2027-03-23", "--previous", prev)
     assert rc != 0 and {"narrowed_after_seal", "material_mismatch"} <= words(v), v
@@ -319,7 +320,7 @@ def test_試験3c_受け入れれば同じ判断が手元とCIで効く(env, cap
     led, site = ledger(env, "kopicha"), env / "site"
     baseline(capsys, led, "facts")
     accept(capsys, led, "facts", site)
-    prev = published(led, "facts", env / "published/facts.json")
+    prev = published(led, "facts", env / "published/facts.json", site)
     _rewrite_together(env, led, site)
     v = accept(capsys, led, "facts", site)
     assert v["generation"] == 2
@@ -433,7 +434,7 @@ def test_試験3e_止めるを足したあと古い封と古い材料に戻し�
         p for p in v["problems"] if p["word"] == "narrowed_after_seal")["items"]
     v = accept(capsys, led, "facts", site)                   # 世代 N+1 を受け入れて配る
     assert v["generation"] == 2 and v["changes"]["leaving"] == [BRAZIL + "=fact"]
-    prev = published(led, "facts", env / "published/facts.json")
+    prev = published(led, "facts", env / "published/facts.json", site)
     rc, v = verify(capsys, led, "facts", site, "2027-03-21", "--previous", prev)
     assert rc == 0 and v["ok"], v
     _restore_old(led, site, snap, judgments=drop_line)
@@ -496,7 +497,9 @@ def _attacker_seal(env, led, site, monkeypatch):
     vessel = V.open_vessel(str(led))
     J.append(str(led), [J.make(vessel, {"record": "claim:c-term-tea-grade-ctc-res-milktea1-24"},
                                "may_publish@facts", by="attacker", at="2027-03-22T00:00:00+09:00", conclusion="good")])
+    monkeypatch.setenv("XDG_CONFIG_HOME", owner)            # 中身の計算だけは持ち主の封の上で（署名は別の鍵）
     plan = R.accept_plan(str(led), "facts", str(site), "2027-03-22")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(other))
     body = dict(plan["body"], at="2027-03-22T00:00:00+09:00", public_key=info["fingerprint"])
     sig = S.sign(V.canonical(body).encode("utf-8"), register_root=str(led))
     pathlib.Path(R.seal_path(str(led), "facts")).write_text(json.dumps({"body": body, "signature": sig}))
@@ -623,7 +626,8 @@ def test_秘密の鍵は台帳にもrepoにも置かず値を出さない(env, c
     for path in list(led.rglob("*")) + list(site.rglob("*")):
         if path.is_file():
             assert body.encode() not in path.read_bytes(), path
-    # 鍵の置き場を台帳の repo の中に向けると、封をせずに断る
+    # 鍵の置き場を台帳の repo の中に向けると、封をせずに断る（前の封は持ち主の公開鍵で確かめられる）
+    monkeypatch.setenv(S.ENV_PUBLIC, S.public_info()["public_key_base64"])
     (led / ".git").mkdir()
     inside = led / "conf"
     inside.mkdir()

@@ -411,11 +411,15 @@ ENTRIES = {
         "初めての出し口は、thth register judge --baseline で今の版を基準として受けてから accept すると、頁を変えずに始められます。"),
     "register_seal_unverified": _entry(
         "公開の直前の確かめが赤です（1 行目の（）の語が最初の赤。全部は --json の problems）。受け入れていない判断・"
-        "封のあとの止める・期限・中身の変わり・世代の戻り・判断の記録の消え・別の鍵の封・宣言の変わりのどれかがあります。",
+        "封のあとの止める・期限・中身の変わり・世代の戻り・判断の記録の消え・別の鍵の封・別の出し口の封・宣言の変わりのどれかが"
+        "あります。手元の use・export・accept では、封の署名が合わない（signature）・公開鍵が無い（public_key）・"
+        "別の出し口の封（other_outlet）のとき、封なしとして扱って止まります。",
         "語に合わせて直してください: 新しい判断や止めるを足したなら thth register accept で封をし直す・世代を戻したなら"
         "最後の世代の封と材料に戻す・判断の記録の行を消したなら git の前の版から戻す・公開鍵は CI の変数"
-        " THTH_REGISTER_SEAL_PUBLIC_KEY に持ち主の公開鍵を置く（repo の中の鍵のファイルは読みません）。",
-        "thth register verify <台帳> --outlet <出し口> --material <先> --previous <前の封>",
+        " THTH_REGISTER_SEAL_PUBLIC_KEY に持ち主の公開鍵を置く（repo の中の鍵のファイルは読みません）・"
+        "前に配った物は台本（--publish）が置いた thth-seal.<出し口>.json を渡す（封だけの写しは読みません）・"
+        "手元で署名が合わないなら、封のファイルを git の前の版から戻すか、持ち主が受け入れ直す。",
+        "thth register verify <台帳> --outlet <出し口> --material <先> --previous <前に配った物>",
         "配る前に手元で同じ verify を回すと、CI で止まる前に気づけます。夜に期限が切れて朝の配信が止まるのを避けたい出し口は、"
         "出し口の宣言で on_narrow を drop にすると、CI が外して配ります。"),
     "register_seal_key_missing": _entry(
