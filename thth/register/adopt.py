@@ -12,9 +12,13 @@
   （MMR）、器が控えた時点どうしなら取り出せる。台帳が git の作業木なら、端に commit も受ける（段 5 §2.1・
   `trail.py`。宣言の置き場に入る枚だけを読むだけの git で取り出す）。変わった記録には結びの候補を付け、
   その間の取り込みの跡（集めた者・検めた者）を出す。
-- `merge`: 束（新しい中身のファイルを、台帳の中の道に置いたフォルダ）を、まとめての入れ替えで入れる。
-- `row_set`・`row_add`: 表（CSV）の 1 行を直す・足す。変える行のバイトだけを書き直し、触っていない行のバイトが
-  1 つでも変わるなら書かずに断る。
+- `merge`: 束（新しい中身のファイルを、台帳の中の道に置いたフォルダ）を、まとめての入れ替えで入れる。次の束は
+  入れない（段 6）: 判定が断りの行がある・重なる番号を作る・集めた者と検めた者が同じ・検めた者が無い（`unchecked`
+  を渡したときだけ入れ、取り込みの跡は「検めていない」）。束の中の検収の記録が対象の版を示していれば、取り込みと
+  同時に新しい版への判断として結ぶ。版を示さない検収の記録は結ばず、「版を示していない検収の記録」として数える。
+- `row_set`・`row_add`: 表（CSV・タブ区切り。区切りは種類の宣言の `delimiter`）の 1 行を直す・足す。変える行の
+  バイトだけを書き直し、触っていない行のバイトが 1 つでも変わるなら書かずに断る。足す行の改行は、最後の
+  レコードの改行に合わせる（混ざった改行の表でも、ほかの行の改行は変えない）。
 
 元の形式の道具（こぴちゃの取り込みの台本・関東の年度の置き換え・MMR の進みの書き込み）は、台帳のファイルに
 そのまま書いてよい（設計 §5.1）。器の書く口は、壊さないための口。
@@ -510,9 +514,10 @@ def diff(root: str, spec: str, *, decl: str | None = None, excused=None) -> dict
 # ------------------------------------------------------------------ 束をまとめて入れる
 
 def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None,
-          checked_by: str | None = None) -> dict:
+          checked_by: str | None = None, unchecked: bool = False) -> dict:
     """束のフォルダの全部のファイルを、台帳の同じ道へ、まとめての入れ替えで入れる（足すか置き換えるだけ）。
-    `base` を渡すと、台帳の今の目録の指紋がそれで始まるときだけ入れる（束を作った時から台帳が動いていない）。"""
+    `base` を渡すと、台帳の今の目録の指紋がそれで始まるときだけ入れる（束を作った時から台帳が動いていない）。
+    検めた者が無い束は、`unchecked` が真のときだけ入れる（命令では `--unchecked` を二段で言う）。"""
     bundle = os.path.abspath(os.path.expanduser(bundle))
     if os.path.islink(bundle) or not os.path.isdir(bundle):
         raise RegisterRefused("register_adopt_unusable", "bundle")
@@ -526,17 +531,96 @@ def merge(root: str, bundle: str, *, by: str, at: str, base: str | None = None,
         desired[rel] = K.read_entry(path, rel)[1]
     if not desired:
         raise RegisterRefused("register_adopt_unusable", "bundle_empty")
+    if checked_by is None and not unchecked:
+        raise RegisterRefused("register_merge_refused", "unchecked")
+    if checked_by is not None and checked_by.strip() == by.strip():
+        raise RegisterRefused("register_merge_refused", "same_person")
     plan = K.pending(root)
     if base is not None and plan is None:
         now = K.catalog_fp(K.view(root))
         if not now.startswith(base):
             raise RegisterRefused("register_batch_conflict", "base", now=now[:16])
+    if plan is None:
+        _screen(root, desired)   # 止まった入れ替えの続きは、初めの打ちで見た（違う束なら K.run が断る）
     result = K.run(root, desired, what="merge", by=by, at=at)
     bundle_fp = K.catalog_fp([{"path": rel, "sha256": K.sha256(data), "size": len(data)}
                               for rel, data in desired.items()])
-    # 取り込みの跡（段 5 §2.3）: 控えの目録に、集めた者・検めた者・束の目録の指紋を残す。
+    bound = _bind(root, set(desired), at=at, bundle_fp=bundle_fp)
+    # 取り込みの跡（段 5 §2.3）: 控えの目録に、集めた者・検めた者・束の目録の指紋を残す（結んだ判断も控えに入る）。
     T.note(root, result.get("snapshot"), what="merge", by=by, at=at, checked_by=checked_by, bundle_fp=bundle_fp)
-    return {**result, "bundle_files": len(desired), "bundle_fp": bundle_fp, "checked_by": checked_by or None}
+    return {**result, "bundle_files": len(desired), "bundle_fp": bundle_fp, "checked_by": checked_by or None,
+            "unchecked": checked_by is None, "bound": bound}
+
+
+def _after_view(root: str, desired: dict, into: str) -> V.Vessel:
+    """束を入れたあとの姿を、台帳の外の作業場に組んで器として読む（台帳には書かない）。"""
+    for e in K.view(root):
+        if e["path"] not in desired:
+            K.put_file(into, e["path"], K.view_bytes(root, e), False)
+    for rel, data in desired.items():
+        K.put_file(into, rel, data, False)
+    for e in K.decl_entries(root, store=False):
+        K.put_file(into, f"{K.THTH}/{e['path']}", _read_decl(root, e["path"]), False)
+    return V.open_vessel(into)
+
+
+def _screen(root: str, desired: dict) -> None:
+    """入れる前に、束を入れたあとの姿で (a) 判定が断りの行 (b) 重なる番号 を見る。どちらかがあれば書かずに断る。"""
+    if not os.path.isdir(os.path.join(K.thth_dir(root), V.KINDS_DIR)):
+        return   # 宣言の無い台帳（備え付けの頭つきの .md だけ）は、検収の記録も番号の表も持たない
+    paths = set(desired)
+    with tempfile.TemporaryDirectory(prefix="thth-merge-") as tmp:
+        after = _after_view(root, desired, tmp)
+        bad = sorted({j["source"] for j in J.inspections(after)
+                      if _source_path(after, j) in paths and J.conclusion_of(after, j)[0] == "bad"})
+        if bad:
+            raise RegisterRefused("register_merge_refused", "verdict_refused", rows=bad[:20])
+        dup_before = {r.ref for r in V.open_vessel(root).all_records if r.id is not None and "id_duplicate" in r.problems}
+        dup_after = {r.ref for r in after.all_records
+                     if r.id is not None and "id_duplicate" in r.problems and r.path in paths}
+        overlap = sorted(dup_after - dup_before)
+        if overlap:
+            raise RegisterRefused("register_merge_refused", "id_overlap", records=overlap[:20])
+
+
+def _source_path(vessel: V.Vessel, j: dict):
+    source = j.get("source")
+    if not isinstance(source, str):
+        return None
+    recs = [r for r in vessel.all_records if r.ref == source]
+    return recs[0].path if recs else None
+
+
+def _bind(root: str, paths: set, *, at: str, bundle_fp: str) -> dict:
+    """束の中の検収の記録を、入れたあとの版への判断として結ぶ（段 6 の 3）。版を示す記録で、中身が今の版と合う
+    物だけ。合わない物は結ばずに `not_bound`、版を示さない物は結ばずに `unversioned`（判断に数えない）。
+    同じ対象・問い・見た依る所・元の行の判断がもうあれば、2 度は結ばない（止まった入れ替えの打ち直し）。"""
+    vessel = V.open_vessel(root)
+    have = {(x["target"].get("record"), x.get("question"), (x.get("seen") or {}).get("depend"), x.get("source"))
+            for x in J.read(root) if isinstance(x.get("target"), dict)}
+    made, not_bound, unversioned = [], [], []
+    for j in J.inspections(vessel):
+        if _source_path(vessel, j) not in paths:
+            continue
+        if not T.shows_version(vessel, j):
+            unversioned.append(T.unversioned_view(vessel, j))
+            continue
+        state = J.evaluate(vessel, j)
+        if state != "effective":
+            not_bound.append({"record": j["target"]["record"], "source": j["source"], "state": state})
+            continue
+        new = J.make(vessel, j["target"], j["question"], by=j["by"], at=at, word=j["answer"]["word"],
+                     source=j["source"], extra={"bundle_fp": bundle_fp})
+        key = (new["target"]["record"], new["question"], new["seen"]["depend"], new["source"])
+        if key in have:
+            continue
+        have.add(key)
+        made.append(new)
+    if made:
+        J.append(root, made)
+    return {"judgments": [{"id": m["id"], "record": m["target"]["record"], "source": m["source"],
+                           "version": m["seen"]["version"]} for m in made],
+            "not_bound": not_bound, "unversioned": unversioned}
 
 
 # ------------------------------------------------------------------ 表の 1 行を書く
@@ -548,27 +632,27 @@ def _split_eol(raw: str) -> tuple:
     return raw, ""
 
 
-def raw_cells(body: str) -> list:
-    """行のセルを、元の字（引用符も含めて）のまま分ける。"""
+def raw_cells(body: str, delimiter: str = ",") -> list:
+    """行のセルを、元の字（引用符も含めて）のまま分ける。区切りは種類の宣言の `delimiter`（`,` かタブ）。"""
     cells, start, quoted = [], 0, False
     for i, ch in enumerate(body):
         if ch == '"':
             quoted = not quoted
-        elif ch == "," and not quoted:
+        elif ch == delimiter and not quoted:
             cells.append(body[start:i])
             start = i + 1
     cells.append(body[start:])
     return cells
 
 
-def render_cell(value: str) -> str:
-    if any(c in value for c in ',"\r\n'):
+def render_cell(value: str, delimiter: str = ",") -> str:
+    if any(c in value for c in delimiter + '"\r\n'):
         return '"' + value.replace('"', '""') + '"'
     return value
 
 
-def _join_row(cells: list, eol: str) -> str:
-    return ",".join(cells) + eol
+def _join_row(cells: list, eol: str, delimiter: str = ",") -> str:
+    return delimiter.join(cells) + eol
 
 
 def _table(root: str, kind: V.Kind, rel: str):
@@ -621,7 +705,9 @@ def row_set(root: str, ref: str, changes: dict, *, by: str, at: str) -> dict:
     if "id_duplicate" in rec.problems:
         raise RegisterRefused("register_unit_ambiguous", "record", record=ref)
     data, bom, lines = _table(root, kind, rec.path)
-    header = V._parse_csv_line(lines[0])
+    header = V._parse_csv_line(lines[0], kind.delimiter)
+    if header is None:
+        raise RegisterRefused("register_write_unsafe", "table_shape")
     for name in changes:
         if name not in header:
             raise RegisterRefused("register_write_unsafe", "unknown_field", field=name)
@@ -636,13 +722,13 @@ def row_set(root: str, ref: str, changes: dict, *, by: str, at: str) -> dict:
     if len(hits) != 1:
         raise RegisterRefused("register_unit_ambiguous", "row", record=ref)
     body, eol = _split_eol(lines[hits[0]])
-    cells = raw_cells(body)
+    cells = raw_cells(body, kind.delimiter)
     if len(cells) != len(header):
         raise RegisterRefused("register_write_unsafe", "row_width")
     for name, value in changes.items():
-        cells[header.index(name)] = render_cell(value)
+        cells[header.index(name)] = render_cell(value, kind.delimiter)
     new_lines = list(lines)
-    new_lines[hits[0]] = _join_row(cells, eol)
+    new_lines[hits[0]] = _join_row(cells, eol, kind.delimiter)
     expect = dict(rec.values, **changes)
     return _write_table(root, rec.path, kind, "".join(lines), new_lines, bom, target_id=rec.id, values=expect,
                         adding=False, by=by, at=at, what="row_set")
@@ -659,7 +745,9 @@ def row_add(root: str, kind_name: str, values: dict, *, by: str, at: str, path: 
         raise RegisterRefused("register_write_unsafe", "which_table", tables=files[:10])
     rel = files[0]
     data, bom, lines = _table(root, kind, rel)
-    header = V._parse_csv_line(lines[0])
+    header = V._parse_csv_line(lines[0], kind.delimiter)
+    if header is None:
+        raise RegisterRefused("register_write_unsafe", "table_shape")
     for name in values:
         if name not in header:
             raise RegisterRefused("register_write_unsafe", "unknown_field", field=name)
@@ -672,10 +760,13 @@ def row_add(root: str, kind_name: str, values: dict, *, by: str, at: str, path: 
         raise RegisterRefused("register_write_unsafe", "id_form")
     if any(r.kind == kind_name and r.id == rid for r in vessel.all_records):
         raise RegisterRefused("register_write_unsafe", "id_exists", record=f"{kind_name}:{rid}")
-    last_body, eol = _split_eol(lines[-1])
-    if not eol:
+    if not _split_eol(lines[-1])[1]:
         # 最後の行に改行が無い: 足すには、その行のバイトを変えることになる（触っていない行は変えない）。
         raise RegisterRefused("register_write_unsafe", "no_final_newline", path=rel)
-    new_lines = list(lines) + [_join_row([render_cell(full_values[n]) for n in header], eol)]
+    # 足す行の改行は、最後のレコード（空の行でない最後の行。無ければ見出し）の改行に合わせる。
+    last = next(raw for raw in reversed(lines) if raw.strip("\r\n"))
+    eol = _split_eol(last)[1]
+    new_lines = list(lines) + [_join_row([render_cell(full_values[n], kind.delimiter) for n in header], eol,
+                                         kind.delimiter)]
     return _write_table(root, rel, kind, "".join(lines), new_lines, bom, target_id=rid, values=full_values,
                         adding=True, by=by, at=at, what="row_add")

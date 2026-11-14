@@ -63,7 +63,7 @@ def test_穴1_台帳のdataが元を指すsymlinkならmergeは書く前に断�
     (reg / "data").symlink_to(source / "data", target_is_directory=True)
     write(bundle / "data/rows.csv", "id,text\na,NEW\n")
     before = tree(source)
-    rc_ = cli.main(["register", "merge", str(reg), str(bundle), "--by", "audit", "--json"])
+    rc_ = cli.main(["register", "merge", str(reg), str(bundle), "--by", "audit", "--checked-by", "z", "--json"])
     value = json.loads(capsys.readouterr().out)
     assert rc_ != 0 and value["detail"] == "symlink"
     assert tree(source) == before
@@ -116,7 +116,7 @@ def test_同じ型_表の1行を書く口も台帳の外を指すsymlinkの親�
     (reg / "t").symlink_to(outside, target_is_directory=True)
     before = tree(outside)
     with pytest.raises(RegisterRefused):
-        A.merge(str(reg), str(_bundle(env, "t/rows.csv", "id,text\na,B\n")), by="m", at=AT)
+        A.merge(str(reg), str(_bundle(env, "t/rows.csv", "id,text\na,B\n")), by="m", at=AT, checked_by="z")
     with pytest.raises(RegisterRefused):
         A.row_add(str(reg), "row", {"id": "b", "text": "B"}, by="m", at=AT, path="t/rows.csv")
     assert tree(outside) == before

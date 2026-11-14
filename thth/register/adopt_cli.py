@@ -13,7 +13,7 @@
         （宣言の置き場の枚だけを読むだけの git で取り出す）。変わった記録の結びの候補と、間の取り込みの跡も出す
     thth register keep <台帳> --by <名前> [--list] [--json]
         今の姿を控える（元の形式の道具が直に書いたあと・git の外の台帳で前の版を取り出せるように）
-    thth register merge <台帳> <束のフォルダ> --by <名前> [--checked-by <名前>] [--base <目録の指紋>] [--json]
+    thth register merge <台帳> <束のフォルダ> --by <名前> (--checked-by <名前> | --unchecked --unchecked) [--base <目録の指紋>] [--json]
         束のファイルを、まとめての入れ替えで入れる（止まっても、打ち直すか resume で続け、resume --rollback で戻す）
     thth register resume <台帳> (--continue | --rollback) --by <名前> [--json]
         止まった入れ替えを続ける・戻す（別の者が打ってよい）
@@ -193,13 +193,24 @@ def _batch_line(value: dict) -> str:
 
 def cmd_merge(args) -> int:
     root = root_of(args.register)
-    value = A.merge(root, args.bundle, by=_by(args), at=_at(), base=args.base, checked_by=_checked_by(args))
+    checked_by = _checked_by(args)
+    if checked_by is not None and args.unchecked:
+        raise RegisterRefused("register_args_invalid", "unchecked_with_checked_by")
+    if checked_by is None and args.unchecked == 1:
+        # 検めずに入れるのは二段で言ったときだけ（1 度だけなら、言い間違いかもしれないので入れない）。
+        raise RegisterRefused("register_merge_refused", "unchecked_once")
+    value = A.merge(root, args.bundle, by=_by(args), at=_at(), base=args.base, checked_by=checked_by,
+                    unchecked=args.unchecked >= 2)
     if args.json:
         _print(value)
     else:
         print(_batch_line(value))
         if value.get("batch"):
-            print("  " + (f"検めた者 {value['checked_by']}" if value["checked_by"] else "検めていない（--checked-by が無い）"))
+            print("  " + (f"検めた者 {value['checked_by']}" if value["checked_by"] else "検めていない（--unchecked を二段）"))
+        bound = value.get("bound") or {}
+        print(f"  結んだ判断 {len(bound.get('judgments', []))} 件・中身が新しい版と合わず結ばなかった検収の記録 "
+              f"{len(bound.get('not_bound', []))} 件・版を示していない検収の記録 {len(bound.get('unversioned', []))} 件"
+              "（判断に数えない）")
     return 0
 
 
@@ -291,7 +302,9 @@ def register_parsers(verbs, run) -> None:
     p.add_argument("register", metavar="台帳")
     p.add_argument("bundle", metavar="束のフォルダ")
     p.add_argument("--by", required=True, help="集めた者")
-    p.add_argument("--checked-by", default=None, help="検めた者（無ければ「検めていない」と残る）")
+    p.add_argument("--checked-by", default=None, help="検めた者（集めた者と別の者）")
+    p.add_argument("--unchecked", action="count", default=0,
+                   help="検めずに入れる（2 度並べて言ったときだけ。取り込みの跡に「検めていない」と残る）")
     p.add_argument("--base", default=None, metavar="目録の指紋")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_merge))

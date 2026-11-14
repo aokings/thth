@@ -624,7 +624,7 @@ def stopped_merge(env, reg: pathlib.Path, bundle: pathlib.Path, *, after: int, b
         "    count[0] += 1\n"
         "    real(a, b)\n"
         "keep._replace = stop\n"
-        f"cli.main(['register', 'merge', {str(reg)!r}, {str(bundle)!r}, '--by', {by!r}])\n")
+        f"cli.main(['register', 'merge', {str(reg)!r}, {str(bundle)!r}, '--by', {by!r}, '--checked-by', 'z'])\n")
     return subprocess.run([sys.executable, "-c", code], env=dict(os.environ), capture_output=True).returncode
 
 
@@ -633,7 +633,7 @@ def setup_merge(capsys, env):
     bundle = make_bundle(env, reg)
     twin = env["tmp"] / "twin"
     shutil.copytree(reg, twin)
-    rc_, done, err = jrun(capsys, "register", "merge", str(twin), str(bundle), "--by", "a")
+    rc_, done, err = jrun(capsys, "register", "merge", str(twin), str(bundle), "--by", "a", "--checked-by", "z")
     assert rc_ == 0, err
     assert done["files"] == 4
     return reg, bundle, K.catalog_fp(K.view(str(reg))), done["fp"]
@@ -663,7 +663,7 @@ def test_試験2d_まとめての入れ替えを途中で止めても読み手�
     rc_, value, _ = jrun(capsys, "register", "check", "kopicha")
     assert rc_ != 0 and value["code"] == "register_batch_pending" and value["what"] == "merge"
     # 別の者が同じ命令を打ち直す → 続きから済ませ、4 枚とも後の版。
-    rc_, value, err = jrun(capsys, "register", "merge", str(reg), str(bundle), "--by", "b")
+    rc_, value, err = jrun(capsys, "register", "merge", str(reg), str(bundle), "--by", "b", "--checked-by", "z")
     assert rc_ == 0, err
     assert value["continued"] and value["applied"] == 2
     assert value["fp"] == after_fp
@@ -691,7 +691,7 @@ def test_試験2d_止まった入れ替えの間にほかの者が書いた枚�
     write(reg / untouched, "id\nほかの者\n")
     rc_, value, _ = jrun(capsys, "register", "resume", str(reg), "--continue", "--by", "b")
     assert rc_ != 0 and value["code"] == "register_batch_conflict" and value["path"] == untouched
-    rc_, value, _ = jrun(capsys, "register", "merge", str(reg), str(bundle), "--by", "b")
+    rc_, value, _ = jrun(capsys, "register", "merge", str(reg), str(bundle), "--by", "b", "--checked-by", "z")
     assert rc_ != 0 and value["code"] in ("register_batch_conflict", "register_batch_pending")
     assert (reg / untouched).read_text(encoding="utf-8") == "id\nほかの者\n"
 
@@ -701,7 +701,7 @@ def test_試験2d_止まったまま別の束を入れようとすると断り�
     assert stopped_merge(env, reg, bundle, after=1) == 9
     other = env["tmp"] / "other"
     write(other / "data/knowledge/leads.csv", "id,question_ja\nl-3,別の束\n")
-    rc_, value, _ = jrun(capsys, "register", "merge", str(reg), str(other), "--by", "b")
+    rc_, value, _ = jrun(capsys, "register", "merge", str(reg), str(other), "--by", "b", "--checked-by", "z")
     assert rc_ != 0 and value["code"] == "register_batch_pending" and value["batch"].startswith("b-")
 
 
@@ -802,7 +802,7 @@ def test_row_add_最後の行の改行で1行を足し重なる番号と最後�
 
 def test_柵_表の1行を書く口は触っていない行が変わるなら書かずに断る(capsys, env, monkeypatch):
     reg = table_reg(capsys, env, MIXED)
-    monkeypatch.setattr(A, "_join_row", lambda cells, eol: ",".join(cells))  # わざと行の終わりを落とす
+    monkeypatch.setattr(A, "_join_row", lambda cells, eol, delimiter=",": delimiter.join(cells))  # わざと行の終わりを落とす
     rc_, value, _ = jrun(capsys, "register", "row", "set", str(reg), "hub:t-1", "--set", "title=Z", "--by", "m")
     assert rc_ != 0 and value["code"] == "register_write_unsafe" and value["detail"] == "other_rows"
     assert (reg / "data/topic-hubs.csv").read_bytes() == MIXED
