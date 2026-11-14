@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "media_manifest",
+ "place": "data/media-manifest.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "note": "path（repo のファイル）と sha256 の一致は台帳の外（固有 N4-17・§4.6）"
+}

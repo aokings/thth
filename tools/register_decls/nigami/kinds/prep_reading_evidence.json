@@ -1,0 +1,66 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "prep_reading_evidence",
+ "place": "data/prep-reading-evidence.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "reading_id",
+   "meaning": "derived_from",
+   "to": "prep_reading"
+  },
+  {
+   "field": "evidence_id",
+   "meaning": "supports",
+   "to": "evidence"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_prep_reading_evidence",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_prep_reading_evidence",
+   "fields": [
+    "id",
+    "reading_id",
+    "evidence_id",
+    "use_note"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "unique",
+   "id": "n4_14_unique_reading",
+   "fields": [
+    "reading_id",
+    "evidence_id"
+   ],
+   "note": "N4-14（scripts/validate_data.py 1037〜1041）"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "n4_14_pair_reading",
+   "via": "evidence_id",
+   "target": {
+    "extraction_status": {
+     "in": [
+      "metadata_only",
+      "needs_verification"
+     ]
+    }
+   },
+   "note": "N4-14（scripts/validate_data.py 1031〜1036）"
+  }
+ ]
+}

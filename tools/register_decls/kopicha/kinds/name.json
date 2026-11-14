@@ -1,0 +1,25 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "name",
+ "place": "data/knowledge/names.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "entity_id",
+   "name"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  }
+ ]
+}

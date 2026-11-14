@@ -196,10 +196,11 @@ class Kind:
     units: dict | None
     path: str                  # 宣言のファイル（台帳の根からの道）
     inspects: dict | None = None  # 検収の記録を持つ表の宣言（`_parse_inspects`）
+    checks: list = field(default_factory=list)  # 検査の部品（段 4。`checks.parse_checks`）
 
 
 _KIND_KEYS = ("schema", "kind", "place", "format", "records", "max_bytes", "rows_at", "id", "questions", "pointers",
-              "units", "inspects", "note")
+              "units", "inspects", "checks", "note")
 _Q_KEYS = ("name", "outlet", "level", "state", "depends", "reason_kind", "reason_text", "note")
 _P_KEYS = ("field", "template", "meaning", "meaning_from", "to", "split", "recorded_version", "note")
 _RV_KEYS = ("field", "of", "hash")
@@ -315,8 +316,13 @@ def _parse_kind(data, path: str) -> Kind:
         inspects = _parse_inspects(data["inspects"])
         if not all(any(p.get("field") == f for p in pointers) for f in inspects["follow"][:1]):
             raise DeclarationError("inspects")
+    checks = []
+    if data.get("checks") is not None:
+        from . import checks as _checks
+        checks = _checks.parse_checks(data["checks"], pointers)
     return Kind(name=name, places=places, format=fmt, records=records, max_bytes=max_bytes, rows_at=rows_at,
-                id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path, inspects=inspects)
+                id_rule=id_rule, questions=questions, pointers=pointers, units=units, path=path, inspects=inspects,
+                checks=checks)
 
 
 def _name(value, word):
@@ -442,6 +448,12 @@ def load_declarations(root: str, base: str | None = None) -> dict:
         if kind.name in kinds:
             raise RegisterRefused("register_kind_invalid", "kind_duplicate", declaration=rel)
         kinds[kind.name] = kind
+    from . import checks as _checks
+    broken = _checks.validate_refs(kinds)
+    if broken is not None:
+        # `count` の `from` が、宣言の無い種類か、この種類を指さない欄を名指している（種類をまたぐ点検）。
+        rel = kinds[broken].path
+        raise RegisterRefused("register_kind_invalid", f"{broken[:30]}: checks", declaration=rel, word="checks")
     constitution = {}
     cpath = os.path.join(base, CONSTITUTION_FILE)
     if os.path.exists(cpath):

@@ -1,0 +1,126 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "hypothesis",
+ "place": "data/knowledge/hypotheses.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "holds",
+   "state": "status",
+   "depends": [
+    "mechanism_ja",
+    "premise_claim_ids",
+    "result_ja",
+    "result_refs"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_ids",
+   "meaning": "about",
+   "to": "point",
+   "split": ";"
+  },
+  {
+   "field": "premise_claim_ids",
+   "meaning": "derived_from",
+   "to": "claim",
+   "split": ";"
+  },
+  {
+   "field": "result_refs",
+   "meaning": "related",
+   "to": "claim",
+   "split": ";",
+   "note": "支える・反する（結果しだい。器は関わるとして数える）"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "h4_2",
+   "fields": [
+    "id"
+   ],
+   "note": "H4-2（scripts/knowledge-hypotheses.mjs 18）"
+  },
+  {
+   "check": "shape",
+   "id": "h4_3",
+   "field": "id",
+   "shape": "slug_loose",
+   "prefix": "h-",
+   "allow_blank": false,
+   "note": "H4-3（同 19 の ^h-[a-z0-9-]+$）。頭 h- と全体が slug_loose。'h-' だけ・'h--x' の扱いが台本と違う（実物 0）"
+  },
+  {
+   "check": "words",
+   "id": "h4_4",
+   "field": "status",
+   "in": [
+    "proposed",
+    "testing",
+    "supported",
+    "refuted",
+    "mixed"
+   ],
+   "note": "H4-4（同 20）"
+  },
+  {
+   "check": "required",
+   "id": "h4_5",
+   "fields": [
+    "title_ja",
+    "mechanism_ja",
+    "predictions_ja",
+    "tests_ja"
+   ],
+   "note": "H4-5（同 21）"
+  },
+  {
+   "check": "required",
+   "id": "h4_7",
+   "fields": [
+    "premise_claim_ids"
+   ],
+   "note": "H4-7（同 23〜25）。先が在るかは指す欄で見る"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "h4_8",
+   "via": "premise_claim_ids",
+   "target": {
+    "claim_status": {
+     "in": [
+      "unverified",
+      "contested"
+     ]
+    }
+   },
+   "level": "review",
+   "note": "H4-8（同 27〜28）。台本は前提 1 本ごとに 1 件、器は仮説ごとに 1 件と数える"
+  },
+  {
+   "check": "required",
+   "id": "h4_9",
+   "fields": [
+    "result_refs"
+   ],
+   "when": {
+    "status": {
+     "in": [
+      "supported",
+      "refuted",
+      "mixed"
+     ]
+    }
+   },
+   "note": "H4-9（同 30）"
+  }
+ ]
+}

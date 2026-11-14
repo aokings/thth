@@ -1,0 +1,64 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "mention",
+ "place": "data/knowledge/mentions.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "claim_id",
+   "entity_id"
+  ]
+ },
+ "questions": [
+  {
+   "name": "mention_ok",
+   "state": "status",
+   "depends": [
+    "matched_name"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "related",
+   "to": "claim"
+  },
+  {
+   "field": "entity_id",
+   "meaning": "related",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "k4_14_required",
+   "fields": [
+    "claim_id",
+    "entity_id"
+   ],
+   "note": "K4-14（scripts/lib/knowledge.mjs 284〜285）。空の番号も赤（先が在るかは指す欄で見る）"
+  },
+  {
+   "check": "words",
+   "id": "k4_14_status",
+   "field": "status",
+   "in": [
+    "confirmed",
+    "rejected"
+   ],
+   "note": "K4-14（scripts/lib/knowledge.mjs 286）"
+  },
+  {
+   "check": "unique",
+   "id": "k4_14_unique",
+   "fields": [
+    "claim_id",
+    "entity_id"
+   ],
+   "note": "K4-14（scripts/lib/knowledge.mjs 287）"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "page_date",
+ "place": "data/entity-page-dates.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "entity_id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ]
+}

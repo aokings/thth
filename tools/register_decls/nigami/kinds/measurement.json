@@ -1,0 +1,79 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "measurement",
+ "place": "data/measurements.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "compound_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "target_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  },
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_measurement",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_measurement",
+   "fields": [
+    "id",
+    "kind",
+    "compound_entity_id",
+    "value",
+    "unit",
+    "source_id"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_measurement_kind",
+   "field": "kind",
+   "in": [
+    "human_detection_threshold",
+    "human_recognition_threshold",
+    "receptor_ec50",
+    "receptor_ic50",
+    "concentration",
+    "dose_over_threshold"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 826〜827"
+  },
+  {
+   "check": "required",
+   "id": "n4_37",
+   "fields": [
+    "compound_entity_id",
+    "source_id"
+   ],
+   "note": "N4-37（scripts/validate_data.py 828〜833）。空も赤（先が在るかは指す欄で見る）"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "en_search_title",
+ "place": "data/i18n/en/entity-search-titles.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "entity_id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ]
+}

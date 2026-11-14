@@ -1,0 +1,104 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lead",
+ "place": "data/knowledge/leads.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "answered",
+   "state": "verification_status",
+   "depends": [
+    "title_ja",
+    "lead_text_ja",
+    "claim_id",
+    "source_id"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "claim_id",
+   "meaning": "related",
+   "to": "claim"
+  },
+  {
+   "field": "source_id",
+   "meaning": "related",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "k4_2_lead",
+   "fields": [
+    "id"
+   ],
+   "note": "K4-2（scripts/lib/knowledge.mjs 160〜164）"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_lead_type",
+   "field": "lead_type",
+   "in": [
+    "reader_question",
+    "practitioner_claim",
+    "research_question",
+    "folk"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_origin_status",
+   "field": "origin_status",
+   "in": [
+    "sns_reply",
+    "sns_where",
+    "search_demand",
+    "reader_mail",
+    "editorial"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "words",
+   "id": "k4_3_verification_status",
+   "field": "verification_status",
+   "in": [
+    "unverified",
+    "documented",
+    "checked_unconfirmed",
+    "retired"
+   ],
+   "allow_blank": false,
+   "note": "K4-3（scripts/lib/knowledge.mjs 167〜179 の checkVocab）。空は赤"
+  },
+  {
+   "check": "required",
+   "id": "w4_5",
+   "fields": [
+    "claim_id"
+   ],
+   "when": {
+    "verification_status": {
+     "in": [
+      "documented"
+     ]
+    }
+   },
+   "note": "W4-5（scripts/knowledge-lead.mjs 61。書く口の関門。実物の行にも当てる）"
+  }
+ ]
+}

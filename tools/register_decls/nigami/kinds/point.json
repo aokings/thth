@@ -1,0 +1,148 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "point",
+ "place": "data/entities.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "show_in_search",
+   "state": "search_visibility",
+   "depends": [
+    "canonical_name",
+    "description",
+    "lifecycle_status"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "hubs",
+   "meaning": "parent",
+   "to": "topic_hub",
+   "split": ";"
+  },
+  {
+   "field": "crossings",
+   "meaning": "related",
+   "to": "crossing",
+   "split": ";"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_point",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_point",
+   "fields": [
+    "id",
+    "entity_type",
+    "canonical_name",
+    "lifecycle_status"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_entity_type",
+   "field": "entity_type",
+   "in": [
+    "ingredient",
+    "organism",
+    "compound",
+    "compound_class",
+    "receptor",
+    "sensation",
+    "process",
+    "dish",
+    "seasoning",
+    "spice",
+    "region",
+    "culture",
+    "concept"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 617〜620"
+  },
+  {
+   "check": "words",
+   "id": "v_lifecycle_status",
+   "field": "lifecycle_status",
+   "in": [
+    "active",
+    "deprecated",
+    "candidate"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 617〜620"
+  },
+  {
+   "check": "words",
+   "id": "v_search_visibility",
+   "field": "search_visibility",
+   "in": [
+    "index",
+    "noindex",
+    "review"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 617〜620"
+  },
+  {
+   "check": "words",
+   "id": "n4_19",
+   "field": "lifecycle_status",
+   "in": [
+    "active"
+   ],
+   "allow_blank": false,
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    }
+   },
+   "note": "N4-19（scripts/validate_data.py 637〜643）。index なら candidate・deprecated でない"
+  },
+  {
+   "check": "count",
+   "id": "n4_20",
+   "from": {
+    "kind": "overview",
+    "via": "entity_id"
+   },
+   "where": {
+    "editorial_status": {
+     "in": [
+      "published"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "search_visibility": {
+     "in": [
+      "index"
+     ]
+    },
+    "lifecycle_status": {
+     "in": [
+      "active"
+     ]
+    }
+   },
+   "note": "N4-20（scripts/validate_data.py 644〜645）"
+  }
+ ]
+}

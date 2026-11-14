@@ -1,0 +1,55 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity_answer",
+ "place": "data/entity-answers.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "claim_ids",
+   "meaning": "supports",
+   "to": "claim",
+   "split": ";"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_entity_answer",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_entity_answer",
+   "fields": [
+    "id",
+    "entity_id",
+    "answer",
+    "tries",
+    "unknowns",
+    "claim_ids",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "n4_31",
+   "fields": [
+    "claim_ids"
+   ],
+   "note": "N4-31（scripts/validate_data.py 566〜568）"
+  }
+ ]
+}

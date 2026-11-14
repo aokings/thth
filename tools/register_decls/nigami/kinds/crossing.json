@@ -1,0 +1,52 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "crossing",
+ "place": "data/crossings.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "partner_entity_id",
+   "meaning": "related",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_crossing",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_crossing",
+   "fields": [
+    "id",
+    "name_ja",
+    "reading",
+    "partner_entity_id",
+    "slug",
+    "definition",
+    "status"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_crossing_status",
+   "field": "status",
+   "in": [
+    "draft",
+    "published"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 612〜613"
+  }
+ ]
+}

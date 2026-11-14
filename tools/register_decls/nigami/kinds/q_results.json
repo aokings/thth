@@ -1,0 +1,181 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "q_results",
+ "place": "data/questions/*/results.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "row_id"
+ },
+ "pointers": [
+  {
+   "field": "study_id",
+   "meaning": "parent",
+   "to": "study"
+  },
+  {
+   "field": "claim_id",
+   "meaning": "supports",
+   "to": "claim"
+  },
+  {
+   "field": "evidence_id",
+   "meaning": "supports",
+   "to": "evidence"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "n4_41_results_req",
+   "fields": [
+    "row_id",
+    "study_id",
+    "measure",
+    "label_ja",
+    "label_en",
+    "condition_ja",
+    "condition_en",
+    "a_ja",
+    "a_en",
+    "b_ja",
+    "b_en",
+    "unit_ja",
+    "unit_en",
+    "direction",
+    "test",
+    "test_note_ja"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 37〜38 の前半 16 欄）"
+  },
+  {
+   "check": "required",
+   "id": "n4_41_results_req2",
+   "fields": [
+    "test_note_en",
+    "locator_ja",
+    "locator_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 37〜38 の後半 3 欄）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_measure",
+   "field": "measure",
+   "in": [
+    "bitter_quality",
+    "bitter_count",
+    "bitter_low_count",
+    "bitter_mentions",
+    "bitter_vs_reference",
+    "bitter_note",
+    "bitter_scale_unclear",
+    "bitter",
+    "bitter_rank_sum",
+    "bitter_difference",
+    "bitter_dominance",
+    "bitter_threshold",
+    "bitter_choice",
+    "pungent",
+    "egumi",
+    "total_phenols",
+    "ligstroside_aglycone",
+    "oleocanthal",
+    "correlation",
+    "astringent",
+    "caffeine",
+    "trigonelline",
+    "mozambioside",
+    "cga_lactones",
+    "cga",
+    "grassy",
+    "momordicosides",
+    "catechins",
+    "naringin",
+    "limonin",
+    "iso_alpha_acids",
+    "theobromine",
+    "liking",
+    "intake",
+    "karami",
+    "isothiocyanate",
+    "bitter_astringent",
+    "palatability",
+    "aversion",
+    "dose_taken"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 25）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_direction",
+   "field": "direction",
+   "in": [
+    "a_higher",
+    "b_higher",
+    "similar",
+    "same_value",
+    "mixed",
+    "not_given"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 26）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_test",
+   "field": "test",
+   "in": [
+    "tested_significant",
+    "tested_not_significant",
+    "tested_partly",
+    "tested_overall_only",
+    "tested_pairs_unclear",
+    "not_reported",
+    "result_not_reported",
+    "abstract_no_test",
+    "text_figure_conflict"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 27）"
+  },
+  {
+   "check": "count",
+   "id": "n4_41_target",
+   "from": {
+    "kind": "q_comparability",
+    "via": "row_id"
+   },
+   "where": {
+    "comparison": {
+     "in": [
+      "target"
+     ]
+    }
+   },
+   "min": 1,
+   "when": {
+    "measure": {
+     "in": [
+      "bitter_count",
+      "bitter_low_count",
+      "bitter_mentions",
+      "bitter_vs_reference",
+      "bitter_note",
+      "bitter_scale_unclear",
+      "bitter",
+      "bitter_dominance",
+      "bitter_threshold",
+      "bitter_choice",
+      "correlation",
+      "bitter_rank_sum",
+      "bitter_difference"
+     ]
+    }
+   },
+   "note": "N4-41（scripts/gate_question_tables.py 145〜146）。器は問いをまたいで数える（番号の重なり 1 組）"
+  }
+ ],
+ "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る。study_id は「同じ問いの studies に在る」が台本の決まりで、器は data/studies.csv に在るかまで"
+}

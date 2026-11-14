@@ -1,0 +1,23 @@
+{
+ "name": "media_hub",
+ "source": "media-hub",
+ "expected": {
+  "records": {
+   "concept": 31,
+   "registry_readme": 1,
+   "media": 1
+  },
+  "dangling": {},
+  "checks": {},
+  "problems": 0
+ },
+ "ask_lane": [
+  "registry/README.md の「1 行 = 1 つの同じもの」に対し、メディアが 1 つだけの行が 5（ph・hard-water・anthocyanin・curcumin・redox-potential。どれも染めと化学の列だけ）。この 5 行は対応表に置いたままでよいか（相手が無い行を許すなら決まりの文を直す）",
+  "media.yaml の status は live・launching と注にあるが検査が無い（ほかの語が入っても誰も断らない）。器で語の検査にするか"
+ ],
+ "vessel_gaps": [
+  "YAML の並びを行として読めない: 器は YAML を records: file だけで読むので、media.yaml の media: の 7 メディア（と hub に残る指標の台帳 indicators.yaml の 22 行）を 1 つずつの記録にできない。media.status の語・id の重なりの検査が書けない",
+  "台帳をまたぐ指し: concepts.csv の sometokagaku・nigamilab・kopicha の列（25・26・7 本、決まりの実物では先が無い 0）は、指す先がよその台帳なので宣言できない",
+  "N 欄のうち 2 つ以上: 「1 行 = 1 つの同じもの」（3 つのメディアの列のうち 2 つ以上が埋まる）は one_of の at_least_one・exactly_one では言えない"
+ ]
+}

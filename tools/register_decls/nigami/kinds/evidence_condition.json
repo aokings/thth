@@ -1,0 +1,22 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "evidence_condition",
+ "place": "data/evidence-conditions.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "evidence_id"
+ },
+ "pointers": [
+  {
+   "field": "evidence_id",
+   "meaning": "same",
+   "to": "evidence"
+  },
+  {
+   "field": "study_id",
+   "meaning": "same",
+   "to": "study"
+  }
+ ]
+}

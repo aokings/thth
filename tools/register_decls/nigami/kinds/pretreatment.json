@@ -1,0 +1,113 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "pretreatment",
+ "place": "data/pretreatments.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "ingredient_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "target_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "method",
+   "meaning": "related",
+   "to": "prep_method"
+  },
+  {
+   "field": "claim_ids",
+   "meaning": "supports",
+   "to": "claim",
+   "split": ";"
+  },
+  {
+   "field": "lead_id",
+   "meaning": "related",
+   "to": "lead"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_pretreatment",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_pretreatment",
+   "fields": [
+    "id",
+    "ingredient_entity_id",
+    "method",
+    "effect",
+    "effect_note",
+    "layer",
+    "status"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_pre_effect",
+   "field": "effect",
+   "in": [
+    "reduces",
+    "unchanged",
+    "increases",
+    "contested",
+    "unverified"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 528〜529"
+  },
+  {
+   "check": "words",
+   "id": "v_pre_layer",
+   "field": "layer",
+   "in": [
+    "食品",
+    "溶液"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 530〜531"
+  },
+  {
+   "check": "words",
+   "id": "v_pre_status",
+   "field": "status",
+   "in": [
+    "draft",
+    "published"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 532〜533"
+  },
+  {
+   "check": "required",
+   "id": "n4_28",
+   "fields": [
+    "claim_ids"
+   ],
+   "when": {
+    "effect": {
+     "not_in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-28（scripts/validate_data.py 539〜540）"
+  }
+ ]
+}

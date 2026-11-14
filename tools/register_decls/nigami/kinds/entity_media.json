@@ -1,0 +1,177 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "entity_media",
+ "place": "data/entity-media.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_entity_media",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_entity_media_1",
+   "fields": [
+    "id",
+    "entity_id",
+    "path",
+    "role",
+    "depicted_taxon",
+    "depicted_part",
+    "caption",
+    "alt_text",
+    "creator",
+    "license_name",
+    "license_url",
+    "source_url",
+    "original_url",
+    "sha256",
+    "mime_type",
+    "width_px"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6。fields は 16 欄までなので分けた"
+  },
+  {
+   "check": "required",
+   "id": "req_entity_media_2",
+   "fields": [
+    "height_px",
+    "identification_status",
+    "review_status",
+    "derivative_note",
+    "retrieved_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6。fields は 16 欄までなので分けた"
+  },
+  {
+   "check": "words",
+   "id": "n4_18_role",
+   "field": "role",
+   "in": [
+    "primary_subject",
+    "source_material",
+    "prepared_form",
+    "dish",
+    "field_observation"
+   ],
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 766〜773）"
+  },
+  {
+   "check": "words",
+   "id": "n4_18_ident",
+   "field": "identification_status",
+   "in": [
+    "source_labeled",
+    "field_identification",
+    "expert_reviewed"
+   ],
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 766〜773）"
+  },
+  {
+   "check": "words",
+   "id": "n4_18_review",
+   "field": "review_status",
+   "in": [
+    "metadata_checked",
+    "metadata_and_visual_checked"
+   ],
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 766〜773）"
+  },
+  {
+   "check": "words",
+   "id": "n4_18_license",
+   "field": "license_name",
+   "in": [
+    "CC0 1.0",
+    "Public domain",
+    "CC BY 4.0",
+    "CC BY 3.0",
+    "CC BY 2.0",
+    "CC BY 2.5",
+    "CC BY-SA 2.5",
+    "CC BY-SA 4.0",
+    "CC BY-SA 3.0",
+    "CC BY-SA 2.0"
+   ],
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 766〜773）"
+  },
+  {
+   "check": "unique",
+   "id": "n4_18_path",
+   "fields": [
+    "path"
+   ],
+   "note": "N4-18（scripts/validate_data.py 782〜784）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_18_license_url",
+   "field": "license_url",
+   "shape": "https_url",
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 786〜788）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_18_source_url",
+   "field": "source_url",
+   "shape": "https_url",
+   "allow_blank": false,
+   "note": "N4-18"
+  },
+  {
+   "check": "shape",
+   "id": "n4_18_original_url",
+   "field": "original_url",
+   "shape": "https_url",
+   "allow_blank": false,
+   "note": "N4-18"
+  },
+  {
+   "check": "shape",
+   "id": "n4_18_retrieved",
+   "field": "retrieved_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 789〜790）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_18_sha256",
+   "field": "sha256",
+   "shape": "sha256",
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 791〜792）"
+  },
+  {
+   "check": "words",
+   "id": "n4_18_mime",
+   "field": "mime_type",
+   "in": [
+    "image/jpeg",
+    "image/png"
+   ],
+   "allow_blank": false,
+   "note": "N4-18（scripts/validate_data.py 793〜794）"
+  }
+ ]
+}

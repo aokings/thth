@@ -1,0 +1,46 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "q_scope",
+ "place": "data/questions/*/scope.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "item_id"
+ },
+ "pointers": [
+  {
+   "field": "study_id",
+   "meaning": "related",
+   "to": "study"
+  }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "n4_41_scope_req",
+   "fields": [
+    "item_id",
+    "title",
+    "year",
+    "decision",
+    "reason_ja",
+    "reason_en"
+   ],
+   "note": "N4-41（scripts/gate_question_tables.py 40）"
+  },
+  {
+   "check": "words",
+   "id": "n4_41_scope_decision",
+   "field": "decision",
+   "in": [
+    "included",
+    "context",
+    "excluded",
+    "unreachable"
+   ],
+   "allow_blank": false,
+   "note": "N4-41（scripts/gate_question_tables.py 33）"
+  }
+ ],
+ "note": "番号は問いの中でだけ一意（問いをまたぐと重なる）。器は番号に置き場を入れられないので、重なりは読みの問題 id_duplicate に出る"
+}

@@ -1,0 +1,164 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "lead",
+ "place": "data/leads.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "answered",
+   "state": "verification_status",
+   "depends": [
+    "title",
+    "lead_text",
+    "source_id"
+   ]
+  }
+ ],
+ "pointers": [
+  {
+   "field": "subject_entity_id",
+   "meaning": "about",
+   "to": "point"
+  },
+  {
+   "field": "source_id",
+   "meaning": "supports",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_lead",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_lead",
+   "fields": [
+    "id",
+    "subject_entity_id",
+    "title",
+    "lead_text",
+    "lead_type",
+    "origin_status",
+    "verification_status",
+    "updated_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_lead_type",
+   "field": "lead_type",
+   "in": [
+    "research_question",
+    "reported_saying",
+    "transmitted_lore"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 967〜972"
+  },
+  {
+   "check": "words",
+   "id": "v_lead_origin",
+   "field": "origin_status",
+   "in": [
+    "editorial",
+    "unrecorded",
+    "field_note",
+    "source_connected"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 967〜972"
+  },
+  {
+   "check": "words",
+   "id": "v_lead_verification",
+   "field": "verification_status",
+   "in": [
+    "unverified",
+    "documented",
+    "retired"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 967〜972"
+  },
+  {
+   "check": "shape",
+   "id": "d_lead_updated_at",
+   "field": "updated_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 997〜998"
+  },
+  {
+   "check": "required",
+   "id": "n4_34_a",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "origin_status": {
+     "in": [
+      "source_connected"
+     ]
+    }
+   },
+   "note": "N4-34（scripts/validate_data.py 976〜977）"
+  },
+  {
+   "check": "required",
+   "id": "n4_34_b",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "verification_status": {
+     "in": [
+      "documented"
+     ]
+    }
+   },
+   "note": "N4-34（scripts/validate_data.py 978〜979）"
+  },
+  {
+   "check": "empty",
+   "id": "n4_34_c",
+   "fields": [
+    "source_id"
+   ],
+   "when": {
+    "verification_status": {
+     "in": [
+      "unverified"
+     ]
+    }
+   },
+   "note": "N4-34（scripts/validate_data.py 980〜981）"
+  },
+  {
+   "check": "required",
+   "id": "n4_34_d",
+   "fields": [
+    "origin_note"
+   ],
+   "when": {
+    "lead_type": {
+     "in": [
+      "reported_saying",
+      "transmitted_lore"
+     ]
+    }
+   },
+   "note": "N4-34（scripts/validate_data.py 984〜985）"
+  }
+ ]
+}

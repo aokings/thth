@@ -1,0 +1,66 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "overview_evidence",
+ "place": "data/entity-overview-evidence.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "overview_id",
+   "meaning": "derived_from",
+   "to": "overview"
+  },
+  {
+   "field": "evidence_id",
+   "meaning": "supports",
+   "to": "evidence"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_overview_evidence",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_overview_evidence",
+   "fields": [
+    "id",
+    "overview_id",
+    "evidence_id",
+    "use_note"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "unique",
+   "id": "n4_14_unique_overview",
+   "fields": [
+    "overview_id",
+    "evidence_id"
+   ],
+   "note": "N4-14（scripts/validate_data.py 1037〜1041）"
+  },
+  {
+   "check": "forbid_pair",
+   "id": "n4_14_pair_overview",
+   "via": "evidence_id",
+   "target": {
+    "extraction_status": {
+     "in": [
+      "metadata_only",
+      "needs_verification"
+     ]
+    }
+   },
+   "note": "N4-14（scripts/validate_data.py 1031〜1036）"
+  }
+ ]
+}

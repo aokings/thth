@@ -1,0 +1,39 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source_license",
+ "place": "data/source-licenses.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "pointers": [
+  {
+   "field": "source_id",
+   "meaning": "about",
+   "to": "source"
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_source_license",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_source_license",
+   "fields": [
+    "id",
+    "source_id",
+    "license",
+    "checked_at",
+    "basis"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  }
+ ]
+}

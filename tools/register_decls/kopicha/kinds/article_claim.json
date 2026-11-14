@@ -1,0 +1,29 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "article_claim",
+ "place": "data/knowledge/article-claims.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "file",
+   "claim_id"
+  ]
+ },
+ "pointers": [
+  {
+   "field": "claim_id",
+   "meaning": "derived_from",
+   "to": "claim",
+   "recorded_version": {
+    "field": "statement_hash",
+    "of": [
+     "statement_ja"
+    ],
+    "hash": "sha1:12"
+   },
+   "note": "A4-1 の主張の側と A4-2 の指紋の側（status の比べは固有に残す）"
+  }
+ ],
+ "note": "file 欄（repo のファイルの道）は指す欄として宣言できない（A4-1 のファイルの側は固有）"
+}

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sys
 
+from . import checks as C
 from . import judgment as J
 from . import vessel as V
 from .errors import RegisterRefused
@@ -34,7 +35,8 @@ def _kind_view(kind: V.Kind) -> dict:
             "pointers": [{k: v for k, v in p.items() if k != "note"} for p in kind.pointers],
             "units": None if kind.units is None else {
                 "key": kind.units["key"], "id": kind.units["id"], "time": kind.units["time"],
-                "scope_separate": kind.units["scope"]["separate"], "sources": bool(kind.units["sources"])}}
+                "scope_separate": kind.units["scope"]["separate"], "sources": bool(kind.units["sources"])},
+            "checks": C.view(kind)}
 
 
 def kinds(root: str) -> dict:
@@ -59,6 +61,8 @@ def cmd_kinds(args, root: str) -> int:
             print(f"  問い {q['question']}（{q['level']}）: 状態の欄 {q['state'] or '-'}・依る欄 {q['depends']}")
         for p in k["pointers"]:
             print(f"  指す欄 {p.get('field') or p.get('template')} → {p['to']}（{p['meaning']}）")
+        for c in k["checks"]:
+            print(f"  検査 {c['id']}（{c['check']}・{c['level']}）" + (f": {c['note']}" if c["note"] else ""))
     if not value["yaml_reader"]:
         print("  YAML の中を読む部品（PyYAML）が入っていないので、YAML の記録は版を取るだけで、中は見ていません"
               "（pip install 'thth[yaml]'）")
@@ -97,7 +101,7 @@ def check(root: str, *, catalog: bool = False) -> dict:
                        "review": graph["review"]},
              "observations": observations, "judgments": J.summary(vessel, judgments),
              "candidates": J.candidates(vessel, judgments), "ids_moves": V.ids_table_moves(vessel),
-             "health": _health(vessel, graph)}
+             "health": _health(vessel, graph), "checks": C.run(vessel, judgments)}
     if catalog:
         value["catalog"] = vessel.catalog()
     return value
@@ -110,7 +114,7 @@ def cmd_check(args, root: str) -> int:
     if not args.json:
         for p in value["problems"]:
             print(f"  {p['path']}: {', '.join(p['words'])}", file=sys.stderr)
-    payload = {k: value[k] for k in ("problems", "records", "links")}
+    payload = {k: value[k] for k in ("problems", "records", "links", "checks")}
     if yaml_problems:
         raise RegisterRefused("register_yaml_refused", f"{len(yaml_problems)} files", **payload)
     if other:
@@ -119,6 +123,12 @@ def cmd_check(args, root: str) -> int:
         raise RegisterRefused("register_link_invalid",
                               f"{len(value['links']['dangling'])} dangling {len(value['links']['cycles'])} cycles",
                               **payload)
+    failing = C.red(value["checks"])
+    if failing:
+        if not args.json:
+            for c in failing:
+                _say_check(c, file=sys.stderr)
+        raise RegisterRefused("register_record_invalid", f"checks: {len(failing)}", **payload)
     if args.json:
         _print(value)
         return 0
@@ -137,9 +147,41 @@ def cmd_check(args, root: str) -> int:
         print(f"  結びの候補 {len(value['candidates'])} 件（器は結びません。結ぶなら人が名指しします）")
     if value["links"]["review"]:
         print(f"  来歴の控えが今の版と違う物 {len(value['links']['review'])} 件（見直す物）")
+    ch = value["checks"]
+    if ch["total"]:
+        print(f"  検査 {ch['total']} 件: 赤 0・知らせる {ch['warn']}・見直しの候補 {ch['review']}")
+        for c in ch["list"]:
+            if c["violations"] or c.get("unverifiable"):
+                _say_check(c)
     if value["health"]["contradicted_good"]:
         print(f"  反する根拠を持つのに「よい」の語の記録 {value['health']['contradicted_good']} 件（語は上書きしていません）")
     return 0
+
+
+_REASON_JA = {"duplicate": "重なる", "blank": "空", "not_blank": "空でない", "none_filled": "どれも空",
+              "more_than_one": "2 つ以上埋まっている", "not_text": "字でない", "word_not_allowed": "語の中に無い",
+              "shape": "形に合わない", "forbidden_pair": "禁じた組を指している", "too_few": "数が足りない",
+              "too_many": "数が多すぎる", "not_judged_good": "効いている「よい」の判断が足りない"}
+
+
+def _say_check(c: dict, file=None) -> None:
+    """人が読む検査の結果: 呼び名と注（なぜ）と、当たった記録と理由（どこを直せば通るか）。"""
+    level = {"error": "赤", "warn": "知らせる", "review": "見直しの候補"}[c["level"]]
+    head = f"  検査 {c['kind']}.{c['id']}（{c['check']}・{level}）"
+    if c.get("failed"):
+        print(head + ": 回す途中で止まりました（宣言か記録の形を確かめてください）", file=file)
+        return
+    head += f": {c['violations']} 件"
+    if c.get("unverifiable"):
+        head += f"・よその台帳を指して確かめられない {c['unverifiable']}"
+    print(head + (f" — {c['note']}" if c["note"] else ""), file=file)
+    for r in c["records"][:5]:
+        where = r.get("field") or ",".join(r.get("fields") or []) or ""
+        print(f"    {r['record']}: {_REASON_JA.get(r['reason'], r['reason'])}" + (f"（{where}）" if where else ""),
+              file=file)
+    rest = c["violations"] - min(5, len(c["records"]))
+    if rest > 0:
+        print(f"    ほか {rest} 件（--json の checks に 50 件まで）", file=file)
 
 
 def _parse_key(items) -> dict:

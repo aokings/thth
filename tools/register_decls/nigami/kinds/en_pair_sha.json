@@ -1,0 +1,14 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "en_pair_sha",
+ "place": "data/i18n/en/pair-shas.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "file",
+   "row",
+   "name"
+  ]
+ }
+}

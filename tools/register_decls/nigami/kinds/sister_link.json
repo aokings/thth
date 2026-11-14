@@ -1,0 +1,18 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "sister_link",
+ "place": "data/sister-links.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "entity_id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ],
+ "note": "url はこぴちゃの頁（台帳をまたぐ。指す欄にできない）"
+}

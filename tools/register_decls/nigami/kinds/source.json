@@ -1,0 +1,143 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "source",
+ "place": "data/sources.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "id"
+ },
+ "questions": [
+  {
+   "name": "read_full",
+   "state": "review_status",
+   "depends": [
+    "url",
+    "doi",
+    "title"
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "check": "shape",
+   "id": "ids_source",
+   "field": "id",
+   "shape": "slug_loose",
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 353〜365 の check_ids（id の形 ^[a-z0-9][a-z0-9-]*$）。§4.6"
+  },
+  {
+   "check": "required",
+   "id": "req_source",
+   "fields": [
+    "id",
+    "title",
+    "source_type",
+    "url",
+    "language",
+    "review_status",
+    "retrieved_at"
+   ],
+   "note": "scripts/validate_data.py 46〜96 の REQUIRED を空にしない（check_ids）。§4.6"
+  },
+  {
+   "check": "words",
+   "id": "v_source_type",
+   "field": "source_type",
+   "in": [
+    "journal_article",
+    "review",
+    "book",
+    "thesis",
+    "government",
+    "academic_database",
+    "standard",
+    "ethnography",
+    "other"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 476〜478"
+  },
+  {
+   "check": "words",
+   "id": "v_source_review_status",
+   "field": "review_status",
+   "in": [
+    "metadata_only",
+    "abstract_checked",
+    "full_text_checked",
+    "needs_full_text"
+   ],
+   "allow_blank": false,
+   "note": "scripts/validate_data.py 476〜478"
+  },
+  {
+   "check": "words",
+   "id": "v_access_status",
+   "field": "access_status",
+   "in": [
+    "open",
+    "abstract_only",
+    "restricted",
+    "unknown"
+   ],
+   "allow_blank": true,
+   "note": "scripts/validate_data.py 479〜481"
+  },
+  {
+   "check": "shape",
+   "id": "n4_27_url",
+   "field": "url",
+   "shape": "http_url",
+   "allow_blank": false,
+   "note": "N4-27（scripts/validate_data.py 470〜472）。台本は urlparse の scheme を見る（http: だけで // が無い字も通す）"
+  },
+  {
+   "check": "words",
+   "id": "n4_27_peer",
+   "field": "peer_reviewed",
+   "in": [
+    "true",
+    "false"
+   ],
+   "allow_blank": false,
+   "note": "N4-27（scripts/validate_data.py 482〜484）"
+  },
+  {
+   "check": "shape",
+   "id": "n4_27_retrieved",
+   "field": "retrieved_at",
+   "shape": "date",
+   "allow_blank": false,
+   "note": "N4-27（scripts/validate_data.py 485〜486）"
+  },
+  {
+   "check": "unique",
+   "id": "n4_27_doi",
+   "fields": [
+    "doi"
+   ],
+   "fold": "lower",
+   "note": "N4-27（scripts/validate_data.py 488〜491 の lower(doi)）"
+  },
+  {
+   "check": "count",
+   "id": "n4_24",
+   "from": {
+    "kind": "source_check",
+    "via": "source_id"
+   },
+   "min": 1,
+   "when": {
+    "review_status": {
+     "in": [
+      "full_text_checked",
+      "abstract_checked"
+     ]
+    }
+   },
+   "note": "N4-24 のうち「確認の記録が 1 行以上」（scripts/validate_data.py 457〜463）。最新の行の範囲は固有"
+  }
+ ]
+}

@@ -1,0 +1,37 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "sister_link",
+ "place": "data/sister-links.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "key": [
+   "page",
+   "entity_id"
+  ]
+ },
+ "checks": [
+  {
+   "check": "required",
+   "id": "l4_2_sister",
+   "fields": [
+    "page",
+    "entity_id",
+    "url",
+    "label",
+    "context"
+   ],
+   "note": "L4-2（tests/sister-links.test.mjs 28〜34）"
+  },
+  {
+   "check": "unique",
+   "id": "l4_3_sister",
+   "fields": [
+    "page",
+    "entity_id"
+   ],
+   "note": "L4-3（同 36〜43）"
+  }
+ ],
+ "note": "entity_id はにがみラボの台帳を指す（台帳をまたぐ指しは宣言できない）。page は頁の道"
+}

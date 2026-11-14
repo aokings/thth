@@ -1,0 +1,52 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "shop",
+ "place": "src/content/shops/*.yaml",
+ "format": "yaml",
+ "records": "file",
+ "id": {
+  "name": true
+ },
+ "max_bytes": 262144,
+ "pointers": [
+  {
+   "template": "shop-{id}",
+   "meaning": "same",
+   "to": "point",
+   "note": "枚と台帳の点の暗黙の結び（頁が <接頭>-<ファイル名> で点を引く）"
+  },
+  {
+   "field": "article",
+   "meaning": "related",
+   "to": "article"
+  }
+ ],
+ "checks": [
+  {
+   "check": "words",
+   "id": "z4_1_shop_kind",
+   "field": "kind",
+   "in": [
+    "roaster",
+    "green-wholesaler",
+    "tea-merchant",
+    "tea-farm",
+    "mall-seller"
+   ],
+   "allow_blank": false,
+   "note": "Z4-1（src/content.config.ts の z.enum）"
+  },
+  {
+   "check": "required",
+   "id": "z4_2_shop",
+   "fields": [
+    "source",
+    "name",
+    "kind",
+    "summary",
+    "updated"
+   ],
+   "note": "Z4-2（src/content.config.ts の要る欄）"
+  }
+ ]
+}

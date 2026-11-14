@@ -1,0 +1,27 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "search_title",
+ "place": "data/entity-search-titles.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "entity_id"
+ },
+ "pointers": [
+  {
+   "field": "entity_id",
+   "meaning": "about",
+   "to": "point"
+  }
+ ],
+ "checks": [
+  {
+   "check": "unique",
+   "id": "n4_43",
+   "fields": [
+    "entity_id"
+   ],
+   "note": "N4-43（scripts/gate_search_titles.py 61〜62）"
+  }
+ ]
+}

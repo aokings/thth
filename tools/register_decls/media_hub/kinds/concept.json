@@ -1,0 +1,11 @@
+{
+ "schema": "thth.kind/1",
+ "kind": "concept",
+ "place": "registry/concepts.csv",
+ "format": "csv",
+ "records": "rows",
+ "id": {
+  "field": "shared_id"
+ },
+ "note": "sometokagaku・nigamilab・kopicha の列は、それぞれのメディアの台帳の点を指す（台帳をまたぐ指しは宣言できない）。対応表に機械の決まりは無い（決まりの実物 §4）"
+}
