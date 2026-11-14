@@ -113,7 +113,11 @@ FIELD_HIDE_WHYS = ("expired", "against_changed")
 INSERT_MAX = 64
 INSERT = re.compile(r"\{\{([a-z][a-z0-9_]{0,31}):([^{}\s]{1,160})\.([A-Za-z_][A-Za-z0-9_]{0,63})\}\}")
 IGNORE_MAX = 64
-_DEST = re.compile(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*\Z")
+# 段 8 §3: 共通の台帳の出さない欄（共通の出し口の宣言の頭 `shared_private`）。運営者の情報は既定で記録ごと出さない。
+SHARED_PRIVATE_KINDS_MAX = 64
+SHARED_PRIVATE_FIELDS_MAX = 256
+SHARED_PRIVATE_ALWAYS = {"operator": "*"}
+_DEST =re.compile(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*\Z")
 
 
 # ------------------------------------------------------------------ 出し口の宣言
@@ -234,11 +238,32 @@ def parse_internal_words(raw) -> tuple:
     return tuple(dict.fromkeys(raw))
 
 
+def parse_shared_private(raw) -> dict:
+    """`shared_private`（段 8 §3）: 共通の台帳の出し口の宣言の頭に置く、種類 → 出さない欄の並び（か `"*"` で記録ごと
+    出さない）。読むのは共通の台帳の側の物だけ（メディアの出し口の宣言に書いても効かない）。64 種類・1 種類 256 欄まで。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > SHARED_PRIVATE_KINDS_MAX:
+        raise V.DeclarationError("shared_private")
+    out = {}
+    for name, fields in raw.items():
+        if not isinstance(name, str) or not V.NAME.fullmatch(name):
+            raise V.DeclarationError("shared_private")
+        if fields == "*":
+            out[name] = "*"
+            continue
+        if not isinstance(fields, list) or len(fields) > SHARED_PRIVATE_FIELDS_MAX:
+            raise V.DeclarationError("shared_private")
+        out[name] = frozenset(_fields(fields, "shared_private"))
+    return out
+
+
 def parse_outlets(data, kinds: dict) -> dict:
-    if (not isinstance(data, dict) or set(data) - {"schema", "outlets", "internal_words", "note"}
+    if (not isinstance(data, dict) or set(data) - {"schema", "outlets", "internal_words", "shared_private", "note"}
             or data.get("schema") != OUTLETS_SCHEMA):
         raise V.DeclarationError("outlets")
     parse_internal_words(data.get("internal_words"))
+    parse_shared_private(data.get("shared_private"))
     raw = data.get("outlets")
     if not isinstance(raw, dict):
         raise V.DeclarationError("outlets")
@@ -530,6 +555,70 @@ def common_bytes(common: Common, ref: str, version: str) -> bytes:
         if sha(data) == version:
             return data
     return K.get_object(common.root, version)
+
+
+def shared_private(common: Common | None) -> dict:
+    """共通の出さない欄（段 8 §3）: 共通の台帳の `.thth/outlets.json` の頭の `shared_private`（種類 → 欄の並びか `"*"`）
+    に、運営者の情報の既定（記録ごと出さない）を重ねた物。メディアの出し口の宣言は読まない（メディアの側で外せない）。
+    共通の台帳を読めないとき（CI）は既定だけ。宣言が崩れていれば断る（狭い側へ倒す）。"""
+    out = {}
+    if common is not None:
+        path = os.path.join(common.root, V.DECL_DIR, OUTLETS_FILE)
+        if os.path.exists(path) or os.path.islink(path):
+            try:
+                data = _read_json(path)
+                parse_outlets(data, common.vessel.kinds)
+                out = parse_shared_private(data.get("shared_private"))
+            except V.DeclarationError as exc:
+                raise RegisterRefused("register_common_unusable", f"shared_private: {exc.word}"[:80]) from None
+    out.update(SHARED_PRIVATE_ALWAYS)
+    return out
+
+
+def _shared_fence(common: Common, ref: str, data: bytes, rules: dict) -> tuple:
+    """採った共通の記録のバイトから、共通の出さない欄を除く。`(バイト | None, 外したわけ)`。記録ごと出さない種類と、
+    元の書き方のまま除けない記録は None（材料に書かない）。除いたあとで読み直し、ほかの欄が元と同じかを見る。"""
+    kind_name = ref.split(":", 1)[0]
+    rule = rules.get(kind_name)
+    if not rule:
+        return data, None
+    if rule == "*":
+        return None, "shared_private"
+    kind = common.vessel.kinds.get(kind_name)
+    if kind is None or kind.format not in ("json", "yaml") or kind.records != "file":
+        return None, "shared_private_unremovable"
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
+    try:
+        text = data[len(bom):].decode("utf-8")
+        if kind.format == "yaml":
+            values, problem, inspected = yamlread.load(text)
+            if problem or not inspected:
+                return None, "shared_private_unremovable"
+        else:
+            values = json.loads(text)
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return None, "shared_private_unremovable"
+    if not isinstance(values, dict):
+        return None, "shared_private_unremovable"
+    blank = {f for f in rule if f in values}
+    if not blank:
+        return data, None
+    new = _yaml_edit(text, blank, {}) if kind.format == "yaml" else _json_edit(text, blank, {})
+    if new is None:
+        return None, "shared_private_unremovable"
+    try:
+        if kind.format == "yaml":
+            got, problem, inspected = yamlread.load(new)
+            if problem or not inspected:
+                return None, "shared_private_unremovable"
+        else:
+            got = json.loads(new)
+    except (ValueError, RecursionError):
+        return None, "shared_private_unremovable"
+    want = {k: v for k, v in values.items() if k not in blank}
+    if not isinstance(got, dict) or V.canonical(got) != V.canonical(want):
+        return None, "shared_private_unremovable"
+    return bom + new.encode("utf-8"), None
 
 
 def common_path(common: Common | None, ref: str, known: dict) -> str:
@@ -859,6 +948,8 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
     if outlet.common is not None:
         sealed_takes = _takes(ctx.sealed)
         all_takes = _takes(ctx.every)
+        # 段 8 §3: 共通の出さない欄は、メディアの出し口の宣言より先に当てる（メディアの側で外せない）
+        rules = shared_private(ctx.common)
         for ref in sorted(set(sealed_takes) | set(all_takes)):
             if not ref.startswith(outlet.common + ":"):
                 continue
@@ -876,12 +967,19 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                     ctx.every, ctx.n_sealed, None, f"{COMMON}:{ref}", None, outlet.name, ctx.as_of) is not None:
                 excluded.append({"record": f"{COMMON}:{ref}", "why": "stopped"})
                 continue
+            if rules.get(ref.split(":", 1)[0]) == "*":
+                excluded.append({"record": f"{COMMON}:{ref}", "why": "shared_private"})
+                continue
             path = f"{COMMON}/{common_path(ctx.common, ref, common_known or {})}"
             if ctx.common is None:
                 items.append({"record": f"{COMMON}:{ref}", "as": "fact", "version": version, "path": path,
                               "unchecked": True})
                 continue
-            files[path] = common_bytes(ctx.common, ref, version)
+            data, withheld = _shared_fence(ctx.common, ref, common_bytes(ctx.common, ref, version), rules)
+            if data is None:
+                excluded.append({"record": f"{COMMON}:{ref}", "why": withheld})
+                continue
+            files[path] = data
             items.append({"record": f"{COMMON}:{ref}", "as": "fact", "version": version, "path": path})
     inputs.sort(key=lambda i: i["record"])
     return {"items": items, "files": files, "inputs": inputs, "excluded": excluded, "pending_takes": pending,
@@ -1756,6 +1854,10 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     ctx = Ctx(root, vessel, parse_judgments(raw[:jm["bytes"]], root), parse_judgments(raw, root), as_of,
               open_common(common_root))
     result = compute(ctx, outlet, common_known=_known_paths(seal))
+    if ctx.common is None and outlet.common is not None:
+        # 段 8 §3: 共通の台帳を読めない CI は、共通の出さない欄で封のときに外した記録（封の項目に無い物）を
+        # 広げたと読まない（材料には書かないので、狭める向きだけ）
+        result["items"] = [i for i in result["items"] if not i.get("unchecked") or item_key(i) in set(body["items"])]
     expected = _outputs(result["files"])
     expected_items = sorted(item_key(i) for i in result["items"])
     sealed_outputs = body["outputs"]
