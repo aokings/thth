@@ -49,6 +49,33 @@
     "_agent"
    ],
    "note": "access_fees_lint 282 行"
+  },
+  {
+   "check": "words",
+   "id": "k_f16_kind",
+   "field": "first_year_total.kind",
+   "in": [
+    "公式記載",
+    "合算",
+    "不明"
+   ],
+   "allow_blank": false,
+   "note": "first_year_total が在り kind が 3 語（access_fees_lint 607〜624 行）"
+  },
+  {
+   "check": "required",
+   "id": "k_f16_amount",
+   "when": {
+    "first_year_total.kind": {
+     "in": [
+      "公式記載"
+     ]
+    }
+   },
+   "fields": [
+    "first_year_total.amount"
+   ],
+   "note": "公式記載なら amount が null でない（同 629〜630 行）"
   }
  ]
 }

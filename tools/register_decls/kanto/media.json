@@ -49,10 +49,17 @@
   },
   "checks": {
    "k_m1": 0,
+   "k_m2": 0,
+   "k_m3": 0,
+   "k_m6": 0,
    "k_a10": 23,
    "k_a12": 2,
    "k_x5": 0,
+   "k_a2_round": 0,
+   "k_a6": 0,
    "k_f2_fees": 0,
+   "k_f16_kind": 0,
+   "k_f16_amount": 0,
    "k_f2_access": 0,
    "k_p1_year": 0
   }
@@ -62,5 +69,13 @@
   "鍵の重なる 37 組 74 行: course の欄（承認待ち）が入るまで、unique の検査は書かない（書けば今 74 行が赤）",
   "access_fees_lint の WARN 589 のうち「同じ定員の数が 2 つ以上の回」173 は、capacity_scope（承認待ち）で言い直せる見込み",
   "events の 211 が無い（264 枚）。母集合の全部に面の記録が要るか（K-M1 は school_master だけ）"
+ ],
+ "vessel_gaps": [
+  "K-A1・K-A2（年の段）・K-A3〜K-A5: まとまり（years の 1 年）の欄を見る検査が無い。count の単位は回の行だけで、年の欄（year・source_tier・sources・data_conflict・reason）を数えられない",
+  "K-A2・K-A6 の「空を許す語の外」: G9 の or_blank は空を「合う」にするので、違反を数える count の where には向かない。not_in に空の語 \"\" を入れて言った（器が空の語を受け取るのを頼りにしている）",
+  "K-M4・K-A5・K-P4・K-F12・K-F13 など: 点の道が並び（sources[]・items[]・stations[]）を読まない（G8 の決まり）",
+  "K-A7・K-F8・K-F14・K-F18 など: 値の型（整数か・数か）と範囲を見る部品が無い。shape の positive_int は字の \"2026\" も通す",
+  "K-F1 後半: ファイル名の番号と中の school_id が同じかを見る部品が無い",
+  "K-F18（回の日付が ISO）: 内側の単位の欄の形を数える部品が無い（count の where は語と空だけ）"
  ]
 }

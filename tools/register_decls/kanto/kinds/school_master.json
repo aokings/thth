@@ -14,5 +14,39 @@
    "meaning": "about",
    "to": "target"
   }
+ ],
+ "checks": [
+  {
+   "check": "required",
+   "id": "k_m2",
+   "fields": [
+    "identity.gender",
+    "identity.founder_type",
+    "identity.address_city",
+    "identity.official_url"
+   ],
+   "note": "identity の 4 欄が空でない（school_master_guard 9・14〜16 行）"
+  },
+  {
+   "check": "words",
+   "id": "k_m3",
+   "field": "identity.gender",
+   "in": [
+    "男子",
+    "女子",
+    "共学",
+    "別学"
+   ],
+   "allow_blank": true,
+   "note": "identity.gender は 4 語か null（同 17〜18 行）"
+  },
+  {
+   "check": "required",
+   "id": "k_m6",
+   "fields": [
+    "identity.sources"
+   ],
+   "note": "identity.sources が空でない（同 23〜24 行）"
+  }
  ]
 }
