@@ -15,7 +15,7 @@
    "pillar": 7,
    "pillar_en": 7,
    "entity_page_rules": 1,
-   "photos": 1,
+   "photos": 0,
    "owner_read": 1,
    "site_urls": 2
   },
@@ -30,7 +30,10 @@
    "lead.subject_entity_id": 0,
    "lead.source_id": 0,
    "observation.subject_entity_id": 0,
-   "observation.question_lead_id": 0
+   "observation.question_lead_id": 0,
+   "article.subject": 0,
+   "article.pillar": 0,
+   "photos.entity_id": 0
   },
   "checks": {
    "s_v1_source": 0,
@@ -54,12 +57,14 @@
    "s_g3": 0,
    "s_g7": 0,
    "s_g8": 0,
+   "s_g2": 0,
    "s_v1_name": 0,
    "s_v2_name": 0,
    "s_v3_name_name_type": 0,
    "s_v3_name_id_confidence": 0,
    "s_v6_name": 0,
    "s_v6_language": 0,
+   "s_v7": 0,
    "s_v1_claim": 0,
    "s_v2_claim": 0,
    "s_v3_claim_predicate": 0,
@@ -106,7 +111,14 @@
    "s_v4_observation_result_ja": 0
   }
  },
+ "vessel_gaps": [
+  "site/owner-read.txt: タブ区切り（G14）でも、見出しの行が無く # の注の行が頭にあるので表として読めない（bytes のまま。S-G9・S-G10 は固有）",
+  "site/src/lib/entity-page-rules.ts の HIDDEN_CLAIM_IDS: TypeScript の一覧は読まない（宿題: 指示 §7。各メディアのコードが正本）",
+  "写真のファイルが site/public/photos/<点>/ に在るか（S-G2 の後半）: ファイルの道を指す欄（宿題: 指示 §6）",
+  "柱の .md（pillars・pillars-en 14 枚）は頭に YAML を持たないので bytes のまま（G12 の外）"
+ ],
  "ask_lane": [
+  "S-V7: null の頭（fiber・region・technique・topic）は、台本は [a-z0-9-]+、器は slug（-a・a--b を断る）。今の実物で差 0",
   "S-V16: 台本の文は「独立した支持の出典が 2 つ以上」だが、数えているのは supports の根拠の source_id の違う値の数。器は台本どおり",
   "S-V15: established の「人が原文を確かめた」は根拠の extraction_status の語で持つ（今 human_checked 0）。判断に移すかはレーンの決め",
   "S-V13: 台本は startswith('http')。器は http:// か https:// で見る（今の実物で差 0）",
