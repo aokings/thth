@@ -5,8 +5,8 @@
         [--developer /Volumes/NexDev/Developer] [--media <名前>] [--only a,b,c,d,e,f] [--json]
         [--replay <こぴちゃの再演の置き場>] [--previous-adopt <段 2 の前の result.json>]
 
-別の者が同じ結果を出す 1 行（8 メディア全部・(a)〜(f)・段 1〜3 の確かめ込み。時間の目安は約 15 分、
-2026-11-14 の通しで 14 分 35 秒。関東と MMR が各 4 分強・こぴちゃ 2.5 分・残りは各 1 分強まで）:
+別の者が同じ結果を出す 1 行（8 メディア全部・(a)〜(f)・段 1〜3 の確かめ込み。時間の目安は約 17 分、
+2026-11-14 の検収の直しのあとの通しで 16 分 39 秒。関東と MMR が各 4 分強・こぴちゃ 4 分弱・残りは各 1 分強まで）:
 
     python3 tools/register_stage9_realcheck.py --work /Volumes/NexDev/Developer/thth-work/stage9 --replay /Volumes/NexDev/Developer/thth-work/stage9/replay_kopicha --previous-adopt ~/Documents/THTH/shadow/20261114-055641/result.json
 
