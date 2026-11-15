@@ -162,6 +162,8 @@ COMMANDS += ['register erase request', 'register erase scope', 'register erase r
              'register fix',
              'register seeds',
              'project leave', 'owner leave']
+# 5.23.0: 返信の印（`thth/reply_marks.py`・報告 r20261021-c6f28e99）。--json は 1 つの値。
+COMMANDS += ['reply-mark']
 
 
 def test_json_table_covers_every_parser():
