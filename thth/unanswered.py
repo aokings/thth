@@ -164,6 +164,12 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
         return True
 
     selected = [row for row in data['replies'] if belongs(row)]
+    # 5.23.0: 人（か THTH）が付けた印（枝の中で答えた・返さない・もう返せない）は未回答に数えない
+    # （報告 r20261021-c6f28e99・r20261104-366caff8・`thth/reply_marks.py`）。読むだけ。
+    from . import reply_marks
+    marks, marks_ok = reply_marks.load(account_name)
+    if not marks_ok:reasons.add('reply_marks_unreadable')
+    marked = []
     # Exact parent edges only: replying elsewhere under this root proves nothing
     # about whether a different participant's reply received an answer.
     for row in selected:
@@ -194,6 +200,11 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
         if at is None:
             reasons.add('reply_time_unknown');continue
         if at > now or floor and at < floor:continue
+        if rid in marks:
+            found = marks[rid]
+            marked.append(dict(post_id=row['post_id'], reply_id=rid, mark=found['mark'],
+                               answered_by=found.get('answered_by'), by=found.get('by'), at=found.get('at')))
+            continue
         rows.append(dict(post_id=row['post_id'], reply_id=rid,
                          author_key=_id(message.get('author_key')), username=message.get('username'),
                          preview=_one_line(message.get('text')),
@@ -220,7 +231,9 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
     rows.sort(key=lambda row: (-row['age_hours'], row['reply_id']))
     follow = _follow_window(account_name, cfg, now,
                             {pid: at for pid, at in posted.items() if pid in roots}, selected)
+    marked.sort(key=lambda row: row['reply_id'])
     return dict(account=account_name, n_total=len(rows), replies=rows,
+                n_marked=len(marked), marked=marked,
                 window=dict(since=jst.iso(floor) if floor else None, until=jst.iso(now), basis='reply_timestamp'),
                 collection_stale_hours=round(stale, 3) if stale is not None else None,
                 collection_stale_basis=STALE_BASIS,
@@ -286,7 +299,9 @@ def cmd(args):
                         status='ok' if rc==0 else 'error', error=None if rc==0 else 'refresh_failed'))
     if args.json:print(json.dumps(result,ensure_ascii=False,indent=2))
     else:
-        print(f"{args.account}: 台帳で未回答 {result['n_total']} 件")
+        tail = (f"（印を付けて外した {result['n_marked']} 件は数えていません・thth reply-mark）"
+                if result.get('n_marked') else '')
+        print(f"{args.account}: 台帳で未回答 {result['n_total']} 件{tail}")
         for row in result['replies']:
             print(f"  {row['age_hours']:.1f} 時間前 @{row['username'] or '—'} {row['reply_id']}")
             print_full_text(row.get('text'), indent='    ')
@@ -326,3 +341,5 @@ def register(sub):
     parser.add_argument('--refresh',action='store_true')
     parser.add_argument('--wait',type=lock.wait_seconds,default=0)
     parser.set_defaults(func=cmd)
+    from . import reply_marks
+    reply_marks.register(sub)

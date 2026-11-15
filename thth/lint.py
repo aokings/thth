@@ -385,6 +385,7 @@ def lint_file(path: str) -> list:
             f"（{found_by!r}）")
 
     errors.extend(reply_to_file_errors(path, fm, account_name))
+    errors.extend(reply_to_root_notes(fm, account_name, account_cfg))
     # 4.0 S4 §9.2: SNS の告知（`announces`・`article`・本文の `{article_url}`）。
     from . import announce
     errors.extend(announce.lint_errors(fm, section, account_cfg, hatena=False))
@@ -413,6 +414,43 @@ def lint_file(path: str) -> list:
 
 
 # --------------------------------------------------------------------------
+_ROOT_REPLIES_CACHE: dict = {}
+
+
+def reply_to_root_notes(fm: dict, account_name, account_cfg) -> list:
+    """`reply_to` が自分の根の投稿で、その根に未回答の返信があるときの予告（**断らない**・5.23.0）。
+
+    報告 r20261104-366caff8（関東 Threads）: 相手のコメントに返すつもりで reply_to に根を入れると、
+    返信は根の下に付き、相手のコメントは未回答のまま残る。根に返すのが意図どおり（自分の続き）なら
+    そのまま通る。読むのは返信の台帳と未回答の計算だけ（`unanswered.answer`・HTTP は打たない）。"""
+    reply_to = fm.get("reply_to")
+    if not account_name or not account_cfg or fm.get("status") == "posted" or reply_to in (None, ""):
+        return []
+    reply_to = str(reply_to)
+    # 1 回の lint（ディレクトリ）の中で口座ごとに 1 度だけ数える（置き場ごとに分ける）。
+    # 長く動く口（MCP・遠くの道）でも古い数を使い続けないよう 60 秒で読み直す。
+    import time
+    key = (str(accounts_mod.thth_root()), account_name)
+    cached = _ROOT_REPLIES_CACHE.get(key)
+    if cached is None or time.monotonic() - cached[0] > 60:
+        found = {}
+        try:
+            from . import unanswered
+            for row in unanswered.answer(account_name, since="30d")["replies"]:
+                found.setdefault(row["post_id"], []).append(row["reply_id"])
+        except Exception:  # noqa: BLE001 — 予告のためだけ（読めなければ何も言わない）
+            found = {}
+        _ROOT_REPLIES_CACHE[key] = cached = (time.monotonic(), found)
+    waiting = cached[1].get(reply_to) or []
+    if not waiting:
+        return []
+    shown = "・".join(waiting[:3]) + ("…" if len(waiting) > 3 else "")
+    return [f"warning: reply_to_is_root: reply_to {reply_to} は自分の根の投稿です（通します）。"
+            f"この根には未回答の返信が {len(waiting)} 件あります（{shown}）。相手のコメントの下に付けるなら、"
+            "reply_to にそのコメントの id を書いてください（thth unanswered <口座> の reply_id）。"
+            "自分の続きとして根に付けるなら、このままで構いません"]
+
+
 # reply_to_file（設計 3.2.0 §1）: 返信先を同じ queue の原稿の名前で書く
 # --------------------------------------------------------------------------
 

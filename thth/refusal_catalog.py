@@ -135,6 +135,7 @@ FIX_VIEWS = {
     "bookmark_cli._BATCH_MESSAGES": (
         "batch_empty", "batch_too_large", "batch_exists", "batch_not_found", "batch_unreadable",
         "batch_text_invalid", "batch_not_cancellable", "schedule_unavailable", "unsupported_operation",
+        "batch_file_unreadable",
     ),
     "announce._MESSAGES": (
         "invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",

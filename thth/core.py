@@ -120,6 +120,18 @@ def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
     return out
 
 
+def _note_unreplyable(account_name, account_cfg, reply_to, detail, error, log) -> None:
+    """返信の公開が断られたあと、媒体が「返信先に送れない」と答えていれば印を付ける（報告
+    r20261104-366caff8・`thth/reply_marks.py`）。印を置けなくても公開の結果は変えない。"""
+    if not reply_to:
+        return
+    from . import reply_marks
+    try:
+        reply_marks.note_publish_refusal(account_name, account_cfg, reply_to, detail, error=error, log=log)
+    except Exception:  # noqa: BLE001 — 印は補助。公開の失敗の記録を邪魔しない
+        pass
+
+
 def last_post_at(files, account_name: str):
     latest = None
     for qf in files:
@@ -1526,6 +1538,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         # アカウント側の断り（X の x_not_permitted）なら、次の run から投げ直さない（3.19.2）。
         publish_hold_mod.note_refusal(account_name, account_cfg, err, file=chosen.path,
                                       via=via, log=log)
+        # 返信先がもう返せない（Threads の code 24・subcode 4279009）なら未回答から外す（5.23.0）。
+        _note_unreplyable(account_name, account_cfg, post.reply_to, detail_data, err, log)
         return ThrowResult(exit_code=1, mode=mode, action="post", message="公開に失敗しました",
                             file=chosen.path, error=err, api_diagnostic=detail_data)
 
@@ -2315,6 +2329,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         status="error", error=err, api_diagnostic=detail_data,
                         extra=_remote_extra(result))
             publish_hold_mod.note_refusal(account_name, account_cfg, err, via="send", log=log)
+            _note_unreplyable(account_name, account_cfg, post.reply_to, detail_data, err, log)
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err, api_diagnostic=detail_data)
         if getattr(result, "remote_state", None):

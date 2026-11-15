@@ -135,6 +135,7 @@ All subcommands `thth --help` lists, one line each:
 - `measured` — read collected insights
 - `collect` — fetch replies and insights on the elapsed-time schedule
 - `unanswered` — replies to your posts that you have not answered yet
+- `reply-mark` — mark a reply so it no longer counts as unanswered (answered in the same branch, no reply needed, or no longer replyable); `--undo` removes the mark
 - `mentions` — mentions of your account
 - `topics` — keyword search (`--search`), and how much each topic was seen
 - `where` — where to engage next: search results with your own history layered on top

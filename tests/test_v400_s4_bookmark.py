@@ -621,3 +621,40 @@ def test_T_S4_10c_本物のurllibで_formはbase_stringに_urlはクエリに_UA
 
 
 _REAL_URLOPEN = httpsafe.urlopen
+
+
+def _verify_order_preserving(request, base_url):
+    """同じ鍵の値を並べ替えない相手の検算（鍵だけで安定に並べ、body の値の順をそのまま使う）。"""
+    params = oauth1.parse_header(request["authorization"])
+    signature = params.pop("oauth_signature")
+    params.pop("realm", None)
+    url = base_url + request["path"]
+    query = urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True)
+    form = urllib.parse.parse_qsl(request["body"].decode(), keep_blank_values=True)
+    pairs = [(oauth1.percent_encode(k), oauth1.percent_encode(v)) for k, v in list(params.items()) + query + form]
+    pairs.sort(key=lambda kv: kv[0])
+    normalized = "&".join(f"{k}={v}" for k, v in pairs)
+    base = "&".join((oauth1.percent_encode("POST"), oauth1.percent_encode(oauth1.base_string_uri(url)),
+                     oauth1.percent_encode(normalized)))
+    return signature == oauth1.sign_hmac_sha1(base, FAKE_CONSUMER["consumer_secret"],
+                                              FAKE_TOKEN["oauth_token_secret"])
+
+
+def test_T_S4_10d_タグはbodyでも署名と同じ順_値を並べ替えない検算でも合う(bm, monkeypatch):
+    """5.23.0（報告 r20261104-1e45aa54）: 台帳の順（文字の順）で送ると、英数で始まるタグ・`_` で終わるタグと
+    日本語のタグが混じったとき、body の順と署名の base string の順（encode したあとの順）が食い違った。"""
+    from thth.adapters import hatena_common
+    tags = sorted(["1980年代", "ケース_", "ケース資料", "台湾"])
+    with _Server() as srv:
+        monkeypatch.setattr(hatenabookmark, "BASE", f"http://127.0.0.1:{srv.port}")
+        monkeypatch.setattr(httpsafe, "urlopen", _REAL_URLOPEN)
+        token, consumer = hatena_common.load_credentials(cfg(ACCOUNT), principals.load_principal("hatena-main"))
+        adapter = hatenabookmark.HatenaBookmarkAdapter(cfg(ACCOUNT), principals.load_principal("hatena-main"),
+                                                       token=token, consumer=consumer)
+        result = adapter.add_bookmark(url=EXTERNAL, comment="メモ", tags=tags)
+        assert result.ok
+        [req] = srv.requests
+        sent_tags = urllib.parse.parse_qs(req["body"].decode())["tags"]
+        assert sorted(sent_tags) == tags and sent_tags == sorted(tags, key=oauth1.percent_encode)
+        assert _verify(req, f"http://127.0.0.1:{srv.port}")
+        assert _verify_order_preserving(req, f"http://127.0.0.1:{srv.port}")

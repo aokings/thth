@@ -474,6 +474,15 @@ ENTRIES = {
         "better": "1 行 1 件の JSON Lines にすると、壊れた行だけ除いて残りを進められます",
         "doors": ("cli", "mcp", "remote"),
     },
+    "batch_file_unreadable": {
+        "kind": "refusal",
+        "why": "札のファイルを開けませんでした。ファイルの道は、thth が動いている機械の上の道として読みます（ssh wt で打てば VM の上の道です）",
+        "fix": "手元（Mac）のファイルを ssh wt で渡すなら、道の代わりに - を渡して標準入力に流してください（例: ssh wt 'thth bookmark batch <口座> -' < 札.jsonl）。VM の上のファイルなら VM の上の道を、手元の thth なら手元の道を渡してください",
+        "command": "thth bookmark batch <口座> -",
+        "better": "標準入力（-）で渡すと、手元の repo の札をそのまま使えて、VM に写す手間と古い写しの取り違えが無くなります",
+        "doors": ("cli", "remote"),
+        "since": "5.23.0",
+    },
     "batch_too_large": {
         "kind": "refusal",
         "why": "札が 1 ファイルの上限（100 件・256 KB）を超えています",

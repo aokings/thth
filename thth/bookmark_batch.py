@@ -52,7 +52,7 @@ STATES = ("pending", "placed", "unknown", "refused", "cancelled", "expired")
 # 断りの符丁（遠くの道の `SAFE_ERRORS` に足す・静的な語だけ）。
 REASONS = frozenset((
     "batch_empty", "batch_too_large", "batch_exists", "batch_not_found", "batch_unreadable",
-    "batch_text_invalid", "batch_not_cancellable", "invalid_json", "invalid_item", "unknown_key",
+    "batch_text_invalid", "batch_file_unreadable", "batch_not_cancellable", "invalid_json", "invalid_item", "unknown_key",
     "duplicate_in_batch", "already_queued", "approval_stale"))
 
 # 付けるときの断りの分け方（§20.8）。
@@ -157,6 +157,9 @@ def lint_problems(path) -> list:
     try:
         entries = parse_text(read_source(path))
     except BatchError as exc:
+        if exc.code == "batch_file_unreadable":
+            return [f"{exc.code}: 札のファイルを開けません（道は THTH が動く機械の上の道として読みます。"
+                    "手元のファイルは thth bookmark batch <口座> - で標準入力に流せます）"]
         return [f"{exc.code}: 札のファイルを読めません"]
     out = []
     for entry in entries:
@@ -180,15 +183,22 @@ def lint_problems(path) -> list:
 
 
 def read_source(source, *, stdin=None) -> str:
-    """ファイル（`-` なら標準入力）を読む。読めなければ `BatchError("batch_text_invalid")`。"""
+    """ファイル（`-` なら標準入力）を読む。開けなければ `BatchError("batch_file_unreadable")`、
+    UTF-8 の文字として読めなければ `BatchError("batch_text_invalid")`。
+
+    道は THTH が動いている機械の上の道（`ssh wt` で打てば VM の道）。手元のファイルを VM の道として
+    渡して「JSON として読めない」と言われ、迷った（報告 r20261103-41553a23）ので、開けないときは
+    符丁を分けて `-`（標準入力）を案内する。"""
     import sys
     if source == "-":
         return (stdin or sys.stdin).read()
     try:
         with open(source, encoding="utf-8") as stream:
             return stream.read(MAX_TEXT_BYTES + 1)
-    except (OSError, UnicodeDecodeError):
+    except UnicodeDecodeError:
         raise BatchError("batch_text_invalid", detail=source) from None
+    except OSError:
+        raise BatchError("batch_file_unreadable", detail=source) from None
 
 
 # --------------------------------------------------------------------------

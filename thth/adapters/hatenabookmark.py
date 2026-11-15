@@ -279,8 +279,15 @@ class HatenaBookmarkAdapter:
         return status, raw
 
     def add_bookmark(self, *, url, comment, tags) -> BookmarkResult:
-        """`POST /rest/1/my/bookmark`（url はクエリ・comment と tags は form の body）。1 回だけ。"""
-        form = [("comment", comment or "")] + [("tags", t) for t in (tags or [])]
+        """`POST /rest/1/my/bookmark`（url はクエリ・comment と tags は form の body）。1 回だけ。
+
+        5.23.0: `tags` は署名の base string と同じ順（RFC 5849 §3.4.1.3.2・encode したあとの値の順）で
+        body に並べる。同じ鍵の値を並べ替えずに検算する相手でも、署名と body の順が食い違わない。前は
+        台帳の順（文字の順）で送っていて、英数で始まるタグと日本語のタグ、`_` で終わるタグなどが混じると
+        2 つの順が違った（はてなが 401 で断った札の見立て・報告 r20261104-1e45aa54・本物では未確認）。"""
+        from .. import oauth1
+        ordered = sorted((tags or []), key=oauth1.percent_encode)
+        form = [("comment", comment or "")] + [("tags", t) for t in ordered]
         out = self._write("POST", self._with_url(url), form=form)
         if isinstance(out, BookmarkResult):
             return out
