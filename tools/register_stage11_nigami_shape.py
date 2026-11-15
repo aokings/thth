@@ -134,6 +134,13 @@ def names(data) -> list:
     return sorted(out)
 
 
+def impact(data) -> list:
+    """5.22.0 から: 影響の候補（`impact.candidates`）の記録。"""
+    if not isinstance(data, dict):
+        return []
+    return sorted({c.get("record") for c in ((data.get("impact") or {}).get("candidates") or []) if c.get("record")})
+
+
 def check_summary(data) -> dict:
     if not isinstance(data, dict):
         return {}
@@ -206,7 +213,7 @@ def main(argv=None) -> int:
         rc, data, out, err = R(label, ["verify", name, "--outlet", outlet, "--material", str(base), "--now", now(),
                                        "--no-previous", "--json"])
         return {"rc": rc, "ok": bool(isinstance(data, dict) and data.get("ok")), "words": words(data),
-                "named": names(data)[:20], "named_count": len(names(data)), "head": (out or err)[:300]}
+                "named": names(data)[:20], "named_count": len(names(data)), "impact": impact(data)[:20], "head": (out or err)[:300]}
 
     def xcheck(label, outlet, base, name=NAME):
         rc, data, out, err = R(label, ["export", name, "--outlet", outlet, "--to", str(base), "--as-of", now(),
@@ -279,7 +286,7 @@ def main(argv=None) -> int:
     v = verify("壊す 5 確かめ", "site", b, nm)
     breaks["5_evidence_only"] = {"row_set_rc": rc, "field": find_field, "evidence": e0[eid_field],
                                  "claim_of_evidence": e0.get("claim_id"),
-                                 "claim_named": any(str(e0.get("claim_id")) in n for n in v["named"]),
+                                 "claim_named": any(str(e0.get("claim_id")) in n for n in v["named"] + v["impact"]),
                                  "verify": v}
     report["breaks"] = breaks
     report["steps"] = R.steps
@@ -290,7 +297,7 @@ def main(argv=None) -> int:
                                                                           if k != "head"}}
                       for o, s in report["shape"].items()}
     short["breaks"] = {k: {kk: (vv if kk not in ("verify", "export_check") else
-                                {x: y for x, y in vv.items() if x in ("rc", "ok", "words", "named", "stale",
+                                {x: y for x, y in vv.items() if x in ("rc", "ok", "words", "named", "impact", "stale",
                                                                       "differs", "mixed", "same_as_seal")})
                            for kk, vv in v.items()} for k, v in breaks.items()}
     print(json.dumps(short, ensure_ascii=False, indent=1))
