@@ -1,0 +1,84 @@
+{
+ "schema": "thth.outlets/1",
+ "note": "にがみラボの出し口（段 11）。読む物は目録 docs/目録_台帳の器_にがみラボ_2026-11-13.md §1.1・§1.2 の「サイトが読むか」。書き出し先は repo の根（\".\"）。repo の中に台帳のフォルダを置き、根の data/ と schema/ を書き出した写しにする（こぴちゃの段 10 と同じ形）。data/published-urls.txt は関門が読み書きする公開済みの URL の控えで材料でないので、両方の出し口で ignore にする",
+ "outlets": {
+  "site": {
+   "audience": "reader",
+   "kinds": [
+    "claim",
+    "crossing",
+    "doi",
+    "en_search_noindex",
+    "en_search_title",
+    "en_text",
+    "entity_answer",
+    "entity_media",
+    "entity_note",
+    "evidence",
+    "figure",
+    "lab_recipe",
+    "lab_recipe_figure",
+    "lab_recipe_step",
+    "lead",
+    "love_brewery",
+    "love_cacao",
+    "love_readme",
+    "love_record",
+    "measurement",
+    "name",
+    "overview",
+    "overview_evidence",
+    "page_date",
+    "point",
+    "prep_method",
+    "prep_reading",
+    "prep_reading_evidence",
+    "pretreatment",
+    "q_comparability",
+    "q_question",
+    "q_readings",
+    "q_results",
+    "q_scope",
+    "q_studies",
+    "recipe",
+    "schema_file",
+    "search_title",
+    "sister_link",
+    "source",
+    "source_check",
+    "study",
+    "topic_hub"
+   ],
+   "fact": [
+    {
+     "question": "may_publish@site",
+     "conclusion": "good"
+    }
+   ],
+   "dest": ".",
+   "note": "頁が読む物: site/src/lib/kb.ts の data/*.csv・比べの頁の data/questions/・英語の頁の data/i18n/en/（texts・題・noindex）・data/loves・data/doi.json・データの配布に同梱の schema/。表ごとの除き方（published だけ等）はサイトの側がするので、器は全部を書き出す（今の版を基準の判断で受ける）",
+   "ignore": [
+    "data/published-urls.txt"
+   ]
+  },
+  "tools": {
+   "audience": "internal",
+   "kinds": [
+    "observation",
+    "media_manifest",
+    "source_license",
+    "evidence_condition",
+    "en_pair_sha",
+    "sensory"
+   ],
+   "dest": ".",
+   "dest_shared_with": [
+    "site"
+   ],
+   "note": "頁が読まず、道具と関門が読む表: 観測・媒体の控え・出典の権利（validate_data.py と配布）・根拠の条件・英訳の対の指紋（gate_i18n_pairs.py）・官能の測り（見出しだけ）。選ばずに書く",
+   "ignore": [
+    "data/published-urls.txt"
+   ]
+  }
+ }
+}
