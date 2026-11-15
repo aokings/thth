@@ -373,14 +373,19 @@ def parse_outlets(data, kinds: dict) -> dict:
     # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）。
     # 段 10: 例外は、内の出し口が `dest_shared_with` で読者の出し口を名指しし、書き出し先が同じ道（入れ子でない）で、
     # 種類が重ならず、置き場の型どうしも重ならないときだけ（同じファイルに 2 つの出し口が書くことは無い）。
+    # 読者の側が `common` を持てば、`common/*` も読者の置き場の型に数える（5.23.0）。
     # 書き出し先そのものを丸ごと公開する使い方では名指ししない（こぴちゃの repo の根のように、公開するのは build の物）。
     for a in out.values():
         for x in a.shares_dest:
             b = out.get(x)
             if b is None or b.audience != "reader" or b.dest is None or dest_key(b.dest) != dest_key(a.dest):
                 raise V.DeclarationError(f"outlets:{a.name}:dest_shared_with:{x}"[:120])
-            if set(a.kinds) & set(b.kinds) or a.common is not None or b.common is not None or \
-                    _patterns_overlap(_kind_patterns(kinds, a), _kind_patterns(kinds, b)):
+            # 5.23.0: 読者の出し口は `common` を持てる（共通から採った物は `common/` に書き出すので、その型
+            # `common/*` も相手の種類の置き場の型と重ならないことを見る）。内の出し口の `common` は今までどおり断る
+            # （要るまで開けない）。
+            theirs = _kind_patterns(kinds, b) + ([f"{COMMON}/*"] if b.common is not None else [])
+            if set(a.kinds) & set(b.kinds) or a.common is not None or \
+                    _patterns_overlap(_kind_patterns(kinds, a), theirs):
                 raise V.DeclarationError(f"outlets:{a.name}:dest_shared_with:{x}:overlap"[:120])
     for a in out.values():
         for b in out.values():
