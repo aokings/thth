@@ -1128,11 +1128,16 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                 kind_of_path.setdefault(rec.path, vessel.kinds[rec.kind])
         # 段 11 の E: 記録が 0 の表（見出しだけ）も、置き場に当たる枚なら見出しのまま書く（書かないと、書き出し先の
         # 同じ枚が旧い材料に見え、受け入れの 2 段めが止まる。頁が読むなら build も壊れる）。表の種類だけ。
+        # 5.23.0（5.22.0 の監査 軽）: 出し口の外の種類の置き場の型にも当たる枚は書かない（種類どうしの型が重なる宣言で、
+        # 外の種類の見出しまで書き出していた）。
+        others = {path for name, other in vessel.kinds.items() if name not in outlet.kinds
+                  for path in V.files_of(vessel, other)}
         for k in outlet.kinds:
             kind = vessel.kinds[k]
             if kind.records == "rows" and kind.format == "csv":
                 for path in V.files_of(vessel, kind):
-                    kind_of_path.setdefault(path, kind)
+                    if path not in others:
+                        kind_of_path.setdefault(path, kind)
         for path in sorted(kind_of_path):
             kind = kind_of_path[path]
             keep = by_path.get(path, set())
@@ -1973,6 +1978,9 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
     if previous is not None:
         sealed_judgments(raw, previous, root)   # 封のあとで判断の記録の頭が書き換わっていれば、受け入れずに断る
     ctx = context(root, as_of, common_root=common_root, raw=raw, sealed_all=True)
+    missing = common_pointers_missing(ctx, outlet)
+    if missing:
+        raise RegisterRefused("register_record_missing", "common_pointer", pointers=missing[:50])
     base = previous or erased_prev
     result = compute(ctx, outlet, common_known=_known_paths(base))
     body = seal_body(root, outlet, ctx, result, raw, base)
@@ -2157,6 +2165,13 @@ def _judgment_line(j: dict) -> dict:
 
 def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, common_root=None) -> dict:
     """受け入れの 2 段め: 1 段めの印が合えば、材料を書き、封をする（材料が先・封があと）。"""
+    return accept_commit(root, accept_prepare(root, outlet_name, to, as_of, confirm=confirm, at=at,
+                                              common_root=common_root))
+
+
+def accept_prepare(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, common_root=None) -> tuple:
+    """受け入れの 2 段めの、書く前の確かめと署名まで（何も書かない）。`--outlet all` は全部の出し口でこれを先に
+    済ませ、1 つでも断れば何も封をしない（5.22.0 の監査 軽: 途中で断られても前の出し口の封が進んだままだった）。"""
     plan = accept_plan(root, outlet_name, to, as_of, common_root=common_root)
     if confirm != plan["digest"]:
         raise RegisterRefused("register_confirm_mismatch", "confirm", digest=plan["digest"])
@@ -2167,6 +2182,12 @@ def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, com
     body = dict(plan["body"], at=at, public_key=S.fingerprint(S.local_public_pem()))
     salt = ensure_salt(root)
     signature = S.sign(seal_message(body, salt), register_root=root)
+    return plan, body, signature
+
+
+def accept_commit(root: str, prepared: tuple) -> dict:
+    """`accept_prepare` の結果で、材料を書き、封をする。"""
+    plan, body, signature = prepared
     write_files(plan["to"], plan["result"]["files"])
     path = seal_path(root, plan["outlet"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2185,7 +2206,7 @@ PROBLEMS = ("no_seal", "seal_shape", "public_key", "signature", "judgments_rewri
             "previous_signature", "previous_other_outlet", "previous_not_deployed", "seal_other_outlet",
             "generation_back", "generation_reused",
             "judgments_not_continued", "decl_changed", "material_mismatch", "narrowed_after_seal",
-            "widened_after_seal", "stale_material", "inputs_changed")
+            "widened_after_seal", "stale_material", "inputs_changed", "common_pointer_missing")
 
 
 def deployed_of(prev: dict) -> dict | None:
@@ -2331,6 +2352,9 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     # 封の中の判断だけ（と、封を待たない狭める物）で、今の日時で計算し直す
     ctx = Ctx(root, vessel, parse_judgments(raw[:jm["bytes"]], root), parse_judgments(raw, root), as_of,
               open_common(common_root))
+    missing = common_pointers_missing(ctx, outlet)
+    if missing:
+        red("common_pointer_missing", items=missing[:50])
     result = compute(ctx, outlet, common_known=_known_paths(seal))
     if ctx.common is None and outlet.common is not None:
         # 段 8 §3: 共通の台帳を読めない CI は、共通の出さない欄で封のときに外した記録（封の項目に無い物）を
@@ -2380,8 +2404,10 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
         red("material_mismatch", files=sorted(p for p in names | set(here) if here.get(p) != sealed_outputs.get(p))[:50])
     mine, theirs = changed_since(vessel, body, ctx.common)
     theirs |= {p["record"][len(COMMON) + 1:] for p in result["pending_takes"]}
+    gone = deleted_since(vessel, body)
     verdict = _verdict(problems, warnings, key=origin, generation=body["generation"],
-                       pending_takes=result["pending_takes"], impact=impact(vessel, mine, theirs))
+                       pending_takes=result["pending_takes"],
+                       impact=impact(vessel, mine | gone, theirs, before=_material_vessel(material, root) if gone else None))
     if publish is not None and verdict["ok"]:
         write_published(publish, seal, raw, as_of, narrowed, salt)
         verdict["published"] = os.path.abspath(publish)
@@ -2391,7 +2417,8 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
 IMPACT_SHOWN = 200   # 影響の候補を出す数（数は全部）
 
 
-def impact(vessel: V.Vessel, changed, common_changed=(), *, graph: dict | None = None) -> dict:
+def impact(vessel: V.Vessel, changed, common_changed=(), *, graph: dict | None = None,
+           before: "V.Vessel | None" = None) -> dict:
     """段 11 の F: 版が変わった記録（`changed`）と、指す欄でつながった記録（指す側・指される側、1 段）を「影響の候補」に
     する。共通の記録の版が進んだとき（`common_changed`: 共通の `<種類>:<番号>`）は、それを `common:<番号>` で指す
     この台帳の記録と、その記録から 1 段の記録を候補にする（考察 §4.2）。**判断を無効にしない**（赤にしない）。
@@ -2414,6 +2441,20 @@ def impact(vessel: V.Vessel, changed, common_changed=(), *, graph: dict | None =
             add(e["from"], e["to"], e, "points_to_common")
             ring.add(e["from"])
     near = changed | ring
+    # 消した記録（今の台帳に無い）: 指していた先は、封のときの材料（`before`）の指す欄から引く。消した記録を指して
+    # いた側は、今の台帳では先の無い指しになる（5.23.0）。
+    gone = {r for r in changed if vessel is not None and vessel.unique(r) is None}
+    if gone and before is not None:
+        try:
+            old_edges = V.links(before)["edges"]
+        except (RegisterRefused, KeyError):
+            old_edges = []
+        for e in old_edges:
+            if e["from"] in gone and not e["to"].startswith(V.COMMON_REF) and vessel.unique(e["to"]) is not None:
+                add(e["to"], e["from"], e, "pointed_by_deleted")
+    for e in graph.get("dangling") or []:
+        if e.get("to") in gone and isinstance(e.get("from"), str):
+            add(e["from"], e["to"], e, "points_to_deleted")
     for e in graph["edges"]:
         if e["to"].startswith(V.COMMON_REF):
             continue
@@ -2443,6 +2484,37 @@ def changed_since(vessel: V.Vessel, body: dict, common: "Common | None" = None) 
         if now is not None and now.version != version:
             mine.add(ref)
     return mine, theirs
+
+
+def common_pointers_missing(ctx, outlet: Outlet) -> list:
+    """この出し口の種類の記録が `common:<番号>` で指す先が、共通の台帳に無い（種類の取り違えも先が無いと読む）物。
+    共通の台帳を読めないとき（`--common` なし）は見られないので空（5.23.0・5.22.0 の監査 軽: 前は health だけが言った）。"""
+    if ctx.common is None:
+        return []
+    kinds = set(outlet.kinds)
+    out = []
+    for e in V.links(ctx.vessel).get("common") or []:
+        if e["from"].split(":", 1)[0] in kinds and ctx.common.vessel.unique(e["to"][len(V.COMMON_REF):]) is None:
+            out.append({"from": e["from"], "to": e["to"], "field": e.get("field")})
+    return out
+
+
+def deleted_since(vessel: V.Vessel, body: dict) -> set:
+    """封の入力にあって、今の台帳に無い（消した）この台帳の記録（5.23.0・5.22.0 の監査 軽: 影響の候補）。"""
+    out = set()
+    for i in body.get("inputs") or []:
+        ref = i.get("record")
+        if isinstance(ref, str) and not ref.startswith(COMMON + ":") and vessel.unique(ref) is None:
+            out.add(ref)
+    return out
+
+
+def _material_vessel(material, root: str):
+    """封のときの材料を、台帳の宣言で読む（消した記録の指す欄を引くため）。読めなければ None（候補を出さないだけ）。"""
+    try:
+        return V.open_vessel(os.path.abspath(material), decl_base=os.path.join(root, V.DECL_DIR), allow_pending=True)
+    except (RegisterRefused, V.DeclarationError, OSError, ValueError):
+        return None
 
 
 def _verdict(problems, warnings, **extra) -> dict:

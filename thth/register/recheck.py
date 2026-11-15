@@ -33,6 +33,9 @@ _DIGEST = re.compile(r"[0-9a-f]{16}\Z")
 _FILE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-register-.+-(?:" + "|".join(TRIGGERS) + r")\.md\Z")
 # 控えと比べる頭の行（`draft.text_for` が書く出所の 4 行）。
 ORIGIN_KEYS = ("from_register", "from_register_digest", "from_register_commit", "from_register_trigger")
+# THTH の側の控えだけが持つ、下書きを作った台帳のフォルダ（控えと別の checkout の `--path` で作ったとき・5.23.0）。
+# 下書きの頭からは読まない（頭は持ち主の LLM が書き換えうるので）。
+PATH_KEY = "register_path"
 _DETAIL_WORD = re.compile(r"[a-z_]{1,40}\Z")
 
 
@@ -74,8 +77,10 @@ def _with_record(path: str, front_matter: dict):
     for key in ORIGIN_KEYS:
         if key in front_matter and str(front_matter[key]).strip() != record.get(key, ""):
             return None, _line(path, "register_row_changed", "from_register_mismatch")
-    merged = dict(front_matter)
+    merged = {k: v for k, v in front_matter.items() if k != _HERE_KEY}
     merged.update({key: record[key] for key in ORIGIN_KEYS if key not in front_matter and key in record})
+    if isinstance(record.get(PATH_KEY), str):
+        merged[_HERE_KEY] = record[PATH_KEY]
     try:
         until, kept = queuefile.parse_not_after(front_matter), queuefile.parse_not_after(record)
     except ValueError:
@@ -85,8 +90,19 @@ def _with_record(path: str, front_matter: dict):
     return merged, None
 
 
+_HERE_KEY = "\x00register_path"   # 控えから読んだ道を頭の値と混ぜないための鍵（頭の欄の名にはならない）
+
+
 def check(path: str, front_matter: dict) -> str | None:
     """断る理由（1 行）か None。台帳の下書きでなければ None。"""
+    ledger.clear_here()
+    try:
+        return _check(path, front_matter)
+    finally:
+        ledger.clear_here()
+
+
+def _check(path: str, front_matter: dict) -> str | None:
     front_matter, problem = _with_record(path, front_matter or {})
     if problem:
         return problem
@@ -107,7 +123,11 @@ def check(path: str, front_matter: dict) -> str | None:
     if jst.now_jst() > until:
         return _line(path, "register_draft_expired", queuefile.jst_minute(until))
     name, row_id = matched.group(1), matched.group(2)
+    here = front_matter.get(_HERE_KEY)
     try:
+        if here is not None:
+            # 作った checkout を、名乗りで同じ台帳か確かめてから読む（控えの道でも名乗りが同じでもなければ断る）
+            ledger.use_path(name, here)
         cfg = ledger.load(name)
     except RegisterRefused as exc:
         if exc.code == "register_missing":

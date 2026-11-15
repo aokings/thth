@@ -95,6 +95,15 @@ def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, a
         # 止まらないように。kopicha の写しで、鍵の置き場が台帳を含む repo の中だったときに踏んだ）
         S.check_key_place(root)
         S._private_ok(S.key_path())
+    # 5.23.0（5.22.0 の監査 軽）: 直す前から、この記録が判断の無い直しで材料から外れていたか（ほかの者が `row set` だけ
+    # して判断していない）。この命令の判断がその直しまで覆ってしまうので、名指しして封へは進めない（1 段めで止める）。
+    prior = []
+    for name, dest in targets:
+        if outlets[name].audience != "reader":
+            continue
+        plan0 = R.accept_plan(root, name, dest, as_of, common_root=common_root)
+        prior += [{"outlet": name, "item": key} for key in plan0["changes"]["leaving"]
+                  if R._parse_item_key(key)[0] == before.ref]
     written = A.row_set(root, ref, values, by=by, at=at)
     moved = V.open_vessel(root).get(ref).version != before.version
     # 名指し: 直したことで外れる記録と、満たさない条件（判断するのは、指定した記録でこの命令で版が変わった物だけ）
@@ -152,12 +161,14 @@ def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, a
             why.append("pending_takes")
         if not outlets[name].fix_seal:
             why.append("fix_seal_not_declared")
+        if any(p["outlet"] == name for p in prior):
+            why.append("prior_unjudged_change")
         can_seal = can_seal and not why
         stage[name] = {"plan": plan, "why": why}
     after = V.open_vessel(root)
     found = R.impact(after, {ref}, ())
     value = {"record": ref, "path": written.get("path"), "named": named, "judgments": added, "impact": found,
-             "outlets": {}}
+             "prior_unjudged": prior, "outlets": {}}
     if can_seal:
         for name, dest in targets:
             got = R.accept(root, name, dest, as_of, confirm=stage[name]["plan"]["digest"], at=at,

@@ -78,6 +78,7 @@ from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
 from . import adopt_cli, erase_cli, health_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
 from . import errors as errors_mod
+from . import recheck as recheck_mod
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
@@ -174,6 +175,10 @@ def ensure_thth_root() -> None:
 def _record(event: str, name: str, by: str, diff: dict) -> None:
     ensure_thth_root()
     try:
+        here = ledger.here_of(name)
+        if here is not None:
+            # 5.23.0（5.23.0 の監査 軽 4）: 控えと別の checkout で打った命令は、どのフォルダかを記録に残す
+            diff = dict(diff, path=[None, here])
         admin_log.append(ACTION_PREFIX + event, name, {"media": "register"}, by=by, diff=diff)
     except (OSError, ValueError, admin_log.AdminLogError):
         raise RegisterRefused("register_log_unavailable") from None
@@ -430,8 +435,8 @@ def cmd_confirm(args) -> int:
     row = find_row(scanned, args.row)
     if row.problems:
         raise RegisterRefused("register_row_secret" if "secret" in row.problems else "register_row_invalid", row.id)
-    if row.head["confirmed"] == form.YES and (ledger.read_confirmed(args.register).get(row.id) or {}).get(
-            "digest") == form.fingerprint(row.text):
+    if row.head["confirmed"] == form.YES and form.fingerprint(row.text) in ledger.confirmed_digests(
+            ledger.read_confirmed(args.register).get(row.id)):
         value = {"register": args.register, "row": row.id, "confirmed": form.YES, "already": True}
         _print(value) if args.json else print(f"行 {row.id} は既に本人が認めた行です（中身も認めたときのままです）")
         return 0
@@ -585,8 +590,11 @@ def cmd_draft(args) -> int:
         if (queue / name).exists():
             raise RegisterRefused("register_draft_exists", row.id)  # 控えを書く前に（あるファイルの控えを書き換えない）
         # 書く前に THTH の側に出所を控える（頭の行が落とされても、承認の確定の段が控えから読み直す・監査 5.19.0 の 1）。
+        # 控えと別の checkout（`--path`）で作った下書きは、その台帳のフォルダも控える（承認のときにそこを読み直す・5.23.0）
+        here = ledger.here_of(args.register)
         draft_origin.record(ledger.state_dir_for(args.register), queue / name,
-                            {**draft_mod.head(text), "not_after": jst.iso(until)})
+                            {**draft_mod.head(text), "not_after": jst.iso(until),
+                             **({recheck_mod.PATH_KEY: here} if here is not None else {})})
         written.append({"row": row.id, "trigger": trigger, "not_after": jst.iso(until),
                         "path": draft_mod.write(queue, name, text)})
     _record("drafted", args.register, by, {"to": [None, args.to], "rows": [[], [w["row"] for w in written]],

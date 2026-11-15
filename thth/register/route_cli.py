@@ -180,6 +180,9 @@ def cmd_fix(args) -> int:
     for n in value["named"]:
         mark = ("判断を足した: " + "・".join(n["questions"])) if n["judged"] else f"足していない（{n['why']}）"
         print(f"  名指し [{n['outlet']}] {n['item']} — {mark}")
+    for p in value.get("prior_unjudged") or []:
+        print(f"  先に判断の無い直しがありました [{p['outlet']}] {p['item']} — この命令の判断がその直しも覆うので、"
+              "封へは進めません（中身を確かめてから accept）")
     show_impact(value.get("impact"))
     if value["sealed"]:
         for name, o in value["outlets"].items():
@@ -239,8 +242,8 @@ def _all_head(args, names, ok) -> None:
 
 def red_channel(results: dict, default: str = "register_material_stale") -> dict:
     """`--all` の赤（rc 1）の JSON に足す報告の 1 行（5.23.0）。符丁は最初の断りの物か、既定の符丁。"""
-    code = next((v["code"] for v in results.values() if v.get("ok") is False and isinstance(v.get("code"), str)),
-                default)
+    code = next((v["code"] for v in results.values() if v.get("ok") is False and isinstance(v.get("code"), str)
+                 and v["code"].startswith("register_")), default)
     return report_channel(code)
 
 
@@ -310,14 +313,25 @@ def _accept_all(args, root: str) -> int:
     if args.confirm != combined:
         raise RegisterRefused("register_confirm_mismatch", "confirm", digest=combined)
     at = _at()
-    results, ok = _each(names, lambda name: (R.accept(root, name, plans[name]["to"], args.as_of,
-                                                      confirm=plans[name]["digest"], at=at,
-                                                      common_root=args.common), True))
+    # 全部の出し口の書く前の確かめと署名を先に済ませ、1 つでも断れば何も書かない・何も封をしない（5.23.0）
+    prepared, ready = _each(names, lambda name: (R.accept_prepare(root, name, plans[name]["to"], args.as_of,
+                                                                  confirm=plans[name]["digest"], at=at,
+                                                                  common_root=args.common), True))
+    if ready:
+        results, ok = _each(names, lambda name: (R.accept_commit(root, prepared[name]), True))
+    else:
+        # 断った出し口はその断り、断らなかった出し口は「封をしていない」（ほかの出し口が断ったので）
+        results, ok = {name: (value if isinstance(value, dict) and value.get("ok") is False
+                              else {"ok": False, "sealed": False, "why": "other_outlet_refused"})
+                       for name, value in prepared.items()}, False
     if args.json:
         _print({"outlet": R.ALL, "ok": ok, "outlets": results, **({} if ok else red_channel(results))})
         return 0 if ok else 1
     _all_head(args, names, ok)
     for name, value in results.items():
+        if value.get("why") == "other_outlet_refused":
+            print(f"[{name}] ほかの出し口が断ったので、書かず封もしていません")
+            continue
         if value.get("ok") is False:
             print(f"[{name}] 断り {value['code']}（{value.get('detail') or ''}）")
             continue
@@ -377,6 +391,7 @@ def cmd_accept(args) -> int:
 
 
 PROBLEM_JA = {
+    "common_pointer_missing": "common:<番号> で指す先が共通の台帳にありません（番号か指す欄の種類の取り違え）",
     "no_seal": "封がありません",
     "seal_shape": "封の形が崩れています",
     "public_key": "確かめに使う公開鍵がありません（環境の変数 THTH_REGISTER_SEAL_PUBLIC_KEY）",

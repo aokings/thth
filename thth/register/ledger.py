@@ -198,6 +198,11 @@ def name_at(value) -> str:
     return name
 
 
+def here_of(name: str):
+    """この命令が `--path`（か `<台帳>` のフォルダの道）で使っている別の checkout の道。無ければ None。"""
+    return _HERE.get(name)
+
+
 def clear_here() -> None:
     _HERE.clear()
 
@@ -292,10 +297,33 @@ def read_confirmed(name: str) -> dict:
     except (OSError, ValueError):
         raise RegisterRefused("register_ledger_invalid", "confirmed") from None
     rows = value.get("rows") if isinstance(value, dict) and value.get("schema") == CONFIRMED_SCHEMA else None
-    if not isinstance(rows, dict) or not all(isinstance(v, dict) and isinstance(v.get("digest"), str)
-                                             for v in rows.values()):
+    if not isinstance(rows, dict) or not all(
+            isinstance(v, dict) and isinstance(v.get("digest"), str)
+            and (("earlier" not in v) or (isinstance(v["earlier"], list) and all(isinstance(d, str) for d in v["earlier"])))
+            for v in rows.values()):
         raise RegisterRefused("register_ledger_invalid", "confirmed")
     return rows
+
+
+EARLIER_MAX = 8   # 1 行が持つ前に認めた中身の指紋の数（checkout ごとに中身が違っても行き来しない・5.23.0）
+
+
+def confirmed_digests(record) -> set:
+    """認めた記録の 1 行が認めた中身の指紋（今の `digest` と、前に認めた `earlier`）。"""
+    if not isinstance(record, dict) or not isinstance(record.get("digest"), str):
+        return set()
+    earlier = record.get("earlier")
+    return {record["digest"], *(d for d in (earlier if isinstance(earlier, list) else []) if isinstance(d, str))}
+
+
+def confirmed_entry(previous, digest: str, *, at: str, by: str) -> dict:
+    """認めた記録の新しい 1 行。前に認めた別の中身の指紋は `earlier` に残す（5.23.0・5.23.0 の監査 軽 1: 中身の違う
+    checkout で認めると、もう片方の同じ行が「認めていない」に行き来した）。認めるのは中身ごとなので、柵は弱めない。"""
+    kept = [d for d in sorted(confirmed_digests(previous)) if d != digest]
+    entry = {"digest": digest, "at": at, "by": by}
+    if kept:
+        entry["earlier"] = kept[-EARLIER_MAX:]
+    return entry
 
 
 def write_confirmed(name: str, rows: dict) -> None:

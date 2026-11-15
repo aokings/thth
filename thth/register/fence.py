@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime
 
-from . import form
+from . import form, ledger
 from .errors import RegisterRefused
 
 
@@ -34,7 +34,7 @@ def state(row: form.Row, records: dict, today: datetime.date) -> str | None:
     if head["confirmed"] == form.GUESS:
         return "register_row_guess"
     record = records.get(row.id)
-    if not isinstance(record, dict) or record.get("digest") != form.fingerprint(row.text):
+    if form.fingerprint(row.text) not in ledger.confirmed_digests(record):
         return "register_row_unconfirmed"
     if form.parse_day(head["review_by"]) < today:
         return "register_row_review_passed"
