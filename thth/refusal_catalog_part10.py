@@ -623,6 +623,32 @@ ENTRIES = {
         "thth register add で控え直してください。健康の --all では、その台帳だけ読めないと出して次へ進みます。",
         "thth register check <台帳>",
         "台帳ごとに 1 つのフォルダ（git の repo）にしておくと、外す命令の見積りも健康も速く終わります。"),
+    "register_path_other": _entry(
+        "指した台帳のフォルダが、その名前の台帳と確かめられません（1 行目の（）の語: other_name は台帳の中の名乗りの名前が"
+        "違う・undeclared は控えの道でないのに名乗りが無い・declaration は名乗りが崩れている）。違う台帳の判断や封を"
+        "取り違えないよう、何も読まず何も書かずに止めました。",
+        "同じ台帳の別の checkout なら、台帳のフォルダの .thth/register.json に "
+        "{\"schema\": \"thth.register_name/1\", \"register\": \"<台帳>\"} の 1 行を置いて（repo に commit すると、どの checkout でも"
+        "同じ名乗りになります）、thth register <命令> <台帳> --path <フォルダ> で打ち直してください。違う台帳なら、その台帳の名前で"
+        "打ってください。",
+        "thth register check <台帳> --path <フォルダ>",
+        "名乗りを台帳の repo に置いておくと、本体・作業木・配信の作業木のどこからでも、控え直さずに確かめと受け入れができます。",
+        by_detail={
+            "other_name": {
+                "fix": "指したフォルダの .thth/register.json の名前が、打った台帳の名前と違います。そのフォルダの台帳の名前で"
+                       "打ち直すか、打った名前の台帳のフォルダを --path に入れてください。",
+                "command": "thth register check <台帳> --path <フォルダ>",
+                "better": "名乗りは手で書き換えず、台帳の repo の 1 か所に置いておくと、どの checkout でも同じ名前になります。"},
+            "undeclared": {
+                "fix": "控えの道でないフォルダは、台帳の中の名乗りで同じ台帳か確かめます。台帳のフォルダの .thth/register.json に"
+                       " {\"schema\": \"thth.register_name/1\", \"register\": \"<台帳>\"} を置いて打ち直してください。",
+                "command": "thth register check <台帳> --path <フォルダ>",
+                "better": "名乗りを repo に commit しておくと、作業木を作るたびに置き直さずに済みます。"},
+            "declaration": {
+                "fix": ".thth/register.json は schema（thth.register_name/1）と register（台帳の名前）の 2 つの欄だけの JSON に"
+                       "直してください（symlink は辿りません）。",
+                "command": "thth register check <台帳> --path <フォルダ>",
+                "better": "名乗りは 2 つの欄だけにしておくと、どの版の thth でも同じに読めます。"}}),
     "register_leave_overlap": _entry(
         "台帳のフォルダが、外す命令の消す所（口座の state・管理する repo・THTH の側の台帳の控えと記録・主体の置き場）と"
         "重なっているか、消す所の中に台帳のフォルダらしい物（.thth/ を持つフォルダ）があります（1 行目の（）の語がその所）。消すと台帳のフォルダの中の物まで消えるので、何も消さずに止めました。"

@@ -40,6 +40,8 @@ REASONS = frozenset((
     # 台帳の器 段 8: 共通の台帳と、外す範囲（メディア・持ち主）。
     "register_common_exists", "register_builtin_kind_exists", "register_leave_confirm", "register_leave_overlap",
     "register_leave_incomplete", "register_leave_changed", "register_folder_too_wide",
+    # 5.23.0: 控えと別の checkout（台帳の中の名乗りで同じ台帳か確かめる）。
+    "register_path_other",
 ))
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 

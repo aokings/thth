@@ -5477,6 +5477,8 @@ def build_parser() -> argparse.ArgumentParser:
     store_cli.register(shop_sub)
     # `thth register`: 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。網に出ない。
     from .register import cli as register_cli
+    from . import report_inbox as _report_inbox
+    register_cli.REPORT_LINE = _report_inbox.refusal_line   # `--json` の断りの report_channel の欄（5.23.0）
     register_cli.register(sub)
     # `thth project leave <メディア>`・`thth owner leave`（台帳の器 段 8・外す範囲の 2 つめと 3 つめ。段を進めるのは
     # `thth/leave.py`・台帳の側は `thth/register/owner.py`）。
@@ -5599,12 +5601,21 @@ def _entry(argv=None) -> int:
         account, code = _remember_refusal(real_argv, rc, tee.first_line())
         # **そのまま打てる報告の 1 行**（設計 3.3.0 B3）。account と理由の符丁を
         # 埋める（分からなければ `<account>`・`<reason_code>` のまま）。
-        from . import report_inbox
-        print(report_inbox.refusal_line(account, code), file=sys.stderr)
+        # `thth register … --json` は stdout の JSON だけにする（`2>&1` でまとめても 1 つの JSON。断りの 1 行は
+        # JSON の `report_channel` の欄に入る・5.23.0 にがみラボのつまずき）。`--json` でないときは今までどおり。
+        if not _register_json(real_argv):
+            from . import report_inbox
+            print(report_inbox.refusal_line(account, code), file=sys.stderr)
     else:
         code = None
     _meter(real_argv, rc, first_stage, code)
     return rc
+
+
+def _register_json(real_argv) -> bool:
+    """`thth register …` を `--json` で打ち、引数が解釈できたか（解釈できなかった使い方の誤りは JSON でないので外す）。"""
+    args = _PARSED.get("args")
+    return real_argv[:1] == ["register"] and args is not None and bool(getattr(args, "json", False))
 
 
 def _meter(real_argv, rc, first_stage, code) -> None:

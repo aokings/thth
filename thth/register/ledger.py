@@ -8,6 +8,13 @@
 
 `thth register remove`・`thth project leave <メディア>`（共通の台帳の控えは消さない）・`thth owner leave` が控えと記録を
 消す。台帳のフォルダは消さない。口座の `thth account leave` は、その project の最後の口座でも控えに触れない（段 8）。
+
+**1 名前に道は 1 つでも、別の checkout を指せる**（にがみラボ 5.22.0 のつまずき）: 本体・作業木・配信の作業木で台帳の
+フォルダの場所が違っても、控え直さずに `<台帳> --path <フォルダ>` か `<台帳>` にフォルダの道を渡して読める。別の道が
+同じ台帳かは、台帳の中の名乗り（`.thth/register.json`・`thth.register_name/1`・欄は schema と register だけ）で確かめる。
+名乗りの名前が違う・名乗りが崩れている・名乗りの無い別の道は `register_path_other` で断る（控えの道そのものは名乗り
+が無くても今までどおり）。控えの道の台帳の名乗りが控えの名前と違うときも断る。指した道はその 1 回の命令の間だけ使い、
+控えは書き換えない。
 """
 from __future__ import annotations
 
@@ -22,6 +29,9 @@ KINDS = ("media", "store")
 FIELDS = ("register", "project", "path", "kind")
 ROLE_FIELD = "role"
 COMMON = "common"
+NAME_FILE = "register.json"                # 台帳の中の名乗り（`.thth/register.json`）
+NAME_SCHEMA = "thth.register_name/1"
+NAME_MAX = 4096
 CONFIRMED_FILE = "confirmed.json"
 CONFIRMED_SCHEMA = "thth.register_confirmed/1"
 
@@ -121,6 +131,77 @@ def check_walkable(root: str, limit: int | None = None) -> int:
     return count
 
 
+# ------------------------------------------------------------------ 名乗りと別の checkout
+
+# その 1 回の命令の間だけ使う道（名前 → フォルダ）。`register/cli._run` が命令の前と後に空にする。
+_HERE: dict = {}
+
+
+def looks_like_path(value) -> bool:
+    """`<台帳>` がフォルダの道か（`/` を含む・`~` か `.` で始まる）。名前は `/` を含めない。"""
+    return isinstance(value, str) and (os.sep in value or "/" in value or value.startswith(("~", ".")))
+
+
+def declared_name(root: str):
+    """台帳の中の名乗り（`.thth/register.json`）の名前。無ければ None。崩れていれば・symlink なら断る
+    （名乗りが読めないのに「同じ台帳」と読み違えない）。"""
+    base = os.path.join(root, ".thth")
+    path = os.path.join(base, NAME_FILE)
+    if not os.path.lexists(path):
+        return None
+    if os.path.islink(base) or os.path.islink(path) or not os.path.isfile(path):
+        raise RegisterRefused("register_path_other", "declaration")
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(NAME_MAX + 1)
+        value = json.loads(raw.decode("utf-8")) if len(raw) <= NAME_MAX else None
+    except (OSError, UnicodeDecodeError, ValueError):
+        value = None
+    if (not isinstance(value, dict) or set(value) != {"schema", "register"} or value.get("schema") != NAME_SCHEMA
+            or not isinstance(value.get("register"), str) or not name_ok(value["register"])):
+        raise RegisterRefused("register_path_other", "declaration")
+    return value["register"]
+
+
+def _same_folder(a: str, b) -> bool:
+    return isinstance(b, str) and os.path.realpath(a) == os.path.realpath(b)
+
+
+def use_path(name: str, value) -> str:
+    """`<名前> --path <フォルダ>`: 控えの道でない別の checkout を、この 1 回の命令の間だけ使う。控えの道そのものか、
+    名乗りが同じ名前のフォルダだけ（名乗りが無い・違えば `register_path_other`）。THTH の置き場の中は今までどおり断る。
+
+    名前ごとの状態（`register_state/<名前>/` の認めた記録・下書きの控え）は名前で引き、道ごとには分けない — 認めた
+    記録は行の中身の指紋で引くので、別の checkout で中身が違えば認めたと読まれず、同じなら同じ同意で済むから。"""
+    cfg = _load_raw(name)
+    path = check_outside_thth(check_path(value))
+    declared = declared_name(path)
+    if declared is not None and declared != name:
+        raise RegisterRefused("register_path_other", "other_name")
+    if declared is None and not _same_folder(path, cfg["path"]):
+        raise RegisterRefused("register_path_other", "undeclared")
+    _HERE[name] = path
+    return path
+
+
+def name_at(value) -> str:
+    """`<台帳>` にフォルダの道: 名乗りから控えの名前を引き、その道を使う。名乗りが無ければ、控えの道が同じ控え
+    （1 つだけ）の名前。どちらも無ければ `register_path_other`（undeclared）。名乗りの名前の控えが無ければ `register_missing`。"""
+    path = check_path(value)
+    name = declared_name(path)
+    if name is None:
+        found = [n for n in list_names() if _same_folder(path, raw_path(n))]
+        if len(found) != 1:
+            raise RegisterRefused("register_path_other", "undeclared")
+        name = found[0]
+    use_path(name, path)
+    return name
+
+
+def clear_here() -> None:
+    _HERE.clear()
+
+
 def raw_path(name: str):
     """読めない控えからも `path` だけを拾う（消さない物の囲いに入れるため）。拾えなければ None。"""
     try:
@@ -167,6 +248,14 @@ def write_new(name: str, data: dict) -> str:
 
 
 def load(name: str) -> dict:
+    """控え（この命令が `--path` で別の checkout を指していれば、`path` はその道）。"""
+    data = _load_raw(name)
+    if name in _HERE:
+        data["path"] = _HERE[name]
+    return data
+
+
+def _load_raw(name: str) -> dict:
     try:
         with open(path_for(name), encoding="utf-8") as f:
             data = json.load(f)
@@ -179,8 +268,12 @@ def load(name: str) -> dict:
 
 
 def root_of(cfg: dict) -> str:
-    """控えの台帳のフォルダ（今もあるフォルダか確かめる）。"""
-    return check_path(cfg["path"])
+    """控えの台帳のフォルダ（今もあるフォルダか確かめる）。台帳の中の名乗りが控えの名前と違えば断る。"""
+    path = check_path(cfg["path"])
+    declared = declared_name(path)
+    if declared is not None and declared != cfg.get("register"):
+        raise RegisterRefused("register_path_other", "other_name")
+    return path
 
 
 # ------------------------------------------------------------------ 認めた記録

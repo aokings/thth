@@ -53,7 +53,7 @@ def _by(args) -> str:
 
 def root_of(name: str) -> str:
     """控えた名前か、フォルダの道（`/` を含む・`~` か `.` で始まる）。"""
-    if isinstance(name, str) and (os.sep in name or "/" in name or name.startswith(("~", "."))):
+    if ledger.looks_like_path(name):
         return ledger.check_path(name)
     return ledger.root_of(ledger.load(name))
 
