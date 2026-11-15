@@ -5,9 +5,9 @@
   "records": {
    "point": 516,
    "name": 1445,
-   "claim": 6114,
-   "evidence": 6995,
-   "source": 2643,
+   "claim": 6121,
+   "evidence": 7002,
+   "source": 2649,
    "lead": 1850,
    "mention": 2540,
    "hypothesis": 39,
@@ -25,6 +25,7 @@
    "variety": 29,
    "tea": 1
   },
+  "records_moving": ["claim", "evidence", "source"],
   "dangling": {
    "name.entity_id": 0,
    "name.source_id": 0,

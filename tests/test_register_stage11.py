@@ -168,6 +168,12 @@ def test_A_共通の台帳に出典と根拠の1行と公開の約束の宣言�
     ("evidence_line/with-claim.json", {"source_id": "s", "locator": "p.1", "finding": "f", "claim_id": "c1"},
      "line_no_media_view"),
     ("pledge/no-text.json", {"media": "nigamilab"}, "pledge_media_text"),
+    # 名前を替えた確かめた範囲・使ってよいかも通さない（置ける欄の一覧で閉じる。段 11 の検収 軽 7）
+    ("evidence_line/rs.json", {"source_id": "s", "locator": "p.1", "finding": "f", "review_status": "checked"},
+     "line_fields_allowed"),
+    ("source/ex.json", {"title": "t", "url": "https://x.test/", "extraction_status": "full_text"}, "source_fields"),
+    ("evidence_line/us.json", {"source_id": "s", "locator": "p.1", "finding": "f", "usable_for": "site"},
+     "line_fields_allowed"),
 ])
 def test_A_備え付けの種類の検査が断る(env, capsys, rel, body, check_id):
     common = env / "shared"
@@ -319,6 +325,72 @@ def test_B_ほかの判断が待っていれば封まで進まない(env, capsys
             reason_text="別の件")
     rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=直した", to=out / "site")
     assert rc == 1 and "other_judgments" in v["outlets"]["site"]["stopped_because"], (v, err)
+
+
+def jl(led) -> list:
+    return [json.loads(x) for x in (led / ".thth/judgments.jsonl").read_text().splitlines() if x.strip()]
+
+
+def test_B_ほかの記録の判断の無い変更は判断せず1段めで止める(env, capsys):
+    # 段 11 の検収 危 1: 直していない別の記録の変更を、fix が自動で「よい」と判断して封まで進めていた
+    led = media(env, decl=site_outlets(fix_seal=True))
+    out = sealed(env, led)
+    site = out / "site"
+    before = (site / "data/claims.csv").read_bytes()
+    A.row_set(str(led), "claim:clm-other", {"text": "渋みは味覚である（誤り）"}, by="someone", at=AT)
+    rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=直した", to=site)
+    assert rc == 1 and not v["sealed"], (v, err)
+    assert "leaving" in v["outlets"]["site"]["stopped_because"]
+    other = [n for n in v["named"] if n["item"].startswith("claim:clm-other")]
+    assert other and not other[0]["judged"] and other[0]["why"] == "not_this_fix"
+    assert all(j["target"]["record"] != "claim:clm-other" for j in jl(led) if j["by"] == "claude-v")
+    assert (site / "data/claims.csv").read_bytes() == before            # 封も材料もまだ
+
+
+def test_B_何も変えないfixは断る(env, capsys):
+    led = media(env, decl=site_outlets(fix_seal=True))
+    out = sealed(env, led)
+    A.row_set(str(led), "claim:clm-other", {"text": "誤り"}, by="someone", at=AT)
+    n = len(jl(led))
+    rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=ヒトの苦味受容体を総説", to=out / "site")
+    assert rc != 0 and "fix_no_change" in err + json.dumps(v or {}, ensure_ascii=False), (v, err)
+    assert len(jl(led)) == n
+
+
+def test_B_ほかの者のだめの判断に自動のよいを重ねない(env, capsys):
+    led = media(env, decl=site_outlets(fix_seal=True))
+    out = sealed(env, led)
+    R.judge(str(led), "claim:clm-other", "may_publish@site", by="reviewer", at=AT, conclusion="bad",
+            reason_text="誤りを見つけた")
+    rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=直した", to=out / "site")
+    assert rc == 1 and not v["sealed"], (v, err)
+    last = [j for j in jl(led) if j["target"]["record"] == "claim:clm-other"][-1]
+    assert last["by"] == "reviewer" and last["answer"]["conclusion"] == "bad"
+
+
+def test_B_直す記録そのもののだめの判断にも自動のよいを重ねない(env, capsys):
+    led = media(env, decl=site_outlets(fix_seal=True))
+    out = sealed(env, led)
+    R.judge(str(led), "evidence:ev-bitter", "may_publish@site", by="reviewer", at=AT, conclusion="bad",
+            reason_text="出典と合わない")
+    rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=直した", to=out / "site")
+    assert rc == 1 and not v["sealed"], (v, err)
+    mine = [n for n in v["named"] if n["item"].startswith("evidence:ev-bitter")]
+    assert mine and not mine[0]["judged"] and mine[0]["why"] == "bad_judgment"
+    assert not v["judgments"]
+    last = [j for j in jl(led) if j["target"]["record"] == "evidence:ev-bitter"][-1]
+    assert last["by"] == "reviewer"
+
+
+def test_B_againstの先が無ければ書く前に断る(env, capsys):
+    led = media(env, decl=site_outlets(fix_seal=True))
+    out = sealed(env, led)
+    before = (led / "data/evidence.csv").read_bytes()
+    n = len(jl(led))
+    rc, v, err = fix(capsys, led, "evidence:ev-bitter", "finding=直した", to=out / "site",
+                     extra=("--against", "source:nosuch"))
+    assert rc != 0 and "register_record_missing" in err + json.dumps(v or {}), (v, err)
+    assert (led / "data/evidence.csv").read_bytes() == before and len(jl(led)) == n
 
 
 def test_B_形の違う直しは書かずに断る(env, capsys):
@@ -495,6 +567,22 @@ def test_D3_gitの中の台帳ではrow_setが直した枚だけを控える(env
     into = env / "restored"
     K.materialize(str(led), snap, str(into))   # 直さなかった枚は、今の枚から（sha256 が同じとき）
     assert (into / "data/extra/t05.csv").read_bytes() == (led / "data/extra/t05.csv").read_bytes()
+
+
+def test_D3_gitの中の台帳でもrestore_atで前の版を取り出せる(env):
+    # 段 11 の検収 軽 2: 直さなかった枚は控えに無いので、restore --at が断っていた（diff と同じく今の枚から読む）
+    led = big_media(env, "repo", git=True)
+    A.row_set(str(led), "claim:clm-bitter", {"text": "1"}, by="masaru", at=AT)
+    A.row_set(str(led), "claim:clm-bitter", {"text": "2"}, by="masaru", at=AT)
+    got = A.restore(str(led), str(env / "restored"), at_snapshot="first")
+    assert got["files"]
+    assert (env / "restored/data/extra/t05.csv").read_bytes() == (led / "data/extra/t05.csv").read_bytes()
+    assert "clm-bitter,1\n" in (env / "restored/data/claims.csv").read_text(encoding="utf-8")   # 1 回めの直しの後
+    # 今の枚が違えば今までどおり断る
+    (led / "data/extra/t05.csv").write_text("id,text\nx5,changed\n", encoding="utf-8")
+    with pytest.raises(RegisterRefused) as exc:
+        A.restore(str(led), str(env / "restored2"), at_snapshot="first")
+    assert exc.value.code == "register_kept_missing"
 
 
 def test_D3_gitの外の台帳では今までどおり全部を控える(env):

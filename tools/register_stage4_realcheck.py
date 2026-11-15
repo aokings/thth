@@ -12,6 +12,7 @@
 
     {"name": "...", "source": "<--developer の下の道>",
      "expected": {"records": {種類: 数}, "dangling": {"<種類>.<指す欄>": 数}, "checks": {検査の id: 今の数},
+                  "records_moving": [日々増える種類]（その種類の records は「期待以上なら合う」。減れば合わない）,
                   "problems": 数（無ければ 0）, "unrouted": {"<種類>.<指す欄>": 数}（G15 の to_by で先の種類が決まらない指し。
                   書かない呼び名は 0）},
      "ask_lane": ["今の台本と決まりの文が食い違う所（1 行ずつ）"],
@@ -154,6 +155,8 @@ def compare(expected: dict, got: dict, checks_run: bool) -> list:
     bad = []
     for name in sorted(set(expected.get("records", {})) | set(got["records"])):
         want, now = expected.get("records", {}).get(name), got["records"].get(name, 0)
+        if name in expected.get("records_moving", ()) and isinstance(want, int) and now >= want:
+            continue  # 日々増える数（メディアのレーンが記録を足す）。期待以上なら合う（減れば合わない）
         if want != now:
             bad.append(["records", name, want, now])
     for name in sorted(set(expected.get("dangling", {})) | set(got["dangling"])):
@@ -193,7 +196,9 @@ def run_one(V, C, folder: pathlib.Path, media: dict, developer: pathlib.Path, wo
             out.update(ok=False, exception=f"{type(exc).__name__}: {str(exc)[:300]}")
             return out
     out.update(got)
-    out["mismatch"] = compare(media.get("expected", {}), got, C is not None)
+    exp = media.get("expected", {})
+    out["records_moving"] = {k: exp.get("records", {}).get(k) for k in exp.get("records_moving", ())}
+    out["mismatch"] = compare(exp, got, C is not None)
     out["ok"] = not out["mismatch"]
     out["ask_lane"] = media.get("ask_lane", [])
     out["vessel_gaps"] = media.get("vessel_gaps", [])
@@ -212,6 +217,9 @@ def say(one: dict) -> None:
         print(f"  検査の部品が無いので、宣言の検査 {cd['stripped']} 件を外して当てた（検査の数は保留）")
     total = sum(one["records"].values())
     print(f"  記録 {total} 件: " + "・".join(f"{k} {n}" for k, n in one["records"].items()))
+    if one.get("records_moving"):
+        print("  日々増える数（期待以上で合う）: " + "・".join(
+            f"{k} {one['records'].get(k, 0)}（期待 {n} 以上）" for k, n in one["records_moving"].items()))
     print(f"  例外 0・読みの問題 {one['problems']}" + (f" {one['problem_words']}" if one["problems"] else "")
           + f"・中を見ていない {one['not_inspected']}・輪 {one['cycles']}・来歴の見直し {one['provenance_review']}")
     hit = {k: n for k, n in one["dangling"].items() if n}

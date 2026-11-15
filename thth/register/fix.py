@@ -5,10 +5,14 @@
                       [--common <共通の台帳>] [--json]
 
 1. **書く**: 表の 1 行を直す（`row set` と同じ道。触っていない行のバイトは変えない）。
-2. **名指し**: 出し口ごとに受け入れの 1 段めを計算し、直したことで材料から外れる記録（判断が要る記録）を名指しする。
+2. **名指し**: 出し口ごとに受け入れの 1 段めを計算し、外れる記録を一覧にする。判断を足す相手は、**指定した記録のうち、
+   この命令で版が変わった物だけ**。ほかの記録が外れていれば判断せずに一覧に出し、1 段めで止める（段 11 の検収 危 1）。
    外れる記録ごとに、出し口の条件（`requires`・`fact`）のうち、今の判断で満たさない問いを挙げる。
 3. **判断を足す**: 名指しした記録と問いに、1 つの理由（`--reason-text`・`--how`・`--against`）で判断を足す（足すだけ）。
    結論は出し口の条件が求める結論。留保（`reservation`）で載っていた記録には足さない（1 段めで止まる）。
+   その問いの最後の判断が「だめ」（誰の物でも・前の版への物でも）なら、自動の「よい」を重ねず 1 段めで止める。
+
+何も変えない fix（今と同じ値）は断る。引数と前提（記録・欄・`--against` の先・封・鍵）は表を書く前に確かめる。
 4. **受け入れの 1 段め**を計算し直す。**外れる 0・入る 0・新しい判断はこの命令が足した物だけ**・旧い材料 0・
    採り入れ待ち 0、かつ回す出し口の全部が宣言で `fix_seal: true` のときだけ、同じ命令の中で封まで進める。
    それ以外は 1 段めで止め、出し口ごとの一覧と印（`accept --confirm` に渡す物）を出す（rc 1）。
@@ -50,13 +54,35 @@ def _needs(root: str, outlet: R.Outlet, ref: str, unit, as_of, common_root) -> l
     return out
 
 
+def _last_bad(root: str, ref: str, unit, question: str, as_of) -> bool:
+    """その記録（か単位）とその問いの最後の判断が「だめ」か。版が変わって効かなくなった判断も見る（ほかの者が
+    前の版に「だめ」と言った所へ、直した者が自動の「よい」を重ねないため。段 11 の検収 軽 1）。"""
+    ctx = R.context(root, as_of, sealed_all=True)
+    match = R._unit_match(ref, unit) if unit else R._record_match(ref)
+    mine = [(n, j) for n, j in ctx.by_record(ctx.every).get(ref, [])
+            if j.get("question") == question and match(j.get("target") or {})]
+    if not mine:
+        return False
+    last = max(mine, key=lambda p: R._key(p, ctx.n_sealed))[1]
+    return R.conclusion_of(ctx.vessel, last)[0] == "bad"
+
+
 def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, at: str, reason_text,
         how=None, against=None, common_root=None) -> dict:
     if not isinstance(reason_text, str) or not reason_text.strip():
         raise RegisterRefused("register_args_invalid", "reason_text")
+    if not values:
+        raise RegisterRefused("register_args_invalid", "fix_no_change")
     targets = _targets(root, outlet, to)
     vessel = V.open_vessel(root)
     outlets = R.load_outlets(root, vessel)
+    # 書く前に、記録・照らした物があるか、何かを変えるか（表だけ直って判断の無い姿を残さない。段 11 の検収 軽 1）
+    before = vessel.get(ref)
+    for one in against or []:
+        if vessel.unique(one) is None:
+            raise RegisterRefused("register_record_missing", "against", record=one)
+    if all(before.values.get(name) == value for name, value in values.items()):
+        raise RegisterRefused("register_args_invalid", "fix_no_change", record=ref)
     for name, _to in targets:
         R.outlet_of(root, vessel, name)
     # 書く前に、どの出し口の封も読めるか（署名の合わない封は、書く前に断る。旧い材料などは 1 段めで止まる）
@@ -70,7 +96,8 @@ def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, a
         S.check_key_place(root)
         S._private_ok(S.key_path())
     written = A.row_set(root, ref, values, by=by, at=at)
-    # 名指し: 直したことで外れる記録と、満たさない条件
+    moved = V.open_vessel(root).get(ref).version != before.version
+    # 名指し: 直したことで外れる記録と、満たさない条件（判断するのは、指定した記録でこの命令で版が変わった物だけ）
     named, added = [], []
     for name, dest in targets:
         o = outlets[name]
@@ -82,12 +109,20 @@ def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, a
             if record.startswith(R.COMMON + ":"):
                 named.append({"outlet": name, "item": key, "judged": False, "why": "common"})
                 continue
+            if record != before.ref or not moved:
+                named.append({"outlet": name, "item": key, "judged": False, "why": "not_this_fix"})
+                continue
             if as_ != "fact":
                 named.append({"outlet": name, "item": key, "judged": False, "why": "not_fact"})
                 continue
             needs = _needs(root, o, record, unit, as_of, common_root)
             if not needs:
                 named.append({"outlet": name, "item": key, "judged": False, "why": "no_condition_missing"})
+                continue
+            bad = [q for q, _w, u in needs if _w != "bad" and _last_bad(root, record, u, q, as_of)]
+            if bad:
+                named.append({"outlet": name, "item": key, "judged": False, "why": "bad_judgment",
+                              "questions": bad})
                 continue
             for question, want, at_unit in needs:
                 body = R.judge(root, record, question, by=by, at=at, unit=at_unit, conclusion=want,

@@ -16,6 +16,10 @@
      "note": "公開の範囲: 論文や頁そのものが、誰でも全文を読めるか（open）・要旨だけか（abstract_only）・閉じているか（closed）。媒体のレーンが確かめた範囲ではない"},
     {"check": "empty", "id": "source_no_checked_range", "fields": ["access_status", "review_status"],
      "note": "確かめた範囲（その媒体が全文を読んだか・要旨だけを読んだか。各媒体の sources.csv の access_status・review_status）は、共通の出典にも根拠の 1 行にも入れず、各媒体の根拠の側に置く。こぴちゃの access_status は確かめた範囲、にがみラボのは論文の公開の範囲で、意味が違う（11/15 こぴちゃ 第12。21 本の食い違いのうち access_status の 5 本中 4 本がこれ）"},
+    {"check": "columns", "id": "source_fields",
+     "allowed": ["id", "title", "authors", "publication_year", "source_type", "publication", "doi", "pmid", "url",
+                 "language", "peer_reviewed", "published_access", "rights_status", "retrieved_at", "notes"],
+     "note": "共通の出典に置ける欄はこれだけ（書誌と公開の範囲・権利の条件）。review_status・extraction_status・usable_for など、媒体ごとの確かめた範囲や使ってよいかは、名前が違っても入れない（各媒体の根拠の側に置く。段 11 の検収 軽 7）"},
     {"check": "words", "id": "source_rights", "field": "rights_status",
      "in": ["fact_only", "public_domain", "open_license", "unknown"], "allow_blank": true,
      "note": "権利の条件（こぴちゃの sources.csv の rights_status と同じ語）"}

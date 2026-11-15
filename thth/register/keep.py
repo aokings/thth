@@ -663,7 +663,9 @@ def view_bytes(root: str, entry: dict) -> bytes:
     """目録の 1 行の中身。台帳のファイルが目録を読んだあとで変わっていれば、控えの同じ中身を使う
     （入れ替えは前の中身を先に控えに置く）。控えにも無ければ断る。"""
     if entry.get("object"):
-        return get_object(root, entry["sha256"])
+        # 控えた前の版を読む（restore --at）。git の中の台帳では直さなかった枚を控えないので、今の枚が同じ
+        # sha256 のときだけ今の枚から読む（段 11 の検収 軽 2。diff と同じ戻り方。違えば今までどおり断る）。
+        return kept_bytes(root, entry)
     data = read_file(root, entry["path"])
     if sha256(data) == entry["sha256"]:
         return data
