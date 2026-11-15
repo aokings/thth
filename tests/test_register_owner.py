@@ -162,8 +162,8 @@ def test_メディアの見積りは何も消さず消える物と残る物の�
     rc, value, _ = _json(capsys, "project", "leave", "alpha", "--by", "operator")
     assert rc == 0 and value["stage"] == "plan"
     assert value["accounts"] == ["alpha", "alpha2"] and value["registers"] == ["alpha-media"]
-    # 見本の 4 ファイル × 3 と、共通の台帳に写した備え付けの種類の宣言 3 つ。
-    assert value["remain"] == {"register_folders": 3, "register_files": 15, "common": ["shared"],
+    # 見本の 4 ファイル × 3 と、共通の台帳に写した備え付けの種類の宣言 6 つ（段 11 で出典・根拠の 1 行・公開の約束を足した）。
+    assert value["remain"] == {"register_folders": 3, "register_files": 18, "common": ["shared"],
                                "other_media": ["beta"]}
     after = _tree(world["tmp"])
     assert all(after.get(k) == v for k, v in before.items())   # 1 つも消えず、1 つも変わらない

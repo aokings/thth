@@ -443,7 +443,7 @@ def _versions_of(root: str, snap: dict, path: str, cache: dict | None = None) ->
         return cache[key]
     with tempfile.TemporaryDirectory(prefix="thth-trail-") as tmp:
         try:
-            K.put_file(tmp, path, K.get_object(root, entry["sha256"]), False)
+            K.put_file(tmp, path, K.kept_bytes(root, entry), False)
             for e in snap.get("decl", []):
                 K.put_file(tmp, f"{K.THTH}/{e['path']}", K.get_object(root, e["sha256"]), False)
             vessel = V.open_vessel(tmp)

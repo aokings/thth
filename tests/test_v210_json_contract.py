@@ -159,6 +159,7 @@ COMMANDS += ['shop doctor']
 # （`health_cli.py`）・メディアと持ち主の外し（`thth/leave.py`・二段）。網に出ない・--json は 1 つの値。
 COMMANDS += ['register erase request', 'register erase scope', 'register erase run', 'register erase status',
              'register erase done', 'register used', 'register published', 'register health', 'register sisters',
+             'register fix',
              'project leave', 'owner leave']
 
 

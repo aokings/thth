@@ -85,6 +85,7 @@ MEANINGS = ("about", "supports", "contradicts", "limits", "contains", "parent", 
             "derived_from")
 CYCLE_FREE = ("contains", "parent", "replaces")  # 輪を禁じるのはこの 3 つだけ（主張どうしの往復は止めない）
 CONCLUSIONS = ("good", "bad", "pending")
+COMMON_REF = "common:"   # 指す欄の値の頭: 共通の台帳の記録を指す（段 11。`route.COMMON` と同じ語）
 HASHES = {"sha1": hashlib.sha1, "sha256": hashlib.sha256}
 
 
@@ -1563,6 +1564,7 @@ class Vessel:
     all_records: list
     _counts: dict = field(default_factory=dict)
     _by_ref: dict = field(default_factory=dict)   # 番号 → 同じ番号の記録の並び（索引。`get` は頭から見ない）
+    walked: list = field(default_factory=list)    # 読んだ台帳の道の並び（段 11: 記録 0 の表も置き場に当たる枚として知る）
 
     def __post_init__(self):
         for rec in self.all_records:
@@ -1634,7 +1636,14 @@ def open_vessel(root: str, decl_base: str | None = None, *, allow_pending: bool 
     for rec in all_records:
         if rec.id is not None:
             records.setdefault(rec.ref, rec)
-    return Vessel(root, decl["kinds"], decl["constitution"], decl["ids"], records, all_records)
+    return Vessel(root, decl["kinds"], decl["constitution"], decl["ids"], records, all_records,
+                  walked=[rel for rel, _full in files if not rel.startswith(DECL_DIR + "/")])
+
+
+def files_of(vessel: Vessel, kind: Kind) -> list:
+    """その種類の置き場に当たる台帳の枚（記録が 0 の枚も。段 11 の E: 見出しだけの表）。"""
+    hit = _matcher(kind)
+    return [rel for rel in vessel.walked if hit(rel)]
 
 
 # ------------------------------------------------------------------ 指す欄
@@ -1719,7 +1728,7 @@ def recorded_hash(spec: dict, target: Record) -> str | None:
 
 def links(vessel: Vessel) -> dict:
     """指す欄を全部たどる: `{"edges": [...], "dangling": [...], "cycles": [...], "review": [...]}`。"""
-    edges, dangling, review, ambiguous, blank, unrouted = [], [], [], [], [], []
+    edges, dangling, review, ambiguous, blank, unrouted, common = [], [], [], [], [], [], []
     for rec in vessel.all_records:
         if rec.id is None or rec.values is None:
             continue
@@ -1734,6 +1743,19 @@ def links(vessel: Vessel) -> dict:
                 # 先の種類が決まらない（`to_by` のどれにも当たらない。段 4 G15）: 先が無い指しとは数えない。
                 unrouted.append({"from": rec.ref, "target": target_id, "field": spec.get("field")})
             for to, target_id in refs:
+                if target_id.startswith(COMMON_REF):
+                    # 共通の台帳の記録を指す（段 11・設計 §7.2 の `共通:<番号>`）: `common:<番号>` は、共通の台帳の
+                    # `<先の種類>:<番号>`。先はこの台帳に無いので「先が無い」に数えない。版はメディアの「採る」の判断が
+                    # 持つ（採ったか・先があるかは健康の common の群で見る）。
+                    meaning = spec["meaning"]
+                    if spec.get("meaning_from"):
+                        said = rec.values.get(spec["meaning_from"])
+                        meaning = said if said in MEANINGS else "related"
+                    edge = {"from": rec.ref, "to": f"{COMMON_REF}{to}:{target_id[len(COMMON_REF):]}",
+                            "meaning": meaning, "field": spec.get("field")}
+                    edges.append(edge)
+                    common.append(edge)
+                    continue
                 ref = f"{to}:{target_id}"
                 target = vessel.unique(ref)
                 meaning = spec["meaning"]
@@ -1758,7 +1780,7 @@ def links(vessel: Vessel) -> dict:
                         review.append({**edge, "recorded": recorded, "now": now})
     cycles = _cycles(edges)
     return {"edges": edges, "dangling": dangling, "cycles": cycles, "review": review, "ambiguous": ambiguous,
-            "blank": blank, "unrouted": unrouted}
+            "blank": blank, "unrouted": unrouted, "common": common}
 
 
 def _cycles(edges: list) -> list:

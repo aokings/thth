@@ -30,8 +30,9 @@
                                        柵: その行を材料に使えるか。使えれば外に出してよい欄と本文、使えなければ断る
     thth register use <台帳> <種類:番号> --outlet <出し口> [--as fact|reservation] [--unit 指し先] [--as-of 日時] [--json]
                                        器の台帳: その出し口に、事実として・留保として使えるか（封の中の判断で・CI と同じ計算）
-    thth register judge|take|export|accept|verify|key …
+    thth register judge|take|export|accept|verify|key|fix …
                                        器の台帳 段 3: 判断を足す・共通を採る・材料・受け入れと封・公開の直前の確かめ・鍵
+                                       段 11: 訂正の 1 本の命令（fix）・--outlet all
                                        （`route_cli.py` の頭の注）
     thth register health [<台帳>] [--thin] [--across] [--all] [--as-of 日時] [--common 共通] [--json]
     thth register sisters <メディアの台帳> [--common 共通] [--json]
@@ -113,7 +114,25 @@ def _by(args) -> str:
         raise RegisterRefused("register_args_invalid", "by") from None
 
 
+def ensure_thth_root() -> None:
+    """段 11 の D: `THTH_ROOT` のフォルダが無いとき（CI の新しい箱）、記録の置き場で止まらないように作る。作るのは
+    THTH_ROOT のフォルダそのものだけ（0700・親は作らない）。symlink の跡・ファイルがあれば触らない（そのあと記録の
+    置き場が断る）。作れなければ何もしない（記録の置き場が `register_log_unavailable` で断る）。"""
+    from .. import accounts
+    try:
+        root = accounts.thth_root()
+    except (OSError, ValueError):
+        return
+    if not root or os.path.lexists(root):
+        return
+    try:
+        os.mkdir(root, 0o700)
+    except OSError:
+        return
+
+
 def _record(event: str, name: str, by: str, diff: dict) -> None:
+    ensure_thth_root()
     try:
         admin_log.append(ACTION_PREFIX + event, name, {"media": "register"}, by=by, diff=diff)
     except (OSError, ValueError, admin_log.AdminLogError):
@@ -121,6 +140,7 @@ def _record(event: str, name: str, by: str, diff: dict) -> None:
 
 
 def _log_ready() -> None:
+    ensure_thth_root()
     try:
         with admin_log.transaction():
             pass
@@ -155,24 +175,34 @@ def _row_line(row: form.Row) -> list:
 # ------------------------------------------------------------------ 命令
 
 BUILTIN_KINDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "builtin_kinds")
-BUILTIN_KINDS = ("correspondence", "operator", "account")
+BUILTIN_KINDS = ("correspondence", "operator", "account", "source", "evidence_line", "pledge")
+# 段 11: 出典（書誌だけ）・根拠の 1 行・公開の約束を足した（記事の中身の共通の層。考察 §4・設計 §7.2）
 
 
-def _builtin_targets(root: str) -> list:
-    """共通の台帳に写す備え付けの種類の宣言の `(写し元, 写し先)`。`.thth`・`.thth/kinds` が symlink なら断り、
-    同じ名前の宣言がもうあれば上書きせずに断る（何も書かない）。"""
+def _builtin_targets(root: str, *, again: bool = False) -> tuple:
+    """共通の台帳に写す備え付けの種類の宣言の `(写す (写し元, 写し先) の並び, もうある種類, 違う中身で置いてある種類)`。
+    `.thth`・`.thth/kinds` が symlink なら断る。初めての add（`again` でない）は、同じ名前の宣言がもうあれば上書きせずに
+    断る（何も書かない）。すでにある共通の台帳へ打ち直したとき（段 11）は、無い種類だけを写し、ある物は上書きしない
+    （同じ中身なら「もうある」、違えば「違う中身のまま残した」と言う）。"""
     base = os.path.join(root, vessel.DECL_DIR)
     kinds_dir = os.path.join(base, vessel.KINDS_DIR)
     for place in (base, kinds_dir):
         if os.path.islink(place) or (os.path.lexists(place) and not os.path.isdir(place)):
             raise RegisterRefused("register_path_unusable", "kinds_dir")
-    out = []
+    out, same, differ = [], [], []
     for kind in BUILTIN_KINDS:
+        source = os.path.join(BUILTIN_KINDS_DIR, f"{kind}.json")
         target = os.path.join(kinds_dir, f"{kind}.json")
         if os.path.lexists(target):
-            raise RegisterRefused("register_builtin_kind_exists", kind)
-        out.append((os.path.join(BUILTIN_KINDS_DIR, f"{kind}.json"), target))
-    return out
+            if not again:
+                raise RegisterRefused("register_builtin_kind_exists", kind)
+            if os.path.islink(target) or not os.path.isfile(target):
+                raise RegisterRefused("register_path_unusable", "kinds_dir")
+            with open(source, "rb") as a, open(target, "rb") as b:
+                (same if a.read() == b.read() else differ).append(kind)
+            continue
+        out.append((source, target))
+    return out, same, differ
 
 
 def _install_builtin(targets: list) -> list:
@@ -187,6 +217,34 @@ def _install_builtin(targets: list) -> list:
             stream.write(raw)
         done.append(os.path.basename(target)[:-5])
     return done
+
+
+def _add_common_again(args, by: str, name: str, path: str) -> int:
+    """段 11: すでにある共通の台帳へ `add --common` を打ち直すと、備え付けの種類のうち無い物だけを写す（前の共通の台帳の
+    控え・宣言・記録は変えない）。控えのフォルダと違うフォルダを言われたら断る（2 つめの共通の台帳にしない）。"""
+    cfg = ledger.load(name)
+    if os.path.realpath(ledger.root_of(cfg)) != os.path.realpath(path):
+        raise RegisterRefused("register_common_exists", name)
+    targets, same, differ = _builtin_targets(path, again=True)
+    _log_ready()
+    installed = _install_builtin(targets)
+    if installed:
+        # 記録の動きの名前は増やさない（目録の決まった名前の中で）。打ち直しは diff の again で分かる
+        _record("added", name, by, {"again": [None, True],
+                                    "builtin_kinds": [same + differ, same + differ + installed]})
+    value = {"register": name, "role": ledger.COMMON, "again": True, "builtin_kinds": installed,
+             "already": same, "kept_different": differ}
+    if args.json:
+        _print(value)
+        return 0
+    if installed:
+        print(f"共通の台帳 {name} に、備え付けの種類 {'・'.join(installed)} の宣言を足しました"
+              f"（{vessel.DECL_DIR}/{vessel.KINDS_DIR}/。前の宣言と記録は変えていません）")
+    else:
+        print(f"共通の台帳 {name} には、備え付けの種類がもう全部あります（足した物はありません）")
+    if differ:
+        print(f"  中身が備え付けと違う宣言 {'・'.join(differ)} は、上書きせずに残しました")
+    return 0
 
 
 def cmd_add(args) -> int:
@@ -210,9 +268,11 @@ def cmd_add(args) -> int:
             except RegisterRefused:
                 raise RegisterRefused("register_ledger_invalid", f"unreadable:{other}") from None
         others = ledger.common_names()
+        if others == [name]:
+            return _add_common_again(args, by, name, path)
         if others:
             raise RegisterRefused("register_common_exists", others[0])
-        targets = _builtin_targets(path)
+        targets = _builtin_targets(path)[0]
     _log_ready()
     written = ledger.write_new(name, ledger.build(name, project=project, path=path, kind=kind, common=common))
     installed = _install_builtin(targets) if common else []

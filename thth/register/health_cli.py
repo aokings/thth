@@ -31,7 +31,9 @@ ITEM_JA = {
     "until_passed": "「いつまで」を過ぎた判断", "passed_in_last_generation": "過ぎたのに最後の世代に載っている記録",
     "unmatched_checks": "1 件も当たらない検査", "failed_checks": "回す途中で止まった検査",
     "unverifiable_pointers": "確かめられない指し（よその台帳）", "violations": "検査の違反",
-    "take_pending": "採り入れ待ち", "common_unchecked": "共通の止めるを確かめられないまま封をした出し口",
+    "impact_candidates": "影響の候補（版の変わった記録と指す欄で 1 段の記録）",
+    "take_pending": "採り入れ待ち", "pointers_untaken": "まだ採っていない共通の記録を指す指し",
+    "common_unchecked": "共通の止めるを確かめられないまま封をした出し口",
 }
 
 

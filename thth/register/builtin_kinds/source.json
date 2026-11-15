@@ -1,0 +1,24 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "source",
+  "place": "source/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {"name": true},
+  "checks": [
+    {"check": "required", "id": "source_title", "fields": ["title"]},
+    {"check": "one_of", "id": "source_doi_or_url", "fields": ["doi", "url"], "mode": "at_least_one",
+     "note": "DOI か URL のどちらかは要る（両方あってよい）"},
+    {"check": "shape", "id": "source_url", "field": "url", "shape": "http_url", "allow_blank": true},
+    {"check": "shape", "id": "source_year", "field": "publication_year", "shape": "date_partial", "allow_blank": true},
+    {"check": "words", "id": "source_published_access", "field": "published_access",
+     "in": ["open", "abstract_only", "closed", "unknown"], "allow_blank": true,
+     "note": "公開の範囲: 論文や頁そのものが、誰でも全文を読めるか（open）・要旨だけか（abstract_only）・閉じているか（closed）。媒体のレーンが確かめた範囲ではない"},
+    {"check": "empty", "id": "source_no_checked_range", "fields": ["access_status", "review_status"],
+     "note": "確かめた範囲（その媒体が全文を読んだか・要旨だけを読んだか。各媒体の sources.csv の access_status・review_status）は、共通の出典にも根拠の 1 行にも入れず、各媒体の根拠の側に置く。こぴちゃの access_status は確かめた範囲、にがみラボのは論文の公開の範囲で、意味が違う（11/15 こぴちゃ 第12。21 本の食い違いのうち access_status の 5 本中 4 本がこれ）"},
+    {"check": "words", "id": "source_rights", "field": "rights_status",
+     "in": ["fact_only", "public_domain", "open_license", "unknown"], "allow_blank": true,
+     "note": "権利の条件（こぴちゃの sources.csv の rights_status と同じ語）"}
+  ],
+  "note": "共通の台帳の備え付けの種類（台帳の器 段 11）。出典の書誌だけ: 題（title）・著者（authors）・年（publication_year）・種類（source_type）・掲載誌（publication）・DOI（doi）・PubMed の番号（pmid）・URL（url）・言語（language）・査読（peer_reviewed）・公開の範囲（published_access。論文そのものが open か・要旨だけか・閉じているか）・権利の条件（rights_status）・取った日（retrieved_at）・注（notes）。欄の名前は、こぴちゃの data/knowledge/sources.csv と、にがみラボの data/sources.csv の頭にそろえた（公開の範囲だけは、媒体の access_status と意味が違うので別の名前にした。確かめた範囲は各媒体の根拠の側に残す）。その媒体で使ってよいか・読んだ所・支える主張は入れない（各媒体に残す。設計 §7.2）。1 件 1 枚（source/<番号>.json）。thth register add <台帳> --common が写す"
+}

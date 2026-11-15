@@ -11,6 +11,13 @@
         基準: 今の版の記録を、その出し口の条件の問いごとに 1 回で受ける（受け入れるまで効かない）
     thth register judge <台帳> --carry <判断> --to <今の版|新しい指し先> --changed-by <直した者> --by <名前>
         結び直す: 前の判断の元の検収を、新しい版へ結ぶ新しい判断（直した者と同じ者は結べない）
+    thth register fix <台帳> <種類:番号> --set 欄=値 ... --reason-text <説明> --outlet <出し口|all> --to <先>
+                      --as-of <日時> --by <名前> [--how <照らし方>] [--against <種類:番号> ...] [--common …] [--json]
+        段 11: 訂正の 1 本の命令（`fix.py`）。外れる 0・入る 0・新しい判断だけで、出し口の宣言が fix_seal を許すときだけ
+        封まで進む（rc 0）。それ以外は受け入れの 1 段めで止め、一覧と印を出す（rc 1）
+    （段 11）export・accept・verify の --outlet all: 宣言の全部の出し口。--to・--material は根で、出し口ごとに
+        <根>/<dest>。verify の --previous・--publish はフォルダで、出し口ごとに thth-seal.<出し口>.json。1 つでも赤なら rc 1。
+        export --check は違い（differs・stale・mixed・pending_takes・封と違う）があれば rc 1
     thth register take <台帳> --common <共通の台帳> [--record <種類:番号> ...] --by <名前> [--json]
         共通の記録の今の版を、まとめて採る（受け入れるまで材料は変わらない）
     thth register export <台帳> --outlet <出し口> --to <先> --as-of <日時> [--common <共通の台帳>] [--check] [--json]
@@ -38,6 +45,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from .. import admin_log, jst
 from . import route as R, seal as S
@@ -131,7 +139,18 @@ def cmd_take(args) -> int:
         print(f"変わっていません: 共通の {ref}（もう今の版を採っています）")
     if value["taken"]:
         print("受け入れる（thth register accept）までは、材料は前の版のままです")
+    show_impact(value.get("impact"))
     return 0
+
+
+def show_impact(found) -> None:
+    """段 11 の F: 影響の候補（判断は無効にしていない。判断し直すかは係が決める）。"""
+    if not found or not found.get("count"):
+        return
+    print(f"  影響の候補 {found['count']} 件（版の変わった記録 {len(found['changed'])} 件と指す欄でつながった記録。"
+          "判断は無効にしていません）:")
+    for c in found["candidates"][:20]:
+        print(f"    {c['record']}（{c['via']} の {c.get('field') or '?'}・{c['why']}）")
 
 
 def _show_changes(value: dict) -> None:
@@ -145,13 +164,108 @@ def _show_changes(value: dict) -> None:
         print(f"  採り入れ待ち: {p['record']}（採った版 {p['taken'][:12]}・共通の今の版 {p['now'][:12]}）")
 
 
-def cmd_export(args) -> int:
+def cmd_fix(args) -> int:
+    """段 11 の B: 訂正の 1 本の命令（`fix.py` の頭の注）。封まで進めば rc 0、1 段めで止まれば rc 1。"""
+    from . import fix as F
+    from .adopt_cli import _pairs
+    by = _by(args)
     root = root_of(args.register)
-    value = R.export(root, args.outlet, args.to, args.as_of, common_root=args.common, check=args.check)
+    value = F.fix(root, args.record, _pairs(args.set), outlet=args.outlet, to=args.to, as_of=args.as_of, by=by,
+                  at=_at(), reason_text=args.reason_text, how=args.how, against=args.against,
+                  common_root=args.common)
     if args.json:
         _print(value)
+        return 0 if value["sealed"] else 1
+    print(f"直しました: {value['record']}（{value['path']}）。判断を {len(value['judgments'])} 件足しました")
+    for n in value["named"]:
+        mark = ("判断を足した: " + "・".join(n["questions"])) if n["judged"] else f"足していない（{n['why']}）"
+        print(f"  名指し [{n['outlet']}] {n['item']} — {mark}")
+    show_impact(value.get("impact"))
+    if value["sealed"]:
+        for name, o in value["outlets"].items():
+            print(f"  [{name}] 受け入れて封をしました: 世代 {o['generation']}・{o['files']} ファイル（封は {o['seal']}）")
         return 0
-    verb = "比べました（書いていません）" if args.check else "書きました"
+    for name, o in value["outlets"].items():
+        print(f"  [{name}] 1 段めで止めました（{'・'.join(o['stopped_because']) or '—'}）: 世代 {o['generation']}・"
+              f"新しい判断 {len(o['new_judgments'])} 件")
+        _show_changes(o)
+    print(f"持ち主に見せ、よいと言われたら thth register accept … --outlet {args.outlet} --confirm {value['digest']} "
+          "で封をしてください")
+    return 1
+
+
+def check_found(value: dict) -> list:
+    """段 11 の D: `export --check` が見つけた違いの語（空なら同じ）。CI が `--json` の中身を読まずに、終わりの番号で
+    止められるように（こぴちゃの報告 #7899）。"""
+    found = [word for word in ("differs", "stale", "mixed", "pending_takes") if value.get(word)]
+    if not value.get("same_as_seal", True):
+        found.append("not_same_as_seal")
+    return found
+
+
+def cmd_export(args) -> int:
+    root = root_of(args.register)
+    if R.is_all(args.outlet):
+        return _export_all(args, root)
+    value = R.export(root, args.outlet, args.to, args.as_of, common_root=args.common, check=args.check)
+    found = check_found(value) if args.check else []
+    if args.check:
+        value["found"] = found
+    if args.json:
+        _print(value)
+        return 1 if found else 0
+    _export_lines(value, args.check)
+    if found:
+        print(f"  違いがあります（{'・'.join(found)}）。終わりの番号は 1 です")
+    return 1 if found else 0
+
+
+def _each(names, run) -> tuple:
+    """出し口ごとに回す。断りもその出し口の結果として持ち、ほかの出し口は続ける。`({名前: 結果}, 全部が緑か)`。"""
+    out, ok = {}, True
+    for name in names:
+        try:
+            value, good = run(name)
+        except RegisterRefused as exc:
+            value, good = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}, False
+        out[name] = value
+        ok = ok and good
+    return out, ok
+
+
+def _all_head(args, names, ok) -> None:
+    print(f"出し口の全部（{'・'.join(names)}）: " + ("緑" if ok else "赤があります（終わりの番号は 1）"))
+
+
+def _export_all(args, root: str) -> int:
+    """段 11 の C: `export --outlet all --to <根>`。出し口ごとに `<根>/<dest>` へ。1 つでも赤なら全体が赤（rc 1）。"""
+    names = R.all_outlets(root)
+
+    def one(name):
+        value = R.export(root, name, R.dest_under(root, name, args.to), args.as_of, common_root=args.common,
+                         check=args.check)
+        found = check_found(value) if args.check else []
+        if args.check:
+            value["found"] = found
+        return value, not found
+    results, ok = _each(names, one)
+    if args.json:
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        return 0 if ok else 1
+    _all_head(args, names, ok)
+    for name, value in results.items():
+        print(f"[{name}]")
+        if "code" in value and value.get("ok") is False:
+            print(f"  断り {value['code']}（{value.get('detail') or ''}）")
+            continue
+        _export_lines(value, args.check)
+        if value.get("found"):
+            print(f"  違いがあります（{'・'.join(value['found'])}）")
+    return 0 if ok else 1
+
+
+def _export_lines(value: dict, check: bool) -> None:
+    verb = "比べました（書いていません）" if check else "書きました"
     print(f"材料を{verb}: {value['outlet']}・世代 {value['generation']}・{value['files']} ファイル・"
           f"{value['items']} 件 → {value['to']}")
     _show_changes(value)
@@ -166,12 +280,68 @@ def cmd_export(args) -> int:
               "出し口の宣言で on_narrow を drop にします")
     if value["stale"]:
         print(f"  一覧に無い旧い材料 {len(value['stale'])}: " + "・".join(value["stale"][:10]))
-    return 0
+
+
+def _accept_all(args, root: str) -> int:
+    """段 11 の C: `accept --outlet all --to <根>`。1 段めは出し口ごとの一覧と、全部を合わせた印。2 段めは同じ印のとき
+    だけ、出し口ごとに受け入れて封をする（読者の出し口が先）。印が違えば何も書かない。"""
+    names = R.all_outlets(root)
+    plans = {name: R.accept_plan(root, name, R.dest_under(root, name, args.to), args.as_of, common_root=args.common)
+             for name in names}
+    combined = R.all_digest({name: plan["digest"] for name, plan in plans.items()})
+    if args.confirm is None:
+        value = {"stage": 1, "outlet": R.ALL, "digest": combined,
+                 "outlets": {name: _stage1(plan) for name, plan in plans.items()}}
+        if args.json:
+            _print(value)
+            return 1
+        print(f"受け入れの 1 段めです（出し口の全部: {'・'.join(names)}）")
+        for name, plan in plans.items():
+            _stage1_lines(_stage1(plan), plan)
+        print(f"持ち主に見せ、よいと言われたら --confirm {combined} を付けて打ち直してください")
+        return 1
+    if args.confirm != combined:
+        raise RegisterRefused("register_confirm_mismatch", "confirm", digest=combined)
+    at = _at()
+    results, ok = _each(names, lambda name: (R.accept(root, name, plans[name]["to"], args.as_of,
+                                                      confirm=plans[name]["digest"], at=at,
+                                                      common_root=args.common), True))
+    if args.json:
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        return 0 if ok else 1
+    _all_head(args, names, ok)
+    for name, value in results.items():
+        if value.get("ok") is False:
+            print(f"[{name}] 断り {value['code']}（{value.get('detail') or ''}）")
+            continue
+        print(f"[{name}] 受け入れて封をしました: 世代 {value['generation']}・判断 {value['judgments']} 件・"
+              f"{value['files']} ファイル")
+        _show_changes(value)
+    return 0 if ok else 1
+
+
+def _stage1(plan: dict) -> dict:
+    return {"stage": 1, "outlet": plan["outlet"], "generation": plan["body"]["generation"],
+            "digest": plan["digest"], "new_judgments": plan["new_judgments"], "changes": plan["changes"],
+            "pending_takes": plan["result"]["pending_takes"], "stale": plan["stale"],
+            "files": len(plan["body"]["outputs"]), "items": len(plan["body"]["items"])}
+
+
+def _stage1_lines(value: dict, plan: dict) -> None:
+    print(f"[{plan['outlet']}] 世代 {value['generation']}・新しい判断 {len(plan['new_judgments'])} 件:")
+    for j in plan["new_judgments"][:40]:
+        print(f"  {j['id']}\t{j['question']}\t{(j['target'] or {}).get('record')}\t"
+              f"{j['word'] or j['conclusion']}\t{j['by']}")
+    _show_changes(value)
+    if value["stale"]:
+        print(f"  一覧に無い旧い材料 {len(value['stale'])}: " + "・".join(value["stale"][:10]))
 
 
 def cmd_accept(args) -> int:
     _by(args)   # 誰が受け入れたかは、受け入れた判断の行（by）と台帳の git に残る
     root = root_of(args.register)
+    if R.is_all(args.outlet):
+        return _accept_all(args, root)
     if args.confirm is None:
         plan = R.accept_plan(root, args.outlet, args.to, args.as_of, common_root=args.common)
         value = {"stage": 1, "outlet": plan["outlet"], "generation": plan["body"]["generation"],
@@ -222,9 +392,42 @@ PROBLEM_JA = {
 }
 
 
+def _verify_all(args, root: str, now: str) -> int:
+    """段 11 の C: `verify --outlet all --material <根>`。材料は `<根>/<dest>`。`--previous`・`--publish` はフォルダで、
+    出し口ごとに `<フォルダ>/thth-seal.<出し口>.json`。1 つでも赤なら全体が赤（rc 1）。"""
+    names = R.all_outlets(root)
+
+    def seal_file(folder, name):
+        return None if folder is None else os.path.join(folder, f"thth-seal.{name}.json")
+
+    def one(name):
+        value = R.verify(root, name, R.dest_under(root, name, args.material), now,
+                         previous_path=seal_file(args.previous, name), no_previous=args.no_previous,
+                         common_root=args.common, publish=seal_file(args.publish, name))
+        return value, value["ok"]
+    results, ok = _each(names, one)
+    if args.json:
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        return 0 if ok else 1
+    _all_head(args, names, ok)
+    for name, value in results.items():
+        if "code" in value and value.get("ok") is False and "problems" not in value:
+            print(f"[{name}] 断り {value['code']}（{value.get('detail') or ''}）")
+            continue
+        print(f"[{name}] " + (f"緑・世代 {value.get('generation')}" if value["ok"] else "赤"))
+        for p in value["problems"]:
+            print(f"  赤: {PROBLEM_JA.get(p['word'], p['word'])}")
+        for w in value["warnings"]:
+            print(f"  知らせ: {w['word']}")
+        show_impact(value.get("impact"))
+    return 0 if ok else 1
+
+
 def cmd_verify(args) -> int:
     root = root_of(args.register)
     now = args.now or _at()
+    if R.is_all(args.outlet):
+        return _verify_all(args, root, now)
     value = R.verify(root, args.outlet, args.material, now, previous_path=args.previous,
                      no_previous=args.no_previous, common_root=args.common, publish=args.publish)
     if not args.json:
@@ -238,12 +441,13 @@ def cmd_verify(args) -> int:
                      if p.get("items") or p.get("files") else ""))
         for w in value["warnings"]:
             print(f"  知らせ: {w['word']}")
+        show_impact(value.get("impact"))
     elif value["ok"]:
         _print(value)
     if not value["ok"]:
         raise RegisterRefused("register_seal_unverified", value["problems"][0]["word"],
                               problems=value["problems"], warnings=value["warnings"], key=value.get("key"),
-                              generation=value.get("generation"))
+                              generation=value.get("generation"), impact=value.get("impact"))
     return 0
 
 
@@ -341,6 +545,21 @@ def register_parsers(verbs, run) -> None:
     p.add_argument("--by", required=True)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_judge))
+
+    p = verbs.add_parser("fix", help="訂正の 1 本の命令（書く・名指し・判断・受け入れの 1 段め。許せば封まで）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("record", metavar="種類:番号")
+    p.add_argument("--set", action="append", default=None, metavar="欄=値")
+    p.add_argument("--reason-text", required=True)
+    p.add_argument("--how", default=None)
+    p.add_argument("--against", action="append", default=None, metavar="種類:番号")
+    p.add_argument("--outlet", required=True, metavar="出し口|all")
+    p.add_argument("--to", required=True, metavar="先")
+    p.add_argument("--as-of", required=True, metavar="日時")
+    p.add_argument("--common", default=None, metavar="共通の台帳")
+    p.add_argument("--by", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=run(cmd_fix))
 
     p = verbs.add_parser("take", help="共通の記録の今の版を、まとめて採る")
     p.add_argument("register", metavar="台帳")

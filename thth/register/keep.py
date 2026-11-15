@@ -341,11 +341,26 @@ def decl_entries(root: str, *, store: bool) -> list:
     return out
 
 
+def in_git_worktree(root: str) -> bool:
+    """台帳のフォルダが git の作業木の中か（台帳の根か、その上のどこかに `.git` がある）。git は呼ばない。"""
+    here = os.path.abspath(root)
+    while True:
+        if os.path.lexists(os.path.join(here, ".git")):
+            return True
+        up = os.path.dirname(here)
+        if up == here:
+            return False
+        here = up
+
+
 def save_snapshot(root: str, entries: list, *, what: str, by: str, at: str, stored: bool = False,
-                  write_log: bool = True) -> dict:
+                  write_log: bool = True, only: set | None = None) -> dict:
     """目録を控える（中身も控えの置き場へ）。名は控えの名（目録と宣言の指紋）。同じ名がもうあれば、跡だけを足す。
-    返すのは `{"fp": 目録の指紋, "snapshot": 控えの名}`。"""
+    返すのは `{"fp": 目録の指紋, "snapshot": 控えの名}`。`only`（道の集まり）を渡すと、中身はその道の物だけを控え、
+    ほかの枚は目録にだけ載せる（段 11 の D: git の作業木の中の台帳で、直した枚だけを控える。前の版は git の履歴から）。"""
     for e in entries if not stored else ():
+        if only is not None and e["path"] not in only:
+            continue
         if not os.path.exists(object_path(root, e["sha256"])):
             if put_object(root, read_file(root, e["path"])) != e["sha256"]:
                 raise RegisterRefused("register_batch_conflict", "moved", path=e["path"])
@@ -478,12 +493,28 @@ def object_digests(root: str) -> list:
     return out
 
 
+def kept_bytes(root: str, entry: dict) -> bytes:
+    """控えの目録の 1 枚の中身。控えの置き場に無ければ（段 11 の D: git の中の台帳で、直さなかった枚は控えない）、
+    今の枚が同じ sha256 のときだけ今の枚から読む。どちらも無ければ断る（`register_kept_missing`。commit の名で
+    打ち直す）。"""
+    digest = entry.get("sha256")
+    if isinstance(digest, str) and len(digest) == 64 and not os.path.exists(object_path(root, digest)):
+        rel = entry.get("path")
+        try:
+            data = read_file(root, rel) if isinstance(rel, str) and os.path.isfile(full(root, rel)) else None
+        except (OSError, RegisterRefused):
+            data = None
+        if data is not None and sha256(data) == digest:
+            return data
+    return get_object(root, digest)
+
+
 def materialize(root: str, snap: dict, into: str) -> None:
     """控えた目録の姿を、別のフォルダに書く（読む物を作るだけ。台帳には書かない）。"""
     for e in snap["files"]:
         if e.get("sha256") is None:
             raise RegisterRefused("register_kept_missing", "erased", path=e.get("path"))
-        put_file(into, e["path"], get_object(root, e["sha256"]), e.get("x", False))
+        put_file(into, e["path"], kept_bytes(root, e), e.get("x", False))
     for e in snap.get("decl", []):
         put_file(into, f"{THTH}/{e['path']}", get_object(root, e["sha256"]), False)
 
@@ -902,9 +933,12 @@ def apply(root: str, *, by: str, at: str) -> dict:
     if not _mine(root, plan):
         return {"applied": applied, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}
     entries = view_after(root)
+    # 段 11 の D: git の作業木の中の台帳では、入れ替えた枚（の前と後。段取りを作るときに控えた）だけを控え、ほかの枚の
+    # 中身は控えない（git の履歴と二重にしない。こぴちゃの row set で 307 枚・14 MB の控えになった・報告 #7899）。
+    only = {e["path"] for e in plan["entries"]} if in_git_worktree(root) else None
     # 控えの中身と目録だけを先に置き（名で決まるので、ほかの者と同じ物になる）、跡は済んだ記録を置けた者だけが
     # 足す（ほかの者が先に済ませ、次の束が始まったあとの混ざった姿を跡に残さない）。
-    kept = save_snapshot(root, entries, what=plan["what"], by=by, at=at, write_log=False)
+    kept = save_snapshot(root, entries, what=plan["what"], by=by, at=at, write_log=False, only=only)
     plan["done"] = {"by": by, "at": at, "files": len(entries), **kept}
     if not _finish(root, plan, "done"):
         return {"applied": applied, **kept, "batch": plan["id"], "files": len(plan["entries"]), "by_other": True}

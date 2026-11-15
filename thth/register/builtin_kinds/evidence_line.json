@@ -1,0 +1,18 @@
+{
+  "schema": "thth.kind/1",
+  "kind": "evidence_line",
+  "place": "evidence_line/*.json",
+  "format": "json",
+  "records": "file",
+  "id": {"name": true},
+  "pointers": [
+    {"field": "source_id", "meaning": "derived_from", "to": "source"}
+  ],
+  "checks": [
+    {"check": "required", "id": "line_fields", "fields": ["source_id", "locator", "finding"],
+     "note": "根拠の 1 行は、共通の出典・その中の場所（頁・表・図）・要約の 3 つがそろって 1 件"},
+    {"check": "empty", "id": "line_no_media_view", "fields": ["claim_id", "relation", "media", "usable", "access_status", "extraction_status"],
+     "note": "媒体の切り口（どの主張を支えるか・関係の種類）・使ってよいかの判断・その媒体が確かめた範囲（access_status・extraction_status）は入れない（各媒体の根拠の記録と判断に残す）"}
+  ],
+  "note": "共通の台帳の備え付けの種類（台帳の器 段 11）。根拠の 1 行「出典のこの場所は、こう言う」: 出典（source_id。共通の source の番号）・場所（locator。頁・表・図）・要約（finding。こぴちゃの finding_ja・にがみラボの finding_paraphrase に当たる）・数値（value）・単位（unit）・条件（condition）・方法（method）・材料（material）・限り（limitations）。1 件 1 枚（evidence_line/<番号>.json）。thth register add <台帳> --common が写す"
+}

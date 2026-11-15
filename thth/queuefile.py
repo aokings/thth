@@ -33,6 +33,11 @@ DEFAULT_MEDIA_LIMIT = 500
 # 500 で落とすのは従来どおり・450 は warning のみ（exit code は 0 のまま）。
 WARN_LIMITS = {"threads": 450}
 _FM_DELIM = "---"
+# 利用者のために名前を控える頭の欄（THTH は将来もこの名前を別の意味で使わない）。読むときは知らない欄として残し、
+# 承認の指紋（`approval.compute_approved_sha`）には入れない。
+# - `seeds`: 原稿が使った台帳の記録の番号（`種類:番号` を空白区切り）。こぴちゃとにがみラボが台帳の器 段 11 から
+#   使う（こぴちゃ docs/段11_共通の台帳_こぴちゃの分_2026-11-15.md）。
+RESERVED_USER_KEYS = ("seeds",)
 # `#語` のハッシュタグ検出。行頭または空白の後に `#` + 語構成文字が続く形。
 _HASHTAG_RE = re.compile(r"(?:^|\s)#\w")
 

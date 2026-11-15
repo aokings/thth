@@ -115,7 +115,7 @@ MATERIALS_DIR = "materials"
 JST = datetime.timezone(datetime.timedelta(hours=9))
 QUESTION = re.compile(r"[a-z][a-z0-9_]{0,31}(@[a-z][a-z0-9_]{0,31})?\Z")
 _O_KEYS = ("audience", "kinds", "level", "requires", "fact", "reservation", "common", "on_narrow", "dest", "ignore",
-           "published", "dest_shared_with", "note")
+           "published", "dest_shared_with", "fix_seal", "note")
 SHARED_MAX = 8
 _K_KEYS = ("private_fields", "inserts", "hide", "reader_fields", "note")
 # 段 7 の後半（§7.7）: 出し口の宣言の頭の内部の語。字のまま比べる（正規表現は受けない）。
@@ -157,13 +157,14 @@ class Outlet:
     requires: list             # [(問い, 結論)]: 記録への「出してよいか」
     fact: list                 # [(問い, 結論)]: 事実として
     reservation: dict | None   # {"question", "conclusion", "reason_kinds"}
-    common: str | None         # 共通の台帳の種類（採った版を書く）
+    common: tuple | None       # 共通の台帳の種類の並び（採った版を書く。宣言は 1 つの名前か並び・段 11）
     on_narrow: str             # stop か drop
     conf: dict = None          # 種類 → KindConf（段 7）
     dest: str | None = None    # 書き出し先（宣言の上の名前。内の出し口と読者の出し口で同じなら断る。§7.1）
     ignore: tuple = ()         # 旧い材料の柵で見ない道の型（§7.8）
     published: dict | None = None  # 出した物の関門の厳しさ（§7.6。形は `published.parse_rules`）
     shares_dest: tuple = ()    # 段 10: 内の出し口が、同じ書き出し先を名指しで分け合う読者の出し口（`dest_shared_with`）
+    fix_seal: bool = False     # 段 11 の B: `fix` が、外れる 0・入る 0・新しい判断だけのとき同じ命令で封まで進めてよい
 
     def __post_init__(self):
         if self.conf is None:
@@ -299,7 +300,7 @@ def parse_outlets(data, kinds: dict) -> dict:
         raise V.DeclarationError("outlets")
     out = {}
     for name, o in raw.items():
-        if not isinstance(name, str) or not V.NAME.fullmatch(name) or not isinstance(o, dict):
+        if not isinstance(name, str) or not V.NAME.fullmatch(name) or not isinstance(o, dict) or name == ALL:
             raise V.DeclarationError("outlets")
         if set(o) - set(_O_KEYS):
             raise V.DeclarationError(f"outlets:{name}")
@@ -332,12 +333,22 @@ def parse_outlets(data, kinds: dict) -> dict:
                 not isinstance(p, str) or not V.PLACE.fullmatch(p) or p.startswith("/") or ".." in p.split("/")
                 for p in ignore):
             raise V.DeclarationError(f"outlets:{name}:ignore")
-        if common is not None and (not isinstance(common, str) or not V.NAME.fullmatch(common)):
+        # 段 11: 共通の種類は 1 つの名前か、名前の並び（出典と根拠の 1 行を同じ出し口で採る）。中では並びにそろえる。
+        if isinstance(common, str):
+            common = (common,)
+        elif isinstance(common, list) and common and len(set(common)) == len(common) and len(common) <= 16:
+            common = tuple(common)
+        elif common is not None:
+            raise V.DeclarationError(f"outlets:{name}")
+        if common is not None and any(not isinstance(c, str) or not V.NAME.fullmatch(c) for c in common):
             raise V.DeclarationError(f"outlets:{name}")
         shared = o.get("dest_shared_with", [])
         if not isinstance(shared, list) or len(shared) > SHARED_MAX or len(set(shared)) != len(shared) or any(
                 not isinstance(x, str) or not x for x in shared) or (shared and (audience != "internal" or dest is None)):
             raise V.DeclarationError(f"outlets:{name}:dest_shared_with")
+        fix_seal = o.get("fix_seal", False)
+        if not isinstance(fix_seal, bool):
+            raise V.DeclarationError(f"outlets:{name}:fix_seal")
         published = None
         if "published" in o:
             from . import published as P   # 段 7 の後半（§7.6）。published.py が route を読むので、ここで読む
@@ -358,7 +369,7 @@ def parse_outlets(data, kinds: dict) -> dict:
             res = {"question": q, "conclusion": c, "reason_kinds": list(kinds_ok)}
         out[name] = Outlet(name, audience, list(names), level, _conds(o.get("requires"), f"outlets:{name}"),
                            _conds(o.get("fact"), f"outlets:{name}"), res, common, on_narrow, confs, dest,
-                           tuple(ignore), published, tuple(shared))
+                           tuple(ignore), published, tuple(shared), fix_seal)
     # §7.1: 内の道具が読む出し口は、読者に出る出し口と同じ書き出し先を言えない（出さない層が公開の材料へ混ざる）。
     # 段 10: 例外は、内の出し口が `dest_shared_with` で読者の出し口を名指しし、書き出し先が同じ道（入れ子でない）で、
     # 種類が重ならず、置き場の型どうしも重ならないときだけ（同じファイルに 2 つの出し口が書くことは無い）。
@@ -473,6 +484,37 @@ def internal_words(root: str, vessel: V.Vessel) -> tuple:
         return parse_internal_words(data.get("internal_words"))
     except V.DeclarationError as exc:
         raise RegisterRefused("register_outlet_unknown", f"outlets: {exc.word}"[:80]) from None
+
+
+ALL = "all"   # 段 11 の C: `--outlet all`（宣言の全部の出し口）。出し口の名前には使えない
+
+
+def is_all(name) -> bool:
+    return name == ALL
+
+
+def all_outlets(root: str) -> list:
+    """`--outlet all` で回す出し口の名前（読者の出し口を先に、それぞれ名前の順）。宣言の無い台帳・出し口 0 は断る。"""
+    outlets = load_outlets(root, V.open_vessel(root))
+    if not outlets:
+        raise RegisterRefused("register_outlet_unknown", "outlet", outlets=[])
+    return [o.name for o in sorted(outlets.values(), key=lambda o: (o.audience != "reader", o.name))]
+
+
+def dest_under(root: str, name: str, base) -> str:
+    """`--outlet all` の書き出し先: 渡された道の下の、出し口の宣言の `dest`。`dest` を書かない出し口は断る
+    （どこへ書くかを器が決めない）。"""
+    outlet = outlet_of(root, V.open_vessel(root), name)
+    if outlet.dest is None:
+        raise RegisterRefused("register_args_invalid", "outlet_all_dest", outlet=name)
+    if not isinstance(base, str) or not base:
+        raise RegisterRefused("register_args_invalid", "to")
+    return os.path.normpath(os.path.join(base, *outlet.dest.split("/")))
+
+
+def all_digest(digests: dict) -> str:
+    """`accept --outlet all` の確かめの印: 出し口ごとの印の組の指紋（1 つでも変われば違う印）。"""
+    return V.fp(sorted([name, d] for name, d in digests.items()))[:16]
 
 
 def outlet_of(root: str, vessel: V.Vessel, name) -> Outlet:
@@ -936,6 +978,11 @@ def _common_stopped(ctx: Ctx, ref: str, outlet: str):
                        ctx.as_of, ctx.cache)
 
 
+def takes_kind(outlet: Outlet, ref: str) -> bool:
+    """共通の記録 `<種類>:<番号>` が、この出し口の採る共通の種類か。"""
+    return outlet.common is not None and ref.split(":", 1)[0] in outlet.common
+
+
 def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> dict:
     """`{"items": [...], "files": {道: bytes}, "inputs": [...], "excluded": [...], "pending_takes": [...]}`。
     段 7: 読者に出る出し口では、出さない欄（§7.2）を書かず、差し込み（§7.3）を置き換え、伏せ方（§7.4）の粒で外す。
@@ -1060,8 +1107,19 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
                                              for u in item["inserts"] if u["record"] not in shown]})
     # 記録ごとの表とファイル
     if outlet.level == "record":
-        for path in sorted({rec.path for rec in vessel.all_records if rec.kind in outlet.kinds}):
-            kind = next(vessel.kinds[r.kind] for r in vessel.all_records if r.path == path and r.kind in outlet.kinds)
+        kind_of_path = {}
+        for rec in vessel.all_records:
+            if rec.kind in outlet.kinds:
+                kind_of_path.setdefault(rec.path, vessel.kinds[rec.kind])
+        # 段 11 の E: 記録が 0 の表（見出しだけ）も、置き場に当たる枚なら見出しのまま書く（書かないと、書き出し先の
+        # 同じ枚が旧い材料に見え、受け入れの 2 段めが止まる。頁が読むなら build も壊れる）。表の種類だけ。
+        for k in outlet.kinds:
+            kind = vessel.kinds[k]
+            if kind.records == "rows" and kind.format == "csv":
+                for path in V.files_of(vessel, kind):
+                    kind_of_path.setdefault(path, kind)
+        for path in sorted(kind_of_path):
+            kind = kind_of_path[path]
             keep = by_path.get(path, set())
             with open(os.path.join(ctx.root, *path.split("/")), "rb") as f:
                 data = f.read()
@@ -1084,7 +1142,7 @@ def compute(ctx: Ctx, outlet: Outlet, *, common_known: dict | None = None) -> di
         # 段 8 §3: 共通の出さない欄は、メディアの出し口の宣言より先に当てる（メディアの側で外せない）
         rules = shared_private(ctx.common)
         for ref in sorted(set(sealed_takes) | set(all_takes)):
-            if not ref.startswith(outlet.common + ":"):
+            if not takes_kind(outlet, ref):
                 continue
             take_j = sealed_takes.get(ref)
             if take_j is None:
@@ -2305,12 +2363,71 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
                                                       if here.get(p) != sealed_outputs.get(p))[:50])
     elif not placed_sealed:
         red("material_mismatch", files=sorted(p for p in names | set(here) if here.get(p) != sealed_outputs.get(p))[:50])
+    mine, theirs = changed_since(vessel, body, ctx.common)
+    theirs |= {p["record"][len(COMMON) + 1:] for p in result["pending_takes"]}
     verdict = _verdict(problems, warnings, key=origin, generation=body["generation"],
-                       pending_takes=result["pending_takes"])
+                       pending_takes=result["pending_takes"], impact=impact(vessel, mine, theirs))
     if publish is not None and verdict["ok"]:
         write_published(publish, seal, raw, as_of, narrowed, salt)
         verdict["published"] = os.path.abspath(publish)
     return verdict
+
+
+IMPACT_SHOWN = 200   # 影響の候補を出す数（数は全部）
+
+
+def impact(vessel: V.Vessel, changed, common_changed=(), *, graph: dict | None = None) -> dict:
+    """段 11 の F: 版が変わった記録（`changed`）と、指す欄でつながった記録（指す側・指される側、1 段）を「影響の候補」に
+    する。共通の記録の版が進んだとき（`common_changed`: 共通の `<種類>:<番号>`）は、それを `common:<番号>` で指す
+    この台帳の記録と、その記録から 1 段の記録を候補にする（考察 §4.2）。**判断を無効にしない**（赤にしない）。
+    名指しするだけで、判断し直すかは係が決める。`{"changed": [...], "count": 数, "candidates": [...]}`。"""
+    changed = set(changed or ())
+    common_changed = set(common_changed or ())
+    if not changed and not common_changed:
+        return {"changed": [], "count": 0, "candidates": []}
+    graph = graph if graph is not None else V.links(vessel)
+    found = {}
+
+    def add(record, via, edge, why):
+        if record in changed or record in found or record.startswith(V.COMMON_REF):
+            return
+        found[record] = {"record": record, "via": via, "field": edge.get("field"), "meaning": edge.get("meaning"),
+                         "why": why}
+    ring = set()
+    for e in graph.get("common") or []:
+        if e["to"][len(V.COMMON_REF):] in common_changed:
+            add(e["from"], e["to"], e, "points_to_common")
+            ring.add(e["from"])
+    near = changed | ring
+    for e in graph["edges"]:
+        if e["to"].startswith(V.COMMON_REF):
+            continue
+        if e["from"] in near:
+            add(e["to"], e["from"], e, "pointed_by_changed")
+        if e["to"] in near:
+            add(e["from"], e["to"], e, "points_to_changed")
+    rows = sorted(found.values(), key=lambda x: x["record"])
+    return {"changed": sorted(changed) + sorted(f"{COMMON}:{c}" for c in common_changed), "count": len(rows),
+            "candidates": rows[:IMPACT_SHOWN]}
+
+
+def changed_since(vessel: V.Vessel, body: dict, common: "Common | None" = None) -> tuple:
+    """封の入力の版の組と今の版を比べて、`(版が変わったこの台帳の記録, 版が進んだ共通の記録)`。"""
+    mine, theirs = set(), set()
+    for i in body.get("inputs") or []:
+        ref, version = i.get("record"), i.get("version")
+        if not isinstance(ref, str):
+            continue
+        if ref.startswith(COMMON + ":"):
+            if common is not None:
+                now = common.vessel.unique(ref[len(COMMON) + 1:])
+                if now is not None and now.version != version:
+                    theirs.add(ref[len(COMMON) + 1:])
+            continue
+        now = vessel.unique(ref)
+        if now is not None and now.version != version:
+            mine.add(ref)
+    return mine, theirs
 
 
 def _verdict(problems, warnings, **extra) -> dict:
@@ -2464,8 +2581,15 @@ def take(root: str, common_root, records, *, by: str, at: str) -> dict:
                 "seen": {"version": rec.version, "depend": None}, "from_version": before}
         taken.append(_stamp(body))
     J.append(root, taken)
+    # 段 11 の F: 版の進んだ共通の記録を指すこの台帳の記録と、そこから 1 段の記録を「影響の候補」に（無効にはしない）
+    moved = {j["target"]["record"] for j in taken if j["from_version"] is not None}
+    try:
+        found = impact(V.open_vessel(root), (), moved) if moved else impact(None, (), ())
+    except RegisterRefused:
+        found = {"changed": sorted(f"{COMMON}:{m}" for m in moved), "count": None, "candidates": [],
+                 "unreadable": True}
     return {"taken": [{"record": j["target"]["record"], "from": j["from_version"], "to": j["seen"]["version"]}
-                      for j in taken], "same": same}
+                      for j in taken], "same": same, "impact": found}
 
 
 def use(root: str, ref: str, outlet_name: str, as_: str, as_of, *, unit=None, common_root=None) -> dict:

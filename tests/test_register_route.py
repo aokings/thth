@@ -140,7 +140,7 @@ def test_つなぐ先_主張を直すと頁から外れる件数を配る前に�
     claims.write_bytes(claims.read_bytes().replace("17.3%".encode(), "17.1%".encode()))
     rc, v, err = jrun(capsys, "register", "export", led, "--outlet", "facts", "--to", site, "--as-of", SEALED_AT,
                       "--check")
-    assert rc == 0, err
+    assert rc == 1, err   # 段 11 の D: 違いを見つけた --check は rc 1
     assert v["changes"]["leaving"] == ["claim:c-term-tea-grade-ctc-res-milktea1-24=fact"]
     assert v["differs"] == ["data/knowledge/claims.csv"] and not v["same_as_seal"]
 
@@ -165,7 +165,8 @@ def test_試験3a_共通の出典を2つのメディアで使い片方だけが�
     for led, site in ((kop, kop_site), (nig, nig_site)):
         rc, v, err = jrun(capsys, "register", "export", led, "--outlet", "bib", "--to", site, "--as-of", SEALED_AT,
                           "--common", common, "--check")
-        assert rc == 0 and v["same_as_seal"] and not v["differs"], err
+        # 段 11 の D: --check は違い（採り入れ待ちも）を見つけたら rc 1（前は 0 で、CI は中身を読んで止めていた）
+        assert rc == 1 and v["same_as_seal"] and not v["differs"] and v["found"] == ["pending_takes"], err
         assert [p["record"] for p in v["pending_takes"]] == ["common:" + src]   # 採り入れ待ち 1
     # こぴちゃだけが採る
     rc, v, err = jrun(capsys, "register", "take", kop, "--common", common, "--by", "masaru")
@@ -173,7 +174,8 @@ def test_試験3a_共通の出典を2つのメディアで使い片方だけが�
     # 採っただけでは広げない（採るも判断。受け入れて封をするまで、材料は前の版のまま）
     rc, v, err = jrun(capsys, "register", "export", kop, "--outlet", "bib", "--to", kop_site, "--as-of", SEALED_AT,
                       "--common", common, "--check")
-    assert rc == 0 and v["same_as_seal"] and not v["differs"], v
+    # 採っただけでは封の中の版のまま（採り入れ待ちが残るので --check は rc 1・段 11 の D）
+    assert rc == 1 and v["same_as_seal"] and not v["differs"] and v["found"] == ["pending_takes"], v
     rc, v = verify(capsys, kop, "bib", kop_site, "2027-03-21", "--no-previous", "--common", common)
     assert rc == 0 and v["ok"], v
     accept(capsys, kop, "bib", kop_site, SEALED_AT, "--common", common)
@@ -199,7 +201,7 @@ def test_試験3a_共通の出典を2つのメディアで使い片方だけが�
     for led, site in ((kop, kop_site), (nig, nig_site)):
         rc, v, err = jrun(capsys, "register", "export", led, "--outlet", "bib", "--to", site, "--as-of", SEALED_AT,
                           "--common", common, "--check")
-        assert rc == 0 and v["changes"]["leaving"] == ["common:" + src + "=fact"], err
+        assert rc == 1 and v["changes"]["leaving"] == ["common:" + src + "=fact"], err   # 段 11 の D: 違いは rc 1
         assert {"record": "common:" + src, "why": "stopped"} in v["excluded"]
         rc, v = verify(capsys, led, "bib", site, "2027-03-21", "--no-previous", "--common", common)
         assert rc != 0 and "narrowed_after_seal" in words(v)

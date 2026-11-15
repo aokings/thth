@@ -321,8 +321,7 @@ def _relevant(outlet: R.Outlet, j: dict) -> bool:
     q = j.get("question") or ""
     ref = t.get("record") or ""
     if t.get("ledger"):
-        return (t.get("ledger") == R.COMMON and q == R.TAKE and outlet.common is not None
-                and ref.startswith(outlet.common + ":"))
+        return t.get("ledger") == R.COMMON and q == R.TAKE and R.takes_kind(outlet, ref)
     if ref.split(":", 1)[0] not in outlet.kinds:
         return False
     if q in (R.STOP, f"{R.STOP}@{outlet.name}"):
@@ -383,8 +382,8 @@ def _seal_group(root, vessel, js, outlets, seals, common, as_of, js_problem, out
     else:
         names = {}
         for name, outlet in (outlets or {}).items():
-            if outlet.common:
-                names.setdefault(outlet.common, []).append(name)
+            for kind in outlet.common or ():
+                names.setdefault(kind, []).append(name)
         hits = []
         for ref in sorted(takes):
             for name in names.get(ref.split(":", 1)[0], []):
@@ -499,7 +498,43 @@ def _rules_group(vessel, result) -> dict:
 
 # ------------------------------------------------------------------ 共通
 
-def _common_group(js, common, seals) -> dict:
+def _impact_item(vessel, seals: dict, js: list, common, graph: dict) -> dict:
+    """段 11 の F: 封のあとで版の変わった記録・採り入れ待ちの共通の記録から、指す欄で 1 段の「影響の候補」（読むだけ。
+    判断を無効にしない）。"""
+    mine, theirs = set(), set()
+    for _name, (seal, _state, _n) in sorted(seals.items()):
+        if seal is not None:
+            a, b = R.changed_since(vessel, seal["body"], common)
+            mine |= a
+            theirs |= b
+    if common is not None:
+        for ref, j in R._takes(js).items():
+            now = common.vessel.unique(ref)
+            if now is not None and now.version != (j.get("seen") or {}).get("version"):
+                theirs.add(ref)
+    found = R.impact(vessel, mine, theirs, graph=graph)
+    return _item(found["count"], found["candidates"], changed=found["changed"][:EXAMPLES_MAX],
+                 changed_count=len(found["changed"]))
+
+
+def _common_pointers(graph: dict, takes: dict, common) -> dict:
+    """段 11: メディアの記録が `common:<番号>` で指す共通の記録のうち、このメディアがまだ採っていない物（版を持つ判断が
+    無い）と、共通の台帳に無い物（`--common` のときだけ見る）。"""
+    untaken, missing = [], []
+    for e in graph.get("common") or []:
+        ref = e["to"][len(V.COMMON_REF):]
+        if ref not in takes:
+            untaken.append({"from": e["from"], "to": e["to"], "field": e.get("field")})
+        if common is not None and common.vessel.unique(ref) is None:
+            missing.append({"from": e["from"], "to": e["to"], "field": e.get("field")})
+    out = _item(len(untaken), untaken, pointers=len(graph.get("common") or []))
+    if common is not None:
+        out["missing_in_common"] = len(missing)
+        out["missing_examples"] = missing[:EXAMPLES_MAX]
+    return out
+
+
+def _common_group(js, common, seals, graph=None) -> dict:
     takes = R._takes(js)
     if not takes:
         pending = _item(0, [])
@@ -519,6 +554,7 @@ def _common_group(js, common, seals) -> dict:
                  for name, (seal, _state, _n) in sorted(seals.items())
                  if seal is not None and seal["body"].get("common_unchecked")]
     return {"take_pending": pending,
+            "pointers_untaken": _common_pointers(graph or {}, takes, common),
             "common_unchecked": _item(len(unchecked), unchecked,
                                       not_seen="CI で共通の台帳を読めずに配った回は、配る物が台帳の外に置かれるので、"
                                                "台帳からは見えない（封を共通なしで作った出し口だけを数えた）")}
@@ -591,8 +627,9 @@ def health(root: str, *, as_of=None, common_root=None, decl_base=None, thin: boo
         "seal": _seal_group(root, vessel, js, outlets, seals, common, as_of, js_problem, outlets_problem),
         "deadline": _deadline_group(root, vessel, pool, states, outlets, as_of),
         "rules": _rules_group(vessel, C.run(vessel, js)),
-        "common": _common_group(js, common, seals),
+        "common": _common_group(js, common, seals, graph),
     }
+    groups["seal"]["impact_candidates"] = _impact_item(vessel, seals, js, common, graph)
     out = {"register": name or root, "as_of": as_of.isoformat(timespec="seconds"),
            "records": sum(1 for r in vessel.all_records if r.id is not None),
            "judgments": len(js), "inspections": len(inspected), "groups": groups}
