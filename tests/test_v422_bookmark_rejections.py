@@ -45,12 +45,12 @@ def codes(warnings):
 
 # ================================================================ A. 本文の予告（断らない）
 
-def test_A_予告の境目は135字と343バイト_半角パーセントは全角なら出ない():
+def test_A_予告の境目は135字と342バイト_半角パーセントは全角なら出ない():
     assert hatena_bookmark.body_form("c", ["a", "b"]) == "[a][b]c"
     assert codes(hatena_bookmark.body_warnings("x" * 135, [])) == []
     assert codes(hatena_bookmark.body_warnings("x" * 136, [])) == ["bookmark_length_maybe_rejected"]
-    assert codes(hatena_bookmark.body_warnings("あ" * 114 + "x", [])) == []                 # 115 字・343 バイト
-    assert codes(hatena_bookmark.body_warnings("あ" * 114 + "xy", [])) == ["bookmark_length_maybe_rejected"]  # 344 バイト
+    assert codes(hatena_bookmark.body_warnings("あ" * 114, [])) == []                       # 114 字・342 バイト
+    assert codes(hatena_bookmark.body_warnings("あ" * 114 + "x", [])) == ["bookmark_length_maybe_rejected"]  # 343 バイト（11/16 に 401）
     assert codes(hatena_bookmark.body_warnings("約 85％", [])) == []
     got = hatena_bookmark.body_warnings("約 85%", ["割合%"])
     assert codes(got) == ["bookmark_percent_maybe_rejected"]
@@ -84,7 +84,7 @@ def test_A_長い札も予告する_editは直したあとの値(bm):
     body = json.loads(out)
     assert rc == 1 and codes(body["preview"]["warnings"]) == ["bookmark_length_maybe_rejected"]
     assert "138 字・398 バイト" in body["preview"]["warnings"][0]["text"]
-    assert "135 字・343 バイト" in body["preview"]["warnings"][0]["text"]
+    assert "予告の線は 135 字・342 バイト" in body["preview"]["warnings"][0]["text"]
     bookmark(ACCOUNT, url=EXTERNAL_2, comment="旧", tags=["旧名"])
     rc, out, _ = call(["bookmark", "edit", ACCOUNT, "--url", EXTERNAL_2, "--comment", "100%", "--json"])
     assert rc == 1 and codes(json.loads(out)["preview"]["warnings"]) == ["bookmark_percent_maybe_rejected"]

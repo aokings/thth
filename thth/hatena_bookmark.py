@@ -93,7 +93,9 @@ def tag_too_long_text(found) -> str:
 # （kopicha の本番 10/18・2 件）は、どちらも下の長さを超えていて、1 件は半角「%」を含んでいた。どちらが原因かは
 # 未確定。数は媒体の特性の台帳の観測（`hatenabookmark.body_rejected_observed`・確かさ low）と同じ。
 BODY_OK_MAX_CHARS = 135      # 付いた札の最大（`[tag]…comment` の形の字数）
-BODY_OK_MAX_BYTES = 343      # 同じ形の UTF-8 のバイト数
+BODY_OK_MAX_BYTES = 342      # 同じ形の UTF-8 のバイト数。11/16 キョン研: 343 バイトの札（127 字・タグ 6）が 2 回とも 401、
+                             # タグを 1 つ減らした 337 バイトは通った（報告 r20261116-29e5c33d）。343 で通った札も 1 件あるので
+                             # 線は 343 から予告する側に倒す（断らない）
 WARNINGS = ("bookmark_percent_maybe_rejected", "bookmark_length_maybe_rejected")
 
 
@@ -129,8 +131,9 @@ def body_warnings(comment, tags) -> list:
     if chars > BODY_OK_MAX_CHARS or size > BODY_OK_MAX_BYTES:
         out.append({"code": "bookmark_length_maybe_rejected",
                     "text": f"タグとコメントを合わせた長さ（[タグ]…コメント の形）が {chars} 字・{size} バイトです。"
-                            "はてなに 401 で断られた札は全部この長さを超えていた（10/18 の観測・2 件・付いた札の最大は "
-                            f"{BODY_OK_MAX_CHARS} 字・{BODY_OK_MAX_BYTES} バイト・原因は未確定）"})
+                            "はてなに 401 で断られた札は全部この長さを超えていた（10/18 の観測 2 件と 11/16 の 343 バイトの札・"
+                            f"予告の線は {BODY_OK_MAX_CHARS} 字・{BODY_OK_MAX_BYTES} バイト・原因は未確定）。"
+                            "タグを 1 つ減らすかコメントを短くすると通ることが多い"})
     return out
 
 

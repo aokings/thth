@@ -375,7 +375,7 @@
     {
       "id": "hatenabookmark.body_rejected_observed",
       "kind": "observation",
-      "statement": "半角 % を含む札と、タグ＋コメントの長い札が、POST /rest/1/my/bookmark で 401（WWW-Authenticate: OAuth）を返された。同じ token の GET（/rest/1/my・URL のクエリに %25 を含む GET）は通る。どちらが原因かは未確定。付いた札の最大は [tag]…comment の形で 135 字・343 バイト（タグだけで 48 字）、断られた 2 件は 146 字・366 バイトと 149 字・377 バイト（1 件目は「約 85%」を含み、2 件目は半角 % を含まない）",
+      "statement": "半角 % を含む札と、タグ＋コメントの長い札が、POST /rest/1/my/bookmark で 401（WWW-Authenticate: OAuth）を返された。同じ token の GET（/rest/1/my・URL のクエリに %25 を含む GET）は通る。どちらが原因かは未確定。予告の線は [tag]…comment の形で 135 字・342 バイト（付いた札の最大は 135 字・343 バイト、タグだけで 48 字）、断られた 2 件は 146 字・366 バイトと 149 字・377 バイト（1 件目は「約 85%」を含み、2 件目は半角 % を含まない）。11/16 キョン研: 127 字・343 バイト（タグ 6）の札を直す POST が 2 回とも 401、タグを 1 つ減らした 123 字・337 バイトは通った（同じ札・同じ token）。長さの上限の線が濃いが、343 バイトで付いた札もあり境目は未確定",
       "evidence": {
         "type": "observed",
         "record": "kopicha の本番（10/18・まとめ承認の 14 件目と bb_7f8a2b29faa6c2ea の 26 件目 PMC4520228・THTH の署名は RFC 5849 どおり本文の % を %25 として base string に入れる）",
