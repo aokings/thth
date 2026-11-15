@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 import shutil
+
+import pytest
 
 from tests.test_register_base import add, env, jrun  # noqa: F401
 from tests.test_register_store import clock, confirm, edit  # noqa: F401
@@ -62,3 +66,65 @@ def test_控えの無い下書きの頭に書いた道の鍵は使わない(caps
                         "\n---\n本文\n", encoding="utf-8")
     line = recheck.check(str(injected), queuefile.parse(str(injected)).front_matter)
     assert line is not None and "register_row_changed" in line, line
+
+
+def _named(main):
+    (main / ".thth").mkdir(exist_ok=True)
+    (main / ".thth/register.json").write_text(json.dumps({"schema": "thth.register_name/1",
+                                                          "register": "cafe-sample"}) + "\n")
+
+
+def _confirm_at(capsys, path):
+    rc, v, err = jrun(capsys, "register", "confirm", "cafe-sample", ROW, "--path", str(path), "--by", "m")
+    if rc == 1:
+        rc, v, err = jrun(capsys, "register", "confirm", "cafe-sample", ROW, "--path", str(path), "--by", "m",
+                          "--confirm", v["digest"])
+    return rc, v, err
+
+
+def test_同じフォルダを大文字小文字の違う綴りで渡しても前の指紋を捨てる(capsys, env, clock):
+    main = add(capsys, env, "cafe-sample", kind="store")
+    _named(main)
+    other = pathlib.Path(str(main.parent) + "/" + main.name.upper())
+    if not other.exists():
+        pytest.skip("大文字小文字を区別する置き場")
+    confirm(capsys, "cafe-sample", ROW)                                  # 18:00（控えの道の綴り）
+    edit(main.joinpath(*ROW_FILE), "close: 18:00", "close: 19:00")
+    rc, v, err = _confirm_at(capsys, other)                              # 同じフォルダを別の綴りで認め直した
+    assert rc == 0, err
+    assert len(ledger.read_confirmed("cafe-sample")[ROW]["paths"]) == 1
+    edit(main.joinpath(*ROW_FILE), "close: 19:00", "close: 18:00")
+    rc, v, err = jrun(capsys, "register", "use", "cafe-sample", ROW)
+    assert rc == 2 and v["code"] == "register_row_unconfirmed", (v, err)
+
+
+def test_道の形の鍵の前の行は同じフォルダの鍵に直して読む(capsys, env, clock):
+    main = add(capsys, env, "cafe-sample", kind="store")
+    confirm(capsys, "cafe-sample", ROW)
+    rows = ledger.read_confirmed("cafe-sample")
+    old = rows[ROW]["digest"]
+    rows[ROW] = {"digest": old, "at": rows[ROW]["at"], "by": "m", "paths": {os.path.realpath(main): old}}
+    ledger.write_confirmed("cafe-sample", rows)                          # c209305 の形
+    edit(main.joinpath(*ROW_FILE), "close: 18:00", "close: 19:00")
+    confirm(capsys, "cafe-sample", ROW)
+    rec = ledger.read_confirmed("cafe-sample")[ROW]
+    assert list(rec["paths"]) == [ledger.folder_key(str(main))]
+    assert rec["folders"] == {ledger.folder_key(str(main)): os.path.realpath(main)}
+    edit(main.joinpath(*ROW_FILE), "close: 19:00", "close: 18:00")
+    rc, v, err = jrun(capsys, "register", "use", "cafe-sample", ROW)
+    assert rc == 2 and v["code"] == "register_row_unconfirmed", (v, err)
+
+
+def test_9フォルダめで認めると最も古いフォルダの指紋が落ち使えない向きに倒れる(capsys, env, clock):
+    main = add(capsys, env, "cafe-sample", kind="store")
+    _named(main)
+    confirm(capsys, "cafe-sample", ROW)                                  # 本体は 18:00
+    for n in range(ledger.PATHS_MAX):
+        wt = env["tmp"] / f"wt{n}" / "cafe-sample"
+        shutil.copytree(main, wt)
+        edit(wt.joinpath(*ROW_FILE), "close: 18:00", f"close: {18 + n // 5}:{n % 5 + 1}0")
+        rc, v, err = _confirm_at(capsys, wt)
+        assert rc == 0, (n, v, err)
+    assert len(ledger.read_confirmed("cafe-sample")[ROW]["paths"]) == ledger.PATHS_MAX
+    rc, v, err = jrun(capsys, "register", "use", "cafe-sample", ROW)
+    assert rc == 2 and v["code"] == "register_row_unconfirmed", (v, err)

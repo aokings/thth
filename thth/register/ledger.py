@@ -299,8 +299,9 @@ def read_confirmed(name: str) -> dict:
     rows = value.get("rows") if isinstance(value, dict) and value.get("schema") == CONFIRMED_SCHEMA else None
     if not isinstance(rows, dict) or not all(
             isinstance(v, dict) and isinstance(v.get("digest"), str)
-            and (("paths" not in v) or (isinstance(v["paths"], dict)
-                                        and all(isinstance(k, str) and isinstance(d, str) for k, d in v["paths"].items())))
+            and all((key not in v) or (isinstance(v[key], dict)
+                                       and all(isinstance(k, str) and isinstance(d, str) for k, d in v[key].items()))
+                    for key in ("paths", "folders"))
             for v in rows.values()):
         raise RegisterRefused("register_ledger_invalid", "confirmed")
     return rows
@@ -309,8 +310,22 @@ def read_confirmed(name: str) -> dict:
 PATHS_MAX = 8   # 1 行が覚える checkout のフォルダの数（checkout ごとに中身が違っても行き来しない・5.23.0）
 
 
+def folder_key(path: str) -> str:
+    """同じフォルダなら同じになる鍵（`<st_dev>:<st_ino>`）。大文字小文字だけ違う綴り（APFS は同じフォルダとして通す）
+    でも 1 つになる（5.23.0 積み増しの再確かめ 軽 1）。読めなければ実の道。"""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return os.path.realpath(path)
+    return f"{info.st_dev}:{info.st_ino}"
+
+
 def confirmed_digests(record) -> set:
-    """認めた記録の 1 行が認めた中身の指紋（今の `digest` と、checkout のフォルダごとに最後に認めた `paths`）。"""
+    """認めた記録の 1 行が認めた中身の指紋（今の `digest` と、checkout のフォルダごとに最後に認めた `paths`）。
+
+    読むフォルダは見ずに、覚えた全フォルダの指紋を合わせて使う（行き来しないため）。作業木を片づけても、その指紋は
+    8 フォルダまで残る。9 フォルダめで認めると最も古いフォルダの指紋が落ち、その中身の行は「認めていない」に戻る
+    （使えない向きに倒れる）。"""
     if not isinstance(record, dict) or not isinstance(record.get("digest"), str):
         return set()
     paths = record.get("paths")
@@ -320,24 +335,39 @@ def confirmed_digests(record) -> set:
 def confirmed_entry(previous, digest: str, *, at: str, by: str, path: str, home=None) -> dict:
     """認めた記録の新しい 1 行。指紋は checkout のフォルダごとに 1 つだけ持つ（5.23.0）。
 
+    - 鍵は `folder_key`（同じフォルダなら綴りが違っても同じ）。見せる道は `folders` に実の道で残す。
     - 別のフォルダで認めた指紋は残す（5.23.0 の監査 軽 1: 中身の違う checkout で認めると、もう片方の同じ行が
       「認めていない」に行き来した）。
     - 同じフォルダで認め直したら、そのフォルダの前の指紋は捨てる（5.23.0 積み増しの検収 危 1: 訂正の前の中身に
       戻した行が「認めた」と読まれた）。訂正は前の中身の取り消しなので、戻った中身は認め直すまで使えない。
-    - `paths` の無い前の行（5.22.0 まで）は、控えのフォルダ（`home`）で認めた物と読む。
+    - `paths` の無い前の行（5.22.0 まで）は、控えのフォルダ（`home`）で認めた物と読む。鍵が道の形（`/` で始まる・
+      積み増しの途中の形）の行は、今あるフォルダなら `folder_key` に直して読む。
     """
-    key = os.path.realpath(path)
-    paths = {}
+    paths, folders = {}, {}
     if isinstance(previous, dict) and isinstance(previous.get("digest"), str):
         old = previous.get("paths")
+        shown = previous.get("folders") if isinstance(previous.get("folders"), dict) else {}
         if isinstance(old, dict):
-            paths = {k: d for k, d in old.items() if isinstance(k, str) and isinstance(d, str)}
+            for k, d in old.items():
+                if not (isinstance(k, str) and isinstance(d, str)):
+                    continue
+                nk = folder_key(k) if k.startswith("/") else k
+                paths.pop(nk, None)
+                paths[nk] = d
+                where = shown.get(k) if isinstance(shown.get(k), str) else (k if k.startswith("/") else None)
+                if where is not None:
+                    folders[nk] = where
         elif home:
-            paths = {os.path.realpath(home): previous["digest"]}
+            nk = folder_key(home)
+            paths[nk] = previous["digest"]
+            folders[nk] = os.path.realpath(home)
+    key = folder_key(path)
     paths.pop(key, None)
     paths[key] = digest
-    kept = list(paths.items())[-PATHS_MAX:]
-    return {"digest": digest, "at": at, "by": by, "paths": dict(kept)}
+    folders[key] = os.path.realpath(path)
+    kept = dict(list(paths.items())[-PATHS_MAX:])
+    return {"digest": digest, "at": at, "by": by, "paths": kept,
+            "folders": {k: folders[k] for k in kept if k in folders}}
 
 
 def write_confirmed(name: str, rows: dict) -> None:
