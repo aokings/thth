@@ -160,6 +160,7 @@ COMMANDS += ['shop doctor']
 COMMANDS += ['register erase request', 'register erase scope', 'register erase run', 'register erase status',
              'register erase done', 'register used', 'register published', 'register health', 'register sisters',
              'register fix',
+             'register seeds',
              'project leave', 'owner leave']
 
 

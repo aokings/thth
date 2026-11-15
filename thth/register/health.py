@@ -531,6 +531,10 @@ def _common_pointers(graph: dict, takes: dict, common) -> dict:
     if common is not None:
         out["missing_in_common"] = len(missing)
         out["missing_examples"] = missing[:EXAMPLES_MAX]
+        # 5.23.0: 採った共通の記録のうち、今の版に共通の台帳の側の「よい」の判断（検めた跡）が無い物（名指しだけ）
+        unchecked = R.unchecked_common(common, sorted(takes))
+        out["unchecked"] = len(unchecked)
+        out["unchecked_examples"] = unchecked[:EXAMPLES_MAX]
     return out
 
 

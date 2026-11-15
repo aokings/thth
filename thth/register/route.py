@@ -81,6 +81,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import csv
 import datetime
 import hashlib
@@ -622,7 +623,31 @@ def judgments_raw(root: str) -> bytes:
     return data
 
 
+@contextlib.contextmanager
+def reading():
+    """読むだけの命令（`verify`・`export --check`）の中だけ、台帳・判断の記録・封を 1 回だけ読む覚えを開ける（5.23.0・
+    こぴちゃの `verify --outlet all` 6.6 秒のうち約 6 秒が読み直しだった）。書く命令には使わない（書いたあとに読み直す
+    ので）。入れ子なら外の覚えを使う。ファイルには残さない。"""
+    if V.READ_MEMO is not None:
+        yield
+        return
+    V.READ_MEMO = {}
+    try:
+        yield
+    finally:
+        V.READ_MEMO = None
+
+
 def parse_judgments(raw: bytes, root: str | None = None) -> list:
+    if V.READ_MEMO is None:
+        return _parse_judgments(raw, root)
+    key = ("judgments", root and os.path.realpath(root), hashlib.sha256(raw).digest())
+    if key not in V.READ_MEMO:
+        V.READ_MEMO[key] = _parse_judgments(raw, root)
+    return list(V.READ_MEMO[key])
+
+
+def _parse_judgments(raw: bytes, root: str | None = None) -> list:
     """`judgment.read` と同じ点検（形は `J.shape_problem`）で、バイトから読む（封の中の頭だけを読むため）。
     段 3 は加えて、番号の重なり（`id_same_as_line N`）・中身から作り直した番号との食い違い（`id_not_from_content`）・
     読めない日時（`at`）の行を断る。封の中か外かは記録の中の位置で決めるが、番号で判断を名指しする所
@@ -1558,6 +1583,15 @@ def seal_path(root: str, outlet: str) -> str:
 
 
 def read_seal(root: str, outlet: str) -> dict | None:
+    if V.READ_MEMO is None:
+        return _read_seal(root, outlet)
+    key = ("seal", os.path.realpath(root), outlet)
+    if key not in V.READ_MEMO:
+        V.READ_MEMO[key] = _read_seal(root, outlet)
+    return V.READ_MEMO[key]
+
+
+def _read_seal(root: str, outlet: str) -> dict | None:
     path = seal_path(root, outlet)
     if not os.path.exists(path):
         return None
@@ -2531,6 +2565,20 @@ def _stamp(body: dict) -> dict:
 
 def judge(root: str, ref: str, question: str, *, by: str, at: str, unit=None, value=None, word=None,
           conclusion=None, reason_kind=None, reason_text=None, how=None, until=None, against=None) -> dict:
+    return judge_many(root, [ref], question, by=by, at=at, unit=unit, value=value, word=word, conclusion=conclusion,
+                      reason_kind=reason_kind, reason_text=reason_text, how=how, until=until, against=against)[0]
+
+
+JUDGE_MANY_MAX = 500   # 1 回に並べて判断できる記録の数（5.23.0）
+
+
+def judge_many(root: str, refs, question: str, *, by: str, at: str, unit=None, value=None, word=None,
+               conclusion=None, reason_kind=None, reason_text=None, how=None, until=None, against=None) -> list:
+    """同じ問いと同じ理由の判断を、並べた記録の全部に 1 回で足す（5.23.0・こぴちゃが `judge` を 1 件ずつ回していた）。
+    全部の判断を作ってから 1 回で足す（1 つでも作れなければ何も足さない）。名指ししていない記録には足さない。"""
+    refs = list(refs or [])
+    if not refs or len(refs) > JUDGE_MANY_MAX or len(set(refs)) != len(refs) or (len(refs) > 1 and unit):
+        raise RegisterRefused("register_args_invalid", "record")
     if not isinstance(question, str) or not QUESTION.fullmatch(question) or question == TAKE:
         raise RegisterRefused("register_args_invalid", "question")
     if conclusion is not None and conclusion not in V.CONCLUSIONS:
@@ -2540,22 +2588,24 @@ def judge(root: str, ref: str, question: str, *, by: str, at: str, unit=None, va
     if reason_kind is not None and not V.FIELD.fullmatch(reason_kind):
         raise RegisterRefused("register_args_invalid", "reason_kind")
     vessel = V.open_vessel(root)
-    target = {"record": ref}
-    if unit:
-        target["unit"] = unit
-    if value:
-        target["value"] = value
     pinned = []
     for one in against or []:
         rec = vessel.unique(one)
         if rec is None:
             raise RegisterRefused("register_record_missing", "against")
         pinned.append({"record": rec.ref, "version": rec.version})
-    body = J.make(vessel, target, question, by=by, at=at, word=word, conclusion=conclusion,
-                  reason_kind=reason_kind, reason_text=reason_text, how=how, until=check_until(until),
-                  extra={"against": pinned} if pinned else None)
-    J.append(root, [body])
-    return body
+    bodies = []
+    for ref in refs:
+        target = {"record": ref}
+        if unit:
+            target["unit"] = unit
+        if value:
+            target["value"] = value
+        bodies.append(J.make(vessel, target, question, by=by, at=at, word=word, conclusion=conclusion,
+                             reason_kind=reason_kind, reason_text=reason_text, how=how, until=check_until(until),
+                             extra={"against": pinned} if pinned else None))
+    J.append(root, bodies)
+    return bodies
 
 
 def stop(root: str, ref: str, *, by: str, at: str, outlet=None, lift: bool = False, unit=None, until=None,
@@ -2675,8 +2725,26 @@ def take(root: str, common_root, records, *, by: str, at: str) -> dict:
     except RegisterRefused:
         found = {"changed": sorted(f"{COMMON}:{m}" for m in moved), "count": None, "candidates": [],
                  "unreadable": True}
+    checked = unchecked_common(common, [j["target"]["record"] for j in taken] + same)
     return {"taken": [{"record": j["target"]["record"], "from": j["from_version"], "to": j["seen"]["version"]}
-                      for j in taken], "same": same, "impact": found}
+                      for j in taken], "same": same, "impact": found, "unchecked": checked}
+
+
+def unchecked_common(common: "Common", refs) -> list:
+    """5.23.0（名指しだけ・赤にしない・take を断らない）: 共通の記録の今の版に、共通の台帳の側で「よい」の判断が
+    無い物（書いた者と別の者が検めた跡が無い）。共通の台帳の判断の記録（`.thth/judgments.jsonl`）の、記録と版が今と
+    同じ「よい」の判断を検めた跡と読む。共通の台帳に判断の記録が無ければ、全部を名指しする。"""
+    seen = set()
+    for j in common.judgments or []:
+        target, answer = j.get("target") or {}, j.get("answer") or {}
+        if answer.get("conclusion") == "good" and isinstance(target.get("record"), str):
+            seen.add((target["record"], (j.get("seen") or {}).get("version")))
+    out = []
+    for ref in refs:
+        rec = common.vessel.unique(ref)
+        if rec is not None and (ref, rec.version) not in seen:
+            out.append(ref)
+    return sorted(set(out))
 
 
 def use(root: str, ref: str, outlet_name: str, as_: str, as_of, *, unit=None, common_root=None) -> dict:
@@ -2732,6 +2800,42 @@ def _insert_refs(rec: V.Record, conf: KindConf, ref: str) -> list:
         if any(f"{m.group(1)}:{m.group(2)}" == ref for m in found):
             fields.append(name)
     return fields
+
+
+def used_common(root: str, ref: str, common_root=None) -> dict:
+    """5.23.0（読むだけ）: 共通の記録 `common:<種類>:<番号>` が、この台帳のどこに届いたか。出し口ごとの封の世代と封に
+    入っている共通の版・今の共通の版（`--common` のとき）・それを `common:` で指すこの台帳の記録と、そこから 1 段の
+    記録（影響の候補と同じ辿り方・上限つき）。封も判断も変えない。"""
+    if not isinstance(ref, str) or not ref.startswith(COMMON + ":") or ref.count(":") < 2:
+        raise RegisterRefused("register_args_invalid", "record")
+    bare = ref[len(COMMON) + 1:]
+    vessel = V.open_vessel(root)
+    common = open_common(common_root) if common_root is not None else None
+    now = common.vessel.unique(bare) if common is not None else None
+    if common is not None and now is None:
+        raise RegisterRefused("register_record_missing", "common_record", record=ref)
+    outlets = load_outlets(root, vessel)
+    rows = []
+    for name in sorted(outlets):
+        try:
+            seal = read_seal(root, name)
+        except RegisterRefused:
+            rows.append({"outlet": name, "seal": "shape"})
+            continue
+        if seal is None:
+            continue
+        body = seal["body"]
+        version = next((i.get("version") for i in body.get("inputs") or []
+                        if isinstance(i, dict) and i.get("record") == ref), None)
+        if version is None:
+            continue
+        rows.append({"outlet": name, "generation": body.get("generation"), "version": version,
+                     "stale": None if now is None else now.version != version})
+    graph = V.links(vessel)
+    pointing = sorted({e["from"] for e in graph.get("common") or [] if e["to"] == ref})
+    found = impact(vessel, (), {bare}, graph=graph)
+    return {"record": ref, "version": now.version if now is not None else None, "outlets": rows,
+            "pointed_by": pointing, "reached": found["candidates"], "reached_count": found["count"]}
 
 
 def used(root: str, ref: str) -> dict:

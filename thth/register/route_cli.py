@@ -93,6 +93,8 @@ def cmd_judge(args) -> int:
     by = _by(args)
     root = root_of(args.register)
     at = _at()
+    if args.more and (args.baseline or args.carry or args.stop or args.resume):
+        raise RegisterRefused("register_args_invalid", "record")   # 並べられるのは足す判断だけ
     if args.baseline:
         if not args.outlet:
             raise RegisterRefused("register_args_invalid", "outlet")
@@ -111,9 +113,20 @@ def cmd_judge(args) -> int:
     else:
         if not args.record or not args.question:
             raise RegisterRefused("register_args_invalid", "record" if not args.record else "question")
-        body = R.judge(root, args.record, args.question, by=by, at=at, unit=args.unit, value=args.value,
-                       word=args.word, conclusion=args.conclusion, reason_kind=args.reason_kind,
-                       reason_text=args.reason_text, how=args.how, until=args.until, against=args.against)
+        bodies = R.judge_many(root, [args.record] + list(args.more or []), args.question, by=by, at=at,
+                              unit=args.unit, value=args.value, word=args.word, conclusion=args.conclusion,
+                              reason_kind=args.reason_kind, reason_text=args.reason_text, how=args.how,
+                              until=args.until, against=args.against)
+        if len(bodies) > 1:
+            # 5.23.0: 記録を並べた judge（同じ問い・同じ理由を 1 回で）
+            value = {"judgments": [{"judgment": b["id"], "record": b["target"]["record"]} for b in bodies],
+                     "question": args.question, "count": len(bodies)}
+            if args.json:
+                _print(value)
+                return 0
+            print(f"判断を {len(bodies)} 件足しました（{args.question}）: " + "・".join(b["target"]["record"] for b in bodies))
+            return 0
+        body = bodies[0]
     value = {"judgment": body["id"], "question": body["question"], "target": body["target"],
              "conclusion": (body.get("answer") or {}).get("conclusion"), "word": (body.get("answer") or {}).get("word")}
     if args.json:
@@ -137,6 +150,8 @@ def cmd_take(args) -> int:
         print(f"採りました: 共通の {t['record']}（{(t['from'] or '初めて')[:12]} → {t['to'][:12]}）")
     for ref in value["same"]:
         print(f"変わっていません: 共通の {ref}（もう今の版を採っています）")
+    for ref in value.get("unchecked") or []:
+        print(f"  検めた跡がありません: 共通の {ref}（共通の台帳の側に、今の版への「よい」の判断が無い。採るのは止めません）")
     if value["taken"]:
         print("受け入れる（thth register accept）までは、材料は前の版のままです")
     show_impact(value.get("impact"))
@@ -207,6 +222,15 @@ def check_found(value: dict) -> list:
 
 
 def cmd_export(args) -> int:
+    if args.check:
+        def run():
+            with R.reading():   # 比べるだけ（何も書かない）の export だけ、同じ物を読み直さない
+                return _cmd_export(args)
+        return _noted("export_check", args, run)
+    return _cmd_export(args)
+
+
+def _cmd_export(args) -> int:
     root = root_of(args.register)
     if R.is_all(args.outlet):
         return _export_all(args, root)
@@ -214,6 +238,7 @@ def cmd_export(args) -> int:
     found = check_found(value) if args.check else []
     if args.check:
         value["found"] = found
+        args._noted_value = value
     if args.json:
         _print({**value, **report_channel("register_material_stale")} if found else value)
         return 1 if found else 0
@@ -259,6 +284,7 @@ def _export_all(args, root: str) -> int:
             value["found"] = found
         return value, not found
     results, ok = _each(names, one)
+    args._noted_value = {"outlets": results}
     if args.json:
         _print({"outlet": R.ALL, "ok": ok, "outlets": results, **({} if ok else red_channel(results))})
         return 0 if ok else 1
@@ -428,6 +454,7 @@ def _verify_all(args, root: str, now: str) -> int:
                          common_root=args.common, publish=seal_file(args.publish, name))
         return value, value["ok"]
     results, ok = _each(names, one)
+    args._noted_value = {"outlets": results}
     if args.json:
         _print({"outlet": R.ALL, "ok": ok, "outlets": results,
                 **({} if ok else red_channel(results, "register_seal_unverified"))})
@@ -446,13 +473,37 @@ def _verify_all(args, root: str, now: str) -> int:
     return 0 if ok else 1
 
 
+def _noted(command: str, args, run) -> int:
+    """確かめの結果を記録に 1 行（`runs.py`・書けなくても rc を変えない・5.23.0）。"""
+    import time
+    from . import runs
+    started, value = time.monotonic(), {}
+    try:
+        rc = run()
+    except RegisterRefused as exc:
+        runs.note(command, args.register, args.outlet, {"code": exc.code, **exc.extra}, False,
+                  time.monotonic() - started)
+        raise
+    runs.note(command, args.register, args.outlet, getattr(args, "_noted_value", None) or value, rc == 0,
+              time.monotonic() - started)
+    return rc
+
+
 def cmd_verify(args) -> int:
+    def run():
+        with R.reading():
+            return _cmd_verify(args)
+    return _noted("verify", args, run)
+
+
+def _cmd_verify(args) -> int:
     root = root_of(args.register)
     now = args.now or _at()
     if R.is_all(args.outlet):
         return _verify_all(args, root, now)
     value = R.verify(root, args.outlet, args.material, now, previous_path=args.previous,
                      no_previous=args.no_previous, common_root=args.common, publish=args.publish)
+    args._noted_value = value
     if not args.json:
         if value["ok"]:
             print(f"確かめました: {args.outlet}・世代 {value.get('generation')}（公開鍵: {value.get('key')}）")
@@ -474,7 +525,37 @@ def cmd_verify(args) -> int:
     return 0
 
 
+def cmd_seeds(args) -> int:
+    """5.23.0: 原稿の頭の `seeds:` を台帳と突き合わせて数える（読むだけ・`seeds.py`）。"""
+    from . import seeds as SD
+    value = SD.count(root_of(args.register), os.path.abspath(os.path.expanduser(args.queue)))
+    if args.json:
+        _print(value)
+        return 0
+    print(f"原稿 {value['drafts']} 本のうち、番号を書いた原稿 {value['seeded']} 本"
+          f"（{'・'.join(f'{k} {n}' for k, n in value['by_kind'].items()) or '—'}）")
+    print(f"  台帳に無い番号 {value['missing_count']}" + "".join(f"\n    {m['draft']}: {m['seed']}" for m in value["missing"]))
+    for kind, item in value["never_seeded"].items():
+        print(f"  まだ種になっていない {kind} {item['count']}")
+    return 0
+
+
 def cmd_used(args) -> int:
+    if args.record.startswith(R.COMMON + ":"):
+        value = R.used_common(root_of(args.register), args.record, args.common)
+        if args.json:
+            _print(value)
+            return 0
+        print(f"{value['record']}（今の共通の版 {(value['version'] or '共通の台帳を --common で渡すと出ます')[:12]}）")
+        for row in value["outlets"]:
+            if "generation" not in row:
+                print(f"  {row['outlet']}: 封の形が崩れていて読めません")
+                continue
+            mark = "" if row["stale"] is None else ("・封のあと共通の版が進んだ" if row["stale"] else "・今の版と同じ")
+            print(f"  {row['outlet']}: 世代 {row['generation']}・封の版 {row['version'][:12]}{mark}")
+        print(f"  指すこの台帳の記録 {len(value['pointed_by'])}: " + "・".join(value["pointed_by"][:20]))
+        print(f"  そこから 1 段 {value['reached_count']}: " + "・".join(c["record"] for c in value["reached"][:20]))
+        return 0
     value = R.used(root_of(args.register), args.record)
     if args.json:
         _print(value)
@@ -544,9 +625,11 @@ def cmd_key(args) -> int:
 
 
 def register_parsers(verbs, run) -> None:
-    p = verbs.add_parser("judge", help="判断を足す（止める・基準・結び直すも）")
+    p = verbs.add_parser("judge", help="判断を足す（止める・基準・結び直すも・記録を並べると同じ判断を 1 回で）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("record", nargs="?", default=None, metavar="種類:番号")
+    p.add_argument("more", nargs="*", default=None, metavar="種類:番号",
+                   help="同じ問いと理由で判断する記録を続けて並べる（5.23.0・止める・結び直すには使えない）")
     p.add_argument("--question", default=None)
     p.add_argument("--unit", default=None, metavar="指し先")
     p.add_argument("--value", default=None, metavar="欄")
@@ -622,9 +705,16 @@ def register_parsers(verbs, run) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_verify))
 
-    p = verbs.add_parser("used", help="使った先: どの出し口の・どの世代の材料に・何として載ったか（読むだけ）")
+    p = verbs.add_parser("seeds", help="原稿の頭の seeds: を台帳と突き合わせて数える（読むだけ・lint にも承認にも入れない）")
+    p.add_argument("register", metavar="台帳")
+    p.add_argument("--queue", required=True, metavar="原稿の置き場")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=run(cmd_seeds))
+
+    p = verbs.add_parser("used", help="使った先: どの出し口の・どの世代の材料に・何として載ったか（読むだけ・common:<番号> も）")
     p.add_argument("register", metavar="台帳")
     p.add_argument("record", metavar="種類:番号")
+    p.add_argument("--common", default=None, metavar="共通の台帳", help="common:<番号> のとき、今の共通の版と比べる")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=run(cmd_used))
 

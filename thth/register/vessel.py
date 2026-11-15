@@ -113,8 +113,13 @@ def value_problem(value) -> str | None:
         if depth > DEPTH_MAX:
             return "too_deep"
         if isinstance(item, str):
-            if any("\ud800" <= c <= "\udfff" for c in item):
-                return "surrogate"
+            # 5.23.0: 字ごとの見回りをやめた（ASCII だけの字は飛ばし、ほかは UTF-8 にできるかで見る。surrogate だけが
+            # UTF-8 にできない。こぴちゃの判断 16,430 行で 0.30 → 0.08 秒・答えは同じ）
+            if not item.isascii():
+                try:
+                    item.encode("utf-8")
+                except UnicodeEncodeError:
+                    return "surrogate"
         elif isinstance(item, dict):
             stack.extend((k, depth + 1) for k in item.keys())
             stack.extend((v, depth + 1) for v in item.values())
@@ -1607,7 +1612,21 @@ def builtin_row_kind() -> Kind:
                 units=None, path="(備え付け)")
 
 
+# 1 つの読むだけの命令の中だけの覚え（`route.reading()` が開けて閉じる。ファイルには残さない・5.23.0）。
+READ_MEMO: dict | None = None
+
+
 def open_vessel(root: str, decl_base: str | None = None, *, allow_pending: bool = False) -> Vessel:
+    """台帳を器として読む（読むだけの命令の中では、同じ台帳を 2 度読まない）。"""
+    if READ_MEMO is None:
+        return _open_vessel(root, decl_base, allow_pending=allow_pending)
+    key = ("vessel", os.path.realpath(root), decl_base and os.path.realpath(decl_base), allow_pending)
+    if key not in READ_MEMO:
+        READ_MEMO[key] = _open_vessel(root, decl_base, allow_pending=allow_pending)
+    return READ_MEMO[key]
+
+
+def _open_vessel(root: str, decl_base: str | None = None, *, allow_pending: bool = False) -> Vessel:
     """台帳を器として読む。宣言が無い台帳は、備え付けの種類（今の頭つきの .md）だけで読む。
 
     途中で止まった入れ替えの段取りが残っている台帳は、既定で断る（`register_batch_pending`。半分の姿を読まない。
