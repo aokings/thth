@@ -14,7 +14,8 @@ subcode 4279009）が、毎回未回答に数えられて返し忘れに見え�
 
 印は `state/<口座>/reply_marks/marks.json`（0600・0700 の置き場・原子的な書き込み）。返信の本文・
 相手の名前は持たない（返信の id・印・誰が・いつ・理由の 1 行だけ）。`thth unanswered` と、それを読む
-observe・board・summary・申し送りは、印の付いた返信を未回答に数えず、`marked` に別に数える。
+observe・board・summary・申し送りは、印の付いた返信を未回答に数えない。印の数（`n_marked`・`marked`）を
+別に出すのは `thth unanswered` だけ。
 印は `thth reply-mark <口座> <reply_id> --undo` で外せる（記録の意味を変えない・何度でも付け直せる）。
 """
 from __future__ import annotations
@@ -157,15 +158,20 @@ def note_publish_refusal(account, cfg, reply_to, detail, *, error=None, log=None
 # --------------------------------------------------------------------------
 
 def _known_reply(account, reply_id) -> bool | None:
-    """返信の台帳にその返信があるか（読めなければ None）。"""
+    """この口座の投稿への返信の台帳にその返信があるか（読めなければ None）。
+
+    返信の置き場は同じ repo のほかの口座と共有なので、この口座の投稿の返信だけを読む
+    （`owned_only`・検収 5.23.0 軽3: 前は口座 two の返信に口座 one で印が付いた）。"""
     from . import replies
     from .adapters import base
     try:
         cfg = accounts.load_account(account)
-        data = replies.load(account)
+        data = replies.load(account, owned_only=True)
     except (accounts.AccountError, OSError, ValueError, TypeError, AttributeError):
         return None
     for row in data.get("replies") or []:
+        if row.get("account") not in (None, account):
+            continue
         message = base.normalize_message(row, medium=cfg["media"])
         if message.get("message_id") == reply_id:
             return True

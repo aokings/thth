@@ -152,3 +152,16 @@ def test_札のファイルを開けないときは道の読み方と標準入�
     assert ' - ' in text and 'VM' in text
     entry = refusal_catalog.CATALOG['batch_file_unreadable']
     assert entry['better'] and 'remote' in entry['doors']
+
+
+def test_reply_markは同じrepoのほかの口座の返信をこの口座の物と数えない(threads_one, isolated_account_factory, capsys):
+    """検収 軽3: 返信の置き場は同じ repo の口座で共有。two の根への返信に one で印を付けさせない。"""
+    from thth import cli
+    isolated_account_factory('two', handle='other', media='threads')
+    _own('two', 'ROOT2')
+    _save_replies('two', 'ROOT2', [('T1', 'outside', {})])
+    rc = cli.main(['reply-mark', 'one', 'T1', '--no-reply-needed', '--by', 'テスト', '--json'])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2 and out['error'] == 'reply_not_in_ledger'
+    assert reply_marks.load('one') == ({}, True)
+    assert cli.main(['reply-mark', 'one', 'R2', '--no-reply-needed', '--by', 'テスト']) == 0
