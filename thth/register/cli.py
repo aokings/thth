@@ -77,15 +77,13 @@ from .. import admin_log, draft_origin, jst, redact, refusal, refusals
 from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod, fence, form, kinds, ledger
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
 from . import adopt_cli, erase_cli, health_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
+from . import errors as errors_mod
 from .errors import RegisterRefused
 
 # 詳細の語のうち、目録の `by_detail` に通し方があるもの。
 DETAIL_WORDS = frozenset(("register_name", "project", "by", "row", "confirm", "row_or_trigger", "question",
                           "answer_text", "private_needed", "inside_thth_state", "contains_thth_state",
                           "other_name", "undeclared", "declaration"))
-# 断りの報告の 1 行を作る口（`thth/cli.py` が `report_inbox.refusal_line` を渡す。台帳の機械は報告の箱を import しない
-# — import の柵 `tests/test_register_base.py` の許した表の外なので）。
-REPORT_LINE = None
 # 控えの名前が要る命令（`<台帳>` にフォルダの道を渡したら、台帳の中の名乗りから控えの名前を引く）。ほかの命令は
 # 今までどおりフォルダの道をそのまま読む（控えが無くてよい）。`add`・`remove` は名前だけ。
 NAMED_VERBS = frozenset(("check", "show", "kinds", "links", "use", "confirm", "deny", "triggers", "draft", "holes",
@@ -99,9 +97,10 @@ def _refuse(args, exc: RegisterRefused) -> int:
     if exc.detail:
         line += f"（{exc.detail}）"
     payload = {"ok": False, "code": exc.code, "detail": exc.detail, **exc.extra}
-    if getattr(args, "json", False) and REPORT_LINE is not None:
+    if getattr(args, "json", False):
         # `--json` の断りは報告の 1 行を stderr に足さず、この欄に入れる（`2>&1` でまとめても 1 つの JSON・5.23.0）。
-        payload.setdefault("report_channel", REPORT_LINE(None, exc.code))
+        for key, value in errors_mod.report_channel(exc.code).items():
+            payload.setdefault(key, value)
     return refusal.emit(args, exc.code, line=redact.redact(line), payload=payload, **reason)
 
 
@@ -130,14 +129,15 @@ def _run(handler):
     return call
 
 
-def _add_here(verbs) -> None:
-    """`<台帳>` を受ける命令に `--path <フォルダ>` を足す（`add` は控える道の `--path` を持つので足さない）。"""
+def _add_here(verbs, top: bool = True) -> None:
+    """`<台帳>` を受ける命令に `--path <フォルダ>` を足す（上の段の `add` は控える道の `--path` を持つので足さない。
+    2 段の命令の `row add` には足す）。"""
     import argparse
     for verb, parser in verbs.choices.items():
-        if verb == "add" or any(a.dest == "here" for a in parser._actions):
+        if (top and verb == "add") or any(a.dest == "here" for a in parser._actions):
             continue
         for inner in (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)):
-            _add_here(inner)   # `row set|add` のような 2 段の命令
+            _add_here(inner, top=False)   # `row set|add` のような 2 段の命令
         if any(a.dest == "register" and not a.option_strings for a in parser._actions):
             parser.add_argument("--path", dest="here", default=None, metavar="フォルダ",
                                 help="控えと別の checkout の台帳のフォルダ（台帳の中の名乗りが同じときだけ・この 1 回だけ）")

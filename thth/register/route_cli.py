@@ -50,7 +50,7 @@ import os
 from .. import admin_log, jst
 from . import route as R, seal as S
 from .adopt_cli import root_of
-from .errors import RegisterRefused
+from .errors import RegisterRefused, report_channel
 
 
 def _print(value) -> None:
@@ -212,7 +212,7 @@ def cmd_export(args) -> int:
     if args.check:
         value["found"] = found
     if args.json:
-        _print(value)
+        _print({**value, **report_channel("register_material_stale")} if found else value)
         return 1 if found else 0
     _export_lines(value, args.check)
     if found:
@@ -237,6 +237,13 @@ def _all_head(args, names, ok) -> None:
     print(f"出し口の全部（{'・'.join(names)}）: " + ("緑" if ok else "赤があります（終わりの番号は 1）"))
 
 
+def red_channel(results: dict, default: str = "register_material_stale") -> dict:
+    """`--all` の赤（rc 1）の JSON に足す報告の 1 行（5.23.0）。符丁は最初の断りの物か、既定の符丁。"""
+    code = next((v["code"] for v in results.values() if v.get("ok") is False and isinstance(v.get("code"), str)),
+                default)
+    return report_channel(code)
+
+
 def _export_all(args, root: str) -> int:
     """段 11 の C: `export --outlet all --to <根>`。出し口ごとに `<根>/<dest>` へ。1 つでも赤なら全体が赤（rc 1）。"""
     names = R.all_outlets(root)
@@ -250,7 +257,7 @@ def _export_all(args, root: str) -> int:
         return value, not found
     results, ok = _each(names, one)
     if args.json:
-        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results, **({} if ok else red_channel(results))})
         return 0 if ok else 1
     _all_head(args, names, ok)
     for name, value in results.items():
@@ -307,7 +314,7 @@ def _accept_all(args, root: str) -> int:
                                                       confirm=plans[name]["digest"], at=at,
                                                       common_root=args.common), True))
     if args.json:
-        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results, **({} if ok else red_channel(results))})
         return 0 if ok else 1
     _all_head(args, names, ok)
     for name, value in results.items():
@@ -407,7 +414,8 @@ def _verify_all(args, root: str, now: str) -> int:
         return value, value["ok"]
     results, ok = _each(names, one)
     if args.json:
-        _print({"outlet": R.ALL, "ok": ok, "outlets": results})
+        _print({"outlet": R.ALL, "ok": ok, "outlets": results,
+                **({} if ok else red_channel(results, "register_seal_unverified"))})
         return 0 if ok else 1
     _all_head(args, names, ok)
     for name, value in results.items():

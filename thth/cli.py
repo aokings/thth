@@ -5478,7 +5478,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth register`: 台帳の機械（計画 実店舗 段 1〜4・`thth/register/`）。網に出ない。
     from .register import cli as register_cli
     from . import report_inbox as _report_inbox
-    register_cli.REPORT_LINE = _report_inbox.refusal_line   # `--json` の断りの report_channel の欄（5.23.0）
+    from .register import errors as _register_errors
+    _register_errors.REPORT_LINE = _report_inbox.refusal_line   # `--json` の report_channel の欄（5.23.0）
     register_cli.register(sub)
     # `thth project leave <メディア>`・`thth owner leave`（台帳の器 段 8・外す範囲の 2 つめと 3 つめ。段を進めるのは
     # `thth/leave.py`・台帳の側は `thth/register/owner.py`）。

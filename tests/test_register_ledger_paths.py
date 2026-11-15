@@ -186,3 +186,38 @@ def test_2と1をまとめた実の出力もjsonとして読める(env, capsys):
                           cwd=str(pathlib.Path(__file__).resolve().parents[1]))
     assert proc.returncode == 1, proc.stdout
     assert json.loads(proc.stdout)["stage"] == 1
+
+
+# ------------------------------------------------------------------ 5.23.0 の検収 軽 2・軽 3
+
+def test_2段の命令のrow_addにもpathが付く():
+    from thth import cli
+    args = cli.build_parser().parse_args(["register", "row", "add", "nigami", "claim", "--set", "id=x", "--by", "m",
+                                          "--path", "/tmp/x"])
+    assert args.here == "/tmp/x"
+    args = cli.build_parser().parse_args(["register", "row", "set", "nigami", "claim:x", "--set", "a=b", "--by", "m",
+                                          "--path", "/tmp/x"])
+    assert args.here == "/tmp/x"
+
+
+def test_jsonのrc1の赤にもreport_channelの欄がある(env, capsys):
+    from tests.test_register_stage11 import shared_outlets
+    led = media(env, "main", decl=shared_outlets())
+    R.baseline(str(led), "site", by="masaru", at=BASE_AT)
+    repo = env / "repo"
+    rc, v, err = jrun(capsys, "register", "accept", led, "--outlet", "all", "--to", repo, "--as-of", AT,
+                      "--by", "masaru")
+    rc, w, err = jrun(capsys, "register", "accept", led, "--outlet", "all", "--to", repo, "--as-of", AT,
+                      "--by", "masaru", "--confirm", v["digest"])
+    assert rc == 0, err
+    (repo / "data/evidence.csv").write_text("id,claim_id,source_id,locator,finding\n", encoding="utf-8")
+    for argv in (("verify", led, "--outlet", "all", "--material", repo, "--now", NOW, "--no-previous"),
+                 ("export", led, "--outlet", "all", "--to", repo, "--as-of", AT, "--check"),
+                 ("export", led, "--outlet", "tools", "--to", repo, "--as-of", AT, "--check")):
+        rc, o, e = run(capsys, "register", *argv, "--json")
+        value = one_json(o, e)
+        assert rc == 1 and e == "", (argv, e)
+        assert value["report_channel"].startswith("report_channel: thth report file "), argv
+        # --json でなければ今までどおり最後の行
+        rc, o, e = run(capsys, "register", *argv)
+        assert rc == 1 and e.strip().splitlines()[-1].startswith("report_channel: thth report file "), argv

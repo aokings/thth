@@ -76,3 +76,37 @@ def test_内の出し口がcommonを持つのは今までどおり断る(env, ca
                 kinds={k: KINDS[k] for k in ("claim", "evidence")}, files=FILES)
     said = _refused_overlap(capsys, led, common, env)
     assert "dest_shared_with:site:overlap" in said
+
+
+# ------------------------------------------------------------------ 5.23.0 の検収 危 1: 綴りの違う同じフォルダ
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("place", ["Common/evidence.csv", "COMMON/evidence.csv", "./common/evidence.csv",
+                                   "common//evidence.csv"])
+def test_大文字小文字や綴りの違うcommonの置き場も重なりとして断る(env, capsys, place):
+    """macOS の既定の置き場は大文字小文字を区別しないので `Common/` と `common/` は同じフォルダ。"""
+    common = common_ledger(env)
+    kinds = {k: dict(KINDS[k]) for k in ("claim", "evidence")}
+    kinds["evidence"]["place"] = place
+    files = {"data/claims.csv": FILES["data/claims.csv"], "common/evidence.csv": FILES["data/evidence.csv"]}
+    led = media(env, "nig", decl=shared_common_outlets(), kinds=kinds, files=files)
+    said = _refused_overlap(capsys, led, common, env)
+    assert "dest_shared_with:site:overlap" in said
+    assert not (env / "repo").exists()
+
+
+def test_段10からの型の重なりも大文字で抜けない(env, capsys):
+    kinds = {k: dict(KINDS[k]) for k in ("claim", "evidence")}
+    kinds["claim"]["place"] = "data/*.csv"
+    kinds["evidence"]["place"] = "Data/inner/evidence.csv"
+    decl = {"schema": "thth.outlets/1", "outlets": {
+        "site": {"audience": "reader", "kinds": ["claim"], "fact": [{"question": "may_publish@site"}], "dest": "."},
+        "tools": {"audience": "internal", "kinds": ["evidence"], "dest": ".", "dest_shared_with": ["site"]}}}
+    files = {"data/claims.csv": "id,text\nclm-bitter,x\n",
+             "Data/inner/evidence.csv": "id,claim_id,source_id,locator,finding\nev-1,clm-bitter,s,p,f\n"}
+    led = media(env, "nig2", decl=decl, kinds=kinds, files=files)
+    rc, v, err = jrun(capsys, "register", "accept", led, "--outlet", "all", "--to", env / "repo2", "--as-of", AT,
+                      "--by", "masaru")
+    assert rc == 2 and "dest_shared_with:site:overlap" in json.dumps(v, ensure_ascii=False) + err, (rc, v, err)

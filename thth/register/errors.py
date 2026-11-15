@@ -43,6 +43,16 @@ REASONS = frozenset((
     # 5.23.0: 控えと別の checkout（台帳の中の名乗りで同じ台帳か確かめる）。
     "register_path_other",
 ))
+# 断りの報告の 1 行を作る口（`thth/cli.py` が `report_inbox.refusal_line` を渡す。台帳の機械は報告の箱を import しない
+# — import の柵 `tests/test_register_base.py` の許した表の外なので）。`--json` の断りと赤の結果の `report_channel` の欄に使う。
+REPORT_LINE = None
+
+
+def report_channel(code) -> dict:
+    """`--json` の結果に足す `{"report_channel": 1 行}`（口が渡されていなければ空）。"""
+    return {"report_channel": REPORT_LINE(None, code)} if REPORT_LINE is not None else {}
+
+
 _DETAIL = re.compile(r"[A-Za-z0-9_./:= -]{1,80}\Z")
 
 

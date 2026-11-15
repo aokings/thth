@@ -404,6 +404,10 @@ def _patterns_overlap(xs, ys) -> bool:
     `/` も越える）・**型の字のある側の、型より前の固定のフォルダの下に、もう片方が置かれうる**（読者の出し口が型で
     まとめて取るフォルダの中に、内の材料を置かせない。build はそのフォルダを丸ごと読むことが多い。段 10 の検収の穴 3）。"""
     import fnmatch
+    # 5.23.0（検収 危 1）: 置き場が大文字小文字と Unicode の正規化を区別しないとき（macOS の既定）、`Common/` と
+    # `common/`・`Data/` と `data/` は同じフォルダ。比べる前に両方の型を `dest_key` と同じ形（NFC・小文字・`./`・`//`・
+    # `..` を解いた道）にそろえる。
+    xs, ys = [_fold_pattern(p) for p in xs], [_fold_pattern(p) for p in ys]
     for x in xs:
         for y in ys:
             if x == y or fnmatch.fnmatchcase(x, y) or fnmatch.fnmatchcase(y, x):
@@ -413,6 +417,12 @@ def _patterns_overlap(xs, ys) -> bool:
                 if deep is not None and _under(_fixed_dir(b), deep):
                     return True
     return False
+
+
+def _fold_pattern(pattern: str) -> str:
+    """重なりを比べる置き場の型の形（NFC・小文字・`.`・空の段・`..` を解く。`dest_key` と同じ扱い）。"""
+    import posixpath
+    return "/".join(K.fold_name(p) for p in posixpath.normpath(pattern).split("/") if p not in ("", "."))
 
 
 def _glob_dir(pattern: str):
