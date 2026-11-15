@@ -1923,13 +1923,20 @@ def _file_sha(path: str) -> str:
         return sha(f.read())
 
 
-def write_files(to: str, files: dict) -> None:
-    for rel, data in files.items():
+def check_writable(to: str, files) -> None:
+    """書く段の断り（道の形・symlink）を、書く前に見る。`accept_prepare` と `write_files` が同じ物を使う
+    （5.23.0 積み増しの検収 軽 1: `--outlet all` で書く段の断りが出ると、前の出し口の封だけが進んだ）。"""
+    for rel in files:
         if rel.startswith("/") or ".." in rel.split("/") or K.reserved_path(rel):
             raise RegisterRefused("register_write_unsafe", "path")
-        path = os.path.join(to, *rel.split("/"))
-        if os.path.islink(path):
+        if os.path.islink(os.path.join(to, *rel.split("/"))):
             raise RegisterRefused("register_write_unsafe", "symlink")
+
+
+def write_files(to: str, files: dict) -> None:
+    check_writable(to, files)
+    for rel, data in files.items():
+        path = os.path.join(to, *rel.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "wb") as f:
@@ -2205,7 +2212,8 @@ def accept(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, com
 
 def accept_prepare(root: str, outlet_name: str, to, as_of, *, confirm: str, at: str, common_root=None) -> tuple:
     """受け入れの 2 段めの、書く前の確かめと署名まで（何も書かない）。`--outlet all` は全部の出し口でこれを先に
-    済ませ、1 つでも断れば何も封をしない（5.22.0 の監査 軽: 途中で断られても前の出し口の封が進んだままだった）。"""
+    済ませ、1 つでも断れば何も封をしない（5.22.0 の監査 軽: 途中で断られても前の出し口の封が進んだままだった）。
+    書く段の断り（道の形・symlink）もここで先に見る（5.23.0 積み増しの検収 軽 1）。"""
     plan = accept_plan(root, outlet_name, to, as_of, common_root=common_root)
     if confirm != plan["digest"]:
         raise RegisterRefused("register_confirm_mismatch", "confirm", digest=plan["digest"])
@@ -2213,6 +2221,7 @@ def accept_prepare(root: str, outlet_name: str, to, as_of, *, confirm: str, at: 
         raise RegisterRefused("register_material_stale", "other_outlet", stale=plan["mixed"][:50])
     if plan["stale"]:
         raise RegisterRefused("register_material_stale", f"{len(plan['stale'])} files", stale=plan["stale"][:50])
+    check_writable(plan["to"], plan["result"]["files"])
     body = dict(plan["body"], at=at, public_key=S.fingerprint(S.local_public_pem()))
     salt = ensure_salt(root)
     signature = S.sign(seal_message(body, salt), register_root=root)

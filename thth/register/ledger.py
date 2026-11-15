@@ -299,31 +299,45 @@ def read_confirmed(name: str) -> dict:
     rows = value.get("rows") if isinstance(value, dict) and value.get("schema") == CONFIRMED_SCHEMA else None
     if not isinstance(rows, dict) or not all(
             isinstance(v, dict) and isinstance(v.get("digest"), str)
-            and (("earlier" not in v) or (isinstance(v["earlier"], list) and all(isinstance(d, str) for d in v["earlier"])))
+            and (("paths" not in v) or (isinstance(v["paths"], dict)
+                                        and all(isinstance(k, str) and isinstance(d, str) for k, d in v["paths"].items())))
             for v in rows.values()):
         raise RegisterRefused("register_ledger_invalid", "confirmed")
     return rows
 
 
-EARLIER_MAX = 8   # 1 行が持つ前に認めた中身の指紋の数（checkout ごとに中身が違っても行き来しない・5.23.0）
+PATHS_MAX = 8   # 1 行が覚える checkout のフォルダの数（checkout ごとに中身が違っても行き来しない・5.23.0）
 
 
 def confirmed_digests(record) -> set:
-    """認めた記録の 1 行が認めた中身の指紋（今の `digest` と、前に認めた `earlier`）。"""
+    """認めた記録の 1 行が認めた中身の指紋（今の `digest` と、checkout のフォルダごとに最後に認めた `paths`）。"""
     if not isinstance(record, dict) or not isinstance(record.get("digest"), str):
         return set()
-    earlier = record.get("earlier")
-    return {record["digest"], *(d for d in (earlier if isinstance(earlier, list) else []) if isinstance(d, str))}
+    paths = record.get("paths")
+    return {record["digest"], *(d for d in (paths.values() if isinstance(paths, dict) else []) if isinstance(d, str))}
 
 
-def confirmed_entry(previous, digest: str, *, at: str, by: str) -> dict:
-    """認めた記録の新しい 1 行。前に認めた別の中身の指紋は `earlier` に残す（5.23.0・5.23.0 の監査 軽 1: 中身の違う
-    checkout で認めると、もう片方の同じ行が「認めていない」に行き来した）。認めるのは中身ごとなので、柵は弱めない。"""
-    kept = [d for d in sorted(confirmed_digests(previous)) if d != digest]
-    entry = {"digest": digest, "at": at, "by": by}
-    if kept:
-        entry["earlier"] = kept[-EARLIER_MAX:]
-    return entry
+def confirmed_entry(previous, digest: str, *, at: str, by: str, path: str, home=None) -> dict:
+    """認めた記録の新しい 1 行。指紋は checkout のフォルダごとに 1 つだけ持つ（5.23.0）。
+
+    - 別のフォルダで認めた指紋は残す（5.23.0 の監査 軽 1: 中身の違う checkout で認めると、もう片方の同じ行が
+      「認めていない」に行き来した）。
+    - 同じフォルダで認め直したら、そのフォルダの前の指紋は捨てる（5.23.0 積み増しの検収 危 1: 訂正の前の中身に
+      戻した行が「認めた」と読まれた）。訂正は前の中身の取り消しなので、戻った中身は認め直すまで使えない。
+    - `paths` の無い前の行（5.22.0 まで）は、控えのフォルダ（`home`）で認めた物と読む。
+    """
+    key = os.path.realpath(path)
+    paths = {}
+    if isinstance(previous, dict) and isinstance(previous.get("digest"), str):
+        old = previous.get("paths")
+        if isinstance(old, dict):
+            paths = {k: d for k, d in old.items() if isinstance(k, str) and isinstance(d, str)}
+        elif home:
+            paths = {os.path.realpath(home): previous["digest"]}
+    paths.pop(key, None)
+    paths[key] = digest
+    kept = list(paths.items())[-PATHS_MAX:]
+    return {"digest": digest, "at": at, "by": by, "paths": dict(kept)}
 
 
 def write_confirmed(name: str, rows: dict) -> None:

@@ -78,7 +78,8 @@ def confirm(name: str, root: str, row: form.Row, *, by: str) -> dict:
     text = with_head(row.text, {"confirmed": form.YES, "confirmed_at": today})
     write_row(root, row, text)
     records = ledger.read_confirmed(name)
-    records[row.id] = ledger.confirmed_entry(records.get(row.id), form.fingerprint(text), at=jst.iso(), by=by)
+    records[row.id] = ledger.confirmed_entry(records.get(row.id), form.fingerprint(text), at=jst.iso(), by=by,
+                                           path=root, home=ledger.raw_path(name))
     ledger.write_confirmed(name, records)
     return {"row": row.id, "confirmed": form.YES, "confirmed_at": today, "digest": records[row.id]["digest"]}
 

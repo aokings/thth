@@ -68,7 +68,9 @@ def _with_record(path: str, front_matter: dict):
     record, broken = recorded(path)
     if record is None:
         if front_matter.get("from_register") is not None:
-            return front_matter, None  # 控えの無い機械か、控えを書く前の下書き（今までどおり頭で読み直す）
+            # 控えの無い機械か、控えを書く前の下書き（今までどおり頭で読み直す）。道は控えからしか読まないので、
+            # 頭に書いた道の鍵は捨てる（5.23.0 積み増しの検収 軽 2）
+            return {k: v for k, v in front_matter.items() if k != _HERE_KEY}, None
         if broken and looks_like_draft(path):
             return None, _line(path, "register_ledger_invalid", "drafts")
         if looks_like_draft(path):
