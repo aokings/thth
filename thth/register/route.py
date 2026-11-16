@@ -2450,7 +2450,8 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     gone = deleted_since(vessel, body)
     verdict = _verdict(problems, warnings, key=origin, generation=body["generation"],
                        pending_takes=result["pending_takes"],
-                       impact=impact(vessel, mine | gone, theirs, before=_material_vessel(material, root) if gone else None))
+                       impact=impact(vessel, mine | gone, theirs, before=_material_vessel(material, root) if gone else None,
+                                     root=root))
     if publish is not None and verdict["ok"]:
         write_published(publish, seal, raw, as_of, narrowed, salt)
         verdict["published"] = os.path.abspath(publish)
@@ -2461,11 +2462,22 @@ IMPACT_SHOWN = 200   # 影響の候補を出す数（数は全部）
 
 
 def impact(vessel: V.Vessel, changed, common_changed=(), *, graph: dict | None = None,
-           before: "V.Vessel | None" = None) -> dict:
+           before: "V.Vessel | None" = None, root: str | None = None) -> dict:
     """段 11 の F: 版が変わった記録（`changed`）と、指す欄でつながった記録（指す側・指される側、1 段）を「影響の候補」に
     する。共通の記録の版が進んだとき（`common_changed`: 共通の `<種類>:<番号>`）は、それを `common:<番号>` で指す
     この台帳の記録と、その記録から 1 段の記録を候補にする（考察 §4.2）。**判断を無効にしない**（赤にしない）。
-    名指しするだけで、判断し直すかは係が決める。`{"changed": [...], "count": 数, "candidates": [...]}`。"""
+    名指しするだけで、判断し直すかは係が決める。`{"changed": [...], "count": 数, "candidates": [...]}`。
+
+    段 12 の 2・3: `root` を渡すと、直した記録と候補を `seeds` で指す出した投稿（`posts`）と、事実の指摘の印から引いた
+    確かめ直しの候補（`recheck`）を足す（`posts.py`・読むだけ・`count` と `candidates` は変えない）。"""
+    found = _impact(vessel, changed, common_changed, graph=graph, before=before)
+    if root is not None:
+        from . import posts as P
+        P.attach(found, root, vessel)
+    return found
+
+
+def _impact(vessel, changed, common_changed=(), *, graph=None, before=None) -> dict:
     changed = set(changed or ())
     common_changed = set(common_changed or ())
     if not changed and not common_changed:

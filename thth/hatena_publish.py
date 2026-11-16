@@ -225,7 +225,7 @@ def _record_sent(state_dir, m, op, entry_id, seq, *, url, at, approved_sha, deli
     sent_mod.write(state_dir, post_id=post_id, text=text,
                    body_hash=approval_mod.compute_body_hash(text), sent_at=at,
                    approved_fingerprint=approved_sha, kind=hatena_entry_kind(op),
-                   blog_id=m["blog_id"], delivery=delivery, url=url)
+                   blog_id=m["blog_id"], delivery=delivery, url=url, seeds=m.get("seeds"))
     return post_id
 
 

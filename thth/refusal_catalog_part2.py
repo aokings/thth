@@ -1629,7 +1629,7 @@ ENTRIES = {
     "reply_mark_kind_required": {
         "kind": "refusal",
         "why": "どの印を付けるかが決まっていません。",
-        "fix": "印の種類を 1 つ付けてください: --answered-by <自分の post_id>（枝の中で答えた）・--no-reply-needed（返さない）・--unreplyable（もう返せない）",
+        "fix": "印の種類を 1 つ付けてください: --answered-by <自分の post_id>（枝の中で答えた）・--no-reply-needed（返さない）・--unreplyable（もう返せない）。読者が事実を指摘した返信なら --fact-challenge（未回答から外さず、台帳の確かめ直しの候補にする）",
         "command": "thth reply-mark <口座> <id> --no-reply-needed --by <名前>",
         "better": "枝の中で答えたときは --answered-by に答えた投稿を書くと、あとで読む人がどこで答えたかを辿れます",
         "doors": ("cli",),

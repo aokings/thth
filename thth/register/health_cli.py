@@ -58,6 +58,9 @@ def _say(value: dict) -> None:
             print(line)
             for ex in item["examples"][:3]:
                 print("      " + ", ".join(f"{k}={v}" for k, v in ex.items() if v is not None)[:160])
+            if name == "impact_candidates":
+                from .route_cli import show_posts
+                show_posts(item.get("posts"), item.get("recheck"), indent="      ")
 
 
 def _across_say(value: dict) -> None:

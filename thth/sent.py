@@ -50,7 +50,8 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           article: str | None = None, tags: list | None = None, result: str | None = None,
           remote: dict | None = None, announces: str | None = None,
           article_url: str | None = None, retry_not_found: bool = False,
-          crossed_quiet_hours: bool = False, share_to_instagram: bool = False) -> str:
+          crossed_quiet_hours: bool = False, share_to_instagram: bool = False,
+          seeds=None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -105,6 +106,11 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
             "approved_fingerprint": approved_fingerprint, "reply_to": reply_to}
     data.update(hatena)
+    seed_refs = seeds_field(seeds)
+    if seed_refs:
+        # 段 12 の 1: 原稿の頭の `seeds:`（台帳の記録の番号）を控える。無ければ欄を足さない（1 バイトも変えない）。
+        # 承認の指紋には入らない（`tests/test_seeds_reserved.py`）。読めない番号は落とすだけで断らない（出た後なので）。
+        data["seeds"] = seed_refs
     if attempts is not None:
         data["attempts"] = attempts
     # 告知（設計 4.0 S4 §9.4 の 3）: どの記事を告げたか。無ければ 1 バイトも変えない。
@@ -175,6 +181,27 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
         f.write("\n")
     os.replace(tmp, p)
     return p
+
+
+# 段 12 の 1: 控える台帳の記録の番号（`種類:番号`・共通は `common:種類:番号`）。
+SEEDS_MAX = 50
+_SEED_RE = _re.compile(r"[a-z][a-z0-9_]{0,31}:[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")
+
+
+def seeds_field(value) -> list:
+    """原稿の `seeds:` の値（空白区切りの文字列か list）を、控える番号の並びにする（読めない番号は落とす・重ねない）。
+
+    **断らない**: 公開が済んだあとに書く記録なので、番号の形が崩れていても例外にしない（崩れた番号を控えないだけ）。"""
+    if value is None:
+        return []
+    items = value.split() if isinstance(value, str) else value if isinstance(value, list) else []
+    out = []
+    for item in items:
+        if isinstance(item, str) and _SEED_RE.fullmatch(item) and item not in out:
+            out.append(item)
+        if len(out) >= SEEDS_MAX:
+            break
+    return out
 
 
 ORIGIN_VIAS = ("mcp", "cli", "http", "api")

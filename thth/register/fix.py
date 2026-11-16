@@ -166,7 +166,7 @@ def fix(root: str, ref: str, values: dict, *, outlet: str, to, as_of, by: str, a
         can_seal = can_seal and not why
         stage[name] = {"plan": plan, "why": why}
     after = V.open_vessel(root)
-    found = R.impact(after, {ref}, ())
+    found = R.impact(after, {ref}, (), root=root)
     value = {"record": ref, "path": written.get("path"), "named": named, "judgments": added, "impact": found,
              "prior_unjudged": prior, "outlets": {}}
     if can_seal:

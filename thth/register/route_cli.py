@@ -159,13 +159,34 @@ def cmd_take(args) -> int:
 
 
 def show_impact(found) -> None:
-    """段 11 の F: 影響の候補（判断は無効にしていない。判断し直すかは係が決める）。"""
-    if not found or not found.get("count"):
+    """段 11 の F: 影響の候補（判断は無効にしていない。判断し直すかは係が決める）。段 12: 出した投稿と確かめ直しの候補。"""
+    if not found:
         return
-    print(f"  影響の候補 {found['count']} 件（版の変わった記録 {len(found['changed'])} 件と指す欄でつながった記録。"
-          "判断は無効にしていません）:")
-    for c in found["candidates"][:20]:
-        print(f"    {c['record']}（{c['via']} の {c.get('field') or '?'}・{c['why']}）")
+    if found.get("count"):
+        print(f"  影響の候補 {found['count']} 件（版の変わった記録 {len(found['changed'])} 件と指す欄でつながった記録。"
+              "判断は無効にしていません）:")
+        for c in found["candidates"][:20]:
+            print(f"    {c['record']}（{c['via']} の {c.get('field') or '?'}・{c['why']}）")
+    show_posts(found.get("posts"), found.get("recheck"))
+
+
+def show_posts(posts, recheck, indent: str = "  ") -> None:
+    """段 12 の 2・3（読むだけ）: 直した記録を seeds で指す出した投稿と、事実の指摘から引いた確かめ直しの候補。"""
+    if posts and posts.get("count"):
+        print(f"{indent}この記録を指す出した投稿 {posts['count']} 件（消す・直す・訂正を出すかは窓口が決めます）:")
+        for p in posts["items"][:20]:
+            print(f"{indent}  {p['account']}（{p.get('media') or '?'}）{p['post_id']}・{p.get('sent_at') or '?'}"
+                  f"・{' '.join(p['seeds'])}")
+    if recheck and recheck.get("count"):
+        print(f"{indent}確かめ直しの候補 {recheck['count']} 件（読者が事実を指摘した返信の付いた投稿が指す記録）:")
+        for r in recheck["items"][:20]:
+            print(f"{indent}  {r['record']} ← {r['account']} {r['post_id']} の返信 {r['reply_id']}"
+                  f"（印 {r.get('marked_at') or '?'}・{r.get('marked_by') or '?'}）")
+    # 投稿と確かめ直しは同じ読みから作るので、言えない物は recheck の側（印の置き場の分も足してある）を 1 回だけ出す。
+    for c in (recheck or posts or {}).get("cannot_say") or []:
+        if c.get("why") in ("register_not_registered", "common_register"):
+            continue      # 控えの無い台帳（試しの写しなど）・共通の台帳は口座を持たない
+        print(f"{indent}言えない: {c.get('account') or '口座'}（{c['why']}）")
 
 
 def _show_changes(value: dict) -> None:

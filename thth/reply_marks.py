@@ -12,6 +12,14 @@ subcode 4279009）が、毎回未回答に数えられて返し忘れに見え�
 - `unreplyable`: もう返せない（媒体が返信先を断った）。Threads の code 24・subcode 4279009 で
   返信が断られたときは、THTH が自分で付ける（`note_publish_refusal`）。
 
+ほかに、未回答の数え方とは別の印を 1 つ持つ（段 12 の 3）:
+
+- `fact_challenge`（`--fact-challenge`）: 読者が事実を指摘した返信。印の付いた返信が付いた自分の投稿が
+  配信の台帳（`sent/`）に控えた `seeds`（台帳の記録の番号）を、`thth register health`・`verify`・`fix` が
+  「確かめ直しの候補」として名指しする（`thth/register/posts.py`）。器は返信の本文を読まない（印は窓口が付ける）。
+  **未回答から外さない**: ほかの 3 つは「返さなくてよい」印だが、事実の指摘は答えるべき返信なので、数え方を今と変えない。
+  置き場は同じ `marks.json` の `facts`（`marks` とは別の欄・同じ返信に両方の印を持てる）。
+
 印は `state/<口座>/reply_marks/marks.json`（0600・0700 の置き場・原子的な書き込み）。返信の本文・
 相手の名前は持たない（返信の id・印・誰が・いつ・理由の 1 行だけ）。`thth unanswered` と、それを読む
 observe・board・summary・申し送りは、印の付いた返信を未回答に数えない。印の数（`n_marked`・`marked`）を
@@ -32,6 +40,8 @@ MARKS_FILE = "marks.json"
 LOCK_FILE = "marks.lock"
 KINDS = ("answered_in_branch", "no_reply_needed", "unreplyable")
 KIND_JA = {"answered_in_branch": "枝の中で答えた", "no_reply_needed": "返さない", "unreplyable": "もう返せない"}
+# 段 12 の 3: 事実の指摘の印。未回答の数え方には入れない（`marks` でなく `facts` に置く・頭の注）。
+FACT_CHALLENGE = "fact_challenge"
 SCHEMA = "thth.reply_marks/1"
 MAX_REASON = 200
 # 返信の id（媒体の数字・英数と `_-.:` だけ）。
@@ -74,8 +84,34 @@ def load(account) -> tuple[dict, bool]:
     return out, len(out) == len(marks)
 
 
-def _write(account, change) -> dict:
-    """ロックの中で読み直し、`change(marks)` を当てて書く。戻りは書いたあとの印。"""
+def load_facts(account) -> tuple[dict, bool]:
+    """事実の指摘の印 `({reply_id: {"post_id", "by", "at", "via", ...}}, 読めたか)`（段 12 の 3・読むだけ）。"""
+    folder = _directory(account)
+    if not os.path.lexists(folder):
+        return {}, True
+    try:
+        with server_files.directory(folder, private=True) as fd:
+            raw = server_files.read_at(fd, MARKS_FILE, private=True, maximum=4 * 1024 * 1024)
+    except FileNotFoundError:
+        return {}, True
+    except (OSError, ValueError):
+        return {}, False
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return {}, False
+    facts = value.get("facts", {}) if isinstance(value, dict) else None
+    if not isinstance(facts, dict):
+        return {}, False
+    out = {rid: row for rid, row in facts.items()
+           if id_is_usable(rid) and isinstance(row, dict) and row.get("mark") == FACT_CHALLENGE}
+    return out, len(out) == len(facts)
+
+
+def _write(account, change, *, field="marks") -> dict:
+    """ロックの中で読み直し、`change(印)` を当てて書く。戻りは書いたあとの印。
+
+    `field` は `marks`（未回答から外す印）か `facts`（事実の指摘・段 12 の 3）。もう片方の欄はそのまま残す。"""
     folder = _directory(account)
     with server_files.directory(folder, create=True, private=True) as fd:
         with server_files.lock_at(fd, LOCK_FILE):
@@ -83,14 +119,15 @@ def _write(account, change) -> dict:
                 raw = server_files.read_at(fd, MARKS_FILE, private=True, maximum=4 * 1024 * 1024)
             except FileNotFoundError:
                 raw = None
-            marks = {}
-            if raw is not None:
-                value = json.loads(raw)
-                marks = dict(value.get("marks") or {}) if isinstance(value, dict) else {}
-            change(marks)
-            server_files.replace_at(fd, MARKS_FILE, server_files.encode({"schema": SCHEMA, "marks": marks}),
-                                    expected=raw, private=True)
-    return marks
+            value = json.loads(raw) if raw is not None else {}
+            value = value if isinstance(value, dict) else {}
+            fields = {"marks": dict(value.get("marks") or {}), "facts": dict(value.get("facts") or {})}
+            change(fields[field])
+            body = {"schema": SCHEMA, "marks": fields["marks"]}
+            if fields["facts"]:
+                body["facts"] = fields["facts"]
+            server_files.replace_at(fd, MARKS_FILE, server_files.encode(body), expected=raw, private=True)
+    return fields[field]
 
 
 def mark(account, reply_id, kind, *, by, answered_by=None, reason=None, via="cli", now=None) -> dict:
@@ -108,14 +145,28 @@ def mark(account, reply_id, kind, *, by, answered_by=None, reason=None, via="cli
     return row
 
 
-def unmark(account, reply_id) -> dict | None:
-    """印を外す。外した印（無ければ None）。"""
+def unmark(account, reply_id, *, field="marks") -> dict | None:
+    """印を外す。外した印（無ければ None）。`field="facts"` は事実の指摘の印だけを外す。"""
     found = {}
 
     def change(marks):
         found["row"] = marks.pop(reply_id, None)
-    _write(account, change)
+    _write(account, change, field=field)
     return found.get("row")
+
+
+def mark_fact(account, reply_id, *, by, post_id=None, reason=None, via="cli", now=None) -> dict:
+    """事実の指摘の印を付ける（段 12 の 3）。`post_id` は返信が付いた自分の投稿（返信の台帳から引いた物）。
+    返信の本文は持たない。未回答の数え方は変えない（`marks` に入れない）。"""
+    if not id_is_usable(reply_id) or (post_id is not None and not isinstance(post_id, str)):
+        raise ValueError("reply_id_invalid")
+    row = {"mark": FACT_CHALLENGE, "by": str(by)[:80], "at": jst.iso(now), "via": via}
+    if post_id:
+        row["post_id"] = post_id[:512]
+    if isinstance(reason, str) and reason.strip():
+        row["reason"] = " ".join(reason.split())[:MAX_REASON]
+    _write(account, lambda facts: facts.__setitem__(reply_id, row), field="facts")
+    return row
 
 
 _CODES_IN_TEXT = re.compile(r"_code_([0-9]{1,9})_subcode_([0-9]{1,9})\b")
@@ -158,7 +209,13 @@ def note_publish_refusal(account, cfg, reply_to, detail, *, error=None, log=None
 # --------------------------------------------------------------------------
 
 def _known_reply(account, reply_id) -> bool | None:
-    """この口座の投稿への返信の台帳にその返信があるか（読めなければ None）。
+    """この口座の投稿への返信の台帳にその返信があるか（読めなければ None）。"""
+    known, _post = _reply_post(account, reply_id)
+    return known
+
+
+def _reply_post(account, reply_id) -> tuple:
+    """`(台帳にあるか, 返信が付いた自分の投稿の post_id)`。読めなければ `(None, None)`。
 
     返信の置き場は同じ repo のほかの口座と共有なので、この口座の投稿の返信だけを読む
     （`owned_only`・検収 5.23.0 軽3: 前は口座 two の返信に口座 one で印が付いた）。"""
@@ -168,14 +225,15 @@ def _known_reply(account, reply_id) -> bool | None:
         cfg = accounts.load_account(account)
         data = replies.load(account, owned_only=True)
     except (accounts.AccountError, OSError, ValueError, TypeError, AttributeError):
-        return None
+        return None, None
     for row in data.get("replies") or []:
         if row.get("account") not in (None, account):
             continue
         message = base.normalize_message(row, medium=cfg["media"])
         if message.get("message_id") == reply_id:
-            return True
-    return False
+            post = row.get("post_id")
+            return True, post if isinstance(post, str) and post else None
+    return False, None
 
 
 def cmd(args) -> int:
@@ -197,6 +255,20 @@ def cmd(args) -> int:
         return refuse("by_required", "--by <名前> を付けてください（誰が印を付けたかを記録します）", rc=1)
     if not id_is_usable(args.reply_id) or (args.answered_by and not id_is_usable(args.answered_by)):
         return refuse("post_id_invalid", "返信の id（thth unanswered の reply_id）の数字を確かめてください")
+    fact = bool(getattr(args, "fact_challenge", False))
+    if args.undo and fact and kind is None:
+        try:
+            removed = unmark(args.account, args.reply_id, field="facts")
+        except (OSError, ValueError):
+            return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")
+        out = {"ok": True, "account": args.account, "reply_id": args.reply_id, "removed": removed}
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        elif removed:
+            print(f"{args.account}: {args.reply_id} の事実の指摘の印を外しました（台帳の確かめ直しの候補に出しません）")
+        else:
+            print(f"{args.account}: {args.reply_id} に事実の指摘の印はありません（何も変えていません）")
+        return 0
     if args.undo:
         if kind is not None:
             return refuse("reply_mark_kind_conflict",
@@ -213,25 +285,38 @@ def cmd(args) -> int:
         else:
             print(f"{args.account}: {args.reply_id} に印はありません（何も変えていません）")
         return 0
-    if kind is None:
+    if kind is None and not fact:
         return refuse("reply_mark_kind_required",
-                      "印の種類を 1 つ付けてください: --answered-by <自分の post_id>・--no-reply-needed・--unreplyable")
-    known = _known_reply(args.account, args.reply_id)
+                      "印の種類を 1 つ付けてください: --answered-by <自分の post_id>・--no-reply-needed・--unreplyable"
+                      "（事実の指摘なら --fact-challenge）")
+    known, replied_post = _reply_post(args.account, args.reply_id)
     if known is False:
         return refuse("reply_not_in_ledger",
                       f"{args.reply_id} は {args.account} の返信の台帳にありません。"
                       f"thth unanswered {args.account} の reply_id を写してください")
+    row, fact_row = {}, None
     try:
-        row = mark(args.account, args.reply_id, kind, by=by, answered_by=args.answered_by, reason=args.reason)
+        if kind is not None:
+            row = mark(args.account, args.reply_id, kind, by=by, answered_by=args.answered_by, reason=args.reason)
+        if fact:
+            fact_row = mark_fact(args.account, args.reply_id, by=by, post_id=replied_post, reason=args.reason)
     except (OSError, ValueError):
         return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")
     out = {"ok": True, "account": args.account, "reply_id": args.reply_id, **row}
+    if fact_row is not None:
+        out["fact_challenge"] = fact_row
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
-        tail = f"（{args.answered_by} で答えた）" if args.answered_by else ""
-        print(f"{args.account}: {args.reply_id} に印を付けました: {KIND_JA[kind]}{tail}。未回答には数えません"
-              f"（外すなら thth reply-mark {args.account} {args.reply_id} --undo --by <名前>）")
+        if kind is not None:
+            tail = f"（{args.answered_by} で答えた）" if args.answered_by else ""
+            print(f"{args.account}: {args.reply_id} に印を付けました: {KIND_JA[kind]}{tail}。未回答には数えません"
+                  f"（外すなら thth reply-mark {args.account} {args.reply_id} --undo --by <名前>）")
+        if fact_row is not None:
+            where = f"投稿 {replied_post}" if replied_post else "返信が付いた投稿（台帳から引けませんでした）"
+            print(f"{args.account}: {args.reply_id} に事実の指摘の印を付けました（{where}）。未回答の数え方は変えません。"
+                  f"この投稿が控えた台帳の記録を thth register health が確かめ直しの候補に出します"
+                  f"（外すなら thth reply-mark {args.account} {args.reply_id} --undo --fact-challenge --by <名前>）")
         if known is None:
             print("  （返信の台帳を読めなかったので、その返信があるかは確かめていません）", file=sys.stderr)
     return 0
@@ -240,7 +325,8 @@ def cmd(args) -> int:
 def register(sub):
     parser = sub.add_parser(
         "reply-mark",
-        help="返信に印を付けて未回答から外す（枝の中で答えた・返さない・もう返せない。--undo で外す）")
+        help="返信に印を付けて未回答から外す（枝の中で答えた・返さない・もう返せない。--undo で外す）。"
+             "--fact-challenge は事実の指摘の印（未回答から外さない・台帳の確かめ直しの候補にする）")
     parser.add_argument("account")
     parser.add_argument("reply_id", help="thth unanswered の reply_id")
     group = parser.add_mutually_exclusive_group()
@@ -248,6 +334,8 @@ def register(sub):
                        help="同じ枝の中で答えた自分の投稿の post_id")
     group.add_argument("--no-reply-needed", action="store_true", help="返さないのが正しい（読者どうしの会話など）")
     group.add_argument("--unreplyable", action="store_true", help="もう返せない（消された・見えない）")
+    parser.add_argument("--fact-challenge", action="store_true",
+                        help="読者が事実を指摘した返信（未回答から外さない。投稿が控えた台帳の記録を確かめ直しの候補にする）")
     parser.add_argument("--reason", default=None, help="理由の 1 行（任意）")
     parser.add_argument("--by", default=None, help="誰が決めたか（環境変数 THTH_ACTOR でも）")
     parser.add_argument("--undo", action="store_true", help="印を外す")

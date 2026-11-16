@@ -446,6 +446,7 @@ def record_published(account_name: str, account_cfg: dict, state_dir: str, recor
                    attachment_kinds=media_mod.attachment_kinds(manifest),
                    # 投稿の目的（設計 3.6.0 §A）。公開したときの原稿の front-matter から。
                    goal=goals_mod.goal_of(qf), goal_change=goals_mod.change(qf),
+                   seeds=fm.get("seeds"),  # 段 12 の 1
                    # 4.5.5: 添付の inflight を人が --published で解いたときも、ふつうの成功と
                    # 同じ形（`core._link_urls_kwargs`・adapter の `PublishResult.media`）を残す。
                    **core._link_urls_kwargs(manifest),

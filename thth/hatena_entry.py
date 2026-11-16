@@ -537,7 +537,9 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
             "entry_id": entry_id, "base_readback_sha": base, "blog_id": blog_id,
             "principal": account_cfg.get("principal"), "project": account_cfg.get("project"),
             "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha,
-            "send_as": t["send_as"], "site_url": t["site_url"], "site_host": t["site_host"], "kind": t["kind"]}
+            "send_as": t["send_as"], "site_url": t["site_url"], "site_host": t["site_host"], "kind": t["kind"],
+            # 段 12 の 1: 原稿の `seeds:` は配信の台帳（sent）に控えるだけ。上の指紋（`kwargs`）には入れない。
+            "seeds": fm.get("seeds")}
 
 
 # ------------------------------------------------------------------ 何を出したか（4.0 S5）

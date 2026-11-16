@@ -498,7 +498,7 @@ def _rules_group(vessel, result) -> dict:
 
 # ------------------------------------------------------------------ 共通
 
-def _impact_item(vessel, seals: dict, js: list, common, graph: dict) -> dict:
+def _impact_item(vessel, seals: dict, js: list, common, graph: dict, root: str | None = None) -> dict:
     """段 11 の F: 封のあとで版の変わった記録・採り入れ待ちの共通の記録から、指す欄で 1 段の「影響の候補」（読むだけ。
     判断を無効にしない）。"""
     mine, theirs = set(), set()
@@ -512,9 +512,11 @@ def _impact_item(vessel, seals: dict, js: list, common, graph: dict) -> dict:
             now = common.vessel.unique(ref)
             if now is not None and now.version != (j.get("seen") or {}).get("version"):
                 theirs.add(ref)
-    found = R.impact(vessel, mine, theirs, graph=graph)
+    found = R.impact(vessel, mine, theirs, graph=graph, root=root)
+    # 段 12: `posts`（直した記録と候補を指す出した投稿）と `recheck`（事実の指摘から引いた確かめ直しの候補）は横に
+    # 添えるだけ。この項目の数（影響の候補の数）と群の数は変えない。
     return _item(found["count"], found["candidates"], changed=found["changed"][:EXAMPLES_MAX],
-                 changed_count=len(found["changed"]))
+                 changed_count=len(found["changed"]), posts=found.get("posts"), recheck=found.get("recheck"))
 
 
 def _common_pointers(graph: dict, takes: dict, common) -> dict:
@@ -633,7 +635,7 @@ def health(root: str, *, as_of=None, common_root=None, decl_base=None, thin: boo
         "rules": _rules_group(vessel, C.run(vessel, js)),
         "common": _common_group(js, common, seals, graph),
     }
-    groups["seal"]["impact_candidates"] = _impact_item(vessel, seals, js, common, graph)
+    groups["seal"]["impact_candidates"] = _impact_item(vessel, seals, js, common, graph, root)
     out = {"register": name or root, "as_of": as_of.isoformat(timespec="seconds"),
            "records": sum(1 for r in vessel.all_records if r.id is not None),
            "judgments": len(js), "inspections": len(inspected), "groups": groups}

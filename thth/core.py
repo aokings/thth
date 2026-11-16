@@ -1582,6 +1582,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         attachment_kinds=media_mod.attachment_kinds(manifest),
                         goal=goal_value, goal_change=goal_change,
                         crossed_quiet_hours=bool(crossed_quiet_hours),
+                        # 段 12 の 1: 原稿の `seeds:` を控える（承認の指紋には入れない・無ければ空）。
+                        seeds=chosen.get("seeds"),
                         **_link_urls_kwargs(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}),
                         **({"community_id": post.community_id} if post.community_id else {}),
