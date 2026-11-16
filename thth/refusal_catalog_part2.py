@@ -1670,8 +1670,7 @@ ENTRIES = {
         "command": "thth reply-mark <口座> <reply_id> --fact-challenge --by <名前>",
         "better": "印は手で書かず thth reply-mark に書かせると、形がそろって二度とつまずきません",
         "doors": ("cli",),
-        # 5.25.0 で足した断り。since は今の版（thth/VERSION）を越えられない試験があるので、版を 5.25.0 に上げる
-        # commit で "5.25.0" に直す（リリースノートの下書き 5.25.0 に書いた）。
-        "since": "5.24.0",
+        # 5.25.0 で足した断り（印の置き場を黙って直さない・5.24.0 監査の軽 5）。
+        "since": "5.25.0",
     },
 }
