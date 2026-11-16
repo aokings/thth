@@ -182,10 +182,16 @@ def show_posts(posts, recheck, indent: str = "  ") -> None:
         for r in recheck["items"][:20]:
             print(f"{indent}  {r['record']} ← {r['account']} {r['post_id']} の返信 {r['reply_id']}"
                   f"（印 {r.get('marked_at') or '?'}・{r.get('marked_by') or '?'}）")
-    # 投稿と確かめ直しは同じ読みから作るので、言えない物は recheck の側（印の置き場の分も足してある）を 1 回だけ出す。
-    for c in (recheck or posts or {}).get("cannot_say") or []:
+    # 投稿と確かめ直しは読む口座が違う（投稿は直した記録があれば全口座・確かめ直しは印のある口座だけ・監査 5.24.0 の
+    # 軽 3）ので、両方の言えない物を合わせ、同じ (口座, わけ) は 1 回だけ出す（検収 段 12 の残りの危 1）。
+    seen = set()
+    for c in [*((posts or {}).get("cannot_say") or []), *((recheck or {}).get("cannot_say") or [])]:
         if c.get("why") in ("register_not_registered", "common_register"):
             continue      # 控えの無い台帳（試しの写しなど）・共通の台帳は口座を持たない
+        key = (c.get("account"), c.get("why"))
+        if key in seen:
+            continue
+        seen.add(key)
         print(f"{indent}言えない: {c.get('account') or '口座'}（{c['why']}）")
 
 

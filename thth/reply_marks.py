@@ -115,10 +115,11 @@ class MarksUnreadable(ValueError):
     書き換えず、`reply_marks_unreadable` で断る。"""
 
 
-def _existing_fields(raw) -> dict:
-    """書く前に読み直した置き場を `{"marks": …, "facts": …}` に。読めない形なら `MarksUnreadable`（書き換えない）。"""
+def _existing_fields(raw) -> tuple:
+    """書く前に読み直した置き場を `(頭の dict, {"marks": …, "facts": …})` に。読めない形なら `MarksUnreadable`（書き換えない）。
+    頭の dict は `schema` と知らない欄を書き込みで落とさないために返す（検収 段 12 の残りの軽 7）。"""
     if raw is None:
-        return {"marks": {}, "facts": {}}
+        return {}, {"marks": {}, "facts": {}}
     try:
         value = json.loads(raw)
     except ValueError as exc:
@@ -133,7 +134,7 @@ def _existing_fields(raw) -> dict:
         if not isinstance(part, dict):
             raise MarksUnreadable(f"{key}_not_object")
         fields[key] = dict(part)
-    return fields
+    return value, fields
 
 
 def _write(account, change, *, field="marks") -> dict:
@@ -148,9 +149,11 @@ def _write(account, change, *, field="marks") -> dict:
                 raw = server_files.read_at(fd, MARKS_FILE, private=True, maximum=4 * 1024 * 1024)
             except FileNotFoundError:
                 raw = None
-            fields = _existing_fields(raw)
+            head, fields = _existing_fields(raw)
             change(fields if field is None else fields[field])
-            body = {"schema": SCHEMA, "marks": fields["marks"]}
+            # schema と知らない欄（先の版が足した物）は残す。無ければ今の schema を書く。
+            body = {**head, "schema": head.get("schema", SCHEMA), "marks": fields["marks"]}
+            body.pop("facts", None)
             if fields["facts"]:
                 body["facts"] = fields["facts"]
             server_files.replace_at(fd, MARKS_FILE, server_files.encode(body), expected=raw, private=True)
