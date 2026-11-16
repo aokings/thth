@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from .. import accounts
 from . import ledger as L
@@ -32,6 +33,10 @@ SENT_DIR = "sent"                                # `thth/sent.py` の `dir_for`
 MARKS_PATH = ("reply_marks", "marks.json")       # `thth/reply_marks.py` の置き場
 FACT_CHALLENGE = "fact_challenge"                # `reply_marks.FACT_CHALLENGE`
 FILE_MAX = 4 * 1024 * 1024
+# 返信の id・投稿の id（`reply_marks._ID` と同じ形・媒体の数字と英数と `_-.:`）。手で直した印の置き場の id を
+# そのまま端末に出さない（制御文字・長い字の列）。投稿の id は Bluesky の AT URI の `/` も通す。
+_REPLY_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
+_TEXT_MAX = 80
 
 
 def _same(a, b) -> bool:
@@ -120,9 +125,25 @@ def _facts(account: str) -> tuple:
     facts = value.get("facts", {}) if isinstance(value, dict) else None
     if not isinstance(facts, dict):
         return {}, False
-    out = {rid: row for rid, row in facts.items()
-           if isinstance(rid, str) and isinstance(row, dict) and row.get("mark") == FACT_CHALLENGE}
+    out = {}
+    for rid, row in facts.items():
+        # 使えない id・文字列でない post_id の行は落として「読めなかった」に数える（手で直した・壊れた置き場）。
+        if (not isinstance(rid, str) or not _REPLY_ID.fullmatch(rid) or not isinstance(row, dict)
+                or row.get("mark") != FACT_CHALLENGE):
+            continue
+        post_id = row.get("post_id")
+        if post_id is not None and (not isinstance(post_id, str) or not post_id or len(post_id) > 512
+                                    or any(ord(c) < 0x20 or ord(c) == 0x7f for c in post_id)):
+            continue
+        out[rid] = {"post_id": post_id, "at": _text(row.get("at")), "by": _text(row.get("by"))}
     return out, len(out) == len(facts)
+
+
+def _text(value):
+    """印の欄（日時・誰が）を出してよい形に（文字列だけ・制御文字を除く・80 字まで）。"""
+    if not isinstance(value, str):
+        return None
+    return "".join(c for c in value if ord(c) >= 0x20 and ord(c) != 0x7f)[:_TEXT_MAX] or None
 
 
 class _Index:
@@ -205,6 +226,9 @@ def rechecks(root: str, vessel=None, *, index: _Index | None = None) -> dict:
         return out
     by_post = {}
     for name, media, row in index.rows:
+        # 取り下げた投稿は外す（`posts_for` と揃える。消した投稿への指摘は、もう出ていない言い分なので候補にしない）。
+        if row.get("retracted_at"):
+            continue
         by_post.setdefault((name, row.get("post_id")), (media, row))
     items, marks, unseeded, unknown = [], 0, 0, 0
     for name in index.accounts:
@@ -240,9 +264,24 @@ def rechecks(root: str, vessel=None, *, index: _Index | None = None) -> dict:
     return out
 
 
+def _unreadable(exc) -> dict:
+    return {"project": None, "register": None, "accounts": [], "count": None, "items": [],
+            "cannot_say": [{"account": None, "why": "posts_unreadable:" + type(exc).__name__}]}
+
+
 def attach(found: dict, root: str, vessel=None) -> dict:
     """影響の候補（`route.impact` の値）に `posts`（直した記録と候補を指す出した投稿）と `recheck`（確かめ直しの候補）
-    を足す。何が起きても `found` の数・候補は変えない（赤にしない）。"""
+    を足す。**何が起きても例外を出さない**: 読めない・壊れた物は `cannot_say` に送り、`found` の数・候補は変えない
+    （赤にしない・rc を変えない・fix が記録を書いたあとに落ちない。検収 段 12 の危 1）。"""
+    try:
+        return _attach(found, root, vessel)
+    except Exception as exc:  # noqa: BLE001 — 読むだけの欄で判定を変えない
+        found["posts"] = _unreadable(exc)
+        found["recheck"] = _unreadable(exc)
+        return found
+
+
+def _attach(found: dict, root: str, vessel=None) -> dict:
     try:
         index = _Index(root)
     except Exception as exc:  # noqa: BLE001

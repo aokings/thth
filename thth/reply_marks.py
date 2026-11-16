@@ -111,7 +111,8 @@ def load_facts(account) -> tuple[dict, bool]:
 def _write(account, change, *, field="marks") -> dict:
     """ロックの中で読み直し、`change(印)` を当てて書く。戻りは書いたあとの印。
 
-    `field` は `marks`（未回答から外す印）か `facts`（事実の指摘・段 12 の 3）。もう片方の欄はそのまま残す。"""
+    `field` は `marks`（未回答から外す印）か `facts`（事実の指摘・段 12 の 3）。もう片方の欄はそのまま残す。
+    `field=None` なら `change({"marks": …, "facts": …})` で両方を 1 回の書き込みで変える（2 つの印を一緒に付けるとき）。"""
     folder = _directory(account)
     with server_files.directory(folder, create=True, private=True) as fd:
         with server_files.lock_at(fd, LOCK_FILE):
@@ -122,16 +123,22 @@ def _write(account, change, *, field="marks") -> dict:
             value = json.loads(raw) if raw is not None else {}
             value = value if isinstance(value, dict) else {}
             fields = {"marks": dict(value.get("marks") or {}), "facts": dict(value.get("facts") or {})}
-            change(fields[field])
+            change(fields if field is None else fields[field])
             body = {"schema": SCHEMA, "marks": fields["marks"]}
             if fields["facts"]:
                 body["facts"] = fields["facts"]
             server_files.replace_at(fd, MARKS_FILE, server_files.encode(body), expected=raw, private=True)
-    return fields[field]
+    return fields if field is None else fields[field]
 
 
 def mark(account, reply_id, kind, *, by, answered_by=None, reason=None, via="cli", now=None) -> dict:
     """印を付ける（同じ返信に付け直すと上書き）。戻りはその返信の印。"""
+    row = _mark_row(reply_id, kind, by=by, answered_by=answered_by, reason=reason, via=via, now=now)
+    _write(account, lambda marks: marks.__setitem__(reply_id, row))
+    return row
+
+
+def _mark_row(reply_id, kind, *, by, answered_by=None, reason=None, via="cli", now=None) -> dict:
     if kind not in KINDS:
         raise ValueError("invalid_mark")
     if not id_is_usable(reply_id):
@@ -141,7 +148,6 @@ def mark(account, reply_id, kind, *, by, answered_by=None, reason=None, via="cli
         row["answered_by"] = answered_by
     if isinstance(reason, str) and reason.strip():
         row["reason"] = " ".join(reason.split())[:MAX_REASON]
-    _write(account, lambda marks: marks.__setitem__(reply_id, row))
     return row
 
 
@@ -158,6 +164,12 @@ def unmark(account, reply_id, *, field="marks") -> dict | None:
 def mark_fact(account, reply_id, *, by, post_id=None, reason=None, via="cli", now=None) -> dict:
     """事実の指摘の印を付ける（段 12 の 3）。`post_id` は返信が付いた自分の投稿（返信の台帳から引いた物）。
     返信の本文は持たない。未回答の数え方は変えない（`marks` に入れない）。"""
+    row = _fact_row(reply_id, by=by, post_id=post_id, reason=reason, via=via, now=now)
+    _write(account, lambda facts: facts.__setitem__(reply_id, row), field="facts")
+    return row
+
+
+def _fact_row(reply_id, *, by, post_id=None, reason=None, via="cli", now=None) -> dict:
     if not id_is_usable(reply_id) or (post_id is not None and not isinstance(post_id, str)):
         raise ValueError("reply_id_invalid")
     row = {"mark": FACT_CHALLENGE, "by": str(by)[:80], "at": jst.iso(now), "via": via}
@@ -165,8 +177,20 @@ def mark_fact(account, reply_id, *, by, post_id=None, reason=None, via="cli", no
         row["post_id"] = post_id[:512]
     if isinstance(reason, str) and reason.strip():
         row["reason"] = " ".join(reason.split())[:MAX_REASON]
-    _write(account, lambda facts: facts.__setitem__(reply_id, row), field="facts")
     return row
+
+
+def mark_with_fact(account, reply_id, kind, *, by, answered_by=None, post_id=None, reason=None, via="cli",
+                   now=None) -> tuple:
+    """未回答から外す印と事実の指摘の印を **1 回の書き込み**で付ける（片方だけ残る半端を作らない・検収 段 12 の軽 4）。"""
+    row = _mark_row(reply_id, kind, by=by, answered_by=answered_by, reason=reason, via=via, now=now)
+    fact = _fact_row(reply_id, by=by, post_id=post_id, reason=reason, via=via, now=now)
+
+    def change(fields):
+        fields["marks"][reply_id] = row
+        fields["facts"][reply_id] = fact
+    _write(account, change, field=None)
+    return row, fact
 
 
 _CODES_IN_TEXT = re.compile(r"_code_([0-9]{1,9})_subcode_([0-9]{1,9})\b")
@@ -296,9 +320,12 @@ def cmd(args) -> int:
                       f"thth unanswered {args.account} の reply_id を写してください")
     row, fact_row = {}, None
     try:
-        if kind is not None:
+        if kind is not None and fact:
+            row, fact_row = mark_with_fact(args.account, args.reply_id, kind, by=by, answered_by=args.answered_by,
+                                           post_id=replied_post, reason=args.reason)
+        elif kind is not None:
             row = mark(args.account, args.reply_id, kind, by=by, answered_by=args.answered_by, reason=args.reason)
-        if fact:
+        else:
             fact_row = mark_fact(args.account, args.reply_id, by=by, post_id=replied_post, reason=args.reason)
     except (OSError, ValueError):
         return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")

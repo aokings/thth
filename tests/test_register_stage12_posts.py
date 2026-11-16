@@ -270,3 +270,111 @@ def test_台帳の機械が字として読む置き場の形は配信の台帳�
     assert sent.dir_for(str(tmp_path)) == os.path.join(str(tmp_path), P.SENT_DIR)
     assert P.MARKS_PATH == ("reply_marks", reply_marks.MARKS_FILE)
     assert P.FACT_CHALLENGE == reply_marks.FACT_CHALLENGE
+
+
+# ------------------------------------------------------------------ 検収 段 12（audit-s12c）の直し
+
+def _write_marks(account_name, value):
+    path = Path(accounts.state_dir_for(account_name)) / "reply_marks" / "marks.json"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_text(json.dumps(value, ensure_ascii=False))
+    path.chmod(0o600)
+
+
+def _sealed_nig(tmp_path):
+    led = media(tmp_path, name="nig")
+    _register(led)
+    R.baseline(str(led), "site", by="masaru", at=BASE_AT)
+    out = tmp_path / "nig-out"
+    accept(led, "site", out / "site")
+    return led, out
+
+
+@pytest.mark.parametrize("bad", [["P1"], {"x": 1}, 7, "P\x001"])
+def test_危1_印の置き場のpost_idが壊れていてもverify_health_fixの判定はattachを外したときと同じ(
+        isolated_account_factory, keys, tmp_path, capsys, bad):
+    from thth.register import posts as P
+    from thth.register import vessel as V
+    account = isolated_account_factory()
+    name = account["name"]
+    _post(name, "P1", "evidence:ev-bitter")
+    _write_marks(name, {"schema": "thth.reply_marks/1", "marks": {},
+                        "facts": {"R1": {"mark": "fact_challenge", "post_id": bad},
+                                  "R\n2": {"mark": "fact_challenge", "post_id": "P1"}}})
+    led, out = _sealed_nig(tmp_path)
+    A.row_set(str(led), "evidence:ev-bitter", {"finding": "直した"}, by="masaru", at=AT)
+    v = R.verify(str(led), "site", str(out / "site"), NOW, no_previous=True)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(P, "attach", lambda found, root, vessel=None: found)
+        plain = R.verify(str(led), "site", str(out / "site"), NOW, no_previous=True)
+    assert v["ok"] == plain["ok"] and v["problems"] == plain["problems"]
+    assert v["impact"]["count"] == plain["impact"]["count"]
+    recheck = v["impact"]["recheck"]
+    assert recheck["count"] == 0 and recheck["marks"] == 0
+    assert {"account": name, "why": "reply_marks_unreadable"} in recheck["cannot_say"]
+    # health は rc 0 で JSON を返す（traceback で抜けない）
+    rc, h, _err = _jrun(capsys, "register", "health", "nig")
+    assert rc == 0 and h["groups"]["seal"]["impact_candidates"]["recheck"]["count"] == 0
+    # fix は記録を書いたあとに落ちない（1 段めの形で返る）
+    before = V.open_vessel(str(led)).unique("claim:clm-bitter").version
+    value = F.fix(str(led), "claim:clm-bitter", {"text": "苦味の受容体はおよそ 25 種"}, outlet="site",
+                  to=str(out / "site"), as_of=AT, by="claude-v", at=AT, reason_text="原文と照らした")
+    assert V.open_vessel(str(led)).unique("claim:clm-bitter").version != before
+    assert value["sealed"] is False and value["digest"] and "recheck" in value["impact"]
+
+
+def test_危1_attachは中で何が起きても例外を出さず言えないに送る(tmp_path, thth_root, monkeypatch):
+    from thth.register import posts as P
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(P, "_Index", lambda root: type("I", (), {"project": "p", "register": "r", "accounts": [],
+                                                                  "rows": [], "cannot": [],
+                                                                  "head": lambda self: {}})())
+    monkeypatch.setattr(P, "rechecks", boom)
+    found = {"changed": ["claim:x"], "count": 0, "candidates": []}
+    got = R.impact(None, {"claim:x"}, (), graph={"edges": []}, root=str(tmp_path))
+    assert got["count"] == 0 and got["candidates"] == []
+    assert got["recheck"]["cannot_say"] == [{"account": None, "why": "posts_unreadable:RuntimeError"}]
+    assert P.attach(found, str(tmp_path))["posts"]["count"] is None
+
+
+def test_軽2_取り下げた投稿への事実の指摘は確かめ直しの候補にしない(isolated_account_factory, keys, tmp_path):
+    account = isolated_account_factory()
+    name = account["name"]
+    _post(name, "P1", "evidence:ev-bitter")
+    reply_marks.mark_fact(name, "R1", by="窓口", post_id="P1")
+    led, out = _sealed_nig(tmp_path)
+    found = R.impact(None, (), (), root=str(led))
+    assert found["recheck"]["count"] == 1
+    sent.mark_retracted(accounts.state_dir_for(name), "P1", retracted_at=AT, retracted_by="テスト",
+                        retract_reason="test")
+    found = R.impact(None, (), (), root=str(led))
+    assert found["recheck"]["count"] == 0 and found["recheck"]["post_unknown"] == 1
+
+
+def test_軽4_2つの印は1回の書き込みで付ける(isolated_account_factory, capsys, monkeypatch):
+    isolated_account_factory("one", handle="owner", media="threads")
+    _post("one", "ROOT", "claim:clm-bitter")
+    _replies("one", "ROOT", [("R1", "reader")])
+    calls = []
+    real = reply_marks._write
+
+    def counted(*a, **k):
+        calls.append(k.get("field", "marks"))
+        return real(*a, **k)
+    monkeypatch.setattr(reply_marks, "_write", counted)
+    monkeypatch.delenv("THTH_ACTOR", raising=False)
+    rc = cli.main(["reply-mark", "one", "R1", "--no-reply-needed", "--fact-challenge", "--by", "窓口", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["mark"] == "no_reply_needed" and out["fact_challenge"]["post_id"] == "ROOT"
+    assert len(calls) == 1
+    # 書き込みが失敗すれば、どちらの印も残らない
+    monkeypatch.setattr(reply_marks.server_files, "replace_at",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("full")))
+    rc = cli.main(["reply-mark", "one", "R1", "--unreplyable", "--fact-challenge", "--by", "別の窓口"])
+    capsys.readouterr()
+    assert rc == 2
+    marks, _ = reply_marks.load("one")
+    facts, _ = reply_marks.load_facts("one")
+    assert marks["R1"]["mark"] == "no_reply_needed" and facts["R1"]["by"] == "窓口"
