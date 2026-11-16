@@ -18,6 +18,10 @@
      出所が台帳の行には `replies_source: ledger`。
   4. 閉じた糸の続き: 窓の中で閉じた糸の、宣言にあって使わなかった媒体（`plaza_from._tried_media` と同じ計算）。
      5.10.0: 閉じていなくても全段が済んだ糸（`state: done`）で、最後の動きが窓の中のものも入れる。
+  5. 反応の多かった台帳の記録（段 12 の 4・5.25.0）: 窓の中の自分の投稿が配信の台帳（`sent/`）か連投の段の実行記録に
+     控えた `seeds`（台帳の記録の番号）ごとに、その投稿の 24h の返ってきた返信（列 1 と同じ計算）を足す。媒体ごと。
+     控えの読み方は台帳の器と同じ 1 か所（`thth/register/posts.py` の `seeds_by_post`）。控えの無い投稿は
+     `unseeded`・行の無い投稿は `sent_missing`・配信の台帳が読めない口座の投稿は `unknown`（0 と混ぜない）。
 
 規律（設計 §3 段 5）:
 
@@ -392,6 +396,81 @@ def _closed_column(ledger, since, now, *, limit):
             "cannot_say": codes, "next": NEXT_LINE}
 
 
+# ------------------------------------------------------------------ 台帳の記録（列 5・段 12 の 4）
+
+RECORDS_METRIC = "replies_back_24h"
+
+
+def _records_column(posts, ledger, *, limit, min_n, window):
+    """反応の多かった台帳の記録: 窓の中の自分の投稿（列 1 と同じ行）が控えた `seeds` ごとに、24h の返ってきた返信を足す。
+
+    媒体ごと（媒体をまたいで足さない・並べない）。群の `n` は「控えのある投稿のうち返信の数の取れた本数」で、
+    `min_n` に満たなければ中央値も比べも言わない。0 の記録は並べない（数には入れる）。"""
+    from .register import posts as register_posts
+    try:
+        index = register_posts.seeds_by_post({row["item"].account for row in posts})
+        problems = index["cannot_say"]
+    except Exception as exc:  # noqa: BLE001 — 読めない控えは 0 と混ぜない
+        index = {"posts": {}, "unreadable": sorted({row["item"].account for row in posts})}
+        problems = [{"account": None, "why": "seeds_unreadable:" + type(exc).__name__}]
+    by_medium = {}
+    for row in posts:
+        item = row["item"]
+        group = by_medium.setdefault(item.medium, {"posts": 0, "seeded": 0, "unseeded": 0, "sent_missing": 0,
+                                                   "unknown": 0, "retracted": 0, "values": [], "records": {}})
+        group["posts"] += 1
+        post_id = next((pid for pid in item.post_ids if isinstance(pid, str) and pid), None)
+        found = index["posts"].get((item.account, post_id))
+        if found is None:
+            group["unknown" if item.account in index["unreadable"] else "sent_missing"] += 1
+            continue
+        if found["retracted"]:
+            group["retracted"] += 1
+            continue
+        if not found["seeds"]:
+            group["unseeded"] += 1
+            continue
+        group["seeded"] += 1
+        value = _count(row["metrics"].get(RECORDS_METRIC))
+        if value is None:
+            continue
+        group["values"].append(value)
+        posted_at = jst.iso(item.posted_at)
+        for ref in found["seeds"]:
+            node = group["records"].setdefault(ref, {"record": ref, "count": 0, "posts": 0, "last_posted_at": None})
+            node["count"] += value
+            node["posts"] += 1
+            node["last_posted_at"] = max(node["last_posted_at"] or "", posted_at or "") or None
+    out_media, codes = {}, []
+    for medium in sorted(by_medium):
+        group = by_medium[medium]
+        ranked = sorted((n for n in group["records"].values() if n["count"] > 0), key=lambda n: n["record"])
+        ranked.sort(key=lambda n: n["count"], reverse=True)
+        node = _group_stat(group["values"], group["posts"], min_n)
+        node.update({key: group[key] for key in ("seeded", "unseeded", "sent_missing", "unknown", "retracted")})
+        node["records"] = len(group["records"])
+        node["rows"] = ranked[:limit]
+        node["more"] = max(0, len(ranked) - limit)
+        if group["seeded"] and not node["comparable"]:
+            codes.append(f"below_min_n:{medium}")
+        out_media[medium] = node
+    if not by_medium:
+        codes.append("no_posts_in_window")
+    elif not any(g["seeded"] for g in by_medium.values()):
+        codes.append("no_seeded_posts_in_window")
+    if problems:
+        codes.append("seeds_unreadable")
+    column = {"key": "records", "label": "反応の多かった台帳の記録", "metric": RECORDS_METRIC,
+              "measure": "記録を seeds で指す自分の投稿の 24h の返ってきた返信の合計（thth after と同じ計算）",
+              "source": "配信の台帳（sent/）と連投の段の実行記録の seeds（原稿の頭の seeds: を出したときに控えた物）",
+              "denominator": "seeds を控えた投稿のうち返信の数の取れた本数（n）／窓の中で反応の数を引けた本数（posts）",
+              "sort_basis": f"{RECORDS_METRIC} の合計の多い順・同じ数は記録の番号の順・媒体ごと（媒体をまたいで足さない）",
+              "window": window, "by_medium": out_media, "cannot_say": sorted(set(codes)), "next": NEXT_LINE}
+    if problems:
+        column["read_problems"] = problems
+    return column
+
+
 # ------------------------------------------------------------------ 全体
 
 def build(target, *, days=DEFAULT_DAYS, limit=DEFAULT_LIMIT, now=None, allowed_names=None) -> dict:
@@ -413,7 +492,9 @@ def build(target, *, days=DEFAULT_DAYS, limit=DEFAULT_LIMIT, now=None, allowed_n
     columns = [by_key["replies"], _visits_column(ledger, since, now, limit=limit, min_n=min_n),
                # 5.11.0 段 7: Threads のリンクのクリック（訪問の列とは別の列・混ぜない）。
                _clicks_column(ledger, since, now, limit=limit, min_n=min_n, window=window),
-               by_key["views"], _closed_column(ledger, since, now, limit=limit)]
+               by_key["views"], _closed_column(ledger, since, now, limit=limit),
+               # 5.25.0 段 12 の 4: 台帳の記録（出した投稿が控えた seeds ごとの返信）。
+               _records_column(posts, ledger, limit=limit, min_n=min_n, window=window)]
     cannot = set(ledger.cannot_say)
     for column in columns:
         cannot |= {code for code in column["cannot_say"] if ":" not in code}

@@ -552,7 +552,11 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                         # 段のリンク先（設計 3.7.0 §A1・裁定 09-24）。連投は sent を書かず本文も
                         # 実行記録に残らないので、click を投稿単位で数える照合のためにここに控える。
                         link_urls=_step_link_urls(section, manifests[index-1]),
-                        **({"media":result.media} if result.media else {}))
+                        **({"media":result.media} if result.media else {}),
+                        # 段 12 の残り: 束の頭の `seeds:`（台帳の記録の番号）を公開の結果の行に控える。連投は sent を
+                        # 書かないので、ここが控え（`thth/register/posts.py` が読む）。承認の指紋・凍結の記録
+                        # （`frozen_records`）には入れない。無ければ欄を足さない。読めない番号は落とすだけで断らない。
+                        **_seeds_kwargs(fm))
     except (OSError,ValueError):
         if not manifests[index-1]:raise
         return StepResult("unresolved",index,"media_record_unconfirmed: 公開後の記録未確定。inflight を保持し再送しません",run_id=run["run_id"],post_id=result.post_id)
@@ -667,3 +671,13 @@ def _step_link_urls(section, manifest) -> list:
     urls = click_attribution.urls_in(section)
     urls += [u for u in click_attribution.manifest_links(manifest) if u not in urls]
     return [u for u in urls if len(u) <= 2048][:10]
+
+
+def _seeds_kwargs(front_matter) -> dict:
+    """束の頭の `seeds:` を、段の公開の行に足す欄にする（段 12 の残り・無ければ空・断らない）。"""
+    from . import sent as sent_mod
+    try:
+        refs = sent_mod.seeds_field(front_matter.get("seeds"))
+    except Exception:  # noqa: BLE001 — 公開が済んだあとの控え。ここで止めない
+        refs = []
+    return {"seeds": refs} if refs else {}

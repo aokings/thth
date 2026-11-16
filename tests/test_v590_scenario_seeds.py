@@ -113,7 +113,8 @@ def _column(payload, key):
 def test_4つの列を数の多い順に並べる_媒体ごと(seeds):
     payload = _build()
     # 5.11.0 段 7: クリックの列（Threads・72h）が訪問の列の次に入った（訪問とは別の列）。
-    assert [c["key"] for c in payload["columns"]] == ["replies", "visits", "clicks", "views", "closed_threads"]
+    assert [c["key"] for c in payload["columns"]] == ["replies", "visits", "clicks", "views", "closed_threads",
+                                                         "records"]   # 5.25.0 段 12 の 4: 台帳の記録
     assert payload["report_type"] == "scenario_seeds" and payload["schema"] == "thth.scenario/1"
     assert payload["skill"]["name"] == "thth-flow"
     replies = _column(payload, "replies")
@@ -250,7 +251,7 @@ def test_先頭はskillで各列の末尾に種にするならの1行(seeds, cap
     assert cli.main(["scenario", "seeds", PROJECT]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("skill: 流れの型は skill thth-flow")
-    assert sum(1 for line in lines if line.strip() == scenario_seeds.NEXT_LINE) == 5   # 5.11.0: クリックの列
+    assert sum(1 for line in lines if line.strip() == scenario_seeds.NEXT_LINE) == 6   # 5.11.0: クリックの列・5.25.0: 台帳の記録の列
     payload = _build()
     assert all(c["next"] == scenario_seeds.NEXT_LINE for c in payload["columns"])
     assert all(c["sort_basis"] for c in payload["columns"])

@@ -108,6 +108,34 @@ def load_facts(account) -> tuple[dict, bool]:
     return out, len(out) == len(facts)
 
 
+class MarksUnreadable(ValueError):
+    """印の置き場（`marks.json`）が読めない形（JSON でない・頭が dict でない・`marks`／`facts` が dict でない）。
+
+    黙って読み替えて書き直さない（監査 5.24.0 の軽 5: `facts` が list のとき dict に読み替えていた）。置き場は
+    書き換えず、`reply_marks_unreadable` で断る。"""
+
+
+def _existing_fields(raw) -> dict:
+    """書く前に読み直した置き場を `{"marks": …, "facts": …}` に。読めない形なら `MarksUnreadable`（書き換えない）。"""
+    if raw is None:
+        return {"marks": {}, "facts": {}}
+    try:
+        value = json.loads(raw)
+    except ValueError as exc:
+        raise MarksUnreadable("not_json") from exc
+    if not isinstance(value, dict):
+        raise MarksUnreadable("not_object")
+    fields = {}
+    for key in ("marks", "facts"):
+        part = value.get(key)
+        if part is None:
+            part = {}
+        if not isinstance(part, dict):
+            raise MarksUnreadable(f"{key}_not_object")
+        fields[key] = dict(part)
+    return fields
+
+
 def _write(account, change, *, field="marks") -> dict:
     """ロックの中で読み直し、`change(印)` を当てて書く。戻りは書いたあとの印。
 
@@ -120,9 +148,7 @@ def _write(account, change, *, field="marks") -> dict:
                 raw = server_files.read_at(fd, MARKS_FILE, private=True, maximum=4 * 1024 * 1024)
             except FileNotFoundError:
                 raw = None
-            value = json.loads(raw) if raw is not None else {}
-            value = value if isinstance(value, dict) else {}
-            fields = {"marks": dict(value.get("marks") or {}), "facts": dict(value.get("facts") or {})}
+            fields = _existing_fields(raw)
             change(fields if field is None else fields[field])
             body = {"schema": SCHEMA, "marks": fields["marks"]}
             if fields["facts"]:
@@ -269,6 +295,15 @@ def cmd(args) -> int:
         return refusal.emit(args, code, line=f"{code}: {message}",
                             payload={"ok": False, "error": code, "message": message}, rc=rc,
                             dump=lambda value: print(json.dumps(value, ensure_ascii=False, indent=2)))
+
+    def refuse_unreadable():
+        # 前向きな断り（docs/原則_前向きな断り.md）: なぜ・通る直し方・より良くする一手。置き場は書き換えていない。
+        where = os.path.join(accounts.state_dir_for(args.account), "reply_marks", MARKS_FILE)
+        return refuse("reply_marks_unreadable",
+                      f"印の置き場 {where} が読めない形です（JSON の頭と marks・facts は "
+                      "{返信の id: 印} の形の dict）。黙って直すと前の印が消えるので、何も書き換えていません。"
+                      "置き場を開いて形を直すか、別の名前に移してから付け直してください"
+                      "（印は THTH に書かせると形がそろいます）")
     try:
         accounts.validate_name(args.account)
         accounts.load_account(args.account)
@@ -283,6 +318,8 @@ def cmd(args) -> int:
     if args.undo and fact and kind is None:
         try:
             removed = unmark(args.account, args.reply_id, field="facts")
+        except MarksUnreadable:
+            return refuse_unreadable()
         except (OSError, ValueError):
             return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")
         out = {"ok": True, "account": args.account, "reply_id": args.reply_id, "removed": removed}
@@ -299,6 +336,8 @@ def cmd(args) -> int:
                           "--undo は印の種類と一緒に渡せません。外すだけなら --undo だけを付けてください")
         try:
             removed = unmark(args.account, args.reply_id)
+        except MarksUnreadable:
+            return refuse_unreadable()
         except (OSError, ValueError):
             return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")
         out = {"ok": True, "account": args.account, "reply_id": args.reply_id, "removed": removed}
@@ -327,6 +366,8 @@ def cmd(args) -> int:
             row = mark(args.account, args.reply_id, kind, by=by, answered_by=args.answered_by, reason=args.reason)
         else:
             fact_row = mark_fact(args.account, args.reply_id, by=by, post_id=replied_post, reason=args.reason)
+    except MarksUnreadable:
+        return refuse_unreadable()
     except (OSError, ValueError):
         return refuse("reply_marks_unwritable", "印の置き場に書けませんでした。thth doctor で置き場を確かめてください")
     out = {"ok": True, "account": args.account, "reply_id": args.reply_id, **row}

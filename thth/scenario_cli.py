@@ -182,7 +182,7 @@ def render(payload, out=print) -> None:
 
 
 def seeds_line(project) -> str:
-    return (f"次の糸の種: thth scenario seeds {project}（返信・訪問・クリック・views の多い順と閉じた糸の続き・"
+    return (f"次の糸の種: thth scenario seeds {project}（返信・訪問・クリック・views の多い順と閉じた糸の続き・反応の多かった台帳の記録・"
             "読むだけ・選ぶのは窓口）")
 
 
@@ -278,6 +278,19 @@ def render_seeds(payload, out=print) -> None:
                     out(f"     {row['count']}  {_when(row['posted_at'])}  {row['file']}{thread}  「{row['head'] or ''}」")
                 if node["more"]:
                     out(f"     ほか {node['more']} 本（--limit で増やす）")
+        elif column["key"] == "records":
+            if not column["by_medium"]:
+                out("   窓の中の自分の投稿がありません")
+            for medium, node in column["by_medium"].items():
+                unknown = f"・言えない {node['unknown']}" if node["unknown"] else ""
+                out(f"   {medium}  seeds を控えた {node['seeded']}/{node['posts']} 本（控えなし {node['unseeded']}・"
+                    f"控えの行なし {node['sent_missing']}{unknown}）・{_median_text(node)}")
+                for row in node["rows"]:
+                    out(f"     {row['count']}  {row['record']}  投稿 {row['posts']} 本  最後 {_when(row['last_posted_at'])}")
+                if node["more"]:
+                    out(f"     ほか {node['more']} 件（--limit で増やす）")
+            if "seeds_unreadable" in column["cannot_say"]:
+                out("   —（seeds_unreadable: 読めない控えがある・その口座の行の無い投稿は 0 と数えない）")
         elif column["key"] == "visits":
             if column.get("as_of"):
                 out(f"   {_when(column['as_of'])} 時点・GA4 の窓は hub が決める（--days より広くても控えを丸ごと使う）")

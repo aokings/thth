@@ -1662,4 +1662,16 @@ ENTRIES = {
         "doors": ("cli",),
         "since": "5.23.0",
     },
+    "reply_marks_unreadable": {
+        "kind": "refusal",
+        "why": "返信の印の置き場（state/<口座>/reply_marks/marks.json）が読めない形です（JSON でない・marks か facts が "
+               "{返信の id: 印} の dict でない）。黙って読み替えると前の印が消えるので、置き場は書き換えていません。",
+        "fix": "marks.json を開いて marks と facts を dict の形に直すか、別の名前に移してから thth reply-mark で付け直してください",
+        "command": "thth reply-mark <口座> <reply_id> --fact-challenge --by <名前>",
+        "better": "印は手で書かず thth reply-mark に書かせると、形がそろって二度とつまずきません",
+        "doors": ("cli",),
+        # 5.25.0 で足した断り。since は今の版（thth/VERSION）を越えられない試験があるので、版を 5.25.0 に上げる
+        # commit で "5.25.0" に直す（リリースノートの下書き 5.25.0 に書いた）。
+        "since": "5.24.0",
+    },
 }

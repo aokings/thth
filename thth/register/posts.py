@@ -9,6 +9,10 @@
 - `rechecks(root)`: 返信に事実の指摘の印（`thth reply-mark --fact-challenge`・`thth/reply_marks.py`）が付いた投稿が
   `seeds` で指す記録を「確かめ直しの候補」に（記録・投稿・印の日・印を付けた者）。返信の本文は読まない。
 
+連投（threadthrow）は `sent/` を書かないので、段の実行記録（`state/threads/<run_id>.json`）の公開の行（段 12 の残りで
+`seeds` を控える）も同じ形にして読む（読むだけ・`run_id` と `step` を足す）。配信の台帳は要るとき（直した記録がある・
+事実の指摘の印がある口座）だけ読む（監査 5.24.0 の軽 3）。`seeds_by_post(口座)` はシナリオの種の記録の列が使う。
+
 どの口座の配信の台帳を見るかは、台帳の控え（`registers/<名前>.json`）の `project` から引き、その project の口座を
 全部見る。読めない口座・読めない配信の台帳は `cannot_say` に名前を出し、0 と混ぜない（数は読めた物だけ）。
 
@@ -146,32 +150,157 @@ def _text(value):
     return "".join(c for c in value if ord(c) >= 0x20 and ord(c) != 0x7f)[:_TEXT_MAX] or None
 
 
-class _Index:
-    """1 回の命令の間だけ、project の口座の配信の台帳を読んでおく。"""
+RUNS_PATH = ("state", "threads")                  # `thth/threadrun.py` の `runs_dir`（連投の段の実行記録）
+RUN_PUBLISHED = "published"                      # `threadrun.PUBLISHED`
 
-    def __init__(self, root: str):
+
+def _runs_rows(names) -> tuple:
+    """連投の段の実行記録（`state/threads/<run_id>.json`）から、口座ごとの公開済みの段 `({口座: [記録]}, 読めない物)`。
+
+    連投は `sent/` を書かないので、段の公開の行（`post_id`・`posted_at`・`seeds`）を配信の台帳の行の形にして返す
+    （`sent_at` は `posted_at`・`run_id` と `step` を足す）。読むだけ。置き場が無ければ空（0 本）。"""
+    folder = os.path.join(accounts.thth_root(), *RUNS_PATH)
+    out = {name: [] for name in names}
+    if not os.path.lexists(folder):
+        return out, []
+    if os.path.islink(folder) or not os.path.isdir(folder):
+        return out, [{"account": None, "why": "runs_unreadable"}]
+    try:
+        files = sorted(os.listdir(folder))
+    except OSError:
+        return out, [{"account": None, "why": "runs_unreadable"}]
+    broken = 0
+    for file in files:
+        if not file.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(folder, file), "rb") as f:
+                raw = f.read(FILE_MAX + 1)
+            run = json.loads(raw.decode("utf-8")) if len(raw) <= FILE_MAX else None
+        except (OSError, UnicodeDecodeError, ValueError):
+            run = None
+        if not isinstance(run, dict) or not isinstance(run.get("posts"), list):
+            broken += 1
+            continue
+        if run.get("account") not in out:
+            continue
+        for step in run["posts"]:
+            if not isinstance(step, dict) or step.get("state") != RUN_PUBLISHED:
+                continue
+            post_id = step.get("post_id")
+            if not isinstance(post_id, str) or not post_id.strip():
+                continue
+            row = {"post_id": post_id, "sent_at": step.get("posted_at"), "run_id": run.get("run_id"),
+                   "step": step.get("index")}
+            if isinstance(step.get("seeds"), list):
+                row["seeds"] = step["seeds"]
+            out[run["account"]].append(row)
+    return out, ([{"account": None, "why": "runs_unreadable", "rows": broken}] if broken else [])
+
+
+class _Index:
+    """1 回の命令の間だけ、project の口座の配信の台帳（と連投の段の実行記録）を読んでおく。
+
+    **要るときだけ読む**（監査 5.24.0 の軽 3）: 口座の並びだけを先に引き、配信の台帳は `rows(口座)` で初めて読む。
+    直した記録も事実の指摘の印も無いふつうの verify では `sent/` を開かない（壊れた行のある口座を毎回「言えない」に
+    出さない）。読んだ口座の読めない物だけを、その欄の `cannot_say` に出す。"""
+
+    def __init__(self, root: str | None = None, *, names=None):
+        self.cannot = []          # 口座を引く前の読めない物（台帳の控え・口座の置き場）
+        self.names = []           # (口座, 媒体)
+        self._rows = {}           # 口座 → [記録]（読めなければ None）
+        self._problems = {}       # 口座 → [読めない物]
+        self._runs = None
+        self._runs_problems = []
+        if names is not None:
+            self.project, self.register = None, None
+            self.names, self.cannot = _named_accounts(names)
+            return
         self.project, self.register, why = project_of(root)
-        self.accounts = []        # 読めた口座の名前
-        self.cannot = [] if why is None else [{"account": None, "why": why}]
-        self.rows = []            # (口座, 媒体, 記録)
+        if why is not None:
+            self.cannot.append({"account": None, "why": why})
         if self.project is None:
             return
-        names, cannot = _accounts_of(self.project)
+        self.names, cannot = _accounts_of(self.project)
         self.cannot += cannot
-        for name, media in names:
-            rows, why, broken = _sent_rows(name)
-            if rows is None:
-                self.cannot.append({"account": name, "why": why})
-                continue
-            if why is not None:
-                self.cannot.append({"account": name, "why": why, "rows": broken})
-            self.accounts.append(name)
-            for row in rows:
-                self.rows.append((name, media, row))
 
-    def head(self) -> dict:
-        return {"project": self.project, "register": self.register, "accounts": list(self.accounts),
-                "cannot_say": list(self.cannot)}
+    @property
+    def accounts(self) -> list:
+        """読めた（まだ読んでいない物を含む）口座。配信の台帳を読んで読めなかった口座は外す。"""
+        return [name for name, _media in self.names if self._rows.get(name, ()) is not None]
+
+    def _load(self, name) -> None:
+        if name in self._rows:
+            return
+        if self._runs is None:
+            self._runs, self._runs_problems = _runs_rows([n for n, _m in self.names])
+        rows, why, broken = _sent_rows(name)
+        problems = []
+        if rows is None:
+            problems.append({"account": name, "why": why})
+        elif why is not None:
+            problems.append({"account": name, "why": why, "rows": broken})
+        if rows is not None:
+            known = {row["post_id"] for row in rows}
+            rows = rows + [row for row in self._runs.get(name, ()) if row["post_id"] not in known]
+        self._rows[name] = rows
+        self._problems[name] = problems
+
+    def rows(self, names=None) -> list:
+        """`[(口座, 媒体, 記録)]`。`names` を渡せばその口座だけ読む。"""
+        wanted = None if names is None else set(names)
+        out = []
+        for name, media in self.names:
+            if wanted is not None and name not in wanted:
+                continue
+            self._load(name)
+            for row in self._rows[name] or ():
+                out.append((name, media, row))
+        return out
+
+    def problems(self, names) -> list:
+        """読んだ口座（`names`）の読めない物。連投の段の実行記録を読んだなら、その読めない物も。"""
+        out = []
+        for name in names:
+            out += self._problems.get(name, [])
+        if any(name in self._rows for name in names):
+            out += self._runs_problems
+        return out
+
+    def head(self, read=()) -> dict:
+        return {"project": self.project, "register": self.register, "accounts": self.accounts,
+                "cannot_say": list(self.cannot) + self.problems(read)}
+
+
+def _named_accounts(names) -> tuple:
+    """口座の名前の並びを `([(口座, 媒体)], 読めない口座)` に（シナリオの種から呼ぶとき）。"""
+    out, cannot = [], []
+    for name in sorted(set(names)):
+        try:
+            cfg = accounts.load_account(name)
+        except Exception as exc:  # noqa: BLE001
+            cannot.append({"account": name, "why": "account_unreadable:" + type(exc).__name__})
+            continue
+        out.append((name, cfg.get("media")))
+    return out, cannot
+
+
+def seeds_by_post(names) -> dict:
+    """口座（`names`）の出した投稿ごとの `seeds`（シナリオの種の「反応の多かった台帳の記録」の列・案の 4・読むだけ）。
+
+    `{"posts": {(口座, post_id): {"seeds": [...], "retracted": bool}}, "unreadable": [口座], "cannot_say": [...]}`。
+    配信の台帳（`sent/`）と連投の段の実行記録の両方から引く。本文は返さない。`unreadable` は配信の台帳が読めない・
+    壊れた行のある口座（その口座で行の引けない投稿は「控えが無い」と言えない）。"""
+    index = _Index(names=names)
+    posts = {}
+    read = [name for name, _media in index.names]
+    for name, _media, row in index.rows(read):
+        posts.setdefault((name, row["post_id"]), {"seeds": _seeds_of(row), "retracted": bool(row.get("retracted_at"))})
+    problems = index.problems(read)
+    unreadable = sorted({p["account"] for p in problems if p.get("account")})
+    if any(p.get("account") is None for p in problems):
+        unreadable = sorted({name for name, _media in index.names})   # 連投の記録が読めない: どの口座の物か言えない
+    return {"posts": posts, "unreadable": unreadable, "cannot_say": list(index.cannot) + problems}
 
 
 def _seeds_of(row) -> list:
@@ -185,6 +314,10 @@ def _post(name, media, row) -> dict:
         out["kind"] = row["kind"]
     if row.get("url"):
         out["url"] = row["url"]
+    if row.get("run_id"):
+        # 連投の段（`sent/` でなく段の実行記録から引いた投稿）。
+        out["run_id"] = row["run_id"]
+        out["step"] = row.get("step")
     return out
 
 
@@ -192,22 +325,32 @@ def posts_for(root: str, refs, *, index: _Index | None = None) -> dict:
     """`refs`（`種類:番号`・共通は `common:種類:番号`）を `seeds` で指す出した投稿（取り下げた物は除く）。"""
     refs = set(refs or ())
     try:
-        index = index or _Index(root)
-    except Exception as exc:  # noqa: BLE001 — 読むだけの欄で判定を変えない
-        return {"project": None, "register": None, "accounts": [], "count": None, "items": [],
-                "cannot_say": [{"account": None, "why": "posts_unreadable:" + type(exc).__name__}]}
-    out = index.head()
+        return _posts_for(root, refs, index)
+    except Exception as exc:  # noqa: BLE001 — 読むだけの欄で判定を変えない（recheck とは別に言えないに送る）
+        return _unreadable(exc)
+
+
+def _posts_for(root, refs, index) -> dict:
+    index = index or _Index(root)
     if index.project is None:
+        out = index.head()
         out.update(count=None, items=[])
         return out
+    if not refs:
+        # 直した記録が無い: 配信の台帳を読まない（監査 5.24.0 の軽 3）。
+        out = index.head()
+        out.update(count=0, items=[])
+        return out
+    read = [name for name, _media in index.names]
     items = []
-    for name, media, row in index.rows:
+    for name, media, row in index.rows(read):
         if row.get("retracted_at"):
             continue
         hit = [s for s in _seeds_of(row) if s in refs]
         if hit:
             items.append({**_post(name, media, row), "seeds": hit})
-    items.sort(key=lambda x: (str(x.get("sent_at") or ""), x["account"], str(x["post_id"])))
+    items.sort(key=lambda x: (str(x.get("sent_at") or ""), x["account"], str(x["post_id"]), x.get("step") or 0))
+    out = index.head(read)
     out.update(count=len(items), items=items[:SHOWN])
     return out
 
@@ -220,24 +363,32 @@ def rechecks(root: str, vessel=None, *, index: _Index | None = None) -> dict:
         return {"project": None, "register": None, "accounts": [], "count": None, "items": [],
                 "marks": None, "unseeded": None, "post_unknown": None,
                 "cannot_say": [{"account": None, "why": "posts_unreadable:" + type(exc).__name__}]}
-    out = index.head()
     if index.project is None:
+        out = index.head()
         out.update(count=None, items=[], marks=None, unseeded=None, post_unknown=None)
         return out
-    by_post = {}
-    for name, media, row in index.rows:
-        # 取り下げた投稿は外す（`posts_for` と揃える。消した投稿への指摘は、もう出ていない言い分なので候補にしない）。
-        if row.get("retracted_at"):
-            continue
-        by_post.setdefault((name, row.get("post_id")), (media, row))
-    items, marks, unseeded, unknown = [], 0, 0, 0
+    # 印を先に読み、印のある口座の配信の台帳だけを読む（監査 5.24.0 の軽 3・要るときだけ読む）。
+    marked, unreadable = {}, []
     for name in index.accounts:
         try:
             facts, ok = _facts(name)
         except Exception:  # noqa: BLE001
             facts, ok = {}, False
         if not ok:
-            out["cannot_say"].append({"account": name, "why": "reply_marks_unreadable"})
+            unreadable.append({"account": name, "why": "reply_marks_unreadable"})
+        if facts:
+            marked[name] = facts
+    by_post = {}
+    for name, media, row in index.rows(list(marked)):
+        # 取り下げた投稿は外す（`posts_for` と揃える。消した投稿への指摘は、もう出ていない言い分なので候補にしない）。
+        if row.get("retracted_at"):
+            continue
+        by_post.setdefault((name, row.get("post_id")), (media, row))
+    out = index.head(list(marked))
+    out["cannot_say"] += unreadable
+    items, marks, unseeded, unknown = [], 0, 0, 0
+    for name in index.accounts:
+        facts = marked.get(name, {})
         for reply_id, mark in sorted(facts.items()):
             marks += 1
             post_id = mark.get("post_id")
@@ -294,9 +445,6 @@ def _attach(found: dict, root: str, vessel=None) -> dict:
         found["posts"] = dict(empty)
         found["recheck"] = dict(empty)
         return found
-    if refs:
-        found["posts"] = posts_for(root, refs, index=index)
-    else:
-        found["posts"] = {**index.head(), "count": 0 if index.project is not None else None, "items": []}
+    found["posts"] = posts_for(root, refs, index=index)
     found["recheck"] = rechecks(root, vessel, index=index)
     return found
