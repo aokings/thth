@@ -2,6 +2,10 @@
 
 2026-11-13、THTH開発 第16。**2026-11-13 に送った。ケース ID 1-8384000042054。審査は 7〜10 営業日（Google の画面の文）。同じ project で二度送らない（遅れる）。**
 
+**2026-11-17 不合格の返事が来た（masaru が転送）。** 理由は 1 つだけ: 申請の「会社のウェブサイト」（https://thth.me）が、確認済みのビジネス プロフィールに出ているウェブサイトと完全に同じでない。プロフィール（山手日本語学校）に出ているのは `https://yamate-jls.aiko.ac.jp/`（11/17 にビジネス プロフィール マネージャーから開いた管理者向けの表示で確かめた）。出し直すなら、ウェブサイトの欄をこの文字列と 1 字も違わず書く。ほかの欄は理由に挙がっていない。プロフィールとウェブサイトを最新にしてから新しく申請するよう書かれている。誤りだと思うなら一般の GBP API のサポートの問い合わせで証拠を出す道もあるが、今回は本当に違っていたので当たらない。
+
+**2026-11-17 出し直した（masaru「出し直します」・THTH開発 第19 が内蔵のブラウザで送った）。新しいケース ID 4-3446000042331。審査は 7〜10 営業日（11/27〜12/1 ごろ）。この project でもう送らない。** 前回から替えたのは 2 欄: 会社のウェブサイト `https://yamate-jls.aiko.ac.jp/`（プロフィールと同じ文字列）、主な理由（学校が自分のプロフィールを THTH で管理する、と書き直した。全文: "Yamate Japanese Language School (Aiko Gakuen) manages its own Business Profiles with THTH, a command-line tool we run on our own computer. We will read and update our own hours, special hours and posts to match our records. Every change is reviewed and approved by us before it is sent; nothing is changed automatically."）。form に会社名の欄は無かった。ほか（アカウント aokings・ビジネス 山手日本語学校・project 番号 654856288966・知った所・60 日以上 はい・許可リスト済みの project いいえ）は前回と同じ。
+
 送った中身（form は下の「form の欄と下書き」の形ではなく、段に分かれた workflow だった: https://support.google.com/business/workflow/16726127）:
 - アカウント: aokings@gmail.com（学校の 3 件のプロフィールの管理者に 11/13 に足した）
 - ビジネス: 山手日本語学校（確認済み）
