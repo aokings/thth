@@ -32,6 +32,7 @@ import json
 import os
 import re
 
+from . import keep as K
 from . import route as R
 from . import vessel as V
 from .errors import RegisterRefused
@@ -443,7 +444,8 @@ def published(root: str, outlet_name: str, list_path, now, *, record: bool = Fal
                 row["to"] = c["to"]
             lines.append(row)
         data = "".join(json.dumps(x, ensure_ascii=False, sort_keys=True) + "\n" for x in lines).encode("utf-8")
-        path = log_path(root, outlet.name)
+        path = K.guard(root, log_path(root, outlet.name))   # 控えの置き場が外への symlink なら断る（監査 5.20.0）
+        K.guard(root, head_path(root, outlet.name))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "ab") as f:
             f.write(data)
@@ -471,7 +473,8 @@ def seed_lines(urls, *, at: str, generation=None) -> bytes:
 
 def write_seed(root: str, outlet: str, urls, *, at: str) -> int:
     """`seed_lines` を控えに書き、頭を書く（移すときの 1 回だけ。控えがもうあれば断る）。"""
-    path = log_path(root, outlet)
+    path = K.guard(root, log_path(root, outlet))
+    K.guard(root, head_path(root, outlet))
     if os.path.exists(path):
         raise RegisterRefused("register_args_invalid", "published_log_exists")
     data = seed_lines(urls, at=at)

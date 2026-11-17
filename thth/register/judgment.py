@@ -27,6 +27,7 @@ import json
 import os
 import re
 
+from . import keep as K
 from . import vessel as V
 from .errors import RegisterRefused
 
@@ -218,6 +219,9 @@ def shape_problem(item: dict) -> str | None:
 def append(root: str, items: list) -> None:
     """試験と段 3 の命令が使う（段 1 の命令は呼ばない）。足すだけ。"""
     path = path_of(root)
+    # 監査 5.20.0「出したあとでよい」1: 読み手は symlink を断るのに、書き手が外のファイルへ足していた。書く前に
+    # 台帳の根からこの枚までのどの段も symlink でないことを確かめる（段 6 の `keep.guard` と同じ）。
+    K.guard(root, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         for item in items:

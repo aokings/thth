@@ -413,6 +413,9 @@ def _records_column(posts, ledger, *, limit, min_n, window):
     except Exception as exc:  # noqa: BLE001 — 読めない控えは 0 と混ぜない
         index = {"posts": {}, "unreadable": sorted({row["item"].account for row in posts})}
         problems = [{"account": None, "why": "seeds_unreadable:" + type(exc).__name__}]
+    # どの口座の物か言えない壊れた実行記録があれば、行の無い投稿はその連投だったかもしれないので「控えの行なし」と
+    # 言わず「言えない」に数える（監査 5.25.0 の残す物 1）。
+    anonymous = any(isinstance(p, dict) and p.get("account") is None for p in problems)
     by_medium = {}
     for row in posts:
         item = row["item"]
@@ -422,7 +425,7 @@ def _records_column(posts, ledger, *, limit, min_n, window):
         post_id = next((pid for pid in item.post_ids if isinstance(pid, str) and pid), None)
         found = index["posts"].get((item.account, post_id))
         if found is None:
-            group["unknown" if item.account in index["unreadable"] else "sent_missing"] += 1
+            group["unknown" if anonymous or item.account in index["unreadable"] else "sent_missing"] += 1
             continue
         if found["retracted"]:
             group["retracted"] += 1

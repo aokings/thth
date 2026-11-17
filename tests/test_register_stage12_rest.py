@@ -362,3 +362,16 @@ def test_検収軽7_印の置き場のschemaと知らない欄を書き込みで
     value = json.loads(_marks_path("one").read_text())
     assert value["schema"] == "thth.reply_marks/2" and value["later"] == {"keep": 1}
     assert value["facts"]["R1"]["post_id"] == "ROOT"
+
+
+def test_残した軽1_どの口座か言えない壊れた実行記録があれば行の無い投稿は言えないに数える(seeds):  # noqa: F811
+    """5.25.0 の監査の「軽い（残す物）」1。JSON でない実行記録はどの口座の物か言えないので、その口座の連投だった
+    かもしれない行の無い投稿を「控えの行なし」（sent_missing）でなく「言えない」（unknown）に数える。"""
+    _seed_row("kp-threads", "P1", "claim:a")
+    directory = Path(threadrun.runs_dir())
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "run-20261024T070000-0000dead.json").write_text("{not json")
+    column = _column(_build(), "records")
+    threads = column["by_medium"]["threads"]
+    assert threads["sent_missing"] == 0 and threads["unknown"] >= 1, threads
+    assert any(p.get("why") == "runs_unreadable" and p.get("account") is None for p in column["read_problems"])

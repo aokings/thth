@@ -1650,7 +1650,7 @@ def ensure_salt(root: str) -> bytes:
     got = read_salt(root)
     if got is not None:
         return got
-    path = salt_path(root)
+    path = K.guard(root, salt_path(root))   # 封の置き場が台帳の外への symlink なら、外に塩を作らない（監査 5.20.0）
     if os.path.lexists(path):
         raise RegisterRefused("register_seal_unverified", "salt_broken", seal="salt")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2270,8 +2270,8 @@ def accept_prepare(root: str, outlet_name: str, to, as_of, *, confirm: str, at: 
 def accept_commit(root: str, prepared: tuple) -> dict:
     """`accept_prepare` の結果で、材料を書き、封をする。"""
     plan, body, signature = prepared
+    path = K.guard(root, seal_path(root, plan["outlet"]))   # 材料を書く前に（封を外に書かない・監査 5.20.0）
     write_files(plan["to"], plan["result"]["files"])
-    path = seal_path(root, plan["outlet"])
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
