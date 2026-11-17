@@ -1043,6 +1043,11 @@ def _read_lines(rel: str, text: str, kind: Kind) -> list:
         values = {name: cells[i] for i, name in enumerate(kind.columns) if i < len(cells)}
         unread = tuple(name for i, name in enumerate(kind.columns) if i >= len(cells))
         problems = [] if kind.columns_min <= len(cells) <= len(kind.columns) else ["row_width"]
+        # 欄の字は削らない。ただ番号を作る欄の前後に空白があると、空白を削って読む道具（染めと化学の
+        # gate_publish.py など）と番号の指す行が食い違うので、印を付けて見せる（宿題 lines の空白）。
+        keys = [kind.id_rule["field"]] if "field" in kind.id_rule else list(kind.id_rule.get("key") or [])
+        if any(isinstance(values.get(k), str) and values[k] != values[k].strip() for k in keys):
+            problems.append("key_space")
         if "field" in kind.id_rule:
             rid = _id_ok(values.get(kind.id_rule["field"]))
         else:

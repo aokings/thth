@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-14"  # 5.20.0（台帳の器の節）。出す日がずれたら直す。前: 2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-17"  # 5.26.0（監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
@@ -313,6 +313,7 @@ REGISTER_ERASE = ".thth/erase/"
 REGISTER_PUBLISHED = ".thth/published/"
 REGISTER_KINDS = ".thth/kinds/"
 REGISTER_SEAL_KEY = "~/.config/thth/register_seal.pem"
+REGISTER_ERASE_MIN = 4   # erase.MIN_NEEDLE と結ぶ（消す求めの最後の確かめで、これより短い値は字で探さない）
 
 
 def _register_managed_en() -> str:
@@ -702,7 +703,8 @@ def build_privacy() -> str:
         "(below). A decision that stops a record takes effect at once. A decision that allows more takes effect only "
         "after the owner accepts it and THTH seals it with a key that belongs to the owner. The private key is kept "
         "on the owner's computer in an owner-only file (by default <code>" + REGISTER_SEAL_KEY + "</code>, mode 600), "
-        "never inside a register or a repository that contains one, and THTH does not show it; the owner gives the "
+        "and THTH refuses to seal with a key kept inside a register or a repository that contains one; THTH does "
+        "not show the key. The owner gives the "
         "matching public key to the build that publishes the material. THTH writes the material to a folder outside "
         "the register and keeps each seal in the register (<code>" + REGISTER_SEALS + "</code>). The seal in the "
         "register holds the outlet's name and who it is for, a generation number, the time, the THTH version, a "
@@ -742,21 +744,25 @@ def build_privacy() -> str:
         "from the register's current text, the kept earlier versions and plans, the judgment log (rewriting the "
         "affected lines into a marker, keeping the number and order of lines) and the seals, including their "
         "signatures (that outlet has no seal until the owner accepts again), then reads every file in the register "
-        "folder, outside git's own folder, to check that the content is gone. THTH does not change or check git "
+        "folder, outside git's own folder, to check that the content is gone (values shorter than " + str(REGISTER_ERASE_MIN) + " characters "
+        "are not searched as text; the result gives their count). THTH does not change or check git "
         "history, material already written or published, other copies or the shared register; seal copies "
         "published before the erase keep the erased lines in salted form. The result lists those places as not "
         "checked until the owner marks each one; when the owner marks the final check as done, THTH reads the folder "
         "again before accepting it. Past results that used the erased version "
         "can no longer be reproduced; the result says which outlets and generations are affected, without the "
         "erased content or its fingerprint.</p>")
-    add("<p>No THTH command deletes a register folder or what THTH wrote inside it, and THTH refuses to keep a "
-        "register inside its own storage. <code>thth register remove</code> "
+    add("<p>Removing a register, an account, a project or an owner never deletes a register folder or what THTH "
+        "wrote inside it (inside a register, only the erase request above removes content, and THTH tidies up its "
+        "own finished change plans); THTH refuses to keep a register inside its own storage. "
+        "<code>thth register remove</code> "
         "deletes THTH's files for one register on the computer where it runs (its name, project, folder path and "
         "kind, the record of confirmed rows and the list of drafts). Removing an account keeps those files and the "
         "register's decisions, even for the project's last account. Removing a media project deletes its accounts "
         "and THTH's files for its registers, and keeps the shared register and other projects. Removing an owner "
-        "deletes all of the owner's accounts, THTH's files for every register (the shared one too), the owner's "
-        "principals with the keys THTH holds for them, and the seal's private key. Removing an account, a project "
+        "deletes every account in THTH's storage on that computer (including accounts of people the owner invited), "
+        "THTH's files for every register (the shared one too), every principal there with the keys THTH holds for "
+        "them, and the seal's private key; the list shown before deleting names them all. Removing an account, a project "
         "or an owner stops without deleting anything if a register folder, or any folder that looks like one "
         "(a folder holding <code>.thth/</code>), lies where it would delete. Removing a "
         "project or an owner first shows what will be deleted and what will remain, deletes only after the owner "
@@ -1333,8 +1339,8 @@ def build_privacy() -> str:
         "THTH が判断を台帳の判断の記録（<code>" + REGISTER_JUDGMENTS + "</code>）に足すのは、持ち主が判断を書くか受け入れた"
         "ときだけで、前の行は書き換えずに足していきます（例外は下の消す求めです）。記録を止める判断はすぐ効きます。使える範囲を"
         "広げる判断は、持ち主が受け入れ、持ち主の鍵で THTH が封をしてから効きます。秘密の鍵は、持ち主のコンピューターの、"
-        "本人だけが読めるファイル（既定は <code>" + REGISTER_SEAL_KEY + "</code>・600）に置き、台帳の中にも、台帳を含む repo の"
-        "中にも置きません。THTH は鍵の値を見せません。対になる公開鍵は、持ち主が材料を出す build に渡します。THTH は材料を"
+        "本人だけが読めるファイル（既定は <code>" + REGISTER_SEAL_KEY + "</code>・600）に置きます。台帳の中や、台帳を含む repo の"
+        "中にある鍵では封をせず、断ります。THTH は鍵の値を見せません。対になる公開鍵は、持ち主が材料を出す build に渡します。THTH は材料を"
         "台帳の外のフォルダに書き、封を台帳（<code>" + REGISTER_SEALS + "</code>）に置きます。台帳の中の封に入るのは、"
         "出し口の名前と読む者、世代の番号、日時、THTH の版、決まりの指紋、判断の記録の大きさと指紋、使った記録の番号と版の"
         "指紋、項目ごと・表の行ごと・書いたファイルごとの指紋です。台帳ごとに秘密の塩も持ち、台帳の中にだけ置きます（<code>"
@@ -1360,18 +1366,20 @@ def build_privacy() -> str:
         "誰が・いつ・どの記録のどの欄か・理由の種類を書き、消したい中身そのものは書きません。持ち主が範囲を二段で決めると、"
         "THTH はそれを、台帳の今の本文・控えた前の版と段取り・判断の記録（当たる行を印の形に書き換え、行の数と順は変えません）・"
         "封（署名も。受け入れ直すまで、その出し口は封なしになります）から除き、そのあと台帳のフォルダの全部のファイル（git の"
-        "自前のフォルダを除く）を読んで、中身が残っていないかを確かめます。git の履歴・書き出した材料や出した頁・ほかの写し・"
+        "自前のフォルダを除く）を読んで、中身が残っていないかを確かめます（" + str(REGISTER_ERASE_MIN) + " 字より短い値は字では探さず、その数を結果に出します）。git の履歴・書き出した材料や出した頁・ほかの写し・"
         "共通の台帳は、THTH は変えず、確かめもしません。消す前に公開した封の写しには、消した行が塩を混ぜた形で残ります。"
         "結果には、持ち主が 1 つずつ印を付けるまで、それらを「確かめていない」と出します。最後の確かめを持ち主が済んだと"
         "言うときは、THTH がフォルダをもう一度読んでから受けます。消した版を使っていた過去の結果は、もう再現"
         "できません。結果には、どの出し口のどの世代かを出し、消した中身もその指紋も入れません。</p>")
-    add("<p>台帳のフォルダと、THTH がその中に書いた物は、THTH のどの命令でも消しません。THTH の置き場の中にある台帳は"
+    add("<p>台帳・口座・プロジェクト・持ち主を外す命令は、台帳のフォルダと、THTH がその中に書いた物を消しません（台帳の"
+        "中から消すのは、上の消す求めと、THTH が済んだ入れ替えの段取りを片づけるときだけです）。THTH の置き場の中にある台帳は"
         "控えません。<code>thth register remove</code> は、"
         "打ったコンピューターの、その台帳についての THTH のファイル（名前・プロジェクト・フォルダの道・種類、認めた行の記録、"
         "下書きの控え）を消します。口座を外しても、そのファイルと台帳の判断は残ります（プロジェクトの最後の口座でも同じです）。"
         "メディアのプロジェクトを外すと、その口座と、その台帳についての THTH のファイルを消し、共通の台帳とほかのプロジェクトは"
-        "残します。持ち主ごとやめると、持ち主の全部の口座、全部の台帳（共通の台帳も）についての THTH のファイル、持ち主の主体と"
-        "THTH が預かるその鍵、封の秘密の鍵を消します。口座・プロジェクト・持ち主のどれを外すときも、消す所に台帳のフォルダか、"
+        "残します。持ち主ごとやめると、そのコンピューターの THTH の置き場にある全部の口座（持ち主が招いた人の口座も）、全部の台帳"
+        "（共通の台帳も）についての THTH のファイル、そこにある全部の主体と THTH が預かるその鍵、封の秘密の鍵を消します（消す前に"
+        "見せる一覧に全部の名前が出ます）。口座・プロジェクト・持ち主のどれを外すときも、消す所に台帳のフォルダか、"
         "台帳らしいフォルダ（<code>.thth/</code> を持つフォルダ）があれば、何も消さずに止まります。プロジェクトと持ち主を外す"
         "ときは、先に消える物と残る物を見せ、持ち主が確かめてから消し、その間にプロジェクトへの所属が変われば止まります。"
         "そのコンピューターには記録（関わる口座・台帳・フォルダ、見せたときのそれぞれの所属、誰が打ったか、進んだ段、消した物の"

@@ -21,6 +21,7 @@ from thth.shop import wire as shop_wire
 from thth.shop import access as shop_access
 from thth.shop import shopify as shop_shopify
 from thth.shop import kinds as shop_kinds
+from thth.register import erase as register_erase
 from thth.register import form as register_form
 from thth.register import kinds as register_kinds
 from thth.register import holes as register_holes
@@ -500,7 +501,7 @@ def facts() -> list[tuple[str, str]]:
          "Removing a media project deletes its accounts and THTH's files for its registers, and keeps the shared "
          "register and other projects" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
         ("持ち主ごとやめると封の秘密の鍵も消す",
-         "THTH's files for every register (the shared one too), the owner's principals with the keys THTH holds for "
+         "THTH's files for every register (the shared one too), every principal there with the keys THTH holds for "
          "them, and the seal's private key" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
         ("メディアを外す・持ち主ごと・日本語",
          "共通の台帳とほかのプロジェクトは残します。持ち主ごとやめると" if _project_leave_keeps_common()
@@ -515,7 +516,7 @@ def facts() -> list[tuple[str, str]]:
         ("封の秘密の鍵の置き場と権限（seal.KEY_NAME・key_dir・_private_ok・check_key_place）",
          _seal_key_default()),
         ("封の秘密の鍵・日本語",
-         _seal_key_default().replace("</code>, mode 600", "</code>・600）に置き、台帳の中にも")),
+         _seal_key_default().replace("</code>, mode 600", "</code>・600）に置きます。台帳の中や")),
         ("台帳ごとの秘密の塩（route.salt_path・ensure_salt）", _salt_inside_register()),
         ("台帳の中の封の欄（route.seal_body）",
          "The seal in the register holds the outlet's name and who it is for" if _seal_body_fields()
@@ -622,7 +623,36 @@ def facts() -> list[tuple[str, str]]:
         ("利用者ごとの期限（permission_watch.USER_LIMIT_DAYS）",
          f"expire {permission_watch.USER_LIMIT_DAYS} days after the user was last active"),
         ("利用者ごとの期限・日本語", f"{permission_watch.USER_LIMIT_DAYS} 日のデータアクセスの期限"),
+        # 監査 5.20.0 の 4・3（11/17）: 文がコードより強かった所を、コードの定数と振る舞いに結ぶ
+        ("消す求めの最後の確かめで短い値は字で探さない（register/erase.MIN_NEEDLE）",
+         f"values shorter than {register_erase.MIN_NEEDLE} characters are not searched as text; the result gives "
+         "their count"),
+        ("短い値・日本語", f"{register_erase.MIN_NEEDLE} 字より短い値は字では探さず、その数を結果に出します"),
+        ("台帳の中の鍵では封をしない（register/seal.check_key_place）",
+         "refuses to seal with a key kept inside a register or a repository that contains one"
+         if _key_place_refused() else "台帳の中の鍵で封をしてしまう"),
+        ("台帳の中の鍵・日本語", "台帳の中や、台帳を含む repo の中にある鍵では封をせず、断ります"
+         if _key_place_refused() else "台帳の中の鍵で封をしてしまう"),
+        ("持ち主ごとやめると置き場の全部の口座（leave.scope_plan の owner）",
+         "deletes every account in THTH's storage on that computer (including accounts of people the owner invited)"
+         if _owner_scope_is_whole_storage() else "持ち主の範囲が置き場の全部でなくなった（privacy を直す）"),
+        ("持ち主ごと・日本語", "そのコンピューターの THTH の置き場にある全部の口座（持ち主が招いた人の口座も）"
+         if _owner_scope_is_whole_storage() else "持ち主の範囲が置き場の全部でなくなった（privacy を直す）"),
     ]
+
+
+def _key_place_refused() -> bool:
+    import inspect
+    from thth.register import seal
+    return "inside_register" in inspect.getsource(seal.check_key_place)
+
+
+def _owner_scope_is_whole_storage() -> bool:
+    """持ち主の範囲は、その置き場の全部の口座と主体（持ち主の名前で絞らない。監査 5.20.0 の 3）。"""
+    import inspect
+    from thth import leave
+    src = inspect.getsource(leave.scope_plan)
+    return "gone=sorted(by_project)" in src and "_principal_names()" in src
 
 
 def _hours(delta) -> int:

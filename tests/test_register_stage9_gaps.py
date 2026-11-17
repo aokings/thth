@@ -390,3 +390,59 @@ def test_宿題L1_NFCの名の枚はこれまでどおり読む(tmp_path):
                        {"ガイド/照合台帳_1.md": "# 照合\n"})
     vessel = V.open_vessel(str(root))
     assert [(r.id, r.problems) for r in vessel.all_records if r.kind == "daichou"] == [("照合台帳_1", [])]
+
+
+def test_宿題L2_repeatの番号がずれても判断は別の行へ黙って移らない(tmp_path):
+    """宿題 L2: `repeat: count` の番号（`.2`・`.3`）は、前に同じ鍵の行が増える・消えるとずれる（数えるだけで決めるので）。
+    ずれた番号に付いていた判断は、問いの依る所（既定は行の全部の欄）の指紋が違えば効かなくなる（stale）。依る所が
+    同じ行（同じ鍵・同じ中身）へ移ったときだけ効いたまま（中身が同じなので、言っていることは変わらない）。"""
+    from thth.register import judgment as J
+    k = owner_kind(questions=[{"name": "read"}])
+    text = "/a/x/\t2026-11-01\t一回め\n/a/x/\t2026-11-01\t二回め\n"
+    root = make_ledger(tmp_path / "l", [k], {"site/owner-read.txt": text})
+    vessel = V.open_vessel(str(root))
+    second = next(r for r in vessel.all_records if r.values.get("memo") == "二回め")
+    assert second.id.endswith(".2")
+    j = J.make(vessel, {"record": second.ref}, "read", by="masaru", at="2026-11-17T10:00:00+09:00", conclusion="good")
+    assert J.evaluate(vessel, j) == "effective"
+    # 前に同じ鍵の行が 1 つ増えた: 番号 .2 は「一回め」を指すようになる → 判断は効かない
+    (root / "site/owner-read.txt").write_text("/a/x/\t2026-11-01\tはじめ\n" + text, encoding="utf-8")
+    moved = V.open_vessel(str(root))
+    assert next(r for r in moved.all_records if r.id == second.id).values["memo"] == "一回め"
+    assert J.evaluate(moved, j) == "stale"
+    # 同じ中身の行どうしでずれたときは効いたまま（同じことを言っている）
+    dup = "/a/x/\t2026-11-01\t同じ\n"
+    (root / "site/owner-read.txt").write_text(dup * 2, encoding="utf-8")
+    twice = V.open_vessel(str(root))
+    rec = next(r for r in twice.all_records if r.id == second.id)
+    j2 = J.make(twice, {"record": rec.ref}, "read", by="masaru", at="2026-11-17T10:00:00+09:00", conclusion="good")
+    (root / "site/owner-read.txt").write_text(dup * 3, encoding="utf-8")
+    assert J.evaluate(V.open_vessel(str(root)), j2) == "effective"
+
+
+def test_宿題L5_ts_constの枚は消す口で枚ごと消せない():
+    """宿題 L5: 1 枚 = 1 記録の ts_const の種類は、消す口の「枚ごと」に当たっていた。TypeScript の枚はアプリのコードで、
+    ほかの定数や関数も入るので、枚ごと消すと壊れる。形の断り（register_erase_invalid の format）にする。"""
+    from thth.register import erase as E
+    from thth.register.errors import RegisterRefused
+    k = V.parse_kind(kind("t", "src/data/*.ts", "ts_const", id={"name": True}), ".thth/kinds/t.json")
+    rec = V.Record("t", "a", "src/data/a.ts", "v", {"A": 1}, True)
+    with pytest.raises(RegisterRefused) as info:
+        E._check_target(k, rec, None, None)
+    assert info.value.code == "register_erase_invalid" and info.value.detail == "format"
+    # 1 枚 = 1 記録の JSON は前のまま枚ごと消せる
+    j = V.parse_kind(kind("j", "a/*.json", "json"), ".thth/kinds/j.json")
+    E._check_target(j, V.Record("j", "a", "a/a.json", "v", {"x": 1}, True), None, None)
+
+
+def test_宿題lines_番号を作る欄の前後の空白には印を付け欄の字は削らない(tmp_path):
+    """宿題（lines の空白）: 器は欄の字を削らない（元の字のまま）。染めと化学の gate_publish.py はパスと日の前後の
+    空白を削って読むので、番号を作る欄に空白があると、器と道具で指す行が食い違う。その行に `key_space` の印。
+    メモの欄（番号を作らない）の空白は印なし（11/17 に実物を数えた: 前後に空白のある欄はメモの 1 つだけ）。"""
+    from thth.register import form
+    text = "/a/x/ \t2026-11-01\tメモ\n/a/y/\t2026-11-02\t後ろに空白 \n"
+    root = make_ledger(tmp_path / "l", [owner_kind()], {"site/owner-read.txt": text})
+    recs = [r for r in V.open_vessel(str(root)).all_records if r.kind == "owner"]
+    assert [r.problems for r in recs] == [["key_space"], []]
+    assert recs[0].values["path"] == "/a/x/ " and recs[1].values["memo"] == "後ろに空白 "
+    assert form.PROBLEM_TEXT["key_space"]

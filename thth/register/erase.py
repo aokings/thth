@@ -183,6 +183,10 @@ def _check_target(kind: V.Kind, rec: V.Record, field, unit) -> None:
         if field is not None and (rec.values is None or field not in rec.values or field == kind.id_rule.get("field")):
             raise RegisterRefused("register_erase_invalid", "field")
         return
+    if kind.format == "ts_const":
+        # 宿題 L5: TypeScript の枚はアプリのコード（ほかの定数・関数も入る）。枚ごと消すとアプリが壊れるので受けない
+        # （値を消すなら、持ち主がコードを直す。器は読むだけの形として扱う・段 9）。
+        raise RegisterRefused("register_erase_invalid", "format")
     if kind.records == "file" and field is None and unit is None:
         return
     raise RegisterRefused("register_erase_invalid", "format")
