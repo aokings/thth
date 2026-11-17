@@ -77,3 +77,44 @@ def test_封の出力と記録を結ぶ():
     two = {"common/a/x.json": "v1", "common/b/x.json": "v1"}
     assert R._sealed_common_path(two, {"record": "common:k:x", "version": "v1"}) is None
     assert R._sealed_common_path(outs, {"record": "common:k:none", "version": "zz"}) is None
+
+
+def _private(common, rule):
+    import json
+    (common / ".thth/outlets.json").write_text(json.dumps({"schema": "thth.outlets/1", "outlets": {},
+                                                          "shared_private": {"source": rule}}))
+
+
+def test_検収危1_共通の側で記録ごと出さない種類はverifyと同じく違いに数えない(env, capsys):
+    """5.26.0 の検収 危 1: 共通の出さない欄で記録ごと外した物（封の項目に無い）を、共通の台帳なしの --check が
+    `common_not_in_seal` に数え、verify は緑なのに rc 1 にしていた（5.25.0 では rc 0）。"""
+    from thth.register import route as R
+    common, kop = ledger(env, "common"), ledger(env, "kopicha")
+    _private(common, "*")
+    rc, v, err = jrun(capsys, "register", "take", kop, "--common", common, "--record", SRC, "--by", "masaru")
+    assert rc == 0, err
+    site = env / "s"
+    accept(capsys, kop, "bib", site, SEALED_AT, "--common", common)
+    assert R.verify(str(kop), "bib", str(site), "2027-03-21", no_previous=True)["ok"]
+    rc, v, err = check(capsys, kop, site)
+    assert rc == 0 and v["found"] == [] and v["common_not_in_seal"] == [], (v, err)
+
+
+def test_検収_出さない欄で削った共通の物は名で結ばれ書き換えれば違いに出る(env, capsys):
+    import json
+    common, kop = ledger(env, "common"), ledger(env, "kopicha")
+    p = common / "sources/fujimoto-2021.json"
+    d = json.loads(p.read_text())
+    d["memo"] = "X"
+    p.write_text(json.dumps(d))
+    _private(common, ["memo"])
+    rc, v, err = jrun(capsys, "register", "take", kop, "--common", common, "--record", SRC, "--by", "masaru")
+    assert rc == 0, err
+    site = env / "s"
+    accept(capsys, kop, "bib", site, SEALED_AT, "--common", common)
+    rc, v, err = check(capsys, kop, site)
+    assert rc == 0 and v["found"] == [], (v, err)
+    f = site / COMMON_FILE
+    f.write_bytes(f.read_bytes() + b" ")
+    rc, v, err = check(capsys, kop, site)
+    assert rc == 1 and COMMON_FILE in v["differs"], v

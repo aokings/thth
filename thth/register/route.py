@@ -1983,8 +1983,13 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
         # こぴちゃ 第12 #8138: 共通の台帳を読めない CI の `export --check` は、共通から採った物を封の指紋で照らす
         # （verify と同じ。仮の共通の台帳を作らずに済む）。共通の側の止める・直すはここでは見えない（verify と同じ）。
         # 封に無い共通の物は中身を言えないので違いに数える。書く export（--check でない）は今までどおり。
+        sealed_items = set(seal["body"]["items"])
         for item in result["items"]:
             if item.get("unchecked"):
+                if item_key(item) not in sealed_items:
+                    # 封のときに外した共通の記録（共通の出さない欄で記録ごと外した物）。材料には書かないので、
+                    # verify と同じく広げたと読まない（5.26.0 の検収 危 1: 通っていた CI を赤にした）
+                    continue
                 path = _sealed_common_path(seal["body"]["outputs"], item)
                 if path is not None:
                     outputs[path] = seal["body"]["outputs"][path]

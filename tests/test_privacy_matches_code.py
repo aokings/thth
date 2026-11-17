@@ -501,8 +501,9 @@ def facts() -> list[tuple[str, str]]:
          "Removing a media project deletes its accounts and THTH's files for its registers, and keeps the shared "
          "register and other projects" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
         ("持ち主ごとやめると封の秘密の鍵も消す",
-         "THTH's files for every register (the shared one too), every principal there with the keys THTH holds for "
-         "them, and the seal's private key" if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
+         "THTH's files for every register (the shared one too), the principals there (unreadable ones are kept and "
+         "listed) with the keys THTH holds for them, and the seal's private key"
+         if _project_leave_keeps_common() else "外す範囲が privacy と違う"),
         ("メディアを外す・持ち主ごと・日本語",
          "共通の台帳とほかのプロジェクトは残します。持ち主ごとやめると" if _project_leave_keeps_common()
          else "外す範囲が privacy と違う"),
@@ -625,9 +626,10 @@ def facts() -> list[tuple[str, str]]:
         ("利用者ごとの期限・日本語", f"{permission_watch.USER_LIMIT_DAYS} 日のデータアクセスの期限"),
         # 監査 5.20.0 の 4・3（11/17）: 文がコードより強かった所を、コードの定数と振る舞いに結ぶ
         ("消す求めの最後の確かめで短い値は字で探さない（register/erase.MIN_NEEDLE）",
-         f"values shorter than {register_erase.MIN_NEEDLE} characters are not searched as text; the result gives "
+         f"values shorter than {register_erase.MIN_NEEDLE} bytes are not searched as text; the result gives "
          "their count"),
-        ("短い値・日本語", f"{register_erase.MIN_NEEDLE} 字より短い値は字では探さず、その数を結果に出します"),
+        ("短い値・日本語", f"{register_erase.MIN_NEEDLE} バイトより短い値は字では探さず、その数を結果に出します"
+         if _short_values_in_bytes() else "短い値の数え方が privacy と違う"),
         ("台帳の中の鍵では封をしない（register/seal.check_key_place）",
          "refuses to seal with a key kept inside a register or a repository that contains one"
          if _key_place_refused() else "台帳の中の鍵で封をしてしまう"),
@@ -639,6 +641,11 @@ def facts() -> list[tuple[str, str]]:
         ("持ち主ごと・日本語", "そのコンピューターの THTH の置き場にある全部の口座（持ち主が招いた人の口座も）"
          if _owner_scope_is_whole_storage() else "持ち主の範囲が置き場の全部でなくなった（privacy を直す）"),
     ]
+
+
+def _short_values_in_bytes() -> bool:
+    import inspect
+    return 'len(value.encode("utf-8")) < MIN_NEEDLE' in inspect.getsource(register_erase)
 
 
 def _key_place_refused() -> bool:
