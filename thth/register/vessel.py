@@ -754,12 +754,16 @@ def _walk(root: str, prefixes: list | None = None):
         rel_dir = os.path.relpath(directory, root).replace(os.sep, "/")
         rel_dir = "" if rel_dir == "." else rel_dir + "/"
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(directory, d))
-                         and (prefixes is None or _could_hold(rel_dir + d + "/", prefixes)))
+                         and (prefixes is None or _could_hold(_nfc(rel_dir + d + "/"), prefixes)))
         for name in sorted(files):
             if name.startswith("."):
                 continue
             full = os.path.join(directory, name)
             yield os.path.relpath(full, root).replace(os.sep, "/"), full
+
+
+def _nfc(value: str) -> str:
+    return value if value.isascii() else unicodedata.normalize("NFC", value)
 
 
 def _could_hold(folder: str, prefixes: list) -> bool:
@@ -926,7 +930,13 @@ def read_kind(root: str, kind: Kind, ids_table: dict, files: list | None = None)
     reverse = {path: ref for ref, path in ids_table.items()}
     hit = _matcher(kind)
     for rel, full in (files if files is not None else _walk(root)):
-        if rel.startswith(DECL_DIR + "/") or not hit(rel):
+        if rel.startswith(DECL_DIR + "/"):
+            continue
+        if not hit(rel):
+            # 宿題 L1: 置き場の型は NFC だけ。名が NFD の枚（mac の古い置き場・ほかの機械からの写し）は型に当たらず、
+            # 印なく読まれなかった。NFC にそろえれば当たる枚は、読まずに印の付いた行として出す（黙って落とさない）。
+            if _nfc(rel) != rel and hit(_nfc(rel)):
+                out.append(Record(kind.name, None, rel, "", None, False, ["name_not_nfc"]))
             continue
         got = _read_file(rel, full, kind, reverse)
         if kind.id_rule.get("scope") == "folder":

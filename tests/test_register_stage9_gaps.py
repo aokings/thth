@@ -340,3 +340,53 @@ def test_検収_inspectsは表だけ():
         V.parse_kind(kind("k", "o.txt", "lines", columns=["a", "b"], id={"field": "a"},
                           pointers=[{"field": "b", "meaning": "about", "to": "k"}],
                           inspects={"follow": ["b"]}), ".thth/kinds/k.json")
+
+
+def test_監査520の2_記録ごとの出口はcsvでない並びの種類を断る():
+    """監査 5.20.0 の 2（宿題 H1）: JSON・YAML の並びの種類を記録ごとの出口に入れると、残った行が 1 つでもあれば枚を
+    丸ごと書くので、止めた記録の中身が材料に出た。並びを切り出して書き直す道が無いので、宣言で断る（csv だけ受ける）。"""
+    from thth.register import route as R
+    kinds = {"j": V.parse_kind(kind("j", "items.json", "json", records="rows", id={"field": "id"}), ".thth/kinds/j.json"),
+             "y": V.parse_kind(kind("y", "items.yaml", "yaml", records="rows", id={"field": "id"}), ".thth/kinds/y.json")}
+    for name in kinds:
+        for audience in ("reader", "internal"):
+            with pytest.raises(V.DeclarationError) as info:
+                R.parse_outlets({"schema": R.OUTLETS_SCHEMA, "outlets": {"o": {"kinds": [name], "audience": audience}}},
+                                kinds)
+            assert info.value.word == "outlets:o:format"
+    # 1 枚 1 記録の JSON は前のまま受ける
+    kinds["f"] = V.parse_kind(kind("f", "a/*.json", "json"), ".thth/kinds/f.json")
+    R.parse_outlets({"schema": R.OUTLETS_SCHEMA, "outlets": {"o": {"kinds": ["f"]}}}, kinds)
+
+
+def test_宿題L1_型の字の所がNFDの枚は黙って読み落とさず印を付ける(tmp_path):
+    """宿題 L1: 置き場の型は NFC だけ受ける。型の字の所（`*` でない所）が NFD の名の枚（mac の古い置き場・ほかの機械
+    からの写し）は型に当たらず、印なく読まれなかった。NFC にそろえれば型に当たる枚は、読まずに `name_not_nfc` の印の
+    付いた行として出す。この機械の置き場は名をそろえることがあるので、たどった道の並びを渡して確かめる。"""
+    k = V.parse_kind(kind("daichou", "ガイド/照合台帳_*.md", "bytes", id={"name": True}), ".thth/kinds/daichou.json")
+    nfd = unicodedata.normalize("NFD", "ガイド/照合台帳_1.md")
+    assert nfd != "ガイド/照合台帳_1.md"
+    got = [(r.id, r.problems) for r in V.read_kind(str(tmp_path), k, {}, [(nfd, str(tmp_path / "x"))])]
+    assert got == [(None, ["name_not_nfc"])], got
+    from thth.register import form
+    assert "NFC" in form.PROBLEM_TEXT["name_not_nfc"]          # `register check` が直し方を 1 行添える
+    # 型に当たらない NFD の名は、ほかの枚と同じく数えない
+    other = unicodedata.normalize("NFD", "ガイド/ほか.md")
+    assert V.read_kind(str(tmp_path), k, {}, [(other, str(tmp_path / "y"))]) == []
+    # フォルダの名が NFD でも、降りる前に NFC で比べる（降りなければ印も付けられない）
+    assert V._could_hold(V._nfc(unicodedata.normalize("NFD", "ガイド/")), [V._literal("ガイド/照合台帳_*.md")])
+
+
+def test_宿題L1_型の星の所がNFDの名でも読む(tmp_path):
+    root = make_ledger(tmp_path / "l", [kind("daichou", "docs/照合台帳_*.md", "bytes", id={"name": True})], {})
+    path = root / unicodedata.normalize("NFD", "docs/照合台帳_ガイド.md")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# 照合\n", encoding="utf-8")
+    vessel = V.open_vessel(str(root))
+    assert [(r.id, r.problems) for r in vessel.all_records if r.kind == "daichou"] == [("照合台帳_ガイド", [])]
+
+def test_宿題L1_NFCの名の枚はこれまでどおり読む(tmp_path):
+    root = make_ledger(tmp_path / "l", [kind("daichou", "ガイド/照合台帳_*.md", "bytes", id={"name": True})],
+                       {"ガイド/照合台帳_1.md": "# 照合\n"})
+    vessel = V.open_vessel(str(root))
+    assert [(r.id, r.problems) for r in vessel.all_records if r.kind == "daichou"] == [("照合台帳_1", [])]

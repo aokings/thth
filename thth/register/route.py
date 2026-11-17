@@ -335,8 +335,10 @@ def parse_outlets(data, kinds: dict) -> dict:
             names = list(names)
         if not isinstance(names, list) or any(not isinstance(k, str) or k not in kinds for k in names):
             raise V.DeclarationError(f"outlets:{name}")
-        if level == "record" and any(kinds[k].format in ("lines", "ts_const") for k in names):
-            # 段 9: 枚を元の形で出す道しか無く、外れた行・注・ほかの定数まで丸ごと出る。内側の単位の出口（値の JSON）を使う
+        if level == "record" and any(kinds[k].format in ("lines", "ts_const")
+                                     or (kinds[k].records == "rows" and kinds[k].format != "csv") for k in names):
+            # 段 9: 枚を元の形で出す道しか無く、外れた行・注・ほかの定数まで丸ごと出る。内側の単位の出口（値の JSON）を使う。
+            # 監査 5.20.0 の 2: JSON・YAML の並びも同じ（行を切り出して書き直す道は表（csv）だけ。止めた行が材料に出た）
             raise V.DeclarationError(f"outlets:{name}:format")
         dest = _dest(o["dest"], f"outlets:{name}:dest") if "dest" in o else None
         ignore = o.get("ignore", [])
