@@ -242,7 +242,7 @@ def cmd_fix(args) -> int:
 def check_found(value: dict) -> list:
     """段 11 の D: `export --check` が見つけた違いの語（空なら同じ）。CI が `--json` の中身を読まずに、終わりの番号で
     止められるように（こぴちゃの報告 #7899）。"""
-    found = [word for word in ("differs", "stale", "mixed", "pending_takes") if value.get(word)]
+    found = [word for word in ("differs", "stale", "mixed", "pending_takes", "common_not_in_seal") if value.get(word)]
     if not value.get("same_as_seal", True):
         found.append("not_same_as_seal")
     return found
@@ -343,6 +343,11 @@ def _export_lines(value: dict, check: bool) -> None:
               "出し口の宣言で on_narrow を drop にします")
     if value["stale"]:
         print(f"  一覧に無い旧い材料 {len(value['stale'])}: " + "・".join(value["stale"][:10]))
+    if value.get("common_unchecked"):
+        print("  共通の台帳を読まずに比べました（共通から採った物は封のときの指紋で照らしています。共通の側で止めた・直した物は --common を渡すと分かります）")
+    if value.get("common_not_in_seal"):
+        print(f"  封の出力と結べない共通の記録 {len(value['common_not_in_seal'])}（中身を言えないので違いに数えます。"
+              "--common を渡すか、受け入れて封をし直します）: " + "・".join(value["common_not_in_seal"][:10]))
 
 
 def _accept_all(args, root: str) -> int:

@@ -1975,6 +1975,19 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
     ctx = context(root, as_of, common_root=common_root, raw=raw, seal=seal)
     result = compute(ctx, outlet, common_known=_known_paths(seal))
     outputs = _outputs(result["files"])
+    unchecked = check and ctx.common is None and outlet.common is not None
+    not_in_seal = []
+    if unchecked:
+        # こぴちゃ 第12 #8138: 共通の台帳を読めない CI の `export --check` は、共通から採った物を封の指紋で照らす
+        # （verify と同じ。仮の共通の台帳を作らずに済む）。共通の側の止める・直すはここでは見えない（verify と同じ）。
+        # 封に無い共通の物は中身を言えないので違いに数える。書く export（--check でない）は今までどおり。
+        for item in result["items"]:
+            if item.get("unchecked"):
+                path = _sealed_common_path(seal["body"]["outputs"], item)
+                if path is not None:
+                    outputs[path] = seal["body"]["outputs"][path]
+                else:
+                    not_in_seal.append(item["record"])
     now = placed(root, ctx.vessel, outlet, to, set(outputs))
     stale = sorted(p for p in now if p not in outputs)
     mixed = mixed_outlets(root, ctx.vessel, outlet, to, outputs)
@@ -1985,6 +1998,9 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
              "same_as_seal": outputs == seal["body"]["outputs"],
              "differs": sorted(p for p in set(outputs) | set(now) if outputs.get(p) != now.get(p)),
              "mixed": mixed, "check": check}
+    if unchecked:
+        value["common_unchecked"] = True
+        value["common_not_in_seal"] = sorted(not_in_seal)
     clash = shared_clash(root, ctx.vessel, outlet, outputs)
     if clash:
         raise RegisterRefused("register_write_unsafe", "shared_dest", **capped("stale", clash))
@@ -1996,6 +2012,19 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
         raise RegisterRefused("register_material_stale", f"{len(stale)} files", **capped("stale", stale))
     write_files(to, result["files"])
     return value
+
+
+def _sealed_common_path(sealed_outputs: dict, item: dict) -> str | None:
+    """共通の台帳を読めないとき、共通から採った記録が封のどの出力か（言えなければ None）。共通の台帳が無いと記録の
+    置き場を引けないので、封の出力のうち、指紋が採った版と同じ物（出さない欄で削っていなければ同じバイト）が 1 つなら
+    それ、無ければ名前が `<番号>.json` で終わる物が 1 つならそれ。2 つ以上当たれば言わない。"""
+    common = {p: d for p, d in sealed_outputs.items() if p.startswith(COMMON + "/")}
+    same = [p for p, d in common.items() if d == item.get("version")]
+    if len(same) == 1:
+        return same[0]
+    tail = "/" + item["record"].split(":")[-1] + ".json"
+    named = [p for p in common if p.endswith(tail)]
+    return named[0] if len(named) == 1 else None
 
 
 def _known_paths(seal: dict | None) -> dict:
