@@ -177,6 +177,16 @@ class Outlet:
         return KindConf(hide="unit" if self.level == "unit" else "record")
 
 
+LIST_CAP = 50
+
+
+def capped(key: str, seq) -> dict:
+    """長い並びは先の LIST_CAP 件だけを載せ、全部の数（`<key>_total`）と省いた数（`<key>_omitted`）を添える。
+    数を添えないと、使う側が載った分を全部と取り違える（苦味 第11 #8258: 165 件のうち 50 件だけを見て accept した）。"""
+    seq = list(seq)
+    return {key: seq[:LIST_CAP], f"{key}_total": len(seq), f"{key}_omitted": max(0, len(seq) - LIST_CAP)}
+
+
 def _fields(raw, word) -> tuple:
     if not isinstance(raw, list) or any(not isinstance(f, str) or not V.FIELD.fullmatch(f) for f in raw) \
             or len(set(raw)) != len(raw):
@@ -1977,13 +1987,13 @@ def export(root: str, outlet_name: str, to, as_of, *, common_root=None, check: b
              "mixed": mixed, "check": check}
     clash = shared_clash(root, ctx.vessel, outlet, outputs)
     if clash:
-        raise RegisterRefused("register_write_unsafe", "shared_dest", stale=clash[:50])
+        raise RegisterRefused("register_write_unsafe", "shared_dest", **capped("stale", clash))
     if check:
         return value
     if mixed:
-        raise RegisterRefused("register_material_stale", "other_outlet", stale=mixed[:50])
+        raise RegisterRefused("register_material_stale", "other_outlet", **capped("stale", mixed))
     if stale:
-        raise RegisterRefused("register_material_stale", f"{len(stale)} files", stale=stale[:50])
+        raise RegisterRefused("register_material_stale", f"{len(stale)} files", **capped("stale", stale))
     write_files(to, result["files"])
     return value
 
@@ -2021,7 +2031,7 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
     ctx = context(root, as_of, common_root=common_root, raw=raw, sealed_all=True)
     missing = common_pointers_missing(ctx, outlet)
     if missing:
-        raise RegisterRefused("register_record_missing", "common_pointer", pointers=missing[:50])
+        raise RegisterRefused("register_record_missing", "common_pointer", **capped("pointers", missing))
     base = previous or erased_prev
     result = compute(ctx, outlet, common_known=_known_paths(base))
     body = seal_body(root, outlet, ctx, result, raw, base)
@@ -2036,7 +2046,7 @@ def accept_plan(root: str, outlet_name: str, to, as_of, *, common_root=None) -> 
         new_judgments = ctx.every
     clash = shared_clash(root, ctx.vessel, outlet, body["outputs"])
     if clash:
-        raise RegisterRefused("register_write_unsafe", "shared_dest", stale=clash[:50])
+        raise RegisterRefused("register_write_unsafe", "shared_dest", **capped("stale", clash))
     now = placed(root, ctx.vessel, outlet, to, set(body["outputs"]))
     return {"outlet": outlet.name, "to": to, "body": body, "result": result, "digest": digest(body),
             "new_judgments": [_judgment_line(j) for j in new_judgments],
@@ -2218,9 +2228,9 @@ def accept_prepare(root: str, outlet_name: str, to, as_of, *, confirm: str, at: 
     if confirm != plan["digest"]:
         raise RegisterRefused("register_confirm_mismatch", "confirm", digest=plan["digest"])
     if plan["mixed"]:
-        raise RegisterRefused("register_material_stale", "other_outlet", stale=plan["mixed"][:50])
+        raise RegisterRefused("register_material_stale", "other_outlet", **capped("stale", plan["mixed"]))
     if plan["stale"]:
-        raise RegisterRefused("register_material_stale", f"{len(plan['stale'])} files", stale=plan["stale"][:50])
+        raise RegisterRefused("register_material_stale", f"{len(plan['stale'])} files", **capped("stale", plan["stale"]))
     check_writable(plan["to"], plan["result"]["files"])
     body = dict(plan["body"], at=at, public_key=S.fingerprint(S.local_public_pem()))
     salt = ensure_salt(root)
@@ -2397,7 +2407,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
               open_common(common_root))
     missing = common_pointers_missing(ctx, outlet)
     if missing:
-        red("common_pointer_missing", items=missing[:50])
+        red("common_pointer_missing", **capped("items", missing))
     result = compute(ctx, outlet, common_known=_known_paths(seal))
     if ctx.common is None and outlet.common is not None:
         # 段 8 §3: 共通の台帳を読めない CI は、共通の出さない欄で封のときに外した記録（封の項目に無い物）を
@@ -2416,7 +2426,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     here = placed(root, vessel, outlet, material, names)
     stale = sorted(p for p in here if p not in sealed_outputs and p not in expected)
     if stale:
-        red("stale_material", files=stale[:50])
+        red("stale_material", **capped("files", stale))
     narrowed = sorted(set(body["items"]) - set(expected_items))
     # 欄だけを伏せた項目（`=hidden`）は、使える物を増やさない（封のときに出していた記録の欄を減らすだけ）。
     # 広がりには数えず、封のときの項目が外れた（狭まった）として扱う（drop でも指紋が合わないので赤）。
@@ -2426,7 +2436,7 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
     placed_sealed = all(here.get(p) == d for p, d in sealed_outputs.items()) and not (set(here) - set(sealed_outputs))
     placed_expected = all(here.get(p) == d for p, d in expected.items()) and not (set(here) - set(expected))
     if widened:
-        red("widened_after_seal", items=widened[:50])
+        red("widened_after_seal", **capped("items", widened))
     # 段 7（§7.3）: 載せたままの項目の指紋が封と違う（差し込んだ先の版が変わった・記録の版が変わった）なら赤。
     # 差し込んだ先が出し口の種類に無いと、材料のバイトは同じのまま入力の版の組だけが変わるので、ここで見る。
     fp_items = (body.get("fingerprints") or {}).get("items")
@@ -2434,17 +2444,18 @@ def verify(root: str, outlet_name: str, material, now, *, previous_path=None, no
         moved = sorted(item_key(i) for i in result["items"]
                        if item_key(i) in fp_items and fp_items[item_key(i)] != item_fp(i))
         if moved:
-            red("inputs_changed", items=moved[:50])
+            red("inputs_changed", **capped("items", moved))
     if narrowed or expected != sealed_outputs:
         if outlet.on_narrow == "drop" and not widened and placed_expected and _only_dropped(body, result, expected):
-            warnings.append({"word": "dropped", "items": narrowed_detail[:50]})
+            warnings.append({"word": "dropped", **capped("items", narrowed_detail)})
         else:
-            red("narrowed_after_seal", items=narrowed_detail[:50])
+            red("narrowed_after_seal", **capped("items", narrowed_detail))
             if not placed_sealed:
-                red("material_mismatch", files=sorted(p for p in names | set(here)
-                                                      if here.get(p) != sealed_outputs.get(p))[:50])
+                red("material_mismatch", **capped("files", sorted(p for p in names | set(here)
+                                                                   if here.get(p) != sealed_outputs.get(p))))
     elif not placed_sealed:
-        red("material_mismatch", files=sorted(p for p in names | set(here) if here.get(p) != sealed_outputs.get(p))[:50])
+        red("material_mismatch", **capped("files", sorted(p for p in names | set(here)
+                                                          if here.get(p) != sealed_outputs.get(p))))
     mine, theirs = changed_since(vessel, body, ctx.common)
     theirs |= {p["record"][len(COMMON) + 1:] for p in result["pending_takes"]}
     gone = deleted_since(vessel, body)

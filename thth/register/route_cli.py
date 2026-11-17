@@ -467,6 +467,16 @@ PROBLEM_JA = {
 }
 
 
+def _omitted_note(entry: dict) -> str:
+    """載せきれなかった数を文の出力にも出す（JSON は `<key>_total`・`<key>_omitted`。苦味 第11 #8258）。"""
+    for key in ("items", "files"):
+        total, omitted = entry.get(f"{key}_total"), entry.get(f"{key}_omitted")
+        if isinstance(total, int) and isinstance(omitted, int) and omitted > 0:
+            return (f"　全部で {total} 件・出したのは {total - omitted} 件。残り {omitted} 件はここに出ていません"
+                    "（直して verify をやり直すと次の分が出ます）")
+    return ""
+
+
 def _verify_all(args, root: str, now: str) -> int:
     """段 11 の C: `verify --outlet all --material <根>`。材料は `<根>/<dest>`。`--previous`・`--publish` はフォルダで、
     出し口ごとに `<フォルダ>/thth-seal.<出し口>.json`。1 つでも赤なら全体が赤（rc 1）。"""
@@ -493,9 +503,9 @@ def _verify_all(args, root: str, now: str) -> int:
             continue
         print(f"[{name}] " + (f"緑・世代 {value.get('generation')}" if value["ok"] else "赤"))
         for p in value["problems"]:
-            print(f"  赤: {PROBLEM_JA.get(p['word'], p['word'])}")
+            print(f"  赤: {PROBLEM_JA.get(p['word'], p['word'])}" + _omitted_note(p))
         for w in value["warnings"]:
-            print(f"  知らせ: {w['word']}")
+            print(f"  知らせ: {w['word']}" + _omitted_note(w))
         show_impact(value.get("impact"))
     return 0 if ok else 1
 
@@ -539,9 +549,10 @@ def _cmd_verify(args) -> int:
         for p in value["problems"]:
             print(f"  赤: {PROBLEM_JA.get(p['word'], p['word'])}"
                   + (f"（{'・'.join(str(i.get('item', i)) if isinstance(i, dict) else str(i) for i in (p.get('items') or p.get('files') or []))[:300]}）"
-                     if p.get("items") or p.get("files") else ""))
+                     if p.get("items") or p.get("files") else "")
+                  + _omitted_note(p))
         for w in value["warnings"]:
-            print(f"  知らせ: {w['word']}")
+            print(f"  知らせ: {w['word']}" + _omitted_note(w))
         show_impact(value.get("impact"))
     elif value["ok"]:
         _print(value)
