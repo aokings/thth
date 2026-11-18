@@ -1123,3 +1123,61 @@ def pos_facts():
 def test_privacyのレジの文はコードと同じ(what, phrase):
     page = PRIVACY.read_text(encoding="utf-8")
     assert phrase in page, f"privacy に「{phrase}」が無い（{what}）。コードと privacy（tools/build_site.py）のどちらかを直す"
+
+
+# ------------------------------------------------------------------ Google ビジネス プロフィール（`thth/gbp/`）
+
+def _gbp_keeps_nothing() -> bool:
+    """`thth/gbp/` の auth.py のほかに、ファイルに書く呼び出しが無い（tests/test_gbp.py の柵と同じ見方）。"""
+    from tests.test_gbp import write_calls
+    gbp_dir = ROOT / "thth" / "gbp"
+    return all(not write_calls(p) for p in gbp_dir.glob("*.py") if p.name != "auth.py")
+
+
+def _gbp_writes_two_stage() -> bool:
+    """書く 2 つの命令（special・post）は、--confirm が無ければ一段目で返り、digest が違えば送らない。"""
+    import inspect
+    from thth.gbp import cli as gbp_cli
+    ok = True
+    for cmd, call in ((gbp_cli.cmd_special, "client.patch_special("), (gbp_cli.cmd_post, "client.create_post(")):
+        src = inspect.getsource(cmd)
+        ok = ok and ("if not args.confirm:" in src and "if args.confirm != digest:" in src
+                     and src.index("if args.confirm != digest:") < src.index(call))
+    return ok
+
+
+def gbp_facts():
+    from thth.gbp import auth as gbp_auth
+    token = gbp_auth.DEFAULT_TOKEN.replace("\\", "/")
+    scope = gbp_auth.SCOPE.rsplit("/", 1)[1]
+    return [
+        ("GBP の scope（gbp/auth.SCOPE）", f"the scope <code>{scope}</code>"),
+        ("GBP の scope・日本語", f"スコープ <code>{scope}</code>"),
+        ("GBP の鍵の置き場（gbp/auth.DEFAULT_TOKEN）", f"(<code>{token}</code>, mode 600)"),
+        ("GBP の鍵の置き場・日本語", f"（<code>{token}</code>・600）"),
+        ("GBP は読んだ物をファイルに書かない（auth.py のほかに書く呼び出しが無い）",
+         "THTH does not write what it reads from Google to any file"
+         if _gbp_keeps_nothing() else "gbp の口にファイルに書く道ができた（privacy を直すか道を外す）"),
+        ("GBP は読んだ物をファイルに書かない・日本語", "THTH は Google から読んだものをファイルに書かず"
+         if _gbp_keeps_nothing() else "gbp の口にファイルに書く道ができた"),
+        ("GBP の書く口は二段確認（special・post）",
+         "only after the owner's two-step confirmation: the first step shows exactly what would be sent"
+         if _gbp_writes_two_stage() else "gbp の書く口に二段確認の無い道がある"),
+        ("GBP の書く口は二段確認・日本語", "持ち主の二段確認のあとだけです。一段目は送る中身をそのまま見せて何も変えず"
+         if _gbp_writes_two_stage() else "gbp の書く口に二段確認の無い道がある"),
+    ]
+
+
+@pytest.mark.parametrize("what,phrase", gbp_facts(), ids=[f[0] for f in gbp_facts()])
+def test_privacyのビジネスプロフィールの文はコードと同じ(what, phrase):
+    page = PRIVACY.read_text(encoding="utf-8")
+    assert phrase in page, f"privacy に「{phrase}」が無い（{what}）。コードと privacy（tools/build_site.py）のどちらかを直す"
+
+
+def test_privacyのビジネスプロフィールの節は提携を匂わせない():
+    """Google の決まり（提携を匂わせない）: 節に partner・認定・公式 などの語を書かない。"""
+    page = PRIVACY.read_text(encoding="utf-8")
+    sections = [page.split("<h2>Google Business Profile</h2>", 1)[1].split("<h2>", 1)[0],
+                page.split("<h2>Google ビジネス プロフィール</h2>", 1)[1].split("<h2>", 1)[0]]
+    words = ("partner", "certified", "endorsed", "official", "approved by Google", "提携", "公認", "認定", "公式")
+    assert [w for s in sections for w in words if w.lower() in s.lower()] == []

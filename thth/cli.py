@@ -5458,6 +5458,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth gsc auth|sites|query|compare|inspect`（Search Console・読むだけ）。口は `thth/gsc/cli.py` に閉じる。
     from .gsc import cli as gsc_cli
     gsc_cli.register(sub)
+    # `thth gbp auth|doctor|locations|show|special|posts|post`（Google ビジネス プロフィール・書くのは二段確認）。
+    # 口は `thth/gbp/cli.py` に閉じる。
+    from .gbp import cli as gbp_cli
+    gbp_cli.register(sub)
     # `thth embed`・`thth upcoming`（計画 Meta 全部盛り M3・読むだけ・保存しない）。口は `thth/meta_public.py` に閉じる。
     from . import meta_public
     meta_public.register(sub)

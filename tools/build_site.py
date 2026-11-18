@@ -569,6 +569,21 @@ def build_privacy() -> str:
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data '
         "Policy</a>, including the Limited Use requirements.</p>")
 
+    # Google ビジネス プロフィール（`thth/gbp/`・設計 実店舗 §6.4・§7.2・提携を匂わせる語を書かない）。
+    add("<h2>Google Business Profile</h2>")
+    add("<p><code>thth gbp</code> works only with the business profiles that the user owns or manages. It asks "
+        "Google for the scope <code>business.manage</code>, through the Google sign-in the user approves in their own "
+        "browser, and runs only on the user's own computer. It reads the list of the user's accounts and, for each "
+        "location, its name, address, website, regular and special hours, open status and map link, and the "
+        "location's posts. These are shown on the user's terminal (or as JSON for the user's own tools); THTH does "
+        "not write what it reads from Google to any file and does not keep it. THTH changes a profile (adds or "
+        "replaces one day of special hours, or publishes one standard post) only after the owner's two-step "
+        "confirmation: the first step shows exactly what would be sent and changes nothing, and nothing is changed "
+        "automatically. The refresh token is kept in its own file that only the user can read "
+        "(<code>~/.config/thth/google-gbp-token.json</code>, mode 600), and nothing from Google is sent to the "
+        "operator's server, to thth.me or to any other party. The Google API Services User Data Policy above, "
+        "including the Limited Use requirements, applies here too.</p>")
+
     add("<h2>Online shops (read-only)</h2>")
     # 共通の段 → 店ごとの段（設計 Shopify と STORES §9・出していない店のことは書かない）。
     add("<p><code>thth shop</code> can read the owner's own online shop on BASE, Shopify or STORES so that THTH can draft a "
@@ -1052,7 +1067,8 @@ def build_privacy() -> str:
         "Revision: adds Facebook Pages, Instagram and Meta ad accounts, direct messages, live video and the "
         "call-to-action button, public reads (hashtags, Pages Search, embeds, events), catalogs and leads, Marketing "
         "API call counts, the permission records and ledger, re-authorization and the Data Use Checkup. Revision: adds the "
-        "read-only Google Ads and Search Console commands and the Google API Services User Data Policy.</p>")
+        "read-only Google Ads and Search Console commands and the Google API Services User Data Policy. Revision: adds "
+        "Google Business Profile.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -1236,6 +1252,18 @@ def build_privacy() -> str:
         "THTH による利用と他のアプリへの移転は、限定使用（Limited Use）の要件を含む"
         '<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API サービスのユーザーデータに関するポリシー</a>'
         "に従います。</p>")
+
+    add("<h2>Google ビジネス プロフィール</h2>")
+    add("<p><code>thth gbp</code> は、利用者本人がオーナーか管理者になっているビジネス プロフィールだけを扱います。"
+        "Google に求めるのはスコープ <code>business.manage</code> で、利用者が自分のブラウザで許可したときに限り、"
+        "動くのは利用者自身のコンピューターの中だけです。読むのは、利用者のアカウントの一覧と、店ごとの名前・住所・"
+        "サイト・営業の時間と臨時の時間・営業の状態・地図のリンク、それに店の投稿です。これらは利用者の端末"
+        "（または利用者自身の道具のための JSON）に出すだけで、THTH は Google から読んだものをファイルに書かず、"
+        "残しません。THTH がプロフィールを変える（臨時の時間を 1 日足すか置き換える・ふつうの投稿を 1 つ出す）のは、"
+        "持ち主の二段確認のあとだけです。一段目は送る中身をそのまま見せて何も変えず、自動で変えることはありません。"
+        "refresh token は本人だけが読める別のファイル（<code>~/.config/thth/google-gbp-token.json</code>・600）に置き、"
+        "Google から得たものを運営者のサーバー・thth.me・その他の誰にも送りません。上の Google API サービスの"
+        "ユーザーデータに関するポリシー（限定使用の要件を含む）は、ここにも当てはまります。</p>")
 
     add("<h2>ネットショップ（読むだけ）</h2>")
     add("<p><code>thth shop</code> は、商品が新しく入った・再入荷した・値下げしたときに投稿の下書きを作れるよう、"
@@ -1612,7 +1640,7 @@ def build_privacy() -> str:
         "改訂: Facebook ページ・Instagram・Meta の広告アカウント、ダイレクトメッセージ、ライブ配信と行動ボタン、公開の読み"
         "（ハッシュタグ・Pages Search・埋め込み・予定）、カタログとリード、Marketing API の呼び出しの数、権限の記録と台帳、"
         "再認可と Data Use Checkup を足しました。改訂: 読むだけの Google 広告と Search Console の命令と、Google API サービスの"
-        "ユーザーデータに関するポリシーを足しました。</p>")
+        "ユーザーデータに関するポリシーを足しました。改訂: Google ビジネス プロフィールを足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")

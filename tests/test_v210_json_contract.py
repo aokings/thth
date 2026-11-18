@@ -138,6 +138,8 @@ COMMANDS += ['ads leave']
 COMMANDS += ['gads accounts', 'gads keywords', 'gads report']
 # Search Console（読むだけ・auth は端末での対話なので --json を持たない）。
 COMMANDS += ['gsc sites', 'gsc query', 'gsc compare', 'gsc inspect']
+# Google ビジネス プロフィール（`thth/gbp/`・auth は端末での対話なので --json を持たない・書く口は二段）。
+COMMANDS += ['gbp doctor', 'gbp locations', 'gbp show', 'gbp special', 'gbp posts', 'gbp post']
 # 店を読む口（`thth/shop/`・BASE v2・読むだけ・add と token set は --json を持たない）。
 COMMANDS += ['shop whoami', 'shop items', 'shop diff', 'shop draft']
 # 監査 5.15.0 の 1: 店を外す（二段確認・--json は 1 つの値）。
