@@ -92,10 +92,6 @@ items	threads_share_to_instagram
 cmd	thth send {TH} --text {BODY2} --share-to-instagram
 hand	Instagram のストーリーズに出たのを（映して）見せたら Return
 end
-seg	th-embed	threads	Threads oEmbed Read — the embed HTML of a public post.
-items	threads_oembed_read
-cmd	thth embed {TH} {TH_URL}
-end
 seg	th-delete	threads	threads_delete — delete the post, then confirm in the Threads app.
 items	threads_delete
 two	thth retract {TH} {TH_POST} --reason {REASON} --by {BY}
@@ -145,13 +141,6 @@ cmd	thth webhook subscribe {FB} --by {BY}
 hand	別のテストの口座からページにコメントを付けたら Return
 cmd	thth webhook status
 end
-seg	fb-cta	facebook	pages_manage_cta — read and remove a call-to-action button.
-items	pages_manage_cta
-prep	録画用の行動ボタンをページの画面で 1 つ足しておく（API では付け直せない・計画 M4）
-cmd	thth page cta show {FB}
-two	thth page cta delete {FB} {CTA} --by {BY}
-hand	ページの画面でボタンが消えたのを見せたら Return
-end
 seg	fb-live	facebook	publish_video, Live Video API — start and end a live video on the Page.
 items	publish_video live_video_api
 prep	ページのフォロワーが 100 人以上かを確かめる（2024-06-10 からの条件）。ffmpeg の配信の命令を用意する
@@ -168,10 +157,6 @@ cmd	thth dm list {FB}
 cmd	thth dm read {FB} {FB_PSID}
 two	thth dm send {FB} {FB_PSID} --text {REPLY} --by {BY}
 hand	Messenger で返事が届いたのを見せたら Return
-end
-seg	fb-dm-profile	facebook	pages_user_locale, pages_user_timezone, pages_user_gender — the sender's profile fields, shown on screen only.
-items	pages_user_locale pages_user_timezone pages_user_gender
-cmd	thth dm read {FB} {FB_PSID} --profile
 end
 seg	fb-human-agent	facebook	Human Agent — a person answers after 24 hours with the human_agent tag.
 items	human_agent
@@ -194,14 +179,6 @@ end
 seg	fb-search	facebook	Page Public Content Access — search public Pages and their posts (counts only).
 items	page_public_content_access
 cmd	thth where {FB} {WORD}
-end
-seg	fb-who	facebook	Page Public Metadata Access — public metadata of another Page.
-items	page_public_metadata_access
-cmd	thth who {FB} {FBPAGE} --profile
-end
-seg	meta-embed	facebook	Meta oEmbed Read — the embed HTML of a public Facebook post.
-items	meta_oembed_read
-cmd	thth embed {FB} {FB_URL}
 end
 seg	fb-brand-content	facebook	facebook_branded_content_ads_brand — read the partnership content a business can advertise.
 items	facebook_branded_content_ads_brand
@@ -342,14 +319,6 @@ seg	ads-leads	ads	leads_retrieval — leads of a lead form (shown on screen only
 items	leads_retrieval
 prep	リード広告のテストのフォームに 1 件入れておく
 cmd	thth ads leads {AD} --page {AD_PAGE}
-end
-seg	ads-network	ads	read_audience_network_insights — Audience Network results.
-items	read_audience_network_insights
-cmd	thth ads network {AD}
-end
-seg	ads-shop	ads	commerce_account_read_settings — the shop's settings.
-items	commerce_account_read_settings
-cmd	thth ads shop {AD}
 end
 seg	ads-mcp	ads	ads_mcp_management — connect the official ads MCP server with THTH's app.
 items	ads_mcp_management

@@ -115,8 +115,6 @@ SEGMENTS = (
          # th-publish と同じ {BODY} だと、同じ口座の直近 30 日の同じ本文として duplicate_text で断られる（別の穴 {BODY2}）
          ("cmd", "thth send {TH} --text {BODY2} --share-to-instagram"),
          ("hand", "Instagram のストーリーズに出たのを（映して）見せたら Return")),
-    _seg("th-embed", "threads", "Threads oEmbed Read — the embed HTML of a public post.", ["threads_oembed_read"],
-         ("cmd", "thth embed {TH} {TH_URL}")),
     _seg("th-delete", "threads", "threads_delete — delete the post, then confirm in the Threads app.",
          ["threads_delete"],
          ("two", "thth retract {TH} {TH_POST} --reason {REASON} --by {BY}"),
@@ -154,10 +152,6 @@ SEGMENTS = (
          ["pages_manage_metadata"],
          ("cmd", "thth webhook subscribe {FB} --by {BY}"),
          ("hand", "別のテストの口座からページにコメントを付けたら Return"), ("cmd", "thth webhook status")),
-    _seg("fb-cta", "facebook", "pages_manage_cta — read and remove a call-to-action button.", ["pages_manage_cta"],
-         ("prep", "録画用の行動ボタンをページの画面で 1 つ足しておく（API では付け直せない・計画 M4）"),
-         ("cmd", "thth page cta show {FB}"), ("two", "thth page cta delete {FB} {CTA} --by {BY}"),
-         ("hand", "ページの画面でボタンが消えたのを見せたら Return")),
     _seg("fb-live", "facebook", "publish_video, Live Video API — start and end a live video on the Page.",
          ["publish_video", "live_video_api"],
          ("prep", "ページのフォロワーが 100 人以上かを確かめる（2024-06-10 からの条件）。ffmpeg の配信の命令を用意する"),
@@ -172,9 +166,6 @@ SEGMENTS = (
          ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --by {BY}"),
          ("hand", "Messenger で返事が届いたのを見せたら Return"),
          real_first="messaging_type の綴りが【推】（計画 M4）"),
-    _seg("fb-dm-profile", "facebook", "pages_user_locale, pages_user_timezone, pages_user_gender — the sender's "
-         "profile fields, shown on screen only.", ["pages_user_locale", "pages_user_timezone", "pages_user_gender"],
-         ("cmd", "thth dm read {FB} {FB_PSID} --profile")),
     _seg("fb-human-agent", "facebook", "Human Agent — a person answers after 24 hours with the human_agent tag.",
          ["human_agent"],
          ("prep", "24 時間より前に届いたメッセージを用意する"),
@@ -193,10 +184,6 @@ SEGMENTS = (
          ("cmd", "thth doctor {FB}")),
     _seg("fb-search", "facebook", "Page Public Content Access — search public Pages and their posts (counts only).",
          ["page_public_content_access"], ("cmd", "thth where {FB} {WORD}")),
-    _seg("fb-who", "facebook", "Page Public Metadata Access — public metadata of another Page.",
-         ["page_public_metadata_access"], ("cmd", "thth who {FB} {FBPAGE} --profile")),
-    _seg("meta-embed", "facebook", "Meta oEmbed Read — the embed HTML of a public Facebook post.",
-         ["meta_oembed_read"], ("cmd", "thth embed {FB} {FB_URL}")),
     _seg("fb-brand-content", "facebook", "facebook_branded_content_ads_brand — read the partnership content a "
          "business can advertise.", ["facebook_branded_content_ads_brand"],
          ("cmd", "thth brand content {FB} --business {BUSINESS}")),
@@ -308,10 +295,6 @@ SEGMENTS = (
          ("cmd", "thth ads catalog list {AD}"), ("cmd", "thth ads catalog products {AD} --catalog {CATALOG}")),
     _seg("ads-leads", "ads", "leads_retrieval — leads of a lead form (shown on screen only).", ["leads_retrieval"],
          ("prep", "リード広告のテストのフォームに 1 件入れておく"), ("cmd", "thth ads leads {AD} --page {AD_PAGE}")),
-    _seg("ads-network", "ads", "read_audience_network_insights — Audience Network results.",
-         ["read_audience_network_insights"], ("cmd", "thth ads network {AD}")),
-    _seg("ads-shop", "ads", "commerce_account_read_settings — the shop's settings.",
-         ["commerce_account_read_settings"], ("cmd", "thth ads shop {AD}")),
     _seg("ads-mcp", "ads", "ads_mcp_management — connect the official ads MCP server with THTH's app.",
          ["ads_mcp_management"],
          ("hand", "Claude Code で claude mcp add --transport http --client-id <THTH の app id> meta-ads "
@@ -319,9 +302,28 @@ SEGMENTS = (
          door="claude mcp add（公式の広告 MCP に THTH のアプリで繋ぐ・計画 §1.5）"),
 )
 
-# 今回の申請の範囲から外した区間（masaru 2026-11-18「WhatsApp だけは今回外す」）。台本・表・tsv には載せない。
-# 外の人に WhatsApp の口を開くときに、`DEFERRED` から戻して申請する。
+# 今回の申請の範囲から外した区間（masaru 2026-11-18）。台本・表・tsv には載せない。口は残し、申し込めるように
+# なったら `DEFERRED` から戻して足す申請を出す。
 DEFERRED_SEGMENTS = (
+    # ---------------------------------------------------------------- 申し込む口が無い・審査が要らない（masaru 2026-11-18「推しでOK」）
+    # 原文の出所と区間ごとの理由は docs/段取り_Meta申請の録画_2026-11-18.md §5。理由の正本は `DEFERRED`。
+    _seg("th-embed", "threads", "Threads oEmbed Read — the embed HTML of a public post.", ["threads_oembed_read"],
+         ("cmd", "thth embed {TH} {TH_URL}")),
+    _seg("meta-embed", "facebook", "Meta oEmbed Read — the embed HTML of a public Facebook post.",
+         ["meta_oembed_read"], ("cmd", "thth embed {FB} {FB_URL}")),
+    _seg("fb-who", "facebook", "Page Public Metadata Access — public metadata of another Page.",
+         ["page_public_metadata_access"], ("cmd", "thth who {FB} {FBPAGE} --profile")),
+    _seg("fb-cta", "facebook", "pages_manage_cta — read and remove a call-to-action button.", ["pages_manage_cta"],
+         ("prep", "録画用の行動ボタンをページの画面で 1 つ足しておく（API では付け直せない・計画 M4）"),
+         ("cmd", "thth page cta show {FB}"), ("two", "thth page cta delete {FB} {CTA} --by {BY}"),
+         ("hand", "ページの画面でボタンが消えたのを見せたら Return")),
+    _seg("fb-dm-profile", "facebook", "pages_user_locale, pages_user_timezone, pages_user_gender — the sender's "
+         "profile fields, shown on screen only.", ["pages_user_locale", "pages_user_timezone", "pages_user_gender"],
+         ("cmd", "thth dm read {FB} {FB_PSID} --profile")),
+    _seg("ads-network", "ads", "read_audience_network_insights — Audience Network results.",
+         ["read_audience_network_insights"], ("cmd", "thth ads network {AD}")),
+    _seg("ads-shop", "ads", "commerce_account_read_settings — the shop's settings.",
+         ["commerce_account_read_settings"], ("cmd", "thth ads shop {AD}")),
     # ---------------------------------------------------------------- WhatsApp（口の形と試験だけ・口座の種類がまだ無い）
     # WhatsApp の口座は広告と同じ型の台帳（`thth wa add`）。鍵は WABA に結んだユーザーの長い鍵（`thth wa auth`）で、
     # 審査員の流れ（招待）には載らない。録画は試験用の番号（支払い方法なしで hello_world を送れる）で撮る。
@@ -353,16 +355,33 @@ PLANNED = {
     "commerce_manage_accounts": "ads",
 }
 
-# 今回の申請の範囲から外した権限と理由（masaru 2026-11-18）。`names()`・区間・privacy の語の表から除く。
-# 口（`thth wa`・`thth dm event --channel whatsapp`）と `permission_watch.PERMISSIONS` の行はそのまま残す。
+# 今回の申請の範囲から外した権限・機能と理由（masaru 2026-11-18）。`names()`・区間・privacy の語の表から除く。
+# 口（`thth wa`・`thth embed` など）と `permission_watch.PERMISSIONS`・`FEATURES` の行はそのまま残す。
 _WA_DEFERRED = ("WhatsApp は今回の申請から外した（masaru 2026-11-18）。自分のビジネスの WABA はアプリの役割で使える見込みで、"
                 "審査が要るのは外の事業者の WhatsApp を預かるとき。テスト用の WABA と番号が未用意・本物の 1 回も未・"
                 "ユースケースは足すと消せない")
+_OEMBED_DEFERRED = ("oEmbed は鍵なしで呼べるようになり、公開の物の埋め込みにアプリレビューは要らない"
+                    "（Meta の告知 2026-06-15 Tokenless Access to Meta oEmbed APIs）")
+_USER_DEFERRED = ("Messenger のユースケースでは「テスト準備完了」だが、Facebook Login for Business の構成の選択肢に出ず、"
+                  "THTH の鍵に乗らない（11/18 の Dashboard）。計画 §3.4 ④ でも落とす推し")
 DEFERRED = {
     "whatsapp_business_management": _WA_DEFERRED,
     "whatsapp_business_messaging": _WA_DEFERRED,
     "whatsapp_business_manage_events": _WA_DEFERRED,
     "manage_app_solution": _WA_DEFERRED,
+    # 以下は masaru 2026-11-18「推しでOK」（原文は docs/段取り_Meta申請の録画_2026-11-18.md §5）。口はそのまま残す。
+    "threads_oembed_read": _OEMBED_DEFERRED,
+    "meta_oembed_read": _OEMBED_DEFERRED,
+    "page_public_metadata_access": "PPMA は PPCA に置き換わり、PPCA と同じ申請・PPCA の承認後には申し込めない"
+                                   "（features-reference/page-public-metadata-access）。PPCA（fb-search）だけ申し込む",
+    "pages_manage_cta": "どのユースケースの権限の表にも出ず、アプリから申し込む口が無い（11/18 の Dashboard）。口ができたら足す申請で",
+    "pages_user_locale": _USER_DEFERRED,
+    "pages_user_timezone": _USER_DEFERRED,
+    "pages_user_gender": _USER_DEFERRED,
+    "read_audience_network_insights": "アプリの持ち主の Audience Network の枠の成績を読む権限。THTH は枠を持たず、"
+                                      "ユースケースの中は public_profile だけ（11/18 の Dashboard）",
+    "commerce_account_read_settings": "コマース API のシステムユーザーの鍵で求める権限（commerce-platform/api-setup・2026-06-28）。"
+                                      "カタログ API のユースケースに無く、ショップは catalog_management と商品タグで足りる",
 }
 
 # 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。

@@ -60,13 +60,34 @@ def test_WhatsAppは今回の申請から外し_口と見張りは残す():
     """masaru 2026-11-18「WhatsApp だけは今回外す」: 表・区間・台本に出さず、口と PERMISSIONS の行は残す。"""
     wa = {"whatsapp_business_management", "whatsapp_business_messaging", "whatsapp_business_manage_events",
           "manage_app_solution"}
-    assert set(appreview.DEFERRED) == wa and all(reason.strip() for reason in appreview.DEFERRED.values())
+    assert wa <= set(appreview.DEFERRED) and all(reason.strip() for reason in appreview.DEFERRED.values())
     assert not wa & set(appreview.names()) and not wa & {item["name"] for item in appreview.items()}
     assert not [s["id"] for s in appreview.SEGMENTS if s["medium"] == "whatsapp"]
-    assert [s["id"] for s in appreview.DEFERRED_SEGMENTS] == ["wa-manage", "wa-messaging", "wa-events"]
+    assert [s["id"] for s in appreview.DEFERRED_SEGMENTS if s["medium"] == "whatsapp"] == \
+        ["wa-manage", "wa-messaging", "wa-events"]
     assert "wa-" not in appreview.tsv()
     assert {"whatsapp_business_management", "whatsapp_business_messaging"} <= set(pw.PERMISSIONS)
     assert not set(appreview.DEFERRED) & (set(appreview.PLANNED) | set(appreview.DROPPED))
+
+
+
+def test_申し込む口の無いものと審査の要らないものは今回外す():
+    """masaru 2026-11-18「推しでOK」（docs/段取り_Meta申請の録画_2026-11-18.md §5）: oEmbed は審査が要らなくなり、
+    PPMA は PPCA と同じ申請に入れられず、残りは Dashboard に申し込む口が無い。表・区間・tsv に出さず、口は残す。"""
+    gone = {"threads_oembed_read", "meta_oembed_read", "page_public_metadata_access", "pages_manage_cta",
+            "pages_user_locale", "pages_user_timezone", "pages_user_gender", "read_audience_network_insights",
+            "commerce_account_read_settings"}
+    segs = {"th-embed", "meta-embed", "fb-who", "fb-cta", "fb-dm-profile", "ads-network", "ads-shop"}
+    assert gone <= set(appreview.DEFERRED)
+    assert not gone & set(appreview.names()) and not gone & {item["name"] for item in appreview.items()}
+    assert not segs & {s["id"] for s in appreview.SEGMENTS}
+    assert segs <= {s["id"] for s in appreview.DEFERRED_SEGMENTS}
+    rows = appreview.tsv()
+    assert not [seg for seg in segs if f"{seg}\t" in rows or f"\t{seg}\t" in rows]
+    # PPCA は残す（PPMA と入れ替え）。口と見張りの行は残す
+    assert "page_public_content_access" in appreview.names() and "fb-search" in {s["id"] for s in appreview.SEGMENTS}
+    assert {"pages_manage_cta", "read_audience_network_insights"} <= set(pw.PERMISSIONS)
+    assert {"threads_oembed_read", "page_public_metadata_access"} <= set(appreview.FEATURES)
 
 
 # ---------------------------------------------------------------- (d) 台本の表
@@ -254,8 +275,9 @@ def test_二段目の前には人の手を待つ所がある():
 
 # ---------------------------------------------------------------- (e) 提出の前の点検
 
-ITEMS = ("threads_basic", "pages_manage_cta", "threads_oembed_read")
-TEXT = "Threads: posts. Facebook Pages: the call-to-action button. Posts can be shown with embed."
+# 11/18 に pages_manage_cta・threads_oembed_read を申請から外したので、例を pages_manage_posts・機能の IG 公開コンテンツに替えた
+ITEMS = ("threads_basic", "pages_manage_posts", "instagram_public_content_access")
+TEXT = "Threads: posts. Facebook Pages: publish posts. Instagram: hashtag search."
 
 
 def fake_view(**days):
@@ -268,12 +290,12 @@ def subset(*names):
 
 
 def test_全部そろえば問題は無い():
-    result = appreview.evaluate(fake_view(threads_basic=1, pages_manage_cta=29), TEXT, now=NOW, rows=subset(*ITEMS))
+    result = appreview.evaluate(fake_view(threads_basic=1, pages_manage_posts=29), TEXT, now=NOW, rows=subset(*ITEMS))
     assert result["ok"] and result["problems"] == []
 
 
 def test_壊す_1権限の呼び出しの記録を消すと赤():
-    result = appreview.evaluate(fake_view(pages_manage_cta=1), TEXT, now=NOW, rows=subset(*ITEMS))
+    result = appreview.evaluate(fake_view(pages_manage_posts=1), TEXT, now=NOW, rows=subset(*ITEMS))
     assert not result["ok"]
     assert result["problems"] == [{"code": "appreview_no_recent_call", "level": "red", "names": ["threads_basic"]}]
 
@@ -285,7 +307,7 @@ def test_30日の線(days, ok):
 
 
 def test_機能は呼び出しを数えず_口とprivacyだけ見る():
-    result = appreview.evaluate(fake_view(), TEXT, now=NOW, rows=subset("threads_oembed_read"))
+    result = appreview.evaluate(fake_view(), TEXT, now=NOW, rows=subset("instagram_public_content_access"))
     assert result["ok"]
     assert result["items"][0]["recent_call"] is None
 
@@ -299,10 +321,10 @@ def test_口の無い権限は赤():
 
 
 def test_privacyに語が無ければ赤で_大文字小文字は見ない():
-    result = appreview.evaluate(fake_view(threads_basic=1, pages_manage_cta=1), "THREADS: posts. embed.",
+    result = appreview.evaluate(fake_view(threads_basic=1, pages_manage_posts=1), "THREADS: posts. INSTAGRAM: hashtag.",
                                 now=NOW, rows=subset(*ITEMS))
-    assert result["problems"] == [{"code": "appreview_privacy_missing", "level": "red", "names": ["pages_manage_cta"]}]
-    assert result["items"][1]["privacy_missing"] == ["Facebook Pages:", "call-to-action"]
+    assert result["problems"] == [{"code": "appreview_privacy_missing", "level": "red", "names": ["pages_manage_posts"]}]
+    assert result["items"][1]["privacy_missing"] == ["Facebook Pages:", "publish"]
 
 
 def test_媒体の語のある権限は_その媒体の項の中で語を探す():
@@ -328,8 +350,8 @@ def test_媒体の語は見出しの下の段落も項に数える():
 
 
 def test_媒体の語の無い権限は頁全体で探す():
-    page = appreview._strip("<p>Threads: posts.</p>\n<p>Posts can be shown with embed.</p>")
-    assert appreview.evaluate(fake_view(), page, now=NOW, rows=subset("threads_oembed_read"))["items"][0][
+    page = appreview._strip("<p>Threads: posts.</p>\n<p>Search uses threads_keyword_search.</p>")
+    assert appreview.evaluate(fake_view(), page, now=NOW, rows=subset("threads_keyword_search"))["items"][0][
         "privacy_missing"] == []
 
 
@@ -356,10 +378,10 @@ def test_privacyの既定はbuild_siteが作る頁の文(tmp_path):
 
 @pytest.fixture
 def few(monkeypatch, tmp_path):
-    chosen = subset("threads_basic", "threads_oembed_read")
+    chosen = subset("threads_basic", "instagram_public_content_access")
     monkeypatch.setattr(appreview, "items", lambda: chosen)
     page = tmp_path / "privacy.html"
-    page.write_text("<li>Threads: posts</li><p>embed</p>", encoding="utf-8")
+    page.write_text("<li>Threads: posts</li><li>Instagram: hashtag</li>", encoding="utf-8")
     return str(page)
 
 
