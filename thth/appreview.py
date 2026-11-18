@@ -164,8 +164,8 @@ SEGMENTS = (
          ("prep", "別のテストの口座からページにメッセージを 1 通送っておく"),
          ("cmd", "thth dm list {FB}"), ("cmd", "thth dm read {FB} {FB_PSID}"),
          ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --by {BY}"),
-         ("hand", "Messenger で返事が届いたのを見せたら Return"),
-         real_first="messaging_type の綴りが【推】（計画 M4）"),
+         ("hand", "Messenger で返事が届いたのを見せたら Return")),
+    # 2026-11-19 に S.o.h shop（soh-fb）で本物の返事が通った（messaging_type の綴りが解けた）ので real_first を外した
     _seg("fb-human-agent", "facebook", "Human Agent — a person answers after 24 hours with the human_agent tag.",
          ["human_agent"],
          ("prep", "24 時間より前に届いたメッセージを用意する"),
@@ -175,8 +175,8 @@ SEGMENTS = (
          ["pages_events"],
          ("prep", "別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）"),
          ("two", "thth dm event {FB} --type purchase --conversation {FB_PSID} --value {VALUE} --currency JPY --by {BY}"),
-         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return"),
-         real_first="events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）"),
+         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return")),
+    # 2026-11-19 に soh-fb で本物の purchase が received 1 で通った（dataset は二段目で作られ、partner_agent なしで通った）
     _seg("fb-email", "facebook", "email — the authorizing user's email address, read once at authorization.",
          ["email"],
          ("prep", "email を求める認可は端末で thth auth <口座> --by <名前> を打つ（招待の画面では値は出ない）。"

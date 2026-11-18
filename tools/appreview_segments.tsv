@@ -151,7 +151,6 @@ two	thth live end {FB} {LIVE} --by {BY}
 end
 seg	fb-dm	facebook	pages_messaging — read the Page inbox and answer within 24 hours.
 items	pages_messaging
-real	messaging_type の綴りが【推】（計画 M4）
 prep	別のテストの口座からページにメッセージを 1 通送っておく
 cmd	thth dm list {FB}
 cmd	thth dm read {FB} {FB_PSID}
@@ -166,7 +165,6 @@ two	thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}
 end
 seg	fb-events	facebook	pages_events — report a purchase that came from a Messenger conversation.
 items	pages_events
-real	events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）
 prep	別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）
 two	thth dm event {FB} --type purchase --conversation {FB_PSID} --value {VALUE} --currency JPY --by {BY}
 hand	Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return
