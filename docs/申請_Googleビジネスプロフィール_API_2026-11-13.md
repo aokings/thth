@@ -6,6 +6,8 @@
 
 **2026-11-17 出し直した（masaru「出し直します」・THTH開発 第19 が内蔵のブラウザで送った）。新しいケース ID 4-3446000042331。審査は 7〜10 営業日（11/27〜12/1 ごろ）。この project でもう送らない。** 前回から替えたのは 2 欄: 会社のウェブサイト `https://yamate-jls.aiko.ac.jp/`（プロフィールと同じ文字列）、主な理由（学校が自分のプロフィールを THTH で管理する、と書き直した。全文: "Yamate Japanese Language School (Aiko Gakuen) manages its own Business Profiles with THTH, a command-line tool we run on our own computer. We will read and update our own hours, special hours and posts to match our records. Every change is reviewed and approved by us before it is sent; nothing is changed automatically."）。form に会社名の欄は無かった。ほか（アカウント aokings・ビジネス 山手日本語学校・project 番号 654856288966・知った所・60 日以上 はい・許可リスト済みの project いいえ）は前回と同じ。
 
+**2026-11-19 合格の返事が来た（masaru が本文を貼った）。** project 654856288966 が Google Business Profile API の許可リストに載った。割り当ては既定の 300 QPM（1 分あたりの問い合わせ）。次の手として書かれていたのは 2 つ: Google Cloud Console で API を有効にする（API ライブラリで探す）、Google Workspace の利用者なら組織でビジネス プロフィールを有効にする（aokings@gmail.com は Workspace でないので当たらない【推】）。決まりの念押し: Google との提携・後援・推薦を匂わせる公の発言や報道発表はしない（書面の事前の承認がない限り）。**まだしていないこと**: Console で API を有効にする（masaru の承認待ち）・THTH の口を作る（設計_実店舗 §6.4 の後の段）。
+
 送った中身（form は下の「form の欄と下書き」の形ではなく、段に分かれた workflow だった: https://support.google.com/business/workflow/16726127）:
 - アカウント: aokings@gmail.com（学校の 3 件のプロフィールの管理者に 11/13 に足した）
 - ビジネス: 山手日本語学校（確認済み）
