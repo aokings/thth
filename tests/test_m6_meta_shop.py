@@ -27,6 +27,7 @@ V = "/" + fb.GRAPH_VERSION
 PAGE, IG_ID = "61596075596464", "17841437318552220"
 FB_ACCOUNT, IG_ACCOUNT = "m6s-fb", "m6s-ig"
 MEDIA, CATALOG, PRODUCT, OTHER = "17895695668004550", "960179311066902", "3231775643511089", "5209223099160494"
+ALBUM, CHILD_IMAGE, CHILD_VIDEO = "17908412406282110", "17953866678213169", "18095043389063006"
 
 
 @pytest.fixture
@@ -44,7 +45,8 @@ def shop(isolated_account_factory, tmp_path, monkeypatch):
         token.write_text(json.dumps({"access_token": "tok-" + secrets.token_hex(12), "user_id": extra["user_id"]}))
         token.chmod(0o600)
         isolated_account_factory(name, token=str(token), production=True, **extra)
-    state = {"eligible": True, "write": (200, {"success": True})}
+    state = {"eligible": True, "write": (200, {"success": True}),
+             "children": [{"id": CHILD_IMAGE, "media_type": "IMAGE"}, {"id": CHILD_VIDEO, "media_type": "VIDEO"}]}
     table = {
         ("GET", V + f"/{IG_ID}"): lambda q, f, r: (200, {"shopping_product_tag_eligibility": state["eligible"],
                                                          "id": IG_ID}),
@@ -59,6 +61,11 @@ def shop(isolated_account_factory, tmp_path, monkeypatch):
             {"product_id": int(PRODUCT), "name": "商品の目印", "review_status": "approved", "x": 0.5, "y": 0.8,
              "price_string": "¥3,500"}]}),
         ("POST", V + f"/{MEDIA}/product_tags"): lambda q, f, r: state["write"],
+        ("GET", V + f"/{MEDIA}"): (200, {"media_type": "IMAGE", "id": MEDIA}),
+        ("GET", V + f"/{ALBUM}"): (200, {"media_type": "CAROUSEL_ALBUM", "id": ALBUM}),
+        ("GET", V + f"/{ALBUM}/children"): lambda q, f, r: (200, {"data": state["children"]}),
+        ("POST", V + f"/{ALBUM}/product_tags"): (400, {"error": {"message": "メディアタイプ「8」が不明です", "code": 100,
+                                                               "error_subcode": 2207023}}),
     }
     with fake_graph(table) as (url, calls):
         monkeypatch.setenv(fb.BASE_URL_ENV, url)
@@ -151,6 +158,44 @@ def test_結果の分からない書き込みは済んだと言わない(shop, c
     assert rc == 1 and "meta_write_unknown" in out and len(writes(shop)) == 1
 
 
+def test_カルーセルの親は付ける前に断り子の画像を示す(shop, capsys):
+    # 11/18 本物: 親への POST は 400（subcode 2207023）。子の画像になら付く。
+    rc, out, err = main(capsys, "shop", "tag", IG_ACCOUNT, ALBUM, "--product", PRODUCT, "--x", "0.4", "--y", "0.6",
+                        "--by", "m")
+    text = out + err
+    assert rc == 2 and "shop_tag_carousel" in text, text
+    assert CHILD_IMAGE in text and CHILD_VIDEO not in text
+    assert f"thth shop tag {IG_ACCOUNT} {CHILD_IMAGE} --product {PRODUCT} --x 0.4 --y 0.6" in text
+    assert writes(shop) == [] and get(shop, f"/{ALBUM}/product_tags") == []
+    assert get(shop, f"/{ALBUM}")[0]["query"]["fields"] == ["media_type"]
+    assert get(shop, f"/{ALBUM}/children")[0]["query"]["fields"] == ["id,media_type"]
+
+
+def test_カルーセルの断りはjsonでも子の画像の配列を出す(shop, capsys):
+    rc, out, err = main(capsys, "shop", "tag", IG_ACCOUNT, ALBUM, "--product", PRODUCT, "--by", "m", "--json")
+    payload = json.loads(out)
+    assert rc == 2 and payload["error"] == "shop_tag_carousel" and payload["children"] == [CHILD_IMAGE]
+
+
+def test_動画だけのカルーセルは画像を選ぶよう言う(shop, capsys):
+    shop["state"]["children"] = [{"id": CHILD_VIDEO, "media_type": "VIDEO"}]
+    rc, out, err = main(capsys, "shop", "tag", IG_ACCOUNT, ALBUM, "--product", PRODUCT, "--by", "m")
+    assert rc == 2 and "shop_tag_carousel" in out + err and "画像の投稿を選んで" in out + err
+    assert writes(shop) == []
+
+
+def test_画像の投稿は種類を読んでから一段目に進む(shop, capsys):
+    rc, out, err = main(capsys, "shop", "tag", IG_ACCOUNT, MEDIA, "--product", OTHER, "--x", "0.5", "--y", "0.5",
+                        "--by", "m", "--json")
+    assert rc == 1 and json.loads(out)["stage"] == 1, err
+    assert "shop_tag_carousel" not in out + err and get(shop, f"/{MEDIA}/children") == []
+    assert writes(shop) == []
+
+
+def test_商品タグの区間は本物で確かめた印を外した():
+    assert not next(s for s in appreview.SEGMENTS if s["id"] == "ig-shop")["real_first"]
+
+
 @pytest.mark.parametrize("argv", [("--product", "abc"), ("--product", PRODUCT, "--x", "0.5"),
                                   ("--product", PRODUCT, "--x", "1.5", "--y", "0.5")])
 def test_引数が違えば網に出る前に断る(shop, capsys, argv):
@@ -190,5 +235,6 @@ def test_書く口を呼ぶのはmeta_shopだけ():
 
 
 def test_符丁は目録にあり3つがそろう():
-    entry = refusal_catalog.CATALOG["shop_args_invalid"]
-    assert entry["why"] and entry["fix"]["text"] and entry["better"]
+    for code in ("shop_args_invalid", "shop_tag_carousel"):
+        entry = refusal_catalog.CATALOG[code]
+        assert entry["why"] and entry["fix"]["text"] and entry["better"], code

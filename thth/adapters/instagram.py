@@ -874,6 +874,24 @@ class InstagramAdapter(fb.FacebookAdapter):
                  "y": row.get("y") if isinstance(row.get("y"), (int, float)) else None}
                 for row in self._rows(body, "商品タグの確認") if row.get("product_id") is not None]
 
+    def shop_media_kind(self, media_id: str) -> dict:
+        """`GET /{ig-media-id}?fields=media_type`。カルーセルなら `GET /{id}/children?fields=id,media_type` も読む。
+
+        商品タグはカルーセルの親には付かない（11/18 本物で 400・code 100・subcode 2207023「メディアタイプ「8」が不明」）。
+        子の画像に付けると通る。断りで子の id を示すために読む。
+        """
+        value = self._media_id(media_id, "投稿の種類の確認")
+        body = self._get(f"/{value}", "投稿の種類の確認", params={"fields": "media_type"})
+        kind = body.get("media_type") if isinstance(body.get("media_type"), str) else None
+        children = []
+        if kind == "CAROUSEL_ALBUM":
+            rows = self._rows(self._get(f"/{value}/children", "カルーセルの子の確認",
+                                        params={"fields": "id,media_type"}), "カルーセルの子の確認")
+            children = [{"id": str(row["id"]),
+                         "media_type": row.get("media_type") if isinstance(row.get("media_type"), str) else None}
+                        for row in rows if row.get("id") is not None]
+        return {"media_type": kind, "children": children}
+
     def shop_tag(self, media_id: str, product_id: str, *, x: float | None = None, y: float | None = None) -> dict:
         """`POST /{ig-media-id}/product_tags`（`updated_tags`＝JSON の配列）。足すだけ・同じ商品なら位置の更新。
 

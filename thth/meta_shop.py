@@ -24,8 +24,11 @@
   - タグを外す口（`DELETE /{ig-media-id}/product_tags`）は公式の頁に無い。なので `shop untag` は作っていない。
   - 投稿の作成（`POST /{ig-user-id}/media` の `product_tags`）に載せる `send --product` は、投稿の指紋・queue・lint を通る
     変更になるので、この口には入れていない（既存の投稿に付ける `shop tag` だけ）。
-  - `product_tags` の POST が、THTH のページの鍵で通るか（公式の頁は各 endpoint の参照に token の型を譲っている）は、
-    本物で 1 回打って確かめる。
+
+**本物で確かめた（2026-11-18・S.o.h）**:
+  - `product_tags` の POST は THTH のページの鍵で通る。
+  - カルーセルの親には付かない（400・code 100・subcode 2207023「メディアタイプ「8」が不明」）。子の画像になら付く。
+    なので `tag` は先に `GET /{media}?fields=media_type` を読み、親なら子の画像の id を示して断る（`shop_tag_carousel`）。
 
 **保存**: 答えは画面に出すだけ（数と id と商品名まで・保存しない）。残すのは runs の 1 行（命令の名前・媒体・使った権限・結果）だけ。
 書く口（`tag`）は `meta_write` と同じ二段確認・production・安全装置の止めの印・結果不明の扱い。
@@ -53,6 +56,21 @@ def _digits(value, what) -> str:
     if not DIGITS.fullmatch(text):
         _bad(f"{what}は数字の id です")
     return text
+
+
+def _carousel(args, media_id, product, children) -> None:
+    """カルーセルの親は Meta が受けない（400・subcode 2207023）。子の画像の id と、そのまま打てる命令を示して断る。"""
+    images = [row["id"] for row in children if row.get("media_type") == "IMAGE"]
+    by = json.dumps(getattr(args, "by", None) or "<名前>", ensure_ascii=False)
+    x = args.x if args.x is not None else 0.5
+    y = args.y if args.y is not None else 0.5
+    lines = [f"投稿 {media_id} はカルーセル（複数枚）です。商品タグは親でなく、中の 1 枚（画像）に付けます。"]
+    if images:
+        lines.append("  中の画像: " + "・".join(f"{i + 1} 枚目 {cid}" for i, cid in enumerate(images)))
+        lines.append(f"  例: thth shop tag {args.account} {images[0]} --product {product} --x {x} --y {y} --by {by}")
+    else:
+        lines.append("  中に画像がありません（動画だけのカルーセル）。画像の投稿を選んでください")
+    mw._refuse("shop_tag_carousel", "\n".join(lines), rc=2, children=images)
 
 
 def _note(args, action, media, permission) -> None:
@@ -149,6 +167,9 @@ def cmd_tag(args) -> int:
         _bad("--x と --y は 0.0〜1.0 です")
     mw._need(args, adapter_cls, token, [ig.SHOP_PERMISSION, "instagram_basic"])
     adapter = mw._adapter(account_cfg, token)
+    kind = mw._read("投稿の種類の確認", lambda: adapter.shop_media_kind(media_id))
+    if kind["media_type"] == "CAROUSEL_ALBUM":
+        _carousel(args, media_id, product, kind["children"])
     current = mw._read("商品タグの確認", lambda: adapter.shop_tags(media_id))
     already = any(row["product_id"] == product for row in current)
     by = mw._by(args)

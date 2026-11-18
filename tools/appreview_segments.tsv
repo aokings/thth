@@ -325,7 +325,6 @@ items	whatsapp_business_manage_events
 end
 seg	ig-shop	instagram	instagram_shopping_tag_products — check eligibility, find the catalog and its products, and tag a product on an existing post (catalog_management reads the catalogs).
 items	instagram_shopping_tag_products
-real	eligibility が true になるか・ページの鍵で product_tags の POST が通るかが【未確認】（本物のショップで 1 回）
 prep	承認済みの Instagram ショップに録画の口座を結び、商品の入ったカタログを用意しておく（ショップを持つビジネスの管理者の鍵で。自社のドメインで実際に売っている物を載せる）。タグを付ける画像の投稿を 1 本出しておく
 cmd	thth shop eligibility {IG}
 cmd	thth shop catalogs {IG}

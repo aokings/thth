@@ -304,8 +304,9 @@ SEGMENTS = (
          ("cmd", "thth shop products {IG} --catalog {SHOPCAT}"),
          ("two", "thth shop tag {IG} {IG_POST} --product {PRODUCT} --x 0.5 --y 0.5 --by {BY}"),
          ("cmd", "thth shop tags {IG} {IG_POST}"),
-         ("hand", "Instagram の投稿に商品タグが付いたのを見せたら Return"),
-         real_first="eligibility が true になるか・ページの鍵で product_tags の POST が通るかが【未確認】（本物のショップで 1 回）"),
+         ("hand", "Instagram の投稿に商品タグが付いたのを見せたら Return")),
+    # 11/18 S.o.h の本物で eligibility true・ページの鍵の POST が通ると確かめた。{IG_POST} は画像の投稿
+    # （カルーセルなら中の画像の id。親は Meta が受けず、thth は shop_tag_carousel で断る）。
     # ---------------------------------------------------------------- 広告
     # 設計 広告の資格と遠くの道（2026-11-06）: 広告の招待も資格の行を作り、`thth login` の鍵が広告の台帳に結ばれる。
     # 鍵は口座 1 つなので、IG と同じく広告の区間の前に広告の招待で login をやり直す。審査員の台帳に結んだページは
