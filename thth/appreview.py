@@ -273,28 +273,6 @@ SEGMENTS = (
          "(Standard Access returns test data).", ["instagram_creator_marketplace_discovery"],
          ("prep", "ブランドを Instagram のクリエイターマーケットプレイスに onboard し、利用規約に同意しておく（資格は Meta が見る）"),
          ("cmd", "thth creators search {IG} --country JP")),
-    # ---------------------------------------------------------------- WhatsApp（口の形と試験だけ・口座の種類がまだ無い）
-    # WhatsApp の口座は広告と同じ型の台帳（`thth wa add`）。鍵は WABA に結んだユーザーの長い鍵（`thth wa auth`）で、
-    # 審査員の流れ（招待）には載らない。録画は試験用の番号（支払い方法なしで hello_world を送れる）で撮る。
-    _seg("wa-manage", "whatsapp", "whatsapp_business_management — read the WhatsApp Business Account's phone numbers "
-         "and message templates, and create a message template.", ["whatsapp_business_management"],
-         ("prep", "Dashboard でアプリに WhatsApp の用途を足し、テスト用の WABA と試験用の番号を用意しておく。台帳は "
-                  "thth wa add、鍵は thth wa auth（録画の外）。審査の間だけ運営者が VM の台帳の production を true にする"),
-         ("cmd", "thth wa numbers {WA}"), ("cmd", "thth wa templates {WA}"),
-         ("two", "thth wa template create {WA} --name {WATPL} --language ja --category UTILITY --body {WABODY} --by {BY}"),
-         ("cmd", "thth wa templates {WA}"),
-         real_first="THTH のユーザーの長い鍵が、WABA の phone_numbers・message_templates を通すか・テンプレートの POST が通るか"
-                    "が【未確認】（本物で 1 回）"),
-    _seg("wa-messaging", "whatsapp", "whatsapp_business_messaging — send an approved template message to a phone number.",
-         ["whatsapp_business_messaging"],
-         ("prep", "試験用の番号から、受信する端末の番号（確認コードで登録済み）へ hello_world を送る。受信する端末の画面も映す"),
-         ("cmd", "thth wa numbers {WA}"),
-         ("two", "thth wa send {WA} --from {WANUM} --to {WATO} --template hello_world --language en_US --by {BY}"),
-         ("hand", "受信する端末の WhatsApp にメッセージが届いたのを見せたら Return"),
-         real_first="POST /{phone-number-id}/messages の `to` の形（国番号・符号）と、THTH の鍵で通るかが【未確認】（本物で 1 回）"),
-    _seg("wa-events", "whatsapp", "whatsapp_business_manage_events — report a purchase that came from a WhatsApp "
-         "conversation.", ["whatsapp_business_manage_events"],
-         door="thth dm event <口座> --channel whatsapp（WhatsApp の口座の種類がまだ THTH に無い・口の形と試験だけ）"),
     _seg("ig-shop", "instagram", "instagram_shopping_tag_products — check eligibility, find the catalog and its products, "
          "and tag a product on an existing post (catalog_management reads the catalogs).",
          ["instagram_shopping_tag_products"],
@@ -341,12 +319,50 @@ SEGMENTS = (
          door="claude mcp add（公式の広告 MCP に THTH のアプリで繋ぐ・計画 §1.5）"),
 )
 
+# 今回の申請の範囲から外した区間（masaru 2026-11-18「WhatsApp だけは今回外す」）。台本・表・tsv には載せない。
+# 外の人に WhatsApp の口を開くときに、`DEFERRED` から戻して申請する。
+DEFERRED_SEGMENTS = (
+    # ---------------------------------------------------------------- WhatsApp（口の形と試験だけ・口座の種類がまだ無い）
+    # WhatsApp の口座は広告と同じ型の台帳（`thth wa add`）。鍵は WABA に結んだユーザーの長い鍵（`thth wa auth`）で、
+    # 審査員の流れ（招待）には載らない。録画は試験用の番号（支払い方法なしで hello_world を送れる）で撮る。
+    _seg("wa-manage", "whatsapp", "whatsapp_business_management — read the WhatsApp Business Account's phone numbers "
+         "and message templates, and create a message template.", ["whatsapp_business_management"],
+         ("prep", "Dashboard でアプリに WhatsApp の用途を足し、テスト用の WABA と試験用の番号を用意しておく。台帳は "
+                  "thth wa add、鍵は thth wa auth（録画の外）。審査の間だけ運営者が VM の台帳の production を true にする"),
+         ("cmd", "thth wa numbers {WA}"), ("cmd", "thth wa templates {WA}"),
+         ("two", "thth wa template create {WA} --name {WATPL} --language ja --category UTILITY --body {WABODY} --by {BY}"),
+         ("cmd", "thth wa templates {WA}"),
+         real_first="THTH のユーザーの長い鍵が、WABA の phone_numbers・message_templates を通すか・テンプレートの POST が通るか"
+                    "が【未確認】（本物で 1 回）"),
+    _seg("wa-messaging", "whatsapp", "whatsapp_business_messaging — send an approved template message to a phone number.",
+         ["whatsapp_business_messaging"],
+         ("prep", "試験用の番号から、受信する端末の番号（確認コードで登録済み）へ hello_world を送る。受信する端末の画面も映す"),
+         ("cmd", "thth wa numbers {WA}"),
+         ("two", "thth wa send {WA} --from {WANUM} --to {WATO} --template hello_world --language en_US --by {BY}"),
+         ("hand", "受信する端末の WhatsApp にメッセージが届いたのを見せたら Return"),
+         real_first="POST /{phone-number-id}/messages の `to` の形（国番号・符号）と、THTH の鍵で通るかが【未確認】（本物で 1 回）"),
+    _seg("wa-events", "whatsapp", "whatsapp_business_manage_events — report a purchase that came from a WhatsApp "
+         "conversation.", ["whatsapp_business_manage_events"],
+         door="thth dm event <口座> --channel whatsapp（WhatsApp の口座の種類がまだ THTH に無い・口の形と試験だけ）"),
+)
+
 # 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す
 # （ブランドとクリエイターの 6 つ・商品タグと、`email`・`pages_events`・`instagram_manage_events`・`whatsapp_business_manage_events`・`whatsapp_business_management`・`whatsapp_business_messaging` は 11/09 に口ができて移した）。
 PLANNED = {
     "instagram_creator_marketplace_messaging": "instagram",
     "commerce_manage_accounts": "ads",
-    "manage_app_solution": "whatsapp",
+}
+
+# 今回の申請の範囲から外した権限と理由（masaru 2026-11-18）。`names()`・区間・privacy の語の表から除く。
+# 口（`thth wa`・`thth dm event --channel whatsapp`）と `permission_watch.PERMISSIONS` の行はそのまま残す。
+_WA_DEFERRED = ("WhatsApp は今回の申請から外した（masaru 2026-11-18）。自分のビジネスの WABA はアプリの役割で使える見込みで、"
+                "審査が要るのは外の事業者の WhatsApp を預かるとき。テスト用の WABA と番号が未用意・本物の 1 回も未・"
+                "ユースケースは足すと消せない")
+DEFERRED = {
+    "whatsapp_business_management": _WA_DEFERRED,
+    "whatsapp_business_messaging": _WA_DEFERRED,
+    "whatsapp_business_manage_events": _WA_DEFERRED,
+    "manage_app_solution": _WA_DEFERRED,
 }
 
 # 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。
@@ -428,8 +444,8 @@ PRIVACY_WORDS = {
 # ---------------------------------------------------------------- 表
 
 def names() -> list:
-    """申請に入れる名前（権限の正本 `PERMISSIONS` ＋ `PLANNED` ＋ 機能）。"""
-    return [*watch.PERMISSIONS, *PLANNED, *FEATURES]
+    """申請に入れる名前（権限の正本 `PERMISSIONS` ＋ `PLANNED` ＋ 機能。`DEFERRED` は除く）。"""
+    return [name for name in (*watch.PERMISSIONS, *PLANNED, *FEATURES) if name not in DEFERRED]
 
 
 def _door_of(template) -> str:

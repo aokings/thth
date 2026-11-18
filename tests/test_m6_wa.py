@@ -463,14 +463,15 @@ def test_入口は手元のCLIだけ_MCPと遠くの道に出さない():
         assert "thth wa" not in text and "wa_send" not in text
 
 
-def test_権限は審査の表と見張りに移った():
+def test_権限は見張りに移り_審査は今回外した区間に残す():
+    # masaru 2026-11-18: WhatsApp は今回の申請から外した（appreview.DEFERRED）。区間は DEFERRED_SEGMENTS に残す。
     for name in ("whatsapp_business_management", "whatsapp_business_messaging"):
-        assert name in pw.PERMISSIONS and name not in appreview.PLANNED
-        row = next(item for item in appreview.items() if item["name"] == name)
-        assert row["requested_by_thth"] and row["doors"] and row["segments"]
-    assert {"thth wa numbers", "thth wa templates"} <= set(
-        next(i for i in appreview.items() if i["name"] == "whatsapp_business_management")["doors"])
-    assert next(i for i in appreview.items() if i["name"] == "whatsapp_business_messaging")["doors"] == ["thth wa numbers", "thth wa send"]
+        assert name in pw.PERMISSIONS and name not in appreview.PLANNED and name in appreview.DEFERRED
+    segs = {s["id"]: s for s in appreview.DEFERRED_SEGMENTS}
+    manage = {appreview._door_of(c) for c in appreview.segment_commands(segs["wa-manage"])}
+    assert {"thth wa numbers", "thth wa templates"} <= manage
+    assert [appreview._door_of(c) for c in appreview.segment_commands(segs["wa-messaging"])] == \
+        ["thth wa numbers", "thth wa send"]
 
 
 def test_断りの符丁は目録に3つそろう():

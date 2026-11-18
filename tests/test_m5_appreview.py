@@ -52,7 +52,21 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert all(reason.strip() for reason in appreview.DROPPED.values())
     # 16 のうち、ブランドとクリエイターの 6 つ（2949689）と email・pages_events・instagram_manage_events・
     # whatsapp_business_manage_events の 4 つ（1c5a5e0）と商品タグ（e500d33）は口ができて PERMISSIONS へ移した（11/09）。
-    assert len(appreview.PLANNED) == 3
+    # manage_app_solution（WhatsApp）は 11/18 に DEFERRED へ移した。
+    assert len(appreview.PLANNED) == 2
+
+
+def test_WhatsAppは今回の申請から外し_口と見張りは残す():
+    """masaru 2026-11-18「WhatsApp だけは今回外す」: 表・区間・台本に出さず、口と PERMISSIONS の行は残す。"""
+    wa = {"whatsapp_business_management", "whatsapp_business_messaging", "whatsapp_business_manage_events",
+          "manage_app_solution"}
+    assert set(appreview.DEFERRED) == wa and all(reason.strip() for reason in appreview.DEFERRED.values())
+    assert not wa & set(appreview.names()) and not wa & {item["name"] for item in appreview.items()}
+    assert not [s["id"] for s in appreview.SEGMENTS if s["medium"] == "whatsapp"]
+    assert [s["id"] for s in appreview.DEFERRED_SEGMENTS] == ["wa-manage", "wa-messaging", "wa-events"]
+    assert "wa-" not in appreview.tsv()
+    assert {"whatsapp_business_management", "whatsapp_business_messaging"} <= set(pw.PERMISSIONS)
+    assert not set(appreview.DEFERRED) & (set(appreview.PLANNED) | set(appreview.DROPPED))
 
 
 # ---------------------------------------------------------------- (d) 台本の表
@@ -62,7 +76,8 @@ def test_権限の正本はPERMISSIONSの1か所で_台本の表は重ねない(
     assert not set(appreview.FEATURES) & (set(pw.PERMISSIONS) | set(appreview.PLANNED))
     names = appreview.names()
     assert len(names) == len(set(names))
-    assert {item["name"] for item in appreview.items() if item["requested_by_thth"]} == set(pw.PERMISSIONS)
+    assert {item["name"] for item in appreview.items() if item["requested_by_thth"]} == \
+        set(pw.PERMISSIONS) - set(appreview.DEFERRED)
     for item in appreview.items():
         if item["requested_by_thth"]:   # 媒体と読む／書くは PERMISSIONS から引く
             assert (item["media"], item["kind"]) == (pw.PERMISSIONS[item["name"]]["media"],
@@ -73,14 +88,14 @@ def test_認可が求める権限は全部台本の表に出る():
     wanted = {*scopes.DEFAULT_SCOPES, *facebook.SCOPES, *instagram.SCOPES, *ads_auth.SCOPES, *wa_auth.SCOPES}
     for extra in scopes.META_INVITE_EXTRA.values():
         wanted |= set(extra)
-    assert sorted(wanted - {item["name"] for item in appreview.items()}) == []
+    assert sorted(wanted - {item["name"] for item in appreview.items()} - set(appreview.DEFERRED)) == []
 
 
 def test_区間の名前は表にあり_privacyの語は名前ごとに1つずつ():
     names = set(appreview.names())
     used = [name for segment in appreview.SEGMENTS for name in segment["items"]]
     assert sorted(set(used) - names) == []
-    assert set(appreview.PRIVACY_WORDS) == names
+    assert set(appreview.PRIVACY_WORDS) - set(appreview.DEFERRED) == names
     ids = [segment["id"] for segment in appreview.SEGMENTS]
     assert len(ids) == len(set(ids))
 
@@ -137,12 +152,10 @@ def test_本物で確かめていない口の区間には印がある():
 
 def test_口の無い権限は表で口が無いと言う():
     assert row("pages_utility_messaging")["doors"] == []
-    assert row("manage_app_solution")["doors"] == [] and not row("manage_app_solution")["requested_by_thth"]
     # 口ができた 4 権限は PERMISSIONS に移り、口（thth dm event・thth doctor）が表に出る。
     assert row("pages_events")["doors"] == ["thth dm event"] and row("pages_events")["requested_by_thth"]
     assert row("instagram_manage_events")["doors"] == ["thth dm event"]
     assert row("email")["doors"] == ["thth doctor"] and row("email")["kind"] == "read"
-    assert row("whatsapp_business_manage_events")["doors"] and row("whatsapp_business_manage_events")["segments"] == ["wa-events"]
     assert row("threads_basic")["doors"] == ["thth posts"]
     assert row("ads_mcp_management")["doors"]            # 手だけの区間は区間の口の文
     assert row("marketing_api_access_tier")["doors"]     # 録画の要らない機能
@@ -400,11 +413,11 @@ def test_今の表では口の無い権限と申請の前の呼び出しが赤�
 def test_記録に残らない権限は赤の中でそう分けて言う():
     """evidence の空の権限と PLANNED は、1 回打っても記録に残らない（Dashboard の呼び出しの欄で確かめる）。"""
     assert pw.PERMISSIONS["threads_basic"]["evidence"] and not pw.PERMISSIONS["pages_utility_messaging"]["evidence"]
-    names = ("threads_basic", "pages_utility_messaging", "manage_app_solution")
+    names = ("threads_basic", "pages_utility_messaging", "commerce_manage_accounts")
     result = appreview.evaluate(fake_view(), "", now=NOW, rows=subset(*names))
     problem = next(p for p in result["problems"] if p["code"] == "appreview_no_recent_call")
     assert set(problem["names"]) == set(names)
-    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "manage_app_solution"}
+    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "commerce_manage_accounts"}
     fix = rc.CATALOG["appreview_no_recent_call"]["fix"]["text"]
     assert "Dashboard" in fix and "記録に残らない" in fix
 
