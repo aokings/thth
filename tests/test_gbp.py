@@ -514,3 +514,75 @@ def test_通しの認可はgbpの置き場に600で残しgadsとgscの鍵に触�
     out = "\n".join(said) + json.dumps(value) + "".join(capsys.readouterr())
     for secret in SECRETS + ("4/FAKE-gbp-code",):
         assert secret not in out
+
+
+# ---- 監査 5.27.0 の直し
+
+def test_監査527_端末を操る字は出さない():
+    import io, contextlib
+    from thth.gbp import cli as gbp_cli
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        gbp_cli.print("店\x1b[2J名\x9b31m", "二行目\nあり")
+    assert "\x1b" not in buf.getvalue() and "\x9b" not in buf.getvalue()
+    assert "店?[2J名?31m 二行目\nあり" in buf.getvalue()
+
+
+def _post_digest(capsys, base):
+    rc, out = run(base + ["--json"], capsys)
+    assert rc == 1, out
+    return json.loads(out.out)["digest"]
+
+
+def test_監査527_結果の分からない投稿を同じconfirmで打ち直しても二つ目を出さない(google, capsys):
+    base = ["gbp", "post", LOC, "--text", TEXT, "--by", "m"]
+    digest = _post_digest(capsys, base)
+    posts = (api.V4_BASE + f"{ACC}/{LOC}/localPosts")
+    google.routes[("POST", posts)] = (503, {"error": {"status": "UNAVAILABLE"}})
+    rc, out = run(base + ["--confirm", digest], capsys)
+    assert rc == 2 and "gbp_write_unknown" in out.err
+    # Google は受けていて、一覧の先頭に新しい投稿が出た。
+    google.routes[("GET", posts)] = (200, {"localPosts": [
+        {"name": f"{ACC}/{LOC}/localPosts/10", "topicType": "STANDARD", "state": "PROCESSING", "summary": TEXT}]})
+    google.routes[("POST", posts)] = (200, {"name": f"{ACC}/{LOC}/localPosts/11", "state": "PROCESSING"})
+    rc, out = run(base + ["--confirm", digest], capsys)
+    assert rc == 1 and "gbp_digest_mismatch" in out.err
+    assert len(google.writes()) == 1
+
+
+@pytest.mark.parametrize("status", [201, 202, 204])
+def test_監査527_書く依頼の2xxは受けたものとして扱う(google, capsys, status):
+    base = ["gbp", "post", LOC, "--text", TEXT, "--by", "m"]
+    digest = _post_digest(capsys, base)
+    google.routes[("POST", api.V4_BASE + f"{ACC}/{LOC}/localPosts")] = (
+        status, b"" if status == 204 else {"name": f"{ACC}/{LOC}/localPosts/10"})
+    rc, out = run(base + ["--confirm", digest], capsys)
+    assert rc == 0 and "出しました" in out.out, out
+
+
+def test_監査527_書く依頼の3xxは済んだか分からないと言う(google, capsys):
+    base = ["gbp", "post", LOC, "--text", TEXT, "--by", "m"]
+    digest = _post_digest(capsys, base)
+    google.routes[("POST", api.V4_BASE + f"{ACC}/{LOC}/localPosts")] = (302, b"")
+    rc, out = run(base + ["--confirm", digest], capsys)
+    assert rc == 2 and "gbp_write_unknown" in out.err
+
+
+@pytest.mark.parametrize("kind", ["post", "special"])
+def test_監査527_digestの食い違いの断りに今のdigestを入れない(google, capsys, kind):
+    if kind == "post":
+        base = ["gbp", "post", LOC, "--text", TEXT, "--by", "m"]
+    else:
+        base = ["gbp", "special", LOC, "--date", "2026-12-28", "--closed", "--by", "m"]
+    real = _post_digest(capsys, base)
+    rc, out = run(base + ["--confirm", "0" * 12, "--json"], capsys)
+    assert rc == 1 and "gbp_digest_mismatch" in out.out + out.err
+    assert real not in out.out + out.err
+
+
+def test_監査527_一段目は断りに数えない(google, capsys):
+    from thth import refusals
+    refusals.clear_first_stage()
+    rc, out = run(["gbp", "post", LOC, "--text", TEXT, "--by", "m"], capsys)
+    assert rc == 1 and refusals.is_first_stage()
+    assert "report_channel" not in out.err

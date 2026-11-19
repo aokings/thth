@@ -498,3 +498,13 @@ def test_DMの読みを止めた断りは目録にあり遠くの道でも言え
     entry = refusal_catalog.CATALOG["meta_ig_message_access_off"]
     assert entry["why"] and "接続ツール" in entry["fix"]["text"] and entry["better"]
     assert "meta_ig_message_access_off" in server_meta.REASONS
+
+
+def test_監査527_持ち主でない側のDMの止めには当てない():
+    from thth.meta import errors as meta_errors
+    assert not meta_errors.is_message_access_off(
+        {"code": 200, "message": "(#200) The recipient has disabled access to direct messages."})
+    assert not meta_errors.is_message_access_off(
+        {"code": 200, "message": "(#200) 相手はダイレクトメッセージを無効にしています。"})
+    assert meta_errors.is_message_access_off(
+        {"code": 200, "message": "(#200) The account owner has disabled access to instagram direct messages."})

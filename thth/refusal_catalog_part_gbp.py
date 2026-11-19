@@ -9,7 +9,7 @@ Google の断り（HTTP の数・`error.status`・`error.details[].reason`・上
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.26.0"
+_SINCE = "5.27.0"
 _AUTH = "thth gbp auth"
 _DOCTOR = "thth gbp doctor"
 _LOCATIONS = "thth gbp locations"

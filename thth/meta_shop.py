@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 
 from . import approval as approval_mod
 from . import meta_write as mw
@@ -61,7 +62,7 @@ def _digits(value, what) -> str:
 def _carousel(args, media_id, product, children) -> None:
     """カルーセルの親は Meta が受けない（400・subcode 2207023）。子の画像の id と、そのまま打てる命令を示して断る。"""
     images = [row["id"] for row in children if row.get("media_type") == "IMAGE"]
-    by = json.dumps(getattr(args, "by", None) or "<名前>", ensure_ascii=False)
+    by = shlex.quote(getattr(args, "by", None)) if getattr(args, "by", None) else "<名前>"
     x = args.x if args.x is not None else 0.5
     y = args.y if args.y is not None else 0.5
     lines = [f"投稿 {media_id} はカルーセル（複数枚）です。商品タグは親でなく、中の 1 枚（画像）に付けます。"]

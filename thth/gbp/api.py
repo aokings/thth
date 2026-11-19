@@ -402,7 +402,11 @@ class Client:
             payload = json.loads(raw.decode("utf-8")) if raw else {}
         except (ValueError, UnicodeDecodeError):
             payload = None
-        if status != 200:
+        if write and 200 <= status < 300:
+            pass  # 書く依頼の 2xx は Google が受けた（201・202 も。監査 5.27.0 の 2）
+        elif write and 300 <= status < 400:
+            raise GbpRefused("gbp_write_unknown", f"HTTP {status}")  # 受けたかどうか言えない
+        elif status != 200:
             raise refusal_for(status, payload, write=write)
         if not isinstance(payload, dict):
             raise GbpRefused("gbp_write_unknown" if write else "gbp_response_invalid")

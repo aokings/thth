@@ -100,8 +100,9 @@ def is_message_access_off(err: dict) -> bool:
         return False
     message = str(err.get("message") or "")
     low = message.lower()
-    english = "direct message" in low and ("disabled" in low or "turned off" in low)
-    japanese = "ダイレクトメッセージ" in message and ("無効" in message or "オフ" in message)
+    # 「持ち主が」止めた文だけ（相手の側の止めなど、ほかの code 200 の断りに当てない・監査 5.27.0 の 10）。
+    english = "owner" in low and "direct message" in low and ("disabled" in low or "turned off" in low)
+    japanese = "所有者" in message and "ダイレクトメッセージ" in message and ("無効" in message or "オフ" in message)
     return english or japanese
 
 

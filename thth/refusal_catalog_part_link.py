@@ -8,7 +8,7 @@ thth/refusal_catalog.py が読む。
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.26.0"
+_SINCE = "5.27.0"
 _CHECK = "thth link check <台帳>"
 _SHOW = "thth link show <台帳>"
 _SEND = "thth link send <台帳> --bundle <束> --by <名前>"

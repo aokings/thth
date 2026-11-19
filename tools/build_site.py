@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-17"  # 5.26.0（監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-19"  # 5.27.0（Google ビジネス プロフィールの節・店の変化の連動の節）。出す日がずれたら直す。前: 2026-11-17（5.26.0 監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
@@ -583,7 +583,7 @@ def build_privacy() -> str:
         "location, its name, address, website, regular and special hours, open status and map link, and the "
         "location's posts. These are shown on the user's terminal (or as JSON for the user's own tools); THTH does "
         "not write what it reads from Google to any file and does not keep it. THTH changes a profile (adds or "
-        "replaces one day of special hours, or publishes one standard post) only after the owner's two-step "
+        "replaces one day of special hours, or publishes one standard or event post) only after the owner's two-step "
         "confirmation: the first step shows exactly what would be sent and changes nothing, and <code>thth gbp</code> "
         "itself changes nothing automatically (updates made with the owner's advance consent are described in the "
         "next section). The refresh token is kept in its own file that only the user can read "
@@ -1300,7 +1300,7 @@ def build_privacy() -> str:
         "動くのは利用者自身のコンピューターの中だけです。読むのは、利用者のアカウントの一覧と、店ごとの名前・住所・"
         "サイト・営業の時間と臨時の時間・営業の状態・地図のリンク、それに店の投稿です。これらは利用者の端末"
         "（または利用者自身の道具のための JSON）に出すだけで、THTH は Google から読んだものをファイルに書かず、"
-        "残しません。THTH がプロフィールを変える（臨時の時間を 1 日足すか置き換える・ふつうの投稿を 1 つ出す）のは、"
+        "残しません。THTH がプロフィールを変える（臨時の時間を 1 日足すか置き換える・ふつうの投稿かイベントの投稿を 1 つ出す）のは、"
         "持ち主の二段確認のあとだけです。一段目は送る中身をそのまま見せて何も変えず、<code>thth gbp</code> が自分で"
         "自動に変えることはありません（持ち主の前もっての同意による自動の更新は次の節）。"
         "refresh token は本人だけが読める別のファイル（<code>~/.config/thth/google-gbp-token.json</code>・600）に置き、"

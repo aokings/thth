@@ -24,9 +24,11 @@ MCP と遠くの道にはまだ出さない。
 from __future__ import annotations
 
 import argparse
+import builtins
 import datetime
 import json
 import os
+import re
 import shlex
 import stat
 
@@ -35,6 +37,14 @@ from . import api, auth
 from .wire import GbpRefused
 
 VERBS = ("auth", "doctor", "locations", "show", "special", "posts", "post")
+# Google から来た店の名前・本文に端末を操る字（ESC など）が入っていても、そのまま端末に出さない
+# （監査 5.27.0 の 11）。改行とタブは残す。JSON は json.dumps が先に逃がすので形は変わらない。
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\x9b]")
+
+
+def print(*items, **kwargs):  # noqa: A001 — この口の出力は全部ここを通す
+    builtins.print(*(_CONTROL.sub("?", str(item)) for item in items), **kwargs)
+
 MAX_BY = 256
 DAY_JA = {"MONDAY": "月", "TUESDAY": "火", "WEDNESDAY": "水", "THURSDAY": "木", "FRIDAY": "金", "SATURDAY": "土",
           "SUNDAY": "日"}
@@ -88,7 +98,9 @@ def _no_by(args) -> int:
 
 
 def _stage_one(args, *, digest, payload, lines, again) -> int:
-    """一段目: 見せて digest を出し、何もしない（rc 1）。"""
+    """一段目: 見せて digest を出し、何もしない（rc 1）。rc 1 は断りではない（印を付ける・監査 5.27.0 の 7）。"""
+    from .. import refusals
+    refusals.mark_first_stage()
     if args.json:
         print(json.dumps({"ok": False, "stage": 1, "digest": digest, **payload}, ensure_ascii=False))
         return 1
@@ -283,8 +295,8 @@ def cmd_special(args) -> int:
             raise GbpRefused("gbp_digest_mismatch")
         client.patch_special(location_id, merged)
     except GbpRefused as exc:
-        extra = {"digest": digest} if exc.code == "gbp_digest_mismatch" else {}
-        return _refuse(args, exc, rc=1 if exc.code == "gbp_digest_mismatch" else 2, **extra)
+        # 食い違いの断りに今の digest を入れない。返すと、変わった中身を見ないまま打ち直せる（監査 5.27.0 の 6）。
+        return _refuse(args, exc, rc=1 if exc.code == "gbp_digest_mismatch" else 2)
     value = {"ok": True, "changed": True, "location": f"locations/{location_id}", "period": period, "by": by}
 
     def render(v):
@@ -346,7 +358,10 @@ def cmd_post(args) -> int:
         client = _client(args)
         account_id = _account_id(client, account_id, location_id)
         parent = f"accounts/{account_id}/locations/{location_id}"
-        digest = api.digest_of("post", parent, body)
+        # Google の今のいちばん新しい投稿を digest に入れる。結果の分からない送信のあと同じ --confirm で
+        # 打ち直したとき、届いていれば食い違いで止まり、二つ目を出さない（監査 5.27.0 の 1）。
+        latest = [r.get("name") for r in client.posts(account_id, location_id, limit=1)]
+        digest = api.digest_of("post", parent, body, latest)
         if not args.confirm:
             kind = (f"イベントの投稿（EVENT）: {api.event_text(event)}" if event else "ふつうの投稿（STANDARD）")
             lines = [f"出しません（確認の一段目です）: {parent}",
@@ -369,8 +384,8 @@ def cmd_post(args) -> int:
             raise GbpRefused("gbp_digest_mismatch")
         created = client.create_post(account_id, location_id, body)
     except GbpRefused as exc:
-        extra = {"digest": digest} if exc.code == "gbp_digest_mismatch" else {}
-        return _refuse(args, exc, rc=1 if exc.code == "gbp_digest_mismatch" else 2, **extra)
+        # 食い違いの断りに今の digest を入れない。返すと、変わった中身を見ないまま打ち直せる（監査 5.27.0 の 6）。
+        return _refuse(args, exc, rc=1 if exc.code == "gbp_digest_mismatch" else 2)
     state = created.get("state") if isinstance(created.get("state"), str) else None
     link = created.get("searchUrl") if isinstance(created.get("searchUrl"), str) else None
     value = {"ok": True, "changed": True, "location": parent, "post": created.get("name"), "state": state,
