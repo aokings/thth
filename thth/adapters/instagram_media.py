@@ -6,6 +6,12 @@
 `POST /{ig}/media`（`media_type=CAROUSEL`・`children`・`caption`）を同じく待つ → `POST /{ig}/media_publish`
 （`creation_id`）。**再試行しない。**
 
+**ストーリー**（連動 段 1・11/19・原稿の `post_options: {story: true}`）: 同じ入れ物の 2 段で、入れ物を
+`POST /{ig}/media`（`image_url`・`media_type=STORIES`）で作る（**L2**: content-publishing「Stories」）。
+ストーリーに字幕（caption）は無いので送らない（原稿の本文は THTH の記録にだけ残る）。1 枚だけ・JPEG・8MB。
+縦横比はストーリーの画面に合わせて Meta が切る（9:16 を勧める・L2）ので、フィードの 4:5〜1.91:1 では断らない【推】。
+動画のストーリーと `alt_text`・`is_ai_generated` はこの段では送らない（`story_options` で断る）。
+
 失敗の振り分け（`threads_media.publish` と同じ語）:
 
 | 段 | 何が起きた | failure |
@@ -40,7 +46,8 @@ WIDTH_MIN = 320
 WIDTH_MAX = 1440
 CAROUSEL_MAX = 20
 ALT_MAX = 1000
-POST_OPTIONS = frozenset({"is_ai_generated"})
+POST_OPTIONS = frozenset({"is_ai_generated", "story"})
+STORY_OPTIONS = frozenset({"story"})
 # 作成の POST は Meta が画像を取りに来る間開いている（Threads と同じ理由・`threads_media.CREATE_TIMEOUT_SECONDS`）。
 CREATE_TIMEOUT_SECONDS = 90.0
 
@@ -57,6 +64,11 @@ def _shape(row):
     return w, h
 
 
+def is_story(manifest) -> bool:
+    return isinstance(manifest, dict) and isinstance(manifest.get("post_options"), dict) \
+        and manifest["post_options"].get("story") is True
+
+
 def intent_error(manifest):
     """要求を 1 本も出す前に、この添付が Instagram に載るかだけを答える（`media_delivery.error_for`）。"""
     if manifest["captions"]:
@@ -65,9 +77,14 @@ def intent_error(manifest):
         return "unsupported_attachment: instagram/typed_attachment"
     if set(manifest["post_options"]) - POST_OPTIONS:
         return "unsupported_attachment: instagram/post_options"
+    story = is_story(manifest)
+    if story and set(manifest["post_options"]) - STORY_OPTIONS:
+        return "unsupported_attachment: instagram/story_options"
     rows = manifest["files"]
     if not rows:
-        return "unsupported_attachment: instagram/no_media"
+        return "unsupported_attachment: instagram/" + ("story_no_media" if story else "no_media")
+    if story and len(rows) != 1:
+        return "media_limit_exceeded: count (story 1)"
     if len(rows) > CAROUSEL_MAX:
         return f"media_limit_exceeded: count ({CAROUSEL_MAX})"
     for row in rows:
@@ -82,6 +99,8 @@ def intent_error(manifest):
         w, h = _shape(row)
         if type(w) is not int or type(h) is not int or w <= 0 or h <= 0:
             return "media_dimensions_unavailable"
+        if story:
+            continue   # ストーリーの縦横比は Meta が画面に合わせて切る（上の注・【推】）
         ratio = w / h
         if ratio < RATIO_MIN - 1e-9 or ratio > RATIO_MAX + 1e-9:
             return "media_limit_exceeded: aspect_ratio (4:5〜1.91:1)"
@@ -179,10 +198,11 @@ def publish(adapter, post, *, before_publish=None, on_container_created=None):
                 f"instagram_publish_limit_reached: 24 時間の公開の上限 {limit['total']} 本に届いています"
                 f"（使用 {limit['usage']}）。窓が空くまで出しません")
         options = post.media_manifest["post_options"]
+        story = is_story(post.media_manifest)
         common = {"caption": post.text}
         if options.get("is_ai_generated") is True:
             common["is_ai_generated"] = "true"
-        carousel = len(post.media_files) > 1
+        carousel = len(post.media_files) > 1 and not story
         veto()
         for index, item in enumerate(post.media_files):
             record("uploading", index=index)
@@ -196,11 +216,14 @@ def publish(adapter, post, *, before_publish=None, on_container_created=None):
             record("creating", index=index)
             params = {"image_url": url}
             alt = item.manifest.get("alt")
-            if isinstance(alt, str) and alt.strip():
+            if story:
+                # ストーリーは字幕も alt_text も送らない（上の注・L2 の Stories の欄は image_url と media_type だけ）。
+                params["media_type"] = "STORIES"
+            elif isinstance(alt, str) and alt.strip():
                 params["alt_text"] = alt
             if carousel:
                 params["is_carousel_item"] = "true"
-            else:
+            elif not story:
                 params.update(common)
             container = create(params)
             ids.append(container)

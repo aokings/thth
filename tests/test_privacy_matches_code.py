@@ -26,6 +26,9 @@ from thth.register import form as register_form
 from thth.register import kinds as register_kinds
 from thth.register import holes as register_holes
 from thth.register import questions as register_questions
+from thth.register import linkage as register_linkage
+from thth.register import bundle as register_bundle
+from thth.link import send as link_send
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVACY = ROOT / "callback" / "public" / "privacy" / "index.html"
@@ -640,7 +643,63 @@ def facts() -> list[tuple[str, str]]:
          if _owner_scope_is_whole_storage() else "持ち主の範囲が置き場の全部でなくなった（privacy を直す）"),
         ("持ち主ごと・日本語", "そのコンピューターの THTH の置き場にある全部の口座（持ち主が招いた人の口座も）"
          if _owner_scope_is_whole_storage() else "持ち主の範囲が置き場の全部でなくなった（privacy を直す）"),
+        # 店の変化の連動（設計 店の変化の連動 2026-11-19・thth/register/linkage.py・bundle.py・thth/link/send.py）
+        ("連動の宣言の置き場（register/linkage.FILE）", f"<code>.thth/{register_linkage.FILE}</code>"),
+        ("同意の期限の上限（register/linkage.CONSENT_MAX_DAYS）",
+         f"at most {register_linkage.CONSENT_MAX_DAYS} days after the consent was written"),
+        ("同意の期限の上限・日本語", f"同意を書いた日から {register_linkage.CONSENT_MAX_DAYS} 日まで"),
+        ("束の記録の置き場（register/bundle.FILE）",
+         f"<code>register_state/&lt;register&gt;/{register_bundle.FILE}</code>, mode 600"),
+        ("束の記録の置き場・日本語", f"<code>register_state/&lt;台帳&gt;/{register_bundle.FILE}</code>・600"),
+        ("IG の画像の写し先（link/send.MEDIA_DIR）", f"(<code>{link_send.MEDIA_DIR}/</code>)"),
+        ("同意の控えの置き場（register/linkage.KEPT_FILE）",
+         f"<code>register_state/&lt;register&gt;/{register_linkage.KEPT_FILE}</code>"),
+        ("同意の控えの置き場・日本語", f"<code>register_state/&lt;台帳&gt;/{register_linkage.KEPT_FILE}</code>"),
+        ("控えた同意だけを自動に使う（register/linkage.consent_for）",
+         "a consent that is only written in the file, or was changed after it was kept, is not used automatically"
+         if _link_uses_kept_consent() else "控えていない同意を自動に使うようになった（privacy を直す）"),
+        ("店の行に結んだ Google マップの店だけ（link/send._outlet_ok）",
+         "only to a Business Profile location that the store's own row in the register names"
+         if _link_checks_outlet_owner() else "出し先の店を台帳と結ばなくなった（privacy を直す）"),
+        ("ストーリーは字幕なし（adapters/instagram_media の STORIES）",
+         "an Instagram story (an image with no caption; THTH refuses a story without an image)"
+         if _story_has_no_caption() else "ストーリーに字幕を付けるようになった（privacy を直す）"),
+        ("休みの理由は既定で出さない（register/bundle.item_for）",
+         "the reason for a closure is not included unless the owner lists it in <code>public_fields</code>"
+         if _link_hides_reason() else "休みの理由が既定で出るようになった（privacy を直す）"),
+        ("Google が変えたら止める（link/send._special_plan）",
+         "stops without changing anything if that day differs from the value THTH last wrote"
+         if _link_stops_on_google_change() else "Google の変化で止めなくなった（privacy を直す）"),
     ]
+
+
+def _story_has_no_caption() -> bool:
+    import inspect
+    from thth.adapters import instagram_media
+    src = inspect.getsource(instagram_media)
+    return '"STORIES"' in src and "story_no_media" in src
+
+
+def _link_uses_kept_consent() -> bool:
+    import inspect
+    return 'entry.get("fingerprint") in kept' in inspect.getsource(register_linkage.consent_for)
+
+
+def _link_checks_outlet_owner() -> bool:
+    import inspect
+    src = inspect.getsource(link_send._outlet_ok)
+    return "register_link_store_unbound" in src and "project_mismatch" in src
+
+
+def _link_hides_reason() -> bool:
+    import inspect
+    from thth.register import bundle
+    return "body_lines" in inspect.getsource(bundle.item_for)
+
+
+def _link_stops_on_google_change() -> bool:
+    import inspect
+    return "register_link_google_changed" in inspect.getsource(link_send)
 
 
 def _short_values_in_bytes() -> bool:

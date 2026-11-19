@@ -78,6 +78,7 @@ from . import ACTION_PREFIX, COMMAND, confirm as confirm_mod, draft as draft_mod
 from . import holes as holes_mod, places as places_mod, questions as questions_mod, triggers as triggers_mod
 from . import adopt_cli, erase_cli, health_cli, keep, route as route_mod, route_cli, vessel, vessel_cli
 from . import errors as errors_mod
+from . import bundle as bundle_mod, linkage as linkage_mod
 from . import recheck as recheck_mod
 from .errors import RegisterRefused
 
@@ -344,6 +345,13 @@ def cmd_check(args) -> int:
     cfg = ledger.load(args.register)
     root = ledger.root_of(cfg)
     keep.refuse_if_pending(root)  # 止まった入れ替えの間は、混ざった姿を読まない（段 2）
+    # 店の変化の連動 段 3: 連動の宣言（.thth/linkage.json）があれば、その形も点検の柵に入れる（崩れた宣言で自動で出さない）。
+    _linkage, linkage_problems = linkage_mod.read(root, args.register)
+    if linkage_problems:
+        if not args.json:
+            for word in linkage_problems:
+                print(f"  .thth/{linkage_mod.FILE}: {word} — {linkage_mod.problem_text(word)}", file=sys.stderr)
+        raise RegisterRefused("register_linkage_invalid", linkage_problems[0], problems=linkage_problems)
     if getattr(args, "against", None) and not vessel.has_declarations(root):
         vessel_cli.check_against(args, root)  # 段 5 §2.2: 判断の記録は足すだけ（器でない台帳でも見る）
     if vessel.has_declarations(root):
@@ -441,7 +449,7 @@ def cmd_confirm(args) -> int:
         _print(value) if args.json else print(f"行 {row.id} は既に本人が認めた行です（中身も認めたときのままです）")
         return 0
     digest = confirm_mod.digest_for(args.register, row)
-    if kinds.two_stage(row.kind) and args.confirm != digest:
+    if (kinds.two_stage(row.kind) or kinds.binds_outside(row)) and args.confirm != digest:
         if args.confirm is not None:
             raise RegisterRefused("register_confirm_mismatch", "confirm", digest=digest)
         refusals.mark_first_stage()
@@ -494,7 +502,8 @@ def remove_state(name: str) -> list:
     if folder and ledger._inside(folder, state):
         # 台帳のフォルダが認めた記録の置き場の中にある（5.19.0 の add の断りより前に控えた物）。丸ごと消すと台帳も
         # 消えるので、THTH が書いた 2 つのファイルだけを消す（気づき 8）。
-        for leaf in (ledger.CONFIRMED_FILE, draft_origin.FILE):
+        for leaf in (ledger.CONFIRMED_FILE, draft_origin.FILE, linkage_mod.KEPT_FILE, linkage_mod.LOCK_FILE,
+                     bundle_mod.FILE):
             try:
                 os.unlink(os.path.join(state, leaf))
                 done.append("state_files")
@@ -691,8 +700,8 @@ def cmd_answer(args) -> int:
         if args.result == "no":
             confirm_mod.deny(args.register, root, row, by=by)
             effect = "denied"
-        elif kinds.two_stage(row.kind):
-            # 営業の時間と臨時は、会話の一言だけでは認めない（計画 段 3 の柵）。
+        elif kinds.two_stage(row.kind) or kinds.binds_outside(row):
+            # 営業の時間と臨時（と Google マップの店と結ぶ店の行）は、会話の一言だけでは認めない（計画 段 3 の柵）。
             notes.append(f"行 {row.id}（{row.kind}）は二段で認める種類なので、答えだけでは認めていません。"
                          f"全文を持ち主に見せて thth {COMMAND} confirm {args.register} {row.id} --by {by} で確定してください")
             effect = "needs_confirm"

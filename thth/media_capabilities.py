@@ -284,6 +284,8 @@ REFUSALS = {
         'post_options': 'post option outside the instagram set',
         'no_media': 'instagram needs at least one image',
         'reply_media': 'image on a reply (comment) is not possible',
+        'story_options': 'a story takes no other post option',
+        'story_no_media': 'a story needs exactly one image',
     },
 }
 

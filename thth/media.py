@@ -439,10 +439,11 @@ def validate_declarations(fm,medium):
         'x':{'reply_settings'},
         # 段 3（10/29）: AI で作った印（**L2**: content-publishing の `is_ai_generated`・カルーセルは親にだけ）。
         # manifest の post_options に入るので承認の指紋（media_manifest）に入る——指紋の版は上げない。
-        'instagram':{'is_ai_generated'},
+        # 連動 段 1（11/19）: ストーリー（**L2**: content-publishing の `media_type=STORIES`・字幕は無い・1 枚だけ）。
+        'instagram':{'is_ai_generated','story'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
-    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals','is_ai_generated'}
+    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals','is_ai_generated','story'}
     for key,value in options.items():
         if key=='text_spoiler' and type(value) is list:
             for span in value:

@@ -14,6 +14,7 @@
   宣言を 1 つも持たない project は、糸も型も空（`events` にも何も足さない）。
 
 `--json` の契約は `thth.scenario/1`（設計 §4.2）。**鍵は増やしても名前を変えない・消さない。**
+`links`（店の変化の連動 段 6）: project の台帳の束（`thth/link/status.py`・本文なし・運営者の読みだけ）。
 """
 from __future__ import annotations
 
@@ -1158,11 +1159,19 @@ def build(target, *, now=None, ledger=None, allowed_names=None) -> dict:
     threads = [thread_status(d, ledger) for d in decls if d.kind == "thread"]
     series = [series_status(d, ledger) for d in decls if d.kind == "series"]
     from . import flow_skill
+    # 店の変化の連動（段 6）: その project の台帳の束と、出し先ごとの状態。運営者の読みだけ（遠くの道の鍵では読まない）。
+    links = []
+    if allowed_names is None:
+        from .link import status as link_status
+        cannot = set()
+        links = link_status.links_for(ledger.project, cannot)
+        ledger.cannot_say.update(cannot)
     return {
         "schema": SCHEMA, "report_type": "scenario", "generated_at": jst.iso(ledger.now),
         "skill": flow_skill.skill_ref(),
         "project": ledger.project, "accounts": sorted(ledger.accounts),
         "threads": threads, "series": series, "untied": _untied(ledger),
+        "links": links,
         "cannot_say": sorted(ledger.cannot_say),
     }
 

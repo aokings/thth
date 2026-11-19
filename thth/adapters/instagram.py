@@ -13,6 +13,7 @@ Meta の共通層 `thth/meta/` に乗る（`appsecret_proof`・量の制限の�
 |---|---|---|
 | 公開は入れ物 `POST /{ig-id}/media`（`image_url`）→ `POST /{ig-id}/media_publish`（`creation_id`）→ 状態 `GET /{container}?fields=status_code` | content-publishing | **L2** |
 | 状態の問い合わせは 1 分に 1 回・5 分まで。入れ物は 24 時間で切れる | 同上 | **L2** |
+| ストーリーは入れ物の `media_type=STORIES`（`image_url`・字幕なし）→ 同じ `media_publish`（原稿の `post_options: {story: true}`・`instagram_media.py`・連動 段 1） | content-publishing（Stories） | **L2**（本物では未確認） |
 | 画像は JPEG だけ・8MB・4:5〜1.91:1・幅 320〜1440。カルーセル 20 件・子にキャプション不可 | 同上 | **L2** |
 | 1 日の公開の上限 `GET /{ig-id}/content_publishing_limit`（`quota_usage`・`config.quota_total`） | content_publishing_limit の参照・本番 10/29 に 100 を読んだ | **確** |
 | `is_ai_generated`（カルーセルは親だけ）・`alt_text`（画像だけ・1000 字まで） | content-publishing | **L2** |

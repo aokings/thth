@@ -313,6 +313,12 @@ REGISTER_ERASE = ".thth/erase/"
 REGISTER_PUBLISHED = ".thth/published/"
 REGISTER_KINDS = ".thth/kinds/"
 REGISTER_SEAL_KEY = "~/.config/thth/register_seal.pem"
+# 店の変化の連動（`thth/register/linkage.FILE`・`CONSENT_MAX_DAYS`・`bundle.FILE`・tests/test_privacy_matches_code.py が結ぶ）。
+LINKAGE_FILE = "linkage.json"
+LINKAGE_CONSENT_DAYS = 366
+LINKAGE_BUNDLES = "linkage_bundles.json"
+LINKAGE_MEDIA_DIR = "register-media"
+LINKAGE_KEPT = "linkage_consent.json"
 REGISTER_ERASE_MIN = 4   # erase.MIN_NEEDLE と結ぶ（消す求めの最後の確かめで、これより短い値は字で探さない）
 
 
@@ -578,11 +584,45 @@ def build_privacy() -> str:
         "location's posts. These are shown on the user's terminal (or as JSON for the user's own tools); THTH does "
         "not write what it reads from Google to any file and does not keep it. THTH changes a profile (adds or "
         "replaces one day of special hours, or publishes one standard post) only after the owner's two-step "
-        "confirmation: the first step shows exactly what would be sent and changes nothing, and nothing is changed "
-        "automatically. The refresh token is kept in its own file that only the user can read "
+        "confirmation: the first step shows exactly what would be sent and changes nothing, and <code>thth gbp</code> "
+        "itself changes nothing automatically (updates made with the owner's advance consent are described in the "
+        "next section). The refresh token is kept in its own file that only the user can read "
         "(<code>~/.config/thth/google-gbp-token.json</code>, mode 600), and nothing from Google is sent to the "
         "operator's server, to thth.me or to any other party. The Google API Services User Data Policy above, "
         "including the Limited Use requirements, applies here too.</p>")
+
+    # 店の変化の連動（`thth/link/`・`thth/register/linkage.py`・`bundle.py`・設計 店の変化の連動 2026-11-19）。
+    # 置き場の名前・同意の期限の上限・ストーリーの形は tests/test_privacy_matches_code.py がコードと結ぶ。
+    add("<h2>Linked updates from a store's register</h2>")
+    add("<p><code>thth link</code> turns one change in a store's register (special hours or a closure, an event, a "
+        "change of regular hours) into one bundle of updates for the outlets that the owner declares in the register's "
+        "file <code>.thth/" + LINKAGE_FILE + "</code>: special hours and event posts on the store's Google Business "
+        "Profile, a feed post on the store's Instagram account, and an Instagram story (an image with no caption; THTH "
+        "refuses a story without an image). The text uses only the fields the owner marked as public, so the reason "
+        "for a closure is not included unless the owner lists it in <code>public_fields</code>. "
+        "<strong>THTH publishes an update without asking each time only when the owner has written a specific consent "
+        "in advance</strong> in that file, naming the store, the outlet, the kind of change, an end date (at most "
+        + str(LINKAGE_CONSENT_DAYS) + " days after the consent was written) and who wrote it and when, and that the "
+        "owner then keeps with <code>thth link consent</code> after a two-step confirmation; THTH keeps only a "
+        "fingerprint of each kept consent (<code>register_state/&lt;register&gt;/" + LINKAGE_KEPT + "</code>), and a "
+        "consent that is only written in the file, or was changed after it was kept, is not used automatically. THTH "
+        "never writes or changes the consents in the file; revoking a consent with <code>thth link consent --revoke</code>, "
+        "removing it from the file or adding <code>revoked_at</code> stops automatic updates from the next run, and a "
+        "revoked consent is not used again even if the same text is written back. THTH publishes only to a Business Profile location that the "
+        "store's own row in the register names (<code>gbp_location</code>, confirmed in two steps), and only to an "
+        "Instagram account of the same project as the register. When the owner moves, shortens or retires a closure, "
+        "THTH removes the days it wrote earlier that are no longer in the register, within the same consent, but not a "
+        "day that another current row of the register holds; when the row simply cannot be found, THTH waits for the "
+        "owner's two-step confirmation. Every other update waits for the owner's two-step confirmation of the whole "
+        "bundle. Before an automatic change to special hours, THTH reads the store's current special hours on Google "
+        "and stops without changing anything if that day differs from the value THTH last wrote (for example, because "
+        "Google or a person changed it). On the computer where it runs, THTH keeps the list of bundles "
+        "(<code>register_state/&lt;register&gt;/" + LINKAGE_BUNDLES + "</code>, mode 600): the register row, its "
+        "fingerprint, the outlets, the state of each update, the text, and the special hours THTH wrote; it does not "
+        "keep what it reads from Google. The same change is published only once. For Instagram, THTH copies the image "
+        "into the owner's account repository (<code>" + LINKAGE_MEDIA_DIR + "/</code>) and publishes in the same way as <code>thth send</code>. Each update "
+        "THTH makes appears in <code>thth events</code> (<code>link_published</code>) so that the owner is told of "
+        "it.</p>")
 
     add("<h2>Online shops (read-only)</h2>")
     # 共通の段 → 店ごとの段（設計 Shopify と STORES §9・出していない店のことは書かない）。
@@ -1068,7 +1108,8 @@ def build_privacy() -> str:
         "call-to-action button, public reads (hashtags, Pages Search, embeds, events), catalogs and leads, Marketing "
         "API call counts, the permission records and ledger, re-authorization and the Data Use Checkup. Revision: adds the "
         "read-only Google Ads and Search Console commands and the Google API Services User Data Policy. Revision: adds "
-        "Google Business Profile.</p>")
+        "Google Business Profile. Revision: adds linked updates from a store's register (with the owner's advance "
+        "consent) and Instagram stories.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -1260,10 +1301,34 @@ def build_privacy() -> str:
         "サイト・営業の時間と臨時の時間・営業の状態・地図のリンク、それに店の投稿です。これらは利用者の端末"
         "（または利用者自身の道具のための JSON）に出すだけで、THTH は Google から読んだものをファイルに書かず、"
         "残しません。THTH がプロフィールを変える（臨時の時間を 1 日足すか置き換える・ふつうの投稿を 1 つ出す）のは、"
-        "持ち主の二段確認のあとだけです。一段目は送る中身をそのまま見せて何も変えず、自動で変えることはありません。"
+        "持ち主の二段確認のあとだけです。一段目は送る中身をそのまま見せて何も変えず、<code>thth gbp</code> が自分で"
+        "自動に変えることはありません（持ち主の前もっての同意による自動の更新は次の節）。"
         "refresh token は本人だけが読める別のファイル（<code>~/.config/thth/google-gbp-token.json</code>・600）に置き、"
         "Google から得たものを運営者のサーバー・thth.me・その他の誰にも送りません。上の Google API サービスの"
         "ユーザーデータに関するポリシー（限定使用の要件を含む）は、ここにも当てはまります。</p>")
+
+    add("<h2>店の変化の連動（台帳から Google マップと Instagram へ）</h2>")
+    add("<p><code>thth link</code> は、店の台帳の 1 つの変化（臨時の休みや時間・催し・営業の時間の変わり）を、持ち主が"
+        "台帳のファイル <code>.thth/" + LINKAGE_FILE + "</code> に書いた出し先への 1 つの束にします。出し先は、店の"
+        "ビジネス プロフィールの臨時の時間とイベントの投稿、店の Instagram のフィードの投稿、Instagram のストーリー"
+        "（字幕の無い画像。画像が無ければ THTH は断ります）です。本文には持ち主が外に出してよいとした欄だけを使い、"
+        "休みの理由は、持ち主が <code>public_fields</code> に書かない限り入れません。"
+        "<strong>THTH が 1 回ずつ聞かずに出すのは、持ち主が前もってそのファイルに具体的な同意を書いたときだけです。</strong>"
+        "同意には、店・出し先・変化の種類・期限（同意を書いた日から " + str(LINKAGE_CONSENT_DAYS) + " 日まで）・"
+        "書いた人と日時を書き、持ち主が <code>thth link consent</code> の二段確認で THTH に控えます。THTH が控えるのは"
+        "同意の指紋だけで（<code>register_state/&lt;台帳&gt;/" + LINKAGE_KEPT + "</code>）、ファイルに書いただけの同意や、"
+        "控えたあとに書き換えた同意は自動には使いません。THTH はファイルの同意を書かず、書き換えません。"
+        "<code>thth link consent --revoke</code> で取り消すか、同意を消すか <code>revoked_at</code> を書けば、次の回から"
+        "自動では出さず、取り消した同意は同じ文を戻しても使いません。Google マップは台帳の店の行の "
+        "<code>gbp_location</code>（二段確認で認めた物）が名指す店だけに、Instagram は台帳と同じ project の口座だけに"
+        "出します。臨時の休みを動かした・縮めた・退役したときは、THTH が前に書いた日のうち台帳に無くなった日を、"
+        "同じ同意の範囲で外します（ほかの今の行が持つ日は外さず、行が見つからないだけのときは持ち主の二段確認を待ちます）。そのほかは、束ごとに持ち主の二段確認を待ちます。臨時の時間を自動で変える前に、"
+        "THTH は Google の今の臨時の時間を読み、その日が THTH の前に書いた値と違えば（Google や人が変えたなど）、"
+        "何も変えずに止めます。動かしたコンピューターの中に、THTH は束の一覧（<code>register_state/&lt;台帳&gt;/"
+        + LINKAGE_BUNDLES + "</code>・600）を置きます。中身は台帳の行とその指紋・出し先・出したかの状態・本文・THTH が"
+        "書いた臨時の時間で、Google から読んだものは残しません。同じ変化は 1 回だけ出します。Instagram には、画像を"
+        "持ち主の口座の repo（<code>" + LINKAGE_MEDIA_DIR + "/</code>）に写し、<code>thth send</code> と同じ道で出します。THTH が出した物は "
+        "<code>thth events</code>（<code>link_published</code>）に並び、持ち主に知らせます。</p>")
 
     add("<h2>ネットショップ（読むだけ）</h2>")
     add("<p><code>thth shop</code> は、商品が新しく入った・再入荷した・値下げしたときに投稿の下書きを作れるよう、"
@@ -1640,7 +1705,8 @@ def build_privacy() -> str:
         "改訂: Facebook ページ・Instagram・Meta の広告アカウント、ダイレクトメッセージ、ライブ配信と行動ボタン、公開の読み"
         "（ハッシュタグ・Pages Search・埋め込み・予定）、カタログとリード、Marketing API の呼び出しの数、権限の記録と台帳、"
         "再認可と Data Use Checkup を足しました。改訂: 読むだけの Google 広告と Search Console の命令と、Google API サービスの"
-        "ユーザーデータに関するポリシーを足しました。改訂: Google ビジネス プロフィールを足しました。</p>")
+        "ユーザーデータに関するポリシーを足しました。改訂: Google ビジネス プロフィールを足しました。"
+        "改訂: 店の変化の連動（持ち主の前もっての同意による自動の更新）と Instagram のストーリーを足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")

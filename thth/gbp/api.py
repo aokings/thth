@@ -20,6 +20,12 @@
   `state`（REJECTED・LIVE・PROCESSING）・`searchUrl`・`name`・`createTime`。actionType は BOOK・ORDER・SHOP・
   LEARN_MORE・SIGN_UP・CALL（CALL は url を付けない・GET_OFFER は古い）。商品の投稿は API で作れない（posts-data）。
 
+- イベントの投稿（連動 段 2・11/19）: LocalPost の `topicType: EVENT` と `event`（LocalPostEvent: `title`・
+  `schedule`＝TimeInterval の `startDate`・`startTime`・`endDate`・`endTime`）。本文（`summary`）とボタンは
+  ふつうの投稿と同じ。
+
+**【推】** イベントの題の上限 58 字は API の参照に無い（ビジネス プロフィールの投稿の画面の上限による）。
+
 **【推】** 投稿の本文の上限 1,500 字は API の参照に無い（ビジネス プロフィールのヘルプの「投稿は 1,500 文字まで」による）。
 数えるのは Python の字の数（Google の数え方が UTF-16 か書記素かは確かめていない）。行動の呼びかけの URL の長さの上限も
 参照に無いので、THTH の他の口と同じ 2,048 字で止める【推】。
@@ -47,6 +53,7 @@ LOCATIONS_PAGE = 100
 POSTS_PAGE_MAX = 100
 MAX_PAGES = 20
 POST_TEXT_MAX = 1500  # 【推】ヘルプの上限（API の参照に数は無い）
+EVENT_TITLE_MAX = 58  # 【推】投稿の画面の上限（API の参照に数は無い）
 URL_MAX = 2048
 ACTIONS = ("LEARN_MORE", "BOOK", "ORDER", "SHOP", "SIGN_UP")
 OPEN_STATUSES = ("OPEN", "CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY")
@@ -203,8 +210,38 @@ def digest_of(kind: str, *parts) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:DIGEST_LENGTH]
 
 
-def post_body(text: str, *, url: str | None = None, action: str | None = None) -> dict:
+def parse_minute(value) -> datetime.datetime:
+    """`YYYY-MM-DD HH:MM`（店の時刻・日本の時刻として読む）。"""
+    try:
+        return datetime.datetime.strptime(str(value or "").strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise GbpRefused("gbp_event_invalid", "minute_form") from None
+
+
+def event_of(title, start: datetime.datetime, end: datetime.datetime) -> dict:
+    """LocalPostEvent（題・始まりと終わりの日と時刻）。終わりは始まりより後。"""
+    text = str(title or "").strip()
+    if not text or len(text) > EVENT_TITLE_MAX or any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise GbpRefused("gbp_event_invalid", "title")
+    if end <= start:
+        raise GbpRefused("gbp_event_invalid", "range")
+    return {"title": text, "schedule": {
+        "startDate": date_obj(start.date()), "startTime": {"hours": start.hour, "minutes": start.minute},
+        "endDate": date_obj(end.date()), "endTime": {"hours": end.hour, "minutes": end.minute}}}
+
+
+def event_text(event: dict) -> str:
+    schedule = event["schedule"]
+    start, end = date_of(schedule["startDate"]), date_of(schedule["endDate"])
+    tail = time_text(schedule["endTime"]) if start == end else f"{end.isoformat()} {time_text(schedule['endTime'])}"
+    return f"{event['title']}（{start.isoformat()} {time_text(schedule['startTime'])}〜{tail}）"
+
+
+def post_body(text: str, *, url: str | None = None, action: str | None = None, event: dict | None = None) -> dict:
     body = {"languageCode": "ja", "summary": check_text(text), "topicType": "STANDARD"}
+    if event is not None:
+        body["topicType"] = "EVENT"
+        body["event"] = event
     if url is not None:
         body["callToAction"] = {"actionType": action or "LEARN_MORE", "url": check_url(url)}
     elif action is not None:

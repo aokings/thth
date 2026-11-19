@@ -5462,6 +5462,10 @@ def build_parser() -> argparse.ArgumentParser:
     # 口は `thth/gbp/cli.py` に閉じる。
     from .gbp import cli as gbp_cli
     gbp_cli.register(sub)
+    # `thth link check|make|show|send|run`（店の変化の連動・台帳の 1 つの変化 → マップ・IG のフィード・ストーリー）。
+    # 口は `thth/link/cli.py` に閉じる。
+    from .link import cli as link_cli
+    link_cli.register(sub)
     # `thth embed`・`thth upcoming`（計画 Meta 全部盛り M3・読むだけ・保存しない）。口は `thth/meta_public.py` に閉じる。
     from . import meta_public
     meta_public.register(sub)

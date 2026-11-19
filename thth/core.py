@@ -1958,8 +1958,11 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
                goal: str | None = None, origin: dict | None = None,
                community_id: str | None = None, approval: str | None = None,
-               share_to_instagram: bool = False) -> ThrowResult:
+               share_to_instagram: bool = False, post_options: dict | None = None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
+
+    **`post_options`**（連動 段 1・11/19）: 原稿の `post_options:` と同じ値（媒体ごとの決まりは `media.py`）。
+    添付の manifest に入るので digest に入る（例: Instagram のストーリー `{"story": True}`）。無ければ今までと同じ。
 
     **`share_to_instagram`**（計画 Meta 全部盛り M4・`--share-to-instagram`）: Threads の投稿を連携した
     Instagram のストーリーズにも出す（`crossreshare_to_ig`）。queue の `share_to_instagram:` と同じ門（Threads
@@ -2030,7 +2033,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
             goal=goal, origin=origin, community_id=community_id, approval=approval,
-            share_to_instagram=share_to_instagram,
+            share_to_instagram=share_to_instagram, post_options=post_options,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -2042,7 +2045,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
                   goal=None, origin=None, community_id=None, approval=None,
-                  share_to_instagram=False) -> ThrowResult:
+                  share_to_instagram=False, post_options=None) -> ThrowResult:
+    media_fm = {'media': media_rows or [], **({'post_options': post_options} if post_options else {})}
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -2091,7 +2095,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
 
         from . import media as media_mod
         try:
-            manifest = media_mod.manifest_for({'media': media_rows or []}, account_cfg)
+            manifest = media_mod.manifest_for(media_fm, account_cfg)
         except media_mod.MediaError as exc:
             return ThrowResult(exit_code=2, mode=mode, action='invalid_attachment', message=str(exc), error=str(exc))
         body = (text or "").strip()
@@ -2210,7 +2214,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             # ——2 か所に書けば必ずずれる。instance に届かないときだけ断らず、
             # 既存の capability_unobserved を警告として言う（上限は upload の
             # 直前にもう一度観測するので、ここで断る根拠にならない）。
-            media_notes = (media_delivery.lint_notes(account_cfg, {'media': media_rows or []},
+            media_notes = (media_delivery.lint_notes(account_cfg, media_fm,
                                                      text=effective, unreachable_warns=True)
                            if manifest else [])
             refusals = [note for note in media_notes if not note.startswith('warning: ')]
@@ -2309,7 +2313,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             inflight_mod.update(state_dir, container_id=container_id)
 
         result = media_delivery.publish(adapter,post,cfg=account_cfg,
-            fm={'media':media_rows or []},manifest=manifest,state_dir=state_dir,
+            fm=media_fm,manifest=manifest,state_dir=state_dir,
             on_container_created=on_container_created,
             before_publish=None)
 

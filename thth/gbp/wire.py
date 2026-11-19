@@ -24,7 +24,7 @@ REASONS = frozenset((
     "gbp_auth_state_mismatch", "gbp_auth_exchange_failed", "gbp_no_refresh_token", "gbp_scope_missing",
     # 引数の形
     "gbp_location_invalid", "gbp_date_invalid", "gbp_date_past", "gbp_time_invalid", "gbp_hours_args_invalid",
-    "gbp_post_text_invalid", "gbp_post_url_invalid",
+    "gbp_post_text_invalid", "gbp_post_url_invalid", "gbp_event_invalid",
     # 店の状態・二段確認
     "gbp_regular_hours_missing", "gbp_digest_mismatch", "gbp_write_unknown",
     # Google の断り

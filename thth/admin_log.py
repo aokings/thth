@@ -87,6 +87,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 台帳の本文は入れない。頭は `thth/register/__init__.py` の `ACTION_PREFIX`（register_）。通知は送らない。
                    'register_added', 'register_confirmed', 'register_denied', 'register_removed', 'register_drafted',
                    'register_asked', 'register_answered', 'register_pasted',
+                   # 店の変化の連動（`thth link`・設計 店の変化の連動 段 4・5）: 束を作った・束から出した（束の id・出し先の
+                   # 種類・状態の数だけ。本文は入れない）。通知は送らない（知らせは thth events の link_published）。
+                   'register_link_made', 'register_link_sent', 'register_link_consent',
                    # Meta 計画 段 6: ページに Webhook を購読させた（欄の名前の前後だけ）。通知は送らない。
                    'webhook_subscribed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
@@ -303,6 +306,7 @@ def transaction(*, rollback=None):
                                       'shopread_drafted', 'register_added', 'register_confirmed',
                                       'register_denied', 'register_removed', 'register_drafted',
                                       'register_asked', 'register_answered', 'register_pasted',
+                                      'register_link_made', 'register_link_sent', 'register_link_consent',
                                       'shopread_publish_set'):
                     continue
                 cfg = accounts.load_account(event['account'])

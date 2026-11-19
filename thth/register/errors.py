@@ -42,6 +42,10 @@ REASONS = frozenset((
     "register_leave_incomplete", "register_leave_changed", "register_folder_too_wide",
     # 5.23.0: 控えと別の checkout（台帳の中の名乗りで同じ台帳か確かめる）。
     "register_path_other",
+    # 店の変化の連動（設計 店の変化の連動 段 3〜5・`linkage.py`・`bundle.py`・`thth/link/`）。
+    "register_linkage_invalid", "register_link_args", "register_link_bundle_missing", "register_link_image_missing",
+    "register_link_too_long", "register_link_google_changed", "register_link_row_changed", "register_link_expired",
+    "register_link_confirm_mismatch", "register_link_account", "register_link_store_unbound", "register_link_consent_unkept", "register_link_send_failed", "register_link_unknown",
 ))
 # 断りの報告の 1 行を作る口（`thth/cli.py` が `report_inbox.refusal_line` を渡す。台帳の機械は報告の箱を import しない
 # — import の柵 `tests/test_register_base.py` の許した表の外なので）。`--json` の断りと赤の結果の `report_channel` の欄に使う。

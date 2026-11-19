@@ -75,6 +75,9 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # 台帳の機械（計画 実店舗 段 2）: queue に下書きを書く口・承認の確定の段の読み直し・持ち主の台帳の頭を書き換える
     # 認める操作。間違った事実（営業の時間・休み）を出さない柵がここにある。
     "register": ("thth/register/*", "thth/draft_origin.py"),
+    # 店の変化の連動（設計 店の変化の連動・11/19）: 持ち主の前もっての同意で、人の押下なしに Google マップと IG に出す口。
+    # 同意の範囲・Google 側の変わりで止める・二度出さないの柵がここにある（宣言と束は上の register に入る）。
+    "link_write": ("thth/link/*",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

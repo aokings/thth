@@ -95,6 +95,10 @@
   過ぎて消えた通知の数（`expired`）、満杯で断った数（`capacity`）、購読したのに一度も取り込めていない
   （`never_pulled`）。今も取り込めていなければ `ongoing: true`。**過去の分は Meta から取り直せない**（36 時間の
   送り直しを越えた分）。記録は `state/_webhook/`（`thth/webhook.py`）。本文は入れない。
+- `link_published`・`link_waiting`（店の変化の連動・`thth/link/status.py`）: 台帳の変化を連動で出した（起きた時刻は
+  出した時刻・`ref` は束の id・`to`・`link_kind` が付く）と、承認待ち・止めた・出たか分からない物のある束（出さない期限の
+  前だけ・続いている状態・`count` が付く）。project の台帳の束を読むだけ（`register_state/<台帳>/linkage_bundles.json`）。
+  運営者の読みだけ（サーバ型の credential が絞った読みには出さない）。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -163,7 +167,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset", "ads_token_expiring",
          "ads_read_failed",
          # Meta 計画 段 6（条件 5）: Webhook の受け口から取り込めなかった時間・消えた数・断った数（今も続けば ongoing）。
-         "webhook_down")
+         "webhook_down",
+         # 店の変化の連動（`thth/link/status.py`）: 連動で出した（起きた時刻つき）・承認待ちか止めた物のある束（続いている状態）。
+         "link_published", "link_waiting")
 # 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
 NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
@@ -773,6 +779,20 @@ def _scenario_events(read, now, allowed_names, cannot_say):
             continue
         out += rows
         if rows or cannot:
+            cannot_say.update(f"scenario_{code}" for code in cannot)
+        # 店の変化の連動: その project の台帳の束（出した・承認待ちか止めた）。台帳が無ければ何も足さない。
+        if allowed_names is None:
+            from .link import status as link_status
+
+            def make_link(kind, account, occurred, ref, summary, _id, ongoing, **extra):
+                return _event(kind, account, occurred, occurred, ref, summary, _id=_id,
+                              ongoing=True if ongoing else None, **extra)
+            try:
+                rows, cannot = link_status.events_for(project, make_link, now=now or jst.now_jst())
+            except Exception:  # noqa: BLE001 — 束が読めなくても他の出所は出す（束はシナリオの現在地の一部）
+                cannot_say.add("scenario_unreadable")
+                continue
+            out += rows
             cannot_say.update(f"scenario_{code}" for code in cannot)
     return out
 

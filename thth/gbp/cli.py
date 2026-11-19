@@ -9,6 +9,8 @@
     thth gbp posts <店> [--limit N] [--json]        投稿の一覧
     thth gbp post <店> --text 本文 [--url URL [--action LEARN_MORE|BOOK|ORDER|SHOP|SIGN_UP]] --by 名前 [--confirm D]
                                                     ふつうの投稿（STANDARD・日本語）を 1 つ出す（二段確認）
+    thth gbp post <店> --event 題 --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM" --text 本文 … --by 名前 [--confirm D]
+                                                    イベントの投稿（EVENT・題と始まりと終わり）を 1 つ出す（二段確認）
 
 <店> は `locations/123…`（`thth gbp locations` に出る）か `accounts/…/locations/…`。
 
@@ -320,10 +322,21 @@ def cmd_posts(args) -> int:
     return _emit(value, args, render)
 
 
+def _event_args(args) -> dict | None:
+    """`--event 題 --start --end`（3 つそろって 1 つ・どれかだけなら断る）。"""
+    given = [getattr(args, key, None) is not None for key in ("event", "start", "end")]
+    if not any(given):
+        return None
+    if not all(given):
+        raise GbpRefused("gbp_event_invalid", "event_start_end")
+    return api.event_of(args.event, api.parse_minute(args.start), api.parse_minute(args.end))
+
+
 def cmd_post(args) -> int:
     try:
         account_id, location_id = api.parse_location(args.location)
-        body = api.post_body(args.text, url=args.url, action=args.action)
+        event = _event_args(args)
+        body = api.post_body(args.text, url=args.url, action=args.action, event=event)
     except GbpRefused as exc:
         return _refuse(args, exc)
     by = _by(args)
@@ -335,14 +348,17 @@ def cmd_post(args) -> int:
         parent = f"accounts/{account_id}/locations/{location_id}"
         digest = api.digest_of("post", parent, body)
         if not args.confirm:
+            kind = (f"イベントの投稿（EVENT）: {api.event_text(event)}" if event else "ふつうの投稿（STANDARD）")
             lines = [f"出しません（確認の一段目です）: {parent}",
-                     "  種類: ふつうの投稿（STANDARD）・日本語",
+                     f"  種類: {kind}・日本語",
                      f"  本文（{len(body['summary'])} 字・上限 {api.POST_TEXT_MAX}）:"]
             lines += [f"    {line}" for line in body["summary"].splitlines()]
             if "callToAction" in body:
                 lines.append(f"  ボタン: {body['callToAction']['actionType']} → {body['callToAction']['url']}")
             lines += [f"  by  : {by}", "  出した投稿は Google の確かめのあと公開されます（thth gbp posts で状態を見られます）"]
             again = f"thth gbp post {parent} --text {_quote(body['summary'])}"
+            if event:
+                again += f" --event {_quote(args.event.strip())} --start {_quote(args.start)} --end {_quote(args.end)}"
             if "callToAction" in body:
                 again += f" --url {_quote(body['callToAction']['url'])}"
                 if args.action:
@@ -424,10 +440,13 @@ def register(sub) -> None:
                       help="出す件数（既定 20）")
     p_ps.add_argument("--json", action="store_true")
     p_ps.set_defaults(func=cmd_posts)
-    p_post = verbs.add_parser("post", help="ふつうの投稿を 1 つ出す（STANDARD・日本語・二段確認）")
+    p_post = verbs.add_parser("post", help="ふつうの投稿かイベントの投稿を 1 つ出す（日本語・二段確認）")
     p_post.add_argument("location", metavar="店", help=_LOC_HELP)
     p_post.add_argument("--text", required=True, metavar="本文", help=f"本文（{api.POST_TEXT_MAX} 字まで）")
     p_post.add_argument("--url", default=None, metavar="URL", help="ボタンの行き先（https の頁）")
     p_post.add_argument("--action", default=None, choices=api.ACTIONS, help="ボタンの種類（既定 LEARN_MORE・--url と一緒に）")
+    p_post.add_argument("--event", default=None, metavar="題", help=f"イベントの投稿にする（題・{api.EVENT_TITLE_MAX} 字まで）")
+    p_post.add_argument("--start", default=None, metavar="YYYY-MM-DD HH:MM", help="イベントの始まり（日本の時刻）")
+    p_post.add_argument("--end", default=None, metavar="YYYY-MM-DD HH:MM", help="イベントの終わり（始まりより後）")
     _write_flags(p_post)
     p_post.set_defaults(func=cmd_post)

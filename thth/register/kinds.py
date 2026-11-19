@@ -13,7 +13,7 @@
 
 | 種類 | 1 枚 | 頭の欄 |
 |---|---|---|
-| `store` | 店.md | `name`（要る）・`address`・`phone`（既定で出さない）・`map_url`・`site_url` |
+| `store` | 店.md | `name`（要る）・`address`・`phone`（既定で出さない）・`map_url`・`site_url`・`gbp_location`（Google マップの店 `locations/<数字>`・あれば認める操作を二段確認にする・店の変化の連動が出し先と結ぶ） |
 | `hours` | 営業の時間.md | `effective_from`（この日から・任意）。本文に曜日ごとの行 `月 10:00-18:00`・`水 休み`・`金 18:00-翌02:00`・`※ ` で始まる注 |
 | `special` | 臨時/<日>_<名>.md | `date`（要る）・`end_date`・`closed`（true か false）・`open`・`close`（closed が false のとき）・`reason`（既定で出さない） |
 | `event` | 催し/<日>_<名>.md | `name`・`starts`・`ends`（`YYYY-MM-DD HH:MM`・要る）・`place`・`fee`・`booking`・`organizer_url` |
@@ -33,6 +33,8 @@ _RANGE = re.compile(r"([0-9]{2}:[0-9]{2})-(翌)?([0-9]{2}:[0-9]{2})\Z")
 _DAY_LINE = re.compile(r"(月|火|水|木|金|土|日|祝)\s+(.+)\Z")
 _MINUTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2} ([01][0-9]|2[0-3]):[0-5][0-9]\Z")
 _PRICE = re.compile(r"[0-9]{1,9}\Z")
+GBP_LOCATION = re.compile(r"locations/[0-9]{1,32}\Z")
+GBP_LOCATION_FIELD = "gbp_location"
 CLOSED_WORD = "休み"
 NOTE_MARK = "※"
 
@@ -111,7 +113,10 @@ def hours_lines(body: str):
 
 
 def _check_store(head, body):
-    return [] if head.get("name") else ["missing:name"]
+    problems = [] if head.get("name") else ["missing:name"]
+    if GBP_LOCATION_FIELD in head and not GBP_LOCATION.fullmatch(head[GBP_LOCATION_FIELD]):
+        problems.append("store_gbp_location")
+    return problems
 
 
 def _check_hours(head, body):
@@ -196,6 +201,7 @@ PROBLEM_TEXT = {
     "item_season": "season_to は season_from と同じ日か、それより後にしてください",
     "place_name": "place は google_maps・tabelog・hotpepper・retty・gurunavi・ikyu・instagram・other のどれかにしてください",
     "place_url": "url は店の頁の https の URL を ASCII の字だけで書いてください（THTH はここに何も送りません）",
+    "store_gbp_location": "gbp_location は Google マップの店の番号 locations/<数字> にしてください（thth gbp locations に出る物）",
     "place_synced_row": "synced_row は THTH が書く欄です。手で直したなら消して、thth register pasted で記録し直してください",
 }
 
@@ -206,6 +212,12 @@ def rule(kind: str) -> dict:
 
 def two_stage(kind: str) -> bool:
     return bool(rule(kind).get("two_stage"))
+
+
+def binds_outside(row) -> bool:
+    """店の行が Google マップの店と結ぶ欄（`gbp_location`）を持つ。結ぶのは間違えたときの害が大きいので、その行を
+    認める操作は種類によらず二段確認にする（店の変化の連動・監査の 2）。"""
+    return row.kind == "store" and GBP_LOCATION_FIELD in row.head
 
 
 def private_by_default(kind: str) -> frozenset:

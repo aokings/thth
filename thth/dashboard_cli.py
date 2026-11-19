@@ -73,7 +73,9 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            "ads_spend_cap_unset": "広告アカウントに支出の上限が無い", "ads_token_expiring": "広告の鍵の期限が近い",
            "ads_read_failed": "広告の口座を読めない",
            # Meta 計画 段 6: Webhook の受け口から取り込めない（`thth/webhook.py`・続いている状態）。
-           "webhook_down": "Webhook の取り込みが止まっている"}
+           "webhook_down": "Webhook の取り込みが止まっている",
+           # 店の変化の連動（`thth/link/status.py`）: 承認待ち・止めた束（続いている状態）と、連動で出した（点）。
+           "link_waiting": "連動の承認待ち", "link_published": "連動で出した"}
 # 広告の出来事の次の一手（題は `KIND_JA`）。
 ADS_NEXT = refusal_catalog.fix_view("dashboard_cli.ADS_NEXT")
 # 予算の断りの符丁 → 画面の言葉（読むと投稿は別の断り・言葉で分ける）。

@@ -166,6 +166,8 @@ COMMANDS += ['register erase request', 'register erase scope', 'register erase r
              'project leave', 'owner leave']
 # 5.23.0: 返信の印（`thth/reply_marks.py`・報告 r20261021-c6f28e99）。--json は 1 つの値。
 COMMANDS += ['reply-mark']
+# 店の変化の連動（`thth/link/`・設計 店の変化の連動 段 3〜6・send は二段か同意のある物だけ）。--json は 1 つの値。
+COMMANDS += ['link check', 'link consent', 'link make', 'link show', 'link send', 'link run']
 
 
 def test_json_table_covers_every_parser():
