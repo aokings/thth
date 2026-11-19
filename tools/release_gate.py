@@ -78,6 +78,9 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # 店の変化の連動（設計 店の変化の連動・11/19）: 持ち主の前もっての同意で、人の押下なしに Google マップと IG に出す口。
     # 同意の範囲・Google 側の変わりで止める・二度出さないの柵がここにある（宣言と束は上の register に入る）。
     "link_write": ("thth/link/*",),
+    # Google ビジネス プロフィールの口（11/19）: 持ち主の Google の鍵（refresh token）を受け取って持つ認可と、
+    # 店の臨時の時間・投稿を書く口（二段確認）。5.27.0 の版を作るときに表に無いと気づいて足した。
+    "gbp_write": ("thth/gbp/*",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

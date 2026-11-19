@@ -94,6 +94,11 @@ def _run(handler):
             return refusal.emit(args, exc.code, line=f"{exc.code}: {exc.message}",
                                 payload={"ok": False, "error": exc.code, "message": exc.message, **exc.extra},
                                 rc=exc.rc, dump=_print_json)
+        except adapter_base.MessageAccessOff as exc:
+            return refusal.emit(args, "meta_ig_message_access_off",
+                                line=f"meta_ig_message_access_off: {getattr(args, 'account', '')}: {exc}",
+                                payload={"ok": False, "error": "meta_ig_message_access_off",
+                                         "permission": exc.permission}, rc=2, dump=_print_json)
         except adapter_base.PermissionMissing as exc:
             text = str(exc).replace("<account>", str(getattr(args, "account", "")))
             return refusal.emit(args, "meta_write_permission_missing", line=f"meta_write_permission_missing: {text}",

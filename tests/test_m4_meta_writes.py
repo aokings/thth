@@ -467,3 +467,34 @@ def test_いいねの無いidは認可し直しを勧めずpost_missingで断る
                    "missing permissions, or does not support this operation."}})
     rc, _out, err = main(capsys, "like", IG_ACCOUNT, IG_MEDIA, "--by", "m")
     assert rc != 0 and "post_missing" in err and "thth auth" not in err
+
+
+# 11/19 本物の s.o.h_shop: 鍵の権限は足りていたが、IG アプリの「メッセージへのアクセスを許可」が切れていた。
+# 「認可し直して」と言うと、認可し直しても直らない所へ持ち主を回してしまう。
+@pytest.mark.parametrize("message", [
+    "(#200) アカウントの所有者はInstagramのダイレクトメッセージへのアクセスを無効にしています。",
+    "(#200) The account owner has disabled access to instagram direct messages.",
+])
+def test_IGの持ち主がDMの読みを止めていたら認可し直しを勧めず接続ツールを案内する(m4, capsys, message):
+    m4["routes"][("GET", V + f"/{PAGE}/conversations")] = (403, {"error": {
+        "message": message, "type": "OAuthException", "code": 200}})
+    rc, out, err = main(capsys, "dm", "list", IG_ACCOUNT)
+    assert rc == 2
+    assert "meta_ig_message_access_off" in err and "接続ツール" in err
+    assert "meta_write_permission_missing" not in err and "thth auth" not in err
+    rc, out, err = main(capsys, "dm", "list", IG_ACCOUNT, "--json")
+    assert rc == 2 and json.loads(out)["error"] == "meta_ig_message_access_off"
+
+
+def test_code200でも権限の文なら今までどおり認可し直しを勧める(m4, capsys):
+    m4["routes"][("GET", V + f"/{PAGE}/conversations")] = (403, {"error": {
+        "message": "(#200) Requires instagram_manage_messages permission", "type": "OAuthException", "code": 200}})
+    rc, out, err = main(capsys, "dm", "list", IG_ACCOUNT)
+    assert rc == 2 and "meta_write_permission_missing" in err and "meta_ig_message_access_off" not in err
+
+
+def test_DMの読みを止めた断りは目録にあり遠くの道でも言える():
+    from thth import server_meta
+    entry = refusal_catalog.CATALOG["meta_ig_message_access_off"]
+    assert entry["why"] and "接続ツール" in entry["fix"]["text"] and entry["better"]
+    assert "meta_ig_message_access_off" in server_meta.REASONS

@@ -470,13 +470,20 @@ class FacebookAdapter(base.Adapter):
         return self._graph().request(method, path, params=params, form=form, body=body,
                                      headers=headers, timeout=timeout, urgent=urgent)
 
+    @staticmethod
+    def _denied(permission: str, err: dict, detail: str) -> base.PermissionMissing:
+        """権限系の断りの例外。IG の持ち主が DM の読みを止めているときは、認可し直しを勧めない子の例外。"""
+        if meta_errors.is_message_access_off(err):
+            return base.MessageAccessOff(permission, detail)
+        return base.PermissionMissing(permission, detail)
+
     def _fail(self, what: str, error: urllib.error.HTTPError, permission: str | None):
         """HTTPError を口の言葉に直す。権限系は `PermissionMissing`。"""
         err = graph_error(error)
         message = self._scrub(str(err.get("message") or error.reason or ""))[:170]
         code = err.get("code")
         if permission and error.code < 500 and is_permission_error(err):
-            return base.PermissionMissing(permission, f"HTTP {error.code} {message}".strip())
+            return self._denied(permission, err, f"HTTP {error.code} {message}".strip())
         if code == _INVALID_TOKEN_CODE:
             return AdapterError(f"{what}: facebook_token_invalid（HTTP {error.code} {message}）。"
                                 f"thth auth {self.auth_account} --by <名前> で認可し直してください",
@@ -502,7 +509,7 @@ class FacebookAdapter(base.Adapter):
         if body.get("error"):
             err = body["error"] if isinstance(body["error"], dict) else {}
             if permission and is_permission_error(err):
-                raise base.PermissionMissing(permission, self._scrub(err.get("message"))[:170])
+                raise self._denied(permission, err, self._scrub(err.get("message"))[:170])
             raise AdapterError(f"{what}: {self._scrub(err.get('message') or body['error'])[:200]}")
         return body
 
@@ -660,7 +667,7 @@ class FacebookAdapter(base.Adapter):
                                    "何も変えていません。読む命令（list や旗なしの命令）で id を確かめてください",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
-                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
+                raise self._denied(permission, err, f"HTTP {e.code} {message}".strip()) from None
             raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
                                failure="definite" if e.code < 500 else "ambiguous",
                                http_status=e.code, code=err.get("code")) from None
@@ -745,7 +752,7 @@ class FacebookAdapter(base.Adapter):
                 raise AdapterError(f"messaging_window_closed: {what}: Meta が窓の外と答えました（HTTP {e.code} {message}）",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
-                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
+                raise self._denied(permission, err, f"HTTP {e.code} {message}".strip()) from None
             raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
                                failure="definite" if e.code < 500 else "ambiguous",
                                http_status=e.code, code=err.get("code")) from None

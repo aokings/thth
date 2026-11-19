@@ -89,6 +89,22 @@ def is_permission_error(err: dict) -> bool:
     return "permission" in message or (code is not None and code in PERMISSION_ERROR_CODES)
 
 
+def is_message_access_off(err: dict) -> bool:
+    """IG の持ち主が「接続ツール → メッセージへのアクセスを許可」を切っている断り。
+
+    11/19 本物: HTTP 403・code 200・文面「アカウントの所有者はInstagramのダイレクトメッセージへの
+    アクセスを無効にしています」（英語では「The account owner has disabled access to instagram direct
+    messages」）。文面は鍵の言語で変わるので、code 200 と、DM と「無効・止めた」の両方の語で見る。
+    """
+    if _code(err) != 200:
+        return False
+    message = str(err.get("message") or "")
+    low = message.lower()
+    english = "direct message" in low and ("disabled" in low or "turned off" in low)
+    japanese = "ダイレクトメッセージ" in message and ("無効" in message or "オフ" in message)
+    return english or japanese
+
+
 def is_rate_limited(err: dict) -> bool:
     code = _code(err)
     return code is not None and code in RATE_LIMIT_CODES

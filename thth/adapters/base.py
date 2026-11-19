@@ -134,6 +134,23 @@ class PermissionMissing(AdapterError):
         super().__init__(not_granted_message(permission, detail))
 
 
+class MessageAccessOff(PermissionMissing):
+    """**Instagram の持ち主が、外の道具が DM を読むのを止めている**（Meta の 403・code 200・
+    「The account owner has disabled access to instagram direct messages」。11/19 本物の s.o.h_shop）。
+
+    鍵には権限が乗っていて、認可し直しても直らない。直すのは IG アプリの
+    「メッセージのコントロール → 接続ツール → メッセージへのアクセスを許可」。
+    `PermissionMissing` の子にしておくのは、読む側（collect の `inbox_state`）が今までどおり
+    「この口は今読めない」として続けられるように。CLI は別の符丁
+    `meta_ig_message_access_off` で、正しい直し方を言う。
+    """
+
+    def __init__(self, permission: str, detail: str = ""):
+        super().__init__(permission, detail)
+        self.args = (f"Instagram の持ち主が外の道具から DM を読むのを止めています（{detail}）",) if detail else \
+            ("Instagram の持ち主が外の道具から DM を読むのを止めています",)
+
+
 class UnsupportedOnPlatform(AdapterError):
     """**その SNS の API に口が無い操作**（設計 3.15.0 §3・Threads のいいね）。
 

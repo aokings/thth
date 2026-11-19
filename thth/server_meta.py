@@ -62,7 +62,7 @@ FIELD_MAX = 4_000
 # 手元の口の符丁のうち、遠くの道でもそのまま言うもの（目録の doors に remote がある）。
 REASONS = frozenset((
     'messaging_window_closed', 'private_reply_window_closed', 'dm_text_invalid', 'dm_recipient_unknown',
-    'meta_write_unsupported', 'meta_write_permission_missing', 'meta_write_digest_mismatch', 'meta_write_refused',
+    'meta_write_unsupported', 'meta_write_permission_missing', 'meta_ig_message_access_off', 'meta_write_digest_mismatch', 'meta_write_refused',
     'meta_write_unknown', 'meta_write_busy', 'page_cta_not_found', 'live_title_invalid', 'live_not_this_page',
     'remote_command_refused'))
 # 依頼の印に書かない欄（本文・相手・相手の属性・配信の宛先）。
