@@ -773,14 +773,9 @@ class InstagramAdapter(fb.FacebookAdapter):
         value = self._media_id(media_id, "広告に使う許可の確認")
         body = self._get(f"/{value}/branded_content_partner_promote", "広告に使う許可の確認",
                          permission=CREATOR_PERMISSION)
-        approved = body.get("approved")
-        if isinstance(approved, str):
-            approved = [v.strip() for v in approved.split(",")]
-        if approved is None:
-            approved = []
-        if not isinstance(approved, list):
-            raise fb.AdapterError("広告に使う許可の確認: 応答の approved の形が読めません（0 件とは言えません）")
-        return [str(v) for v in approved if str(v).strip()]
+        # 11/20 本物（aoking の投稿・s.o.h_shop を許したあと）: `{"data": [{"id": "<ブランドの id>"}]}`。
+        # 前は公式の頁の例に倣って `approved` を読み、許したのに 0 件と出していた。
+        return [str(row["id"]) for row in self._rows(body, "広告に使う許可の確認") if str(row.get("id") or "").strip()]
 
     def promote_set(self, media_id: str, sponsor_id: str, allow: bool) -> dict:
         """`POST /{ig-media-id}/branded_content_partner_promote`（`sponsor_id`・`permission=true|false`）。"""

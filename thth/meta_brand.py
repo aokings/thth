@@ -136,7 +136,7 @@ def cmd_creators(args) -> int:
         mw._print_json({"ok": True, "changed": True, "account": args.account, "action": args.action,
                         "count": len(ids), "by": by})
     else:
-        print(f"{word}ました: {args.account} 承認クリエイター {len(ids)} 件（{by}）")
+        print(f"{'足しました' if args.action == 'approve' else '外しました'}: {args.account} 承認クリエイター {len(ids)} 件（{by}）")
     return 0
 
 

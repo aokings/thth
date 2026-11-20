@@ -258,7 +258,6 @@ two	thth brand creators {IG} remove {CREATOR} --by {BY}
 end
 seg	ig-brand-promote	instagram	instagram_branded_content_creator — allow or revoke a brand's use of a tagged post in partnership ads.
 items	instagram_branded_content_creator
-real	sponsor_id が必須かどうかが【未確認】（公式の頁は例に出すが引数の表に無い）
 prep	クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく
 cmd	thth brand promote {IG} {TIEUP}
 two	thth brand promote {IG} {TIEUP} --allow --sponsor {BRAND} --by {BY}

@@ -250,8 +250,9 @@ SEGMENTS = (
          ("prep", "クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく"),
          ("cmd", "thth brand promote {IG} {TIEUP}"),
          ("two", "thth brand promote {IG} {TIEUP} --allow --sponsor {BRAND} --by {BY}"),
-         ("cmd", "thth brand promote {IG} {TIEUP}"),
-         real_first="sponsor_id が必須かどうかが【未確認】（公式の頁は例に出すが引数の表に無い）"),
+         ("cmd", "thth brand promote {IG} {TIEUP}")),
+    # 11/20 本物（aoking のタイアップ投稿・ブランド s.o.h_shop）で 3 つとも通った。sponsor_id を付けて打つ
+    # （無しで通るかは試していない）。読みの応答は `data` の配列（`approved` ではなかった）。
     _seg("ig-brand-ads", "instagram", "instagram_branded_content_ads_brand — read the account-level partnership ad "
          "permissions and the content a business can advertise.", ["instagram_branded_content_ads_brand"],
          ("prep", "Business Suite で自分の役割（ADS・CREATOR_MANAGEMENT・CREATOR_CONTENT のどれか）を確かめておく"),

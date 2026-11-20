@@ -60,7 +60,7 @@ def m6(isolated_account_factory, tmp_path, monkeypatch):
         ("POST", V + f"/{IG_ID}/branded_content_tag_approval"): lambda q, f, r: state["write"],
         ("DELETE", V + f"/{IG_ID}/branded_content_tag_approval"): lambda q, f, r: state["write"],
         ("GET", V + f"/{MEDIA}/branded_content_partner_promote"):
-            lambda q, f, r: (200, {"approved": ",".join(state["approved"])}),
+            lambda q, f, r: (200, {"data": [{"id": v} for v in state["approved"]]}),  # 11/20 本物の形
         ("POST", V + f"/{MEDIA}/branded_content_partner_promote"): lambda q, f, r: state["write"],
         ("GET", V + f"/{IG_ID}/branded_content_ad_permissions"): (200, {"data": [
             {"creator_ig_id": int(CREATOR), "creator_username": "名前の目印", "permission_status": "APPROVED"},

@@ -164,14 +164,14 @@ def test_本物で確かめていない口の区間には印がある():
     # 計画 §4: DM の綴りと窓の外の札は本物で確かめるまで印を付ける。IG のいいねは 11/08 本物で
     # POST /{ig-user-id}/likes が通ったので印を外した（「本物で打って分かったこと」）。
     # fb-dm・fb-events は 11/19 に S.o.h shop で本物の返事と purchase が通ったので印を外した。
-    # fb-human-agent は 11/20 に同じ会話へ窓の外で通った。
-    done = {"fb-dm", "fb-events", "fb-human-agent", "ig-dm", "ig-events"}
+    # fb-human-agent は 11/20 に同じ会話へ窓の外で通った。ig-brand-promote は 11/20 に aoking で通った。
+    done = {"fb-dm", "fb-events", "fb-human-agent", "ig-dm", "ig-events", "ig-brand-promote"}
     for segment in appreview.SEGMENTS:
         if segment["id"] not in done and any("--human-agent" in command or command.startswith("thth dm send")
                                              for command in appreview.segment_commands(segment)):
             assert segment["real_first"], segment["id"]
     assert not [s["id"] for s in appreview.SEGMENTS if s["id"] in done and s["real_first"]]
-    assert next(s for s in appreview.SEGMENTS if s["id"] == "ig-brand-promote")["real_first"]
+    assert next(s for s in appreview.SEGMENTS if s["id"] == "ig-brand-creators")["real_first"]
     assert not row("instagram_manage_engagement")["real_first"]
     assert not row("threads_basic")["real_first"]
 
