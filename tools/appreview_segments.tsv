@@ -159,7 +159,6 @@ hand	Messenger で返事が届いたのを見せたら Return
 end
 seg	fb-human-agent	facebook	Human Agent — a person answers after 24 hours with the human_agent tag.
 items	human_agent
-real	HUMAN_AGENT の札の綴りと窓の外の断りの符丁が【推】（計画 M4）
 prep	24 時間より前に届いたメッセージを用意する
 two	thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}
 end

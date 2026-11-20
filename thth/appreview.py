@@ -166,11 +166,11 @@ SEGMENTS = (
          ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --by {BY}"),
          ("hand", "Messenger で返事が届いたのを見せたら Return")),
     # 2026-11-19 に S.o.h shop（soh-fb）で本物の返事が通った（messaging_type の綴りが解けた）ので real_first を外した
+    # 2026-11-20 に soh-fb で --human-agent の返事が 24 時間の窓の外で通った（masaru 承認の文面）ので real_first を外した
     _seg("fb-human-agent", "facebook", "Human Agent — a person answers after 24 hours with the human_agent tag.",
          ["human_agent"],
          ("prep", "24 時間より前に届いたメッセージを用意する"),
-         ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}"),
-         real_first="HUMAN_AGENT の札の綴りと窓の外の断りの符丁が【推】（計画 M4）"),
+         ("two", "thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}")),
     _seg("fb-events", "facebook", "pages_events — report a purchase that came from a Messenger conversation.",
          ["pages_events"],
          ("prep", "別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）"),
