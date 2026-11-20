@@ -480,7 +480,7 @@ def test_IGの持ち主がDMの読みを止めていたら認可し直しを勧�
         "message": message, "type": "OAuthException", "code": 200}})
     rc, out, err = main(capsys, "dm", "list", IG_ACCOUNT)
     assert rc == 2
-    assert "meta_ig_message_access_off" in err and "接続ツール" in err
+    assert "meta_ig_message_access_off" in err and "リンク済みのツール" in err
     assert "meta_write_permission_missing" not in err and "thth auth" not in err
     rc, out, err = main(capsys, "dm", "list", IG_ACCOUNT, "--json")
     assert rc == 2 and json.loads(out)["error"] == "meta_ig_message_access_off"
@@ -496,7 +496,7 @@ def test_code200でも権限の文なら今までどおり認可し直しを勧�
 def test_DMの読みを止めた断りは目録にあり遠くの道でも言える():
     from thth import server_meta
     entry = refusal_catalog.CATALOG["meta_ig_message_access_off"]
-    assert entry["why"] and "接続ツール" in entry["fix"]["text"] and entry["better"]
+    assert entry["why"] and "リンク済みのツール" in entry["fix"]["text"] and entry["better"]
     assert "meta_ig_message_access_off" in server_meta.REASONS
 
 

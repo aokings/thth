@@ -184,7 +184,7 @@ class InstagramAdapter(fb.FacebookAdapter):
     MARKET_PERMISSIONS = (MARKET_PERMISSION, "instagram_basic", "pages_manage_metadata", "pages_show_list",
                           "business_management")
     # Conversions API for Business Messaging（`thth dm event`）。dataset は IG の user に結び、user_data は
-    # `instagram_business_account_id`＋`ig_sid`（L2: conversions-api/business-messaging 11/09）。
+    # `ig_account_id`＋`ig_sid`。公式の頁の例の `instagram_business_account_id` は本物で 400（subcode 2804079）だった（11/20）。
     EVENT_PERMISSION = "instagram_manage_events"
     EVENT_PERMISSION_ALIASES = ()
     EVENT_CHANNEL = "instagram"
@@ -828,7 +828,7 @@ class InstagramAdapter(fb.FacebookAdapter):
         return self.ig_user_id
 
     def event_user_data(self, person_id: str) -> dict:
-        return {"instagram_business_account_id": self.ig_user_id, "ig_sid": str(person_id)}
+        return {"ig_account_id": self.ig_user_id, "ig_sid": str(person_id)}
 
     # ----- 商品タグ（呼ぶのは `thth/meta_shop.py` だけ） ----------------------------------
 

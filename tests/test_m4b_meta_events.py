@@ -99,7 +99,7 @@ def test_Instagramの問い合わせは会話から相手を引きdatasetはIG�
     assert [c["path"] for c in made] == [V + f"/{IG_ID}/dataset", V + f"/{DATASET_IG}/events"]
     event = sent_event(made[1])
     assert event["event_name"] == "LeadSubmitted" and event["messaging_channel"] == "instagram"
-    assert event["user_data"] == {"instagram_business_account_id": IG_ID, "ig_sid": IG_PERSON}
+    assert event["user_data"] == {"ig_account_id": IG_ID, "ig_sid": IG_PERSON}
     assert "custom_data" not in event
     assert "dm_event" in found(IG_ACCOUNT)
     nothing_kept(ev, IG_PERSON)
@@ -111,7 +111,7 @@ def test_WhatsAppは口の形だけ_user_dataは公式の例の欄(ev, capsys):
     assert meta_events.user_data("messenger", page_id=PAGE, person_id=PSID) == {
         "page_id": PAGE, "page_scoped_user_id": PSID}
     assert meta_events.user_data("instagram", ig_user_id=IG_ID, person_id=PSID) == {
-        "instagram_business_account_id": IG_ID, "ig_sid": PSID}
+        "ig_account_id": IG_ID, "ig_sid": PSID}
     body = meta_events.event_body("Purchase", "whatsapp", {"x": 1}, event_time=1675999999.7, value=123, currency="USD")
     assert body == {"event_name": "Purchase", "event_time": 1675999999, "action_source": "business_messaging",
                     "messaging_channel": "whatsapp", "user_data": {"x": 1},
@@ -170,6 +170,16 @@ def test_Metaが0件と答えたら済んだと言わず記録に成功を残さ
     (rc, out, err), _ = two_steps(capsys, *FB_ARGV)
     assert rc == 1 and "meta_write_refused" in out
     assert "dm_event" not in found(FB_ACCOUNT)
+
+
+def test_本物1120_Metaの人向けの説明を断りに添える(ev, capsys):
+    # 11/20 soh-ig: 公式の例の欄名では 400「Invalid parameter」だけが出て、原因（ig_account_id が無い）が見えなかった。
+    ev["routes"][("POST", V + f"/{DATASET_IG}/events")] = (400, {"error": {
+        "message": "Invalid parameter", "type": "OAuthException", "code": 100, "error_subcode": 2804079,
+        "error_user_msg": "ユーザーデータのig_account_idパラメーターに有効な値を入力してください。"}})
+    (rc, out, err), _ = two_steps(capsys, *IG_ARGV)
+    assert rc == 1 and "meta_write_refused" in out
+    assert "ig_account_idパラメーター" in out
 
 
 def test_結果の分からない送信は打ち直さない(ev, capsys):

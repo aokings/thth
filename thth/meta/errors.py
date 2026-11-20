@@ -90,7 +90,7 @@ def is_permission_error(err: dict) -> bool:
 
 
 def is_message_access_off(err: dict) -> bool:
-    """IG の持ち主が「接続ツール → メッセージへのアクセスを許可」を切っている断り。
+    """IG の持ち主が「リンク済みのツール（接続ツール）→ メッセージへのアクセスを許可」を切っている断り。
 
     11/19 本物: HTTP 403・code 200・文面「アカウントの所有者はInstagramのダイレクトメッセージへの
     アクセスを無効にしています」（英語では「The account owner has disabled access to instagram direct

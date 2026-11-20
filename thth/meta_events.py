@@ -11,7 +11,7 @@
   - `POST /{DATASET_ID}/events`。本文は `data[]` と `partner_agent`。1 件は `event_name`・`event_time`（Unix 秒）・
     `action_source: "business_messaging"`・`messaging_channel`（messenger／whatsapp／instagram）・`user_data`・
     `custom_data`（`currency`・`value`）。
-  - `user_data`: Messenger は `page_id`＋`page_scoped_user_id`、Instagram は `instagram_business_account_id`＋`ig_sid`、
+  - `user_data`: Messenger は `page_id`＋`page_scoped_user_id`、Instagram は `ig_account_id`＋`ig_sid`（公式の頁の例は `instagram_business_account_id` だが、本物の Meta は 400・subcode 2804079「ig_account_id パラメーターがありません」で断る。11/20 soh-ig で `ig_account_id` にして通った）、
     WhatsApp は `whatsapp_business_account_id`＋`ctwa_clid`（無いときは `page_id`＋ハッシュした `em`／`ph`）。
   - dataset は `POST /{PAGE_ID|IG_USER_ID|WABA_ID}/dataset`（1 ページ 1 つ・既にあれば同じ id が返る）。
   - 出来事の名前: Purchase・LeadSubmitted・InitiateCheckout・AddToCart・ViewContent・OrderCreated・OrderShipped・
@@ -117,7 +117,7 @@ def user_data(channel, *, page_id=None, person_id=None, ig_user_id=None, waba_id
     if channel == "messenger":
         return {"page_id": str(page_id), "page_scoped_user_id": str(person_id)}
     if channel == "instagram":
-        return {"instagram_business_account_id": str(ig_user_id), "ig_sid": str(person_id)}
+        return {"ig_account_id": str(ig_user_id), "ig_sid": str(person_id)}
     if channel == "whatsapp":
         return {"whatsapp_business_account_id": str(waba_id), "ctwa_clid": str(ctwa_clid)}
     raise ValueError(f"channel: {channel}")

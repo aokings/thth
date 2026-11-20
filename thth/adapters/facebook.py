@@ -477,6 +477,12 @@ class FacebookAdapter(base.Adapter):
             return base.MessageAccessOff(permission, detail)
         return base.PermissionMissing(permission, detail)
 
+    def _with_user_msg(self, message: str, err: dict) -> str:
+        """Meta の人向けの説明（`error_user_msg`）を添える。「Invalid parameter」だけでは直す所が分からない
+        （11/20 ig-events の 400・subcode 2804079 は「ig_account_id が無い」と user_msg にだけ書いてあった）。"""
+        user_msg = self._scrub(str(err.get("error_user_msg") or "")).strip()[:200]
+        return f"{message}（{user_msg}）" if user_msg and user_msg not in message else message
+
     def _fail(self, what: str, error: urllib.error.HTTPError, permission: str | None):
         """HTTPError を口の言葉に直す。権限系は `PermissionMissing`。"""
         err = graph_error(error)
@@ -488,6 +494,7 @@ class FacebookAdapter(base.Adapter):
             return AdapterError(f"{what}: facebook_token_invalid（HTTP {error.code} {message}）。"
                                 f"thth auth {self.auth_account} --by <名前> で認可し直してください",
                                 failure="permission", http_status=error.code, code=code)
+        message = self._with_user_msg(message, err)
         return AdapterError(f"{what}: HTTP {error.code} {message}".strip(),
                             failure="permission" if is_permission_error(err) else None,
                             http_status=error.code, code=code)
@@ -668,6 +675,7 @@ class FacebookAdapter(base.Adapter):
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
                 raise self._denied(permission, err, f"HTTP {e.code} {message}".strip()) from None
+            message = self._with_user_msg(message, err)
             raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
                                failure="definite" if e.code < 500 else "ambiguous",
                                http_status=e.code, code=err.get("code")) from None
@@ -753,6 +761,7 @@ class FacebookAdapter(base.Adapter):
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
                 raise self._denied(permission, err, f"HTTP {e.code} {message}".strip()) from None
+            message = self._with_user_msg(message, err)
             raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
                                failure="definite" if e.code < 500 else "ambiguous",
                                http_status=e.code, code=err.get("code")) from None

@@ -218,18 +218,18 @@ SEGMENTS = (
     _seg("ig-like", "instagram", "instagram_manage_engagement — like a media object.", ["instagram_manage_engagement"],
          ("cmd", "thth like {IG} {IG_MEDIA} --by {BY}"), ("hand", "Instagram でいいねが付いたのを見せたら Return")),
     # ig-like の「本物で 1 回打ってから」は外した: 11/08 本物で POST /{ig-user-id}/likes が通った（計画 M4）。
+    # 2026-11-20 に soh-ig で本物が通った（返事・Purchase。events の user_data は ig_account_id）ので real_first を外した
     _seg("ig-dm", "instagram", "instagram_manage_messages — read the Instagram inbox and answer.",
          ["instagram_manage_messages"],
          ("prep", "別のテストの口座から Instagram に DM を 1 通送っておく"),
          ("cmd", "thth dm list {IG}"), ("two", "thth dm send {IG} {IG_PSID} --text {REPLY} --by {BY}"),
-         ("hand", "Instagram で返事が届いたのを見せたら Return"),
-         real_first="messaging_type の綴りが【推】（計画 M4）"),
+         ("hand", "Instagram で返事が届いたのを見せたら Return")),
+    # 2026-11-20 に soh-ig で本物が通った（返事・Purchase。events の user_data は ig_account_id）ので real_first を外した
     _seg("ig-events", "instagram", "instagram_manage_events — report a purchase that came from an Instagram conversation.",
          ["instagram_manage_events"],
          ("prep", "別のテストの口座から Instagram に DM を 1 通送っておく（thth dm list に出る会話の id を使う）"),
          ("two", "thth dm event {IG} --type purchase --conversation {IG_PSID} --value {VALUE} --currency JPY --by {BY}"),
-         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return"),
-         real_first="events の応答の形（events_received）・dataset の応答の欄・partner_agent の要否が【未確認】（計画 M4）"),
+         ("hand", "Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return")),
     _seg("ig-hashtag", "instagram", "Instagram Public Content Access — hashtag search (counts only).",
          ["instagram_public_content_access"], ("cmd", "thth where {IG} {TAG}")),
     _seg("ig-upcoming", "instagram", "instagram_manage_upcoming_events — the account's upcoming events.",

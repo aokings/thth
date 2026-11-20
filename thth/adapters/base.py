@@ -139,7 +139,7 @@ class MessageAccessOff(PermissionMissing):
     「The account owner has disabled access to instagram direct messages」。11/19 本物の s.o.h_shop）。
 
     鍵には権限が乗っていて、認可し直しても直らない。直すのは IG アプリの
-    「メッセージのコントロール → 接続ツール → メッセージへのアクセスを許可」。
+    「メッセージリクエスト → リンク済みのツール → メッセージへのアクセスを許可」（11/20 本物の iOS アプリ。版により「メッセージのコントロール → 接続ツール」）。
     `PermissionMissing` の子にしておくのは、読む側（collect の `inbox_state`）が今までどおり
     「この口は今読めない」として続けられるように。CLI は別の符丁
     `meta_ig_message_access_off` で、正しい直し方を言う。
