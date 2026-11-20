@@ -440,10 +440,19 @@ def validate_declarations(fm,medium):
         # 段 3（10/29）: AI で作った印（**L2**: content-publishing の `is_ai_generated`・カルーセルは親にだけ）。
         # manifest の post_options に入るので承認の指紋（media_manifest）に入る——指紋の版は上げない。
         # 連動 段 1（11/19）: ストーリー（**L2**: content-publishing の `media_type=STORIES`・字幕は無い・1 枚だけ）。
-        'instagram':{'is_ai_generated','story'},
+        # 11/20: タイアップ投稿（**L2**: content-publishing の `is_paid_partnership`・`branded_content_sponsor_ids`
+        # （ブランドの IG user id を 2 つまで）・2026-04 の changelog）。ストーリーには付けない。
+        'instagram':{'is_ai_generated','story','paid_partnership','sponsor_ids'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
-    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals','is_ai_generated','story'}
+    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals','is_ai_generated','story','paid_partnership'}
+    if medium=='instagram' and 'sponsor_ids' in options:
+        ids=options['sponsor_ids']
+        if type(ids) is not list or not 1<=len(ids)<=2 or any(type(v) is not str or not re.fullmatch(r'[0-9]{1,32}',v) for v in ids) or len(set(ids))!=len(ids):
+            raise MediaError('post_options: sponsor_ids needs 1-2 numeric Instagram user ids (strings)')
+        if options.get('paid_partnership') is not True: raise MediaError('post_options: sponsor_ids requires paid_partnership: true')
+    if medium=='instagram' and options.get('story') is True and ('paid_partnership' in options or 'sponsor_ids' in options):
+        raise MediaError('post_options: paid_partnership is not for stories')
     for key,value in options.items():
         if key=='text_spoiler' and type(value) is list:
             for span in value:
@@ -470,6 +479,7 @@ def validate_declarations(fm,medium):
                     field={'app.bsky.richtext.facet#link':'uri','app.bsky.richtext.facet#mention':'did','app.bsky.richtext.facet#tag':'tag'}.get(typ)
                     if field is None or set(feature)!={'$type',field}:raise MediaError('post_options: unknown feature')
                     _text(feature[field],field,empty=field=='tag')
+        elif key=='sponsor_ids':pass   # 形は上（instagram の段）で見た
         else:_text(value,key,empty=key=='spoiler_text')
     for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only','parent_post_author_only','followers_only'},'reply_settings':{'following','mentionedUsers','subscribers','verified'}}.items():
         if key in options and options[key] not in values:raise MediaError(f'post_options: invalid {key}')

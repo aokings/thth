@@ -27,6 +27,7 @@ loopback の試験先）の `/m/` だけ。
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 import urllib.error
@@ -46,7 +47,7 @@ WIDTH_MIN = 320
 WIDTH_MAX = 1440
 CAROUSEL_MAX = 20
 ALT_MAX = 1000
-POST_OPTIONS = frozenset({"is_ai_generated", "story"})
+POST_OPTIONS = frozenset({"is_ai_generated", "story", "paid_partnership", "sponsor_ids"})
 STORY_OPTIONS = frozenset({"story"})
 # 作成の POST は Meta が画像を取りに来る間開いている（Threads と同じ理由・`threads_media.CREATE_TIMEOUT_SECONDS`）。
 CREATE_TIMEOUT_SECONDS = 90.0
@@ -202,6 +203,12 @@ def publish(adapter, post, *, before_publish=None, on_container_created=None):
         common = {"caption": post.text}
         if options.get("is_ai_generated") is True:
             common["is_ai_generated"] = "true"
+        # タイアップ投稿（11/20・L2: `is_paid_partnership`・`branded_content_sponsor_ids` は IG user id の JSON の配列）。
+        # カルーセルは親にだけ付く（common は親か単体の入れ物にだけ渡る）。
+        if options.get("paid_partnership") is True:
+            common["is_paid_partnership"] = "true"
+            if options.get("sponsor_ids"):
+                common["branded_content_sponsor_ids"] = json.dumps([str(v) for v in options["sponsor_ids"]])
         carousel = len(post.media_files) > 1 and not story
         veto()
         for index, item in enumerate(post.media_files):

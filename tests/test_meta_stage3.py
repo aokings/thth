@@ -613,3 +613,71 @@ def test_lintは文だけとPNGを断り_返事は画像なしで通す(wire):
         "unsupported_attachment: instagram/png"]
     notes = media_delivery.lint_notes(cfg, {"media": [{"file": "a.jpg", "alt": "点"}]})
     assert notes == ["warning: instagram scales image width outside 320〜1440"]
+
+
+# ================================================================== タイアップ投稿（11/20）
+
+SPONSOR = "17841459320617507"
+
+
+def test_タイアップ投稿はラベルとブランドのidを入れ物に付ける(wire):
+    result, _ = invoke(wire, {"media": [{"file": "a.jpg", "alt": "赤い点"}],
+                              "post_options": {"paid_partnership": True, "sponsor_ids": [SPONSOR]}})
+    assert result.failure == "none"
+    create = _calls(wire, "POST", f"/{IG}/media")[0]["form"]
+    assert create["is_paid_partnership"] == ["true"]
+    assert json.loads(create["branded_content_sponsor_ids"][0]) == [SPONSOR]
+
+
+def test_タイアップのカルーセルは親にだけ付く(wire):
+    fm = {"media": [{"file": "a.jpg", "alt": "一"}, {"file": "b.jpg", "alt": "二"}],
+          "post_options": {"paid_partnership": True, "sponsor_ids": [SPONSOR]}}
+    result, _ = invoke(wire, fm)
+    assert result.failure == "none"
+    create = [c["form"] for c in _calls(wire, "POST", f"/{IG}/media")]
+    assert all("is_paid_partnership" not in c and "branded_content_sponsor_ids" not in c for c in create[:2])
+    assert create[2]["is_paid_partnership"] == ["true"]
+
+
+@pytest.mark.parametrize("options", [
+    {"sponsor_ids": [SPONSOR]},                                             # ラベル無しで id だけ
+    {"paid_partnership": True, "sponsor_ids": [SPONSOR, "1", "2"]},          # 3 つ
+    {"paid_partnership": True, "sponsor_ids": ["kopi_chaba"]},               # 名前は不可（数字の id）
+    {"paid_partnership": True, "sponsor_ids": [SPONSOR, SPONSOR]},           # 重複
+    {"paid_partnership": "yes"},
+    {"story": True, "paid_partnership": True},                              # ストーリーには付けない
+])
+def test_タイアップの書き方の誤りは原稿の段で断る(options):
+    with pytest.raises(media.MediaError):
+        media.validate_declarations({"media": [{"file": "a.jpg", "alt": "a"}], "post_options": options}, "instagram")
+
+
+def test_タイアップは指紋に入る_ブランドを変えれば承認が古くなる():
+    a_m, b_m = _manifest(), _manifest()
+    a_m["post_options"] = {"paid_partnership": True, "sponsor_ids": [SPONSOR]}
+    b_m["post_options"] = {"paid_partnership": True, "sponsor_ids": ["17841400000000001"]}
+    args = dict(section="本文", account="kopicha-ig", reply_to=None, topic=None,
+                publish_at="2030-01-01T12:00:00+09:00")
+    assert approval.compute_approved_sha(**args, media_manifest=a_m) != \
+        approval.compute_approved_sha(**args, media_manifest=b_m)
+
+
+def test_sendのタイアップの指定はpost_optionsとして渡る(monkeypatch):
+    from thth import cli, core, read_coordination
+    seen = {}
+
+    class _R:
+        exit_code, error, action, mode, post_id, url, digest = 0, None, "dry_run", "rehearsal", None, None, "d"
+        message = next_at = reason = publish_at = file = None
+
+    def fake(account, **kw):
+        seen.update(kw)
+        return _R()
+    monkeypatch.setattr(core, "send_once", fake)
+    monkeypatch.setattr(read_coordination, "invoke", lambda args, command, call=None: call() if call else args.func(args))
+    cli.main(["send", "kopicha-ig", "--text", "x", "--media", "a.jpg", "--alt", "a",
+              "--paid-partnership", "--sponsor", SPONSOR])
+    assert seen["post_options"] == {"paid_partnership": True, "sponsor_ids": [SPONSOR]}
+    seen.clear()
+    cli.main(["send", "kopicha-ig", "--text", "x", "--media", "a.jpg", "--alt", "a"])
+    assert "post_options" not in seen

@@ -4411,6 +4411,12 @@ def cmd_send(args) -> int:
         print('media: one --alt per --media required', file=sys.stderr)
         return 2
     declarations = [{'file': file, 'alt': alt} for file, alt in zip(files, alts)]
+    # タイアップ投稿（11/20・Instagram だけ。形は media.validate_declarations が見る）。
+    send_options = {}
+    if getattr(args, 'paid_partnership', False):
+        send_options['paid_partnership'] = True
+    if getattr(args, 'sponsor_ids', None):
+        send_options['sponsor_ids'] = [str(v) for v in args.sponsor_ids]
     try:
         media_mod.validate(declarations)
     except media_mod.MediaError as exc:
@@ -4441,7 +4447,8 @@ def cmd_send(args) -> int:
                 production_flag=args.production and not getattr(args, "dry_run", False),
                 confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
                 approval=getattr(args, "approval", None),
-                **({'media_rows': declarations} if declarations else {}))
+                **({'media_rows': declarations} if declarations else {}),
+                **({'post_options': send_options} if send_options else {}))
             outcome['result'] = result
             return result.exit_code
         code = read_coordination.invoke(args,'send',send)
@@ -5311,6 +5318,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="hub の承認の番号（口座の台帳が require_gate: true なら --production に必須・4.4.1）")
     p_send.add_argument('--media', dest='media_files', action='append', help='repo 相対の添付ファイル（繰返し可）')
     p_send.add_argument('--alt', dest='alts', action='append', help='対応する添付の説明（各 --media に必須）')
+    # 11/20: Instagram のタイアップ投稿（`is_paid_partnership`・`branded_content_sponsor_ids`）。digest に入る。
+    p_send.add_argument('--paid-partnership', dest='paid_partnership', action='store_true',
+                        help='Instagram の「タイアップ投稿」のラベルを付ける（画像の投稿だけ・ストーリーには付けない）')
+    p_send.add_argument('--sponsor', dest='sponsor_ids', action='append', metavar='IG_USER_ID',
+                        help='タイアップのブランドの Instagram の数字の id（2 つまで・--paid-partnership と一緒に）。'
+                             'ブランドの側で「手動で承認」なら、先に承認の一覧に載っている必要があります')
     p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(
