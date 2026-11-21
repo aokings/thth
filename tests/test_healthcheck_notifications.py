@@ -353,6 +353,9 @@ def test_監査528_符丁の後ろに添えたMetaの文で理由を読み違え
     from thth import healthcheck
     raw = "media_creating_http_400_code_36103: この操作を行う権限がありません"
     assert healthcheck.sanitize_reason(raw, action="post") == "publish_http_400"
+    assert healthcheck.sanitize_reason("media_creating_http_400_code_36103: connection timeout", action="post") == "publish_http_400"
+    # 後ろに符丁が付く形は、その符丁を読む（5.28.0 の版の CI で、ここを壊して赤になった）。
+    assert healthcheck.sanitize_reason("x_publish_http_403: x_not_permitted", action="post") == "x_not_permitted"
     # 符丁でない文は今までどおり。
     assert healthcheck.sanitize_reason("権限がありません: 詳細", action="post") == "permission_missing"
     assert healthcheck.sanitize_reason("permission_missing: instagram_content_publish") == "permission_missing"
