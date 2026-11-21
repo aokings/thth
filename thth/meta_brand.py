@@ -110,6 +110,10 @@ def cmd_creators(args) -> int:
             if value not in present:
                 print(f"  載っていない id={value}")
         print("  Meta の公開の口は、尋ねた id が載っているかを返します（引数なしの全件一覧は公式の頁に無い）")
+        if len(present) < len(ids):
+            # 11/20 approve（success: true）の直後も 11/21 も、本物の読みは `{"data": []}` だった。
+            print("  承認した直後でも Meta の読みに載らないことがあります（11/20〜21 に本物で確認）。"
+                  "タイアップの投稿が通るかで確かめてください")
         return 0
     by = mw._by(args)
     change = "POST" if args.action == "approve" else "DELETE"

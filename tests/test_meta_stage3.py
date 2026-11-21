@@ -367,6 +367,15 @@ def test_作成が4xxなら出ていない_URLは取り消す(wire):
     assert wire["results"] == [False]
 
 
+def test_作成の4xxはMetaの人向けの説明を添える(wire):
+    # 11/20 aoking: 36103/2207097 の直す所は error_user_msg にだけあった。
+    wire["create"] = (400, {"error": {"message": "Invalid parameter", "code": 36103,
+                                      "error_user_msg": "ブランドコンテンツツールが無効です"}})
+    result, journal = invoke(wire)
+    assert result.failure == "publish_definite"
+    assert result.error == "media_creating_http_400_code_36103: ブランドコンテンツツールが無効です"
+
+
 def test_画像の無い投稿は出さない():
     a = adapter("http://127.0.0.1:9")
     result = a.publish(base.Post("文だけ"), dry_run=False)
