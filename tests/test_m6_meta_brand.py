@@ -90,6 +90,10 @@ def test_承認クリエイターは尋ねて載っているかを読む(m6, cap
     assert value["approved"] == [CREATOR] and value["checked"] == 2 and value["storage"] == "display_only"
     assert get(m6, "/branded_content_tag_approval")[0]["query"]["user_ids"] == [f"{CREATOR},{OTHER}"]
     assert "brand_creators" in found(IG_ACCOUNT)
+    # 監査 5.28.0 の B7: --json で読む LLM にも「載らないことがある」を伝える（0 件を未承認と読ませない）。
+    assert "載らないことがあります" in value["note"]
+    rc, out, err = main(capsys, "brand", "creators", IG_ACCOUNT, "list", CREATOR, "--json")
+    assert rc == 0 and "note" not in json.loads(out)
 
 
 def test_承認クリエイターは二段で足し二段で外す(m6, capsys):

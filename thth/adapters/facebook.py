@@ -128,6 +128,8 @@ _PERMISSION_ERROR_CODES = meta_errors.PERMISSION_ERROR_CODES
 _INVALID_TOKEN_CODE = meta_errors.INVALID_TOKEN_CODE
 
 # 本文の中の URL（RFC 3986 の ASCII の文字だけ。和文の句読点や全角の文字で切る）。
+# Meta から来た文に入りうる、端末を操る字（改行とタブは `_user_msg` が先に空白へ畳む）。
+_USER_MSG_CONTROL = re.compile(r"[\x00-\x1f\x7f\x9b]")
 _URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]+")
 
 
@@ -477,10 +479,22 @@ class FacebookAdapter(base.Adapter):
             return base.MessageAccessOff(permission, detail)
         return base.PermissionMissing(permission, detail)
 
+    def _user_msg(self, err: dict) -> str:
+        """Meta の人向けの説明（`error_user_msg`）を、人に見せてよい形にして返す（無ければ空）。
+
+        外から来た文なので（監査 5.28.0 の B1・B3）: 自分の鍵と `access_token=` の形を伏せる・改行は空白に畳む・
+        端末を操る字（ESC など）は「?」にする・THTH の知らない鍵らしい値が残っていたら文ごと添えない・200 字まで。
+        """
+        text = self._scrub(str(err.get("error_user_msg") or ""))
+        text = _USER_MSG_CONTROL.sub("?", re.sub(r"[\r\n\t]+", " ", text)).strip()
+        if not text or redact_mod.looks_like_secret(text):
+            return ""
+        return text[:200]
+
     def _with_user_msg(self, message: str, err: dict) -> str:
         """Meta の人向けの説明（`error_user_msg`）を添える。「Invalid parameter」だけでは直す所が分からない
         （11/20 ig-events の 400・subcode 2804079 は「ig_account_id が無い」と user_msg にだけ書いてあった）。"""
-        user_msg = self._scrub(str(err.get("error_user_msg") or "")).strip()[:200]
+        user_msg = self._user_msg(err)
         return f"{message}（{user_msg}）" if user_msg and user_msg not in message else message
 
     def _fail(self, what: str, error: urllib.error.HTTPError, permission: str | None):

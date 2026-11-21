@@ -680,6 +680,8 @@ def _send(args, account):
     # その場で突き合わせる）。MCP の `thth_send_request` は今までどおり呼べば出す。
     _refuse_unread(args, "send", {"community_id": "--community", "goal": "--goal", "found_by": "--found-by",
                                   "share_to_instagram": "--share-to-instagram",
+                                  # タイアップの印を捨てると、案件の投稿が印なしで公開される（監査 5.28.0 の A1）。
+                                  "paid_partnership": "--paid-partnership", "sponsor_ids": "--sponsor",
                                   "reply_to_root": "--reply-to-root",
                                   "reply_to_author_key": "--reply-to-author-key", "confirm": "--confirm"})
     has_media = bool(getattr(args, "media_files", None))

@@ -318,7 +318,7 @@ def publish(adapter, post, *, before_publish=None, on_container_created=None):
         elif definite:
             # 符丁だけでは直す所が分からない（11/20 aoking の 36103/2207097 は「ブランドコンテンツツールが
             # 無効」と error_user_msg にだけ書いてあった）。記録の reason は符丁のまま、人に見せる文にだけ添える。
-            user_msg = adapter._scrub(str(err.get("error_user_msg") or "")).strip()[:200]
+            user_msg = adapter._user_msg(err)
             if user_msg:
                 reason = f"{reason}: {user_msg}"
         return base.PublishResult(None, None, ts, error=reason, failure=failure)

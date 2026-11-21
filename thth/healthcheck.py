@@ -256,6 +256,11 @@ def sanitize_reason(raw, *, action: str | None = None,
         return "unknown"
     if raw in _KNOWN_REASONS:
         return raw
+    # 「符丁: Meta の人向けの文」の形（5.28.0 で IG の投稿の 4xx に添えた）は、符丁の側だけを読む。
+    # 後ろの文に「権限」「timeout」などがあっても、理由を読み違えない（監査 5.28.0 の B2）。
+    head = raw.split(": ", 1)[0]
+    if head != raw and re.fullmatch(r"[a-z0-9_]+", head) and _HTTP_STATUS.search(head):
+        raw = head
     lower = raw.lower()
     # アカウント側の断り（3.19.2）は HTTP の番号より先に見る（`publish_http_403` では
     # 原稿の問題と見分けられず、次の一手を言えない）。

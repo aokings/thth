@@ -376,6 +376,20 @@ def test_作成の4xxはMetaの人向けの説明を添える(wire):
     assert result.error == "media_creating_http_400_code_36103: ブランドコンテンツツールが無効です"
 
 
+def test_監査528_Metaの文の端末を操る字と改行は出さない(wire):
+    wire["create"] = (400, {"error": {"message": "Invalid parameter", "code": 36103,
+                                      "error_user_msg": "一行目\n二行目\x1b[31m赤\x07"}})
+    result, journal = invoke(wire)
+    assert result.error == "media_creating_http_400_code_36103: 一行目 二行目?[31m赤?"
+
+
+def test_監査528_Metaの文に鍵らしい値があれば文ごと添えない(wire):
+    wire["create"] = (400, {"error": {"message": "Invalid parameter", "code": 36103,
+                                      "error_user_msg": "token EAAB" + "x9Zq" * 40 + " is invalid"}})
+    result, journal = invoke(wire)
+    assert result.error == "media_creating_http_400_code_36103"
+
+
 def test_画像の無い投稿は出さない():
     a = adapter("http://127.0.0.1:9")
     result = a.publish(base.Post("文だけ"), dry_run=False)

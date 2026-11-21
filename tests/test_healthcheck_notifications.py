@@ -345,3 +345,14 @@ def test_board_exposes_safe_cause_and_notification_truth(isolated_account):
     assert row["inflight_started"] == "2026-09-16T20:08:13+09:00"
     assert row["inflight_reason_code"] == "publish_result_unknown"
     assert "媒体上の投稿有無" in row["inflight_next_action"]
+
+
+def test_監査528_符丁の後ろに添えたMetaの文で理由を読み違えない():
+    # IG の投稿の 4xx には「符丁: Meta の人向けの文」と添える（5.28.0）。文に「権限」とあっても、
+    # 認可し直しを勧める permission_missing にしない（符丁の側を読む）。
+    from thth import healthcheck
+    raw = "media_creating_http_400_code_36103: この操作を行う権限がありません"
+    assert healthcheck.sanitize_reason(raw, action="post") == "publish_http_400"
+    # 符丁でない文は今までどおり。
+    assert healthcheck.sanitize_reason("権限がありません: 詳細", action="post") == "permission_missing"
+    assert healthcheck.sanitize_reason("permission_missing: instagram_content_publish") == "permission_missing"

@@ -99,9 +99,15 @@ def cmd_creators(args) -> int:
     present = mw._read("承認クリエイターの一覧", lambda: adapter.brand_creators_check(ids))
     if args.action == "list":
         _note(args, "brand_creators", media, ig.BRAND_PERMISSION)
+        # 11/20 approve（success: true）の直後も 11/21 も、本物の読みは `{"data": []}` だった。
+        lag_note = ("承認した直後でも Meta の読みに載らないことがあります（11/20〜21 に本物で確認）。"
+                    "タイアップの投稿が通るかで確かめてください")
         if args.json:
-            mw._print_json({"ok": True, "account": args.account, "checked": len(ids), "approved": present,
-                            "approved_count": len(present), "storage": "display_only"})
+            value = {"ok": True, "account": args.account, "checked": len(ids), "approved": present,
+                     "approved_count": len(present), "storage": "display_only"}
+            if len(present) < len(ids):
+                value["note"] = lag_note  # --json で読む側にも伝える（0 件を未承認と読ませない・監査 5.28.0 の B7）
+            mw._print_json(value)
             return 0
         print(f"{args.account}  尋ねた {len(ids)} 件のうち承認済み {len(present)} 件（保存しません）")
         for value in present:
@@ -111,9 +117,7 @@ def cmd_creators(args) -> int:
                 print(f"  載っていない id={value}")
         print("  Meta の公開の口は、尋ねた id が載っているかを返します（引数なしの全件一覧は公式の頁に無い）")
         if len(present) < len(ids):
-            # 11/20 approve（success: true）の直後も 11/21 も、本物の読みは `{"data": []}` だった。
-            print("  承認した直後でも Meta の読みに載らないことがあります（11/20〜21 に本物で確認）。"
-                  "タイアップの投稿が通るかで確かめてください")
+            print(f"  {lag_note}")
         return 0
     by = mw._by(args)
     change = "POST" if args.action == "approve" else "DELETE"

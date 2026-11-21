@@ -549,6 +549,9 @@ def test_send_は_production_が無ければ出さずにlintだけ(worker, capsy
     ["send", ACCOUNT, "--production", "--text", "コミュニティへ", "--community", "1234567890"],
     ["send", ACCOUNT, "--production", "--text", "目的つき", "--goal", "reach"],
     ["send", ACCOUNT, "--production", "--text", "古い番号", "--confirm", "abc123"],
+    # 監査 5.28.0 の A1: タイアップの印を捨てると、案件の投稿が印なしで公開される。
+    ["send", ACCOUNT, "--production", "--text", "案件", "--paid-partnership"],
+    ["send", ACCOUNT, "--production", "--text", "案件", "--paid-partnership", "--sponsor", "17841400000000001"],
 ])
 def test_遠くの道が読まない旗は黙って捨てずに断る(worker, capsys, argv):
     """`retract --already-gone` が本当の DELETE に、`send --community` が普段の公開になっていた（10/15）。"""
