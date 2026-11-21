@@ -50,12 +50,14 @@ class Tee:
         except OSError:
             self._handle = None
 
+    # 画面の行は 1 行ごとに押し出す（11/20: ssh の裏では出口が端末でないので、認可の URL の行が
+    # 溜まったまま待ちに入り、人に見えなかった）。
     def log(self, line):
-        print(line)
+        print(line, flush=True)
         self._write(line)
 
     def human_output(self, line):
-        print(line)
+        print(line, flush=True)
         self._write(line)
 
 

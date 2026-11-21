@@ -251,3 +251,18 @@ def test_ログを開けなくても画面だけで続ける(tmp_path, monkeypat
         tee.log("続ける")
     captured = capsys.readouterr()
     assert "続ける" in captured.out and "ログを書けません" in captured.err
+
+
+def test_画面への行は溜めずにその場で出す(tmp_path, monkeypatch):
+    # 11/20: ssh の裏（端末でない出口）で `thth auth` を打つと、認可の URL の行が溜まったまま
+    # 待ちに入り、人に見えなかった（`PYTHONUNBUFFERED=1` で出た）。1 行ごとに押し出す。
+    import io
+    import sys
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="utf-8"))
+    monkeypatch.setenv("THTH_ROOT", str(tmp_path))
+    with auth_log.open_for("alpha", write=False) as tee:
+        tee.human_output("https://example.invalid/authorize")
+        assert "authorize" in raw.getvalue().decode("utf-8")
+        tee.log("次の行")
+        assert "次の行" in raw.getvalue().decode("utf-8")
