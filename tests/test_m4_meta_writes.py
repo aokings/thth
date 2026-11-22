@@ -508,3 +508,14 @@ def test_監査527_持ち主でない側のDMの止めには当てない():
         {"code": 200, "message": "(#200) 相手はダイレクトメッセージを無効にしています。"})
     assert meta_errors.is_message_access_off(
         {"code": 200, "message": "(#200) The account owner has disabled access to instagram direct messages."})
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_Metaの書く口の一段目は断りに数えない(m4, capsys, as_json):
+    # 11/20: dm send の一段目（digest を見せるだけ・rc 1）のたびに、report_channel に「exit_1 で断られた」と
+    # 出ていた。ほかの二段確認（approve・gbp・bookmark）と同じく、一段目は断りではない。
+    from thth import refusals
+    argv = ["dm", "send", FB_ACCOUNT, FB_CONVO, "--text", OUTBOUND, "--by", "m"] + (["--json"] if as_json else [])
+    rc, out, err = main(capsys, *argv)
+    assert rc == 1 and refusals.is_first_stage()
+    assert "report_channel" not in err and "exit_1" not in err

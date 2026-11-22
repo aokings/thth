@@ -169,7 +169,12 @@ def digest_of(kind: str, account: str, *parts) -> str:
 
 
 def _stage_one(args, *, digest, payload, lines, again) -> int:
-    """一段目: 見せて digest を出し、何もしない（rc=1）。"""
+    """一段目: 見せて digest を出し、何もしない（rc=1）。rc 1 は断りではない（印を付ける）。
+
+    11/20: 印が無く、dm send などの一段目のたびに report_channel へ「exit_1 で断られた」と出ていた。
+    """
+    from . import refusals
+    refusals.mark_first_stage()
     if args.json:
         _print_json({"ok": False, "stage": 1, "digest": digest, "account": args.account, **payload})
         return 1
