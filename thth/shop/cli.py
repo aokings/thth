@@ -885,6 +885,8 @@ def cmd_remove(args) -> int:
     digest = remove_mod.digest(found)
     payload = {"store": args.store, "targets": found["targets"], "kept": found["kept"], "by": by}
     if not args.confirm:
+        from .. import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         if args.json:
             _print({"ok": False, "stage": 1, "digest": digest, **payload})
             return 1

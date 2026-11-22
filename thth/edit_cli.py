@@ -234,6 +234,8 @@ def _cmd_edit(args) -> int:
 
     if not args.confirm:
         # ---- 一段目: 見せるだけ。媒体は呼ばない ----
+        from . import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         if args.json:
             _print_json({"ok": False, "edited": False, "stage": 1, "account": args.account,
                          "post_id": post_id, "url": row.get("url"), "permalink": row.get("url"),
@@ -408,6 +410,8 @@ def _cmd_reply(args) -> int:
 
     digest = _reply_delete_digest(comment_id, args.account, reason) if action == "delete" else None
     if action == "delete" and not args.confirm:
+        from . import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         if args.json:
             _print_json({"ok": False, "deleted": False, "stage": 1, "account": args.account,
                          "comment_id": comment_id, "text": comment.get("text"),

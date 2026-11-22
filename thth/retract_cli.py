@@ -292,6 +292,8 @@ def _cmd_retract(args) -> int:
 
     if not args.confirm:
         # ---- 一段目: 見せるだけ。何もしない・DELETE 0 回 ----
+        from . import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         if args.json:
             _print_json({"ok": False, "retracted": False, "stage": 1,
                          "account": args.account, "post_id": post_id, "url": url,

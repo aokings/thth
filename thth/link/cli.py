@@ -98,6 +98,13 @@ def cmd_check(args) -> int:
     return 0
 
 
+def _first_stage(value) -> None:
+    """一段目（digest を見せるだけ・rc 1）なら、断りに数えない印を付ける。"""
+    if value.get("stage") == 1:
+        from .. import refusals
+        refusals.mark_first_stage()
+
+
 def cmd_consent(args) -> int:
     if not (getattr(args, "by", None) or "").strip():
         raise RegisterRefused("register_args_invalid", "by")   # 同意を控える・取り消すのは誰か（必須）
@@ -106,6 +113,7 @@ def cmd_consent(args) -> int:
         raise RegisterRefused("register_args_invalid", "revoke_or_reset")
     if args.reset:
         value = send_mod.reset_consent(args.register, by=by, now=jst.now_jst(), confirm=args.confirm)
+        _first_stage(value)
         if args.json:
             _print({"ok": value["stage"] == 2, **value})
             return 0 if value["stage"] == 2 else 1
@@ -118,6 +126,7 @@ def cmd_consent(args) -> int:
         return 0
     value = send_mod.keep_consent(args.register, by=by, now=jst.now_jst(), confirm=args.confirm, revoke=args.revoke,
                                   to=args.to)
+    _first_stage(value)
     if value["stage"] == 1:
         if args.json:
             _print({"ok": False, **value})
@@ -188,6 +197,7 @@ def cmd_show(args) -> int:
 
 
 def _send_out(args, value) -> int:
+    _first_stage(value)
     if value.get("stage") == 1:
         if args.json:
             _print({"ok": False, **value})

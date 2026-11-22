@@ -358,6 +358,8 @@ def _accept_all(args, root: str) -> int:
              for name in names}
     combined = R.all_digest({name: plan["digest"] for name, plan in plans.items()})
     if args.confirm is None:
+        from .. import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         value = {"stage": 1, "outlet": R.ALL, "digest": combined,
                  "outlets": {name: _stage1(plan) for name, plan in plans.items()}}
         if args.json:
@@ -423,6 +425,8 @@ def cmd_accept(args) -> int:
         return _accept_all(args, root)
     if args.confirm is None:
         plan = R.accept_plan(root, args.outlet, args.to, args.as_of, common_root=args.common)
+        from .. import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
         value = {"stage": 1, "outlet": plan["outlet"], "generation": plan["body"]["generation"],
                  "digest": plan["digest"], "new_judgments": plan["new_judgments"], "changes": plan["changes"],
                  "pending_takes": plan["result"]["pending_takes"], "stale": plan["stale"],

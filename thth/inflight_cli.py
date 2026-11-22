@@ -359,6 +359,8 @@ def refusal(account: str, record, decision: str, post_id):
 
 
 def _stage_one(args, record, decision, post_id, by, expected) -> int:
+    from . import refusals
+    refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
     info = summary(record)
     flag = "--not-published" if decision == "not_published" else f"--published {post_id}"
     command = (f"thth inflight {args.account} resolve {flag} --by "

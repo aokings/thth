@@ -76,6 +76,9 @@ def cmd_request(args) -> int:
 def cmd_scope(args) -> int:
     value = E.scope(root_of(args.register), args.request, args.versions, by=_by(args), at=_at(), confirm=args.confirm,
                     field=args.field, record=args.record)
+    if value["stage"] == 1:
+        from .. import refusals
+        refusals.mark_first_stage()   # 一段目の rc 1 は断りではない
     if args.json:
         _print(value)
         return 1 if value["stage"] == 1 else 0
