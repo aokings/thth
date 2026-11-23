@@ -379,6 +379,32 @@ def compute_retract_digest(*, post_id: str, account: str, reason: str,
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
 
 
+# THTH の記録の無い自分の投稿を `thth retract` で消す二段確認の digest（設計 持ち主の依頼で消す §0 の 2）。
+_RETRACT_OUTSIDE_VERSION = "thth-retract-outside-1"
+
+
+def compute_outside_retract_digest(*, post_id: str, account: str, reason: str, text: str,
+                                   posted_at, kind: str, length: int = APPROVE_DIGEST_LENGTH) -> str:
+    """記録の無い投稿の取り下げの digest。**一段目で媒体から読んだ本文の指紋**を材料に入れる。
+
+    `thth-retract-outside-1`・`post_id`・`account`・`reason`・本文の sha256・媒体の日時・種類
+    （post・story・repost）の順。口座・id・理由だけから計算した番号（`compute_retract_digest`）では
+    通らない——一段目で本文を読まないと作れない。一段目のあとに本文が変われば番号が変わり、消さない。
+    版の語を別にするのは、記録のある投稿の digest と偶然にも一致させないため。
+    """
+    parts = [
+        _RETRACT_OUTSIDE_VERSION,
+        (post_id or "").strip(),
+        (account or "").strip(),
+        (reason or "").strip(),
+        hashlib.sha256((text or "").encode("utf-8")).hexdigest(),
+        str(posted_at or "").strip(),
+        (kind or "").strip(),
+    ]
+    joined = _SEP.join(parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
+
+
 # `thth edit` の二段確認の digest（Meta 計画 段 1・10/29）。
 _EDIT_VERSION = "thth-edit-1"
 

@@ -1153,6 +1153,34 @@ class FacebookAdapter(base.Adapter):
             out["permalink"] = row["permalink_url"]
         return out
 
+    def own_post(self, post_id: str) -> dict:
+        """自分のページの投稿 1 件（`GET /{post_id}`・設計 持ち主の依頼で消す §3）。
+
+        **`from.id` をページの id と比べる**のが本線（ページの鍵はページに書かれた他人の投稿も
+        消せることがあるので、媒体の断りに任せない）。違えば・`from` が無ければ `PostNotOwn`。
+        """
+        value = str(post_id or "").strip()
+        if not OBJECT_ID.fullmatch(value):
+            raise base.PostUnreadable("facebook_post_id_invalid: " + self.POST_ID_FORM_HINT)
+        try:
+            row = self._get(f"/{value}", "投稿の取得",
+                            params={"fields": "id,message,created_time,permalink_url,from{id,name}"},
+                            permission="pages_read_engagement")
+        except base.PermissionMissing:
+            raise
+        except Exception as e:
+            raise base.PostUnreadable("投稿を読めません: " + self._scrub(e)) from None
+        if not isinstance(row, dict) or str(row.get("id") or "") != value:
+            raise base.PostUnreadable("投稿の取得: 応答の id が要求と一致しません")
+        author = row.get("from") if isinstance(row.get("from"), dict) else {}
+        if not self.page_id or str(author.get("id") or "") != self.page_id:
+            raise base.PostNotOwn("このページの投稿ではありません（from.id が違います）")
+        return {"post_id": value,
+                "text": row.get("message") if isinstance(row.get("message"), str) else "",
+                "timestamp": row.get("created_time"),
+                "url": row.get("permalink_url") if isinstance(row.get("permalink_url"), str) else None,
+                "kind": "post"}
+
     # ----- 実測 ------------------------------------------------------------
 
     def recent_posts(self, *, limit: int = 25) -> list:

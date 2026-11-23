@@ -412,6 +412,8 @@ class ThreadsAdapter(base.Adapter):
         name = (account_cfg or {}).get("account")
         if name and accounts_mod.name_is_safe(name):
             adapter.webhook_account = name
+        # 台帳の handle（`own_post` が `owner` の無い応答で持ち主を比べる）。
+        adapter.handle = str((account_cfg or {}).get("handle") or "")
         return leave_gate.bind(adapter, account_cfg)
 
     def _post(self, path: str, params: dict) -> dict:
@@ -1926,6 +1928,45 @@ class ThreadsAdapter(base.Adapter):
             if key in body:
                 out[key] = body[key]
         return out
+
+    # 持ち主を比べるための 1 件読み（設計 持ち主の依頼で消す §3）。`owner` は Media の欄（**L3**:
+    # 本物で返るかは未確認・返らなければ `username` を台帳の handle と比べる）。
+    OWN_POST_FIELDS = "id,owner,username,text,timestamp,permalink,media_type"
+
+    def own_post(self, post_id: str) -> dict:
+        """自分の投稿 1 件（`GET /{id}`・`thth retract` が記録の無い投稿を消す前にだけ呼ぶ）。
+
+        持ち主は `owner.id` を `.token` の `user_id` と比べる。`owner` が無ければ `username` を
+        台帳の `handle` と比べる。どちらでも確かめられなければ `PostNotOwn`。再投稿
+        （`media_type: REPOST_FACADE`）は `kind: repost`（DELETE は再投稿の取り消しになる）。
+        """
+        value = (post_id or "").strip() if isinstance(post_id, str) else ""
+        if not value.isdigit():
+            raise base.PostUnreadable(f"Threads の post_id は数字だけです（{value!r}）")
+        try:
+            body = self._read(
+                lambda: self._get(f"/v1.0/{value}", {"fields": self.OWN_POST_FIELDS}),
+                permission="threads_basic", what="投稿の取得")
+        except base.PermissionMissing:
+            raise
+        except Exception as e:
+            raise base.PostUnreadable(redact_mod.redact(f"投稿を読めません: {e}")) from None
+        if not isinstance(body, dict) or str(body.get("id") or "") != value:
+            raise base.PostUnreadable("投稿の取得: 応答の id が要求と一致しません")
+        owner = body.get("owner") if isinstance(body.get("owner"), dict) else None
+        if owner is not None and owner.get("id") is not None:
+            mine = bool(self.user_id) and str(owner.get("id")) == str(self.user_id)
+        else:
+            handle = str(getattr(self, "handle", "") or "").lstrip("@").lower()
+            username = str(body.get("username") or "").lstrip("@").lower()
+            mine = bool(handle) and username == handle
+        if not mine:
+            raise base.PostNotOwn("この口座の投稿ではありません（持ち主が違うか、確かめられません）")
+        return {"post_id": value,
+                "text": body.get("text") if isinstance(body.get("text"), str) else "",
+                "timestamp": body.get("timestamp"),
+                "url": body.get("permalink") if isinstance(body.get("permalink"), str) else None,
+                "kind": "repost" if body.get("media_type") == "REPOST_FACADE" else "post"}
 
     def inbox(self, *, since=None) -> list:
         """**言及を `inbox` に流す**（設計 v2 §4.3「v2-3 の芽がそのまま受け皿」）。

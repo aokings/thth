@@ -608,6 +608,9 @@ class MastodonAdapter(base.Adapter):
             raise AdapterError("mastodon_reblog_unconfirmed: 応答の reblog が要求した投稿ではありません")
         return {"reaction_id": str(body["id"])}
 
+    # 取り消しは元の投稿の id で打つ（unreblog・unfavourite）。
+    REACTION_UNDO_BY_POST = frozenset({"repost", "like"})
+
     def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
         """`POST /api/v1/statuses/:id/unreblog`（**元の投稿の id** に対して）。"""
         self._react("repost", post_id or "", "unreblog")
@@ -777,6 +780,38 @@ class MastodonAdapter(base.Adapter):
         if url:
             out["permalink"] = url
         return out
+
+    # 自分の投稿なら見せてよい公開範囲（設計 持ち主の依頼で消す §3）。**持ち主を先に見て**から、
+    # フォロワー限定（private）も本人に見せて消せる。direct（宛先だけの投稿）は見せない。
+    OWN_POST_VISIBILITIES = ("public", "unlisted", "private")
+
+    def own_post(self, post_id: str) -> dict:
+        """自分の投稿 1 件（`GET /api/v1/statuses/:id`）。`account.id` を `.token` の `user_id` と比べる。
+
+        `thth retract` が THTH の記録の無い投稿を消す前にだけ呼ぶ。ブースト（`reblog` がある）は
+        `kind: repost`。読めない・direct の投稿は `PostUnreadable`。
+        """
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        if not POST_ID.fullmatch(value):
+            raise base.PostUnreadable("mastodon_post_id_invalid: " + self.POST_ID_FORM_HINT)
+        try:
+            account_id = self.account_id or str(self.whoami().get("user_id") or "")
+            status = self._get_json(f"/api/v1/statuses/{value}", "投稿の取得")
+        except base.PermissionMissing:
+            raise
+        except Exception as e:
+            raise base.PostUnreadable(f"投稿を読めません: {self._scrub(str(e))}") from None
+        if str(status.get("id") or "") != value:
+            raise base.PostUnreadable("投稿の取得: 応答の id が要求と一致しません")
+        owner = status.get("account") if isinstance(status.get("account"), dict) else {}
+        if not account_id or str(owner.get("id") or "") != account_id:
+            raise base.PostNotOwn("この口座の投稿ではありません（account.id が違います）")
+        if status.get("visibility") not in self.OWN_POST_VISIBILITIES:
+            raise base.PostUnreadable("宛先だけの投稿（direct）は見せないので、ここからは消しません")
+        return {"post_id": value, "text": strip_html(status.get("content")),
+                "timestamp": status.get("created_at"),
+                "url": status.get("url") if isinstance(status.get("url"), str) else None,
+                "kind": "repost" if status.get("reblog") else "post"}
 
     # --- 語で検索（T2-1・設計「自分の泉」§2.3・§3） -------------------------
     # `GET /api/v2/search` の param（**L2**: docs.joinmastodon.org/methods/search/

@@ -98,6 +98,29 @@ def write(state_dir: str, *, kind: str, post_id: str, platform_id: str, by: str,
     return {**row, "path": path}
 
 
+def write_outside_undo(state_dir: str, *, kind: str, post_id: str, by: str, via: str = "cli",
+                       media: str | None = None) -> dict:
+    """THTH の外で付けた反応を外した記録を 1 件書く（設計 持ち主の依頼で消す §5）。
+
+    反応を付けた時刻は THTH が知らないので `at` は null、`undone_at` に外した時刻、
+    `outside_thth: true` を立てる。数え（`events`）には外した 1 回だけが入る。
+    """
+    if kind not in KINDS:
+        raise ValueError("invalid_reaction_kind")
+    if via not in VIAS:
+        raise ValueError("invalid_via")
+    if not postid_mod.is_usable(post_id):
+        raise ValueError("invalid_reaction_record")
+    row = {"kind": kind, "post_id": post_id, "platform_id": post_id, "at": None,
+           "undone_at": jst.iso(), "undone_by": by, "undone_via": via, "by": None, "via": via,
+           "outside_thth": True}
+    if media:
+        row["media"] = media
+    path = os.path.join(dir_for(state_dir), _name(kind, post_id))
+    secrets_fs.atomic_write_json(path, row, mode=0o600, dir_mode=0o700)
+    return {**row, "path": path}
+
+
 def mark_undone(row: dict, *, by: str, via: str = "cli", at: str | None = None) -> dict:
     """記録に `undone_at`・`undone_by`・`undone_via` を足す（消さない）。"""
     if via not in VIAS:

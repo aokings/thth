@@ -164,6 +164,13 @@ def summary(person, account, credentials_path, *, now=None) -> dict:
         if jst.parse(record.get("retracted_at")) is not None:
             rows.append({"kind": "retracted", "at": record["retracted_at"], "head": head, "post_id": post_id,
                          "draft_id": None, "reason": None, "reply": bool(record.get("reply_to"))})
+    # THTH を通していない自分の投稿を消した記録（`retracted_outside/`・設計 持ち主の依頼で消す §4）も
+    # 「消した」の行に並べる。行の形は変えない（Worker の側の検査を変えずに済ませる）。
+    for record in sent_mod.outside_retractions(accounts.state_dir_for(account)):
+        if jst.parse(record.get("retracted_at")) is not None:
+            rows.append({"kind": "retracted", "at": record["retracted_at"], "head": _head(record.get("text")),
+                         "post_id": str(record.get("post_id"))[:300], "draft_id": None, "reason": None,
+                         "reply": False})
     try:
         for name, _raw, q, _verified in server_writes._rows(cfg, account):
             fm = q.front_matter

@@ -250,8 +250,9 @@ def test_鍵があっても口座でない語を取る命令は巻き込まな�
     (["account", "status", ACCOUNT], "account_status", {}),
     (["account", "set", ACCOUNT, "daily_max_posts", "3"], "settings", {"key": "daily_max_posts", "value": "3"}),
     (["queue", ACCOUNT], "draft_list", {}),
+    # 11/23（設計 持ち主の依頼で消す）: 二段目の digest はサーバが照らすので confirm も届く。
     (["retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", _retract_digest("123", "誤字")], "retract_request",
-     {"post_id": "123", "reason": "誤字"}),
+     {"post_id": "123", "reason": "誤字", "confirm": _retract_digest("123", "誤字")}),
     (["send", ACCOUNT, "--production", "--text", "こんにちは", "--topic", "お茶", "--reply-to", "55"], "send_request",
      {"body": "こんにちは", "topic": "お茶", "reply_to": "55"}),
 ])
@@ -563,18 +564,34 @@ def test_遠くの道が読まない旗は黙って捨てずに断る(worker, ca
 
 
 def test_retract_は二段_一段目は消さずにdigestを見せる(worker, capsys):
-    """thth.me の道でも手元と同じ二段（masaru 10/15「揃える」）。それまでは一回で DELETE していた。"""
-    worker.push(200, {"account": ACCOUNT, "posts": [{"post_id": "123", "text": "消す本文", "permalink": "https://x/123"}]})
+    """thth.me の道でも手元と同じ二段（masaru 10/15「揃える」）。11/23 から一段目はサーバに訊く
+    （`stage: "1"`・サーバは何も消さず、記録か媒体の 1 件読みの本文と digest を返す）。"""
+    digest = "abc123def456"
+    worker.push(200, {"account": ACCOUNT, "status": "confirm_required", "stage": 1, "retracted": False,
+                      "post_id": "123", "digest": digest, "recorded": False, "kind": "post",
+                      "text": "消す本文", "posted_at": "2026-11-23T10:00:00+09:00", "permalink": "https://x/123"})
     rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字")
-    digest = _retract_digest("123", "誤字")
     assert rc == 1 and "一段目" in out and "消す本文" in out and digest in out
-    assert not any(c["path"].endswith("retract_request") for c in worker.calls)
+    assert "THTH を通していない自分の投稿" in out
+    assert [c["body"] for c in worker.calls] == [{"account": ACCOUNT, "post_id": "123", "reason": "誤字", "stage": "1"}]
 
 
-def test_retract_は違うdigestなら頼まない(worker, capsys):
+def test_retract_は違うdigestならサーバが断る(worker, capsys):
+    """digest はサーバが照らす（記録の無い投稿の digest は本文の指紋入りで手元では作れない・11/23）。"""
+    worker.push(409, {"error": "confirm_mismatch"})
     rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", "0000000000")
-    assert rc == 1 and "一致しない" in (out + err)
-    assert worker.calls == []
+    assert rc != 0 and "confirm_mismatch" in (out + err)
+    assert worker.calls[-1]["body"]["confirm"] == "0000000000"
+
+
+def test_retract_の二段目にサーバが一段目を返したら消したと言わない(worker, capsys):
+    """記録の無い投稿に口座・id・理由だけの番号で頼むと、サーバは一段目を返す（消していない）。"""
+    worker.push(200, {"account": ACCOUNT, "status": "confirm_required", "stage": 1, "retracted": False,
+                      "post_id": "123", "digest": "fedcba987654", "recorded": False, "kind": "repost",
+                      "text": "", "posted_at": None, "permalink": None})
+    rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", _retract_digest("123", "誤字"))
+    assert rc == 1 and "一段目" in out and "取り下げました" not in out and "fedcba987654" in out
+    assert "再投稿の取り消し" in out
 
 
 def test_schedule_は_production_が無ければ予約しない(worker, capsys):

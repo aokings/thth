@@ -178,8 +178,12 @@ def _edit_record(state_dir: str, post_id: str):
     """直せる記録か。`(row, None)` か `(None, 断りの 1 行)`。"""
     row = sent_mod.read(state_dir, post_id)
     if row is None or row.get("post_id") != post_id:
-        return None, (f"post_id {post_id} の記録が sent/ にありません。**THTH で出していない投稿は"
-                      "直しません**（Meta もそのアプリで作った投稿しか直せません）")
+        # 設計 持ち主の依頼で消す §5: 柵は THTH の決まりでなく Meta の決まり（そのアプリで作った投稿しか
+        # 直せない・facebook.py の edit_post の注記）。外しても結果は変わらないので、文だけ直す。
+        return None, (f"post_id {post_id} は直しません — なぜ: sent/ に THTH で出した記録が無く、Meta の決まりで"
+                      "直せるのはそのアプリ（THTH）で作った投稿だけです。直し方: Facebook の画面で直すか、"
+                      f"thth retract <account> {post_id} で消して THTH から出し直してください。"
+                      "より良く: 直しそうな投稿は THTH から出しておくと、あとから thth edit で直せます")
     if row.get("kind") is not None:
         return None, f"post_id {post_id} は SNS の投稿の記録ではありません（{row.get('kind')}）"
     if row.get("retracted_at"):

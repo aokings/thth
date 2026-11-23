@@ -159,6 +159,23 @@ class UnsupportedOnPlatform(AdapterError):
     """
 
 
+class PostNotOwn(AdapterError):
+    """**読めたが、この口座の投稿ではない**（`own_post()` が投げる・設計 持ち主の依頼で消す §3）。
+
+    `thth retract` は記録の無い投稿を消す前に `own_post()` で 1 件読み、持ち主を比べる。
+    比べて違えば（または持ち主の欄が無く確かめられなければ）これ。呼ぶ側は消さずに
+    `post_not_own` で断る。
+    """
+
+
+class PostUnreadable(AdapterError):
+    """**その投稿を読めなかった**（5xx・時間切れ・形の違う応答・見せない種類）。
+
+    `own_post()` が投げる。読めなければ本文を見せられないので、呼ぶ側は消さずに
+    `post_unreadable` で断る（媒体の DELETE が他人の物を断る媒体でも同じ）。
+    """
+
+
 class ScopeMissing(AdapterError):
     """**この操作に要る scope がトークンに無いと分かっている**（設計 3.15.0 §3・
     Mastodon の `write:favourites`・X の `like.write`）。
@@ -530,6 +547,10 @@ class Adapter:
     # 取り消しに別の権限が要る媒体は `REACTION_UNDO_PERMISSIONS` に書く。
     REACTION_PERMISSIONS: dict = {}
     REACTION_UNDO_PERMISSIONS: dict = {}
+    # 元の投稿の id だけで「自分の、その投稿への反応」を外せる反応（設計 持ち主の依頼で消す §5）。
+    # ここにある反応は THTH の記録が無くても `thth unrepost|unlike` で 1 回頼める（他人の反応には届かない）。
+    # Threads の再投稿は再投稿そのものの id が要る・Bluesky は反応の記録の uri が要るので入れない。
+    REACTION_UNDO_BY_POST: frozenset = frozenset()
     # 口を持たない反応 → 断りの理由（`unsupported_on_platform` に添える 1 行）。
     UNSUPPORTED_REACTIONS: dict = {}
 
@@ -583,6 +604,22 @@ class Adapter:
         """
         raise AdapterError(
             f"{type(self).__name__}: この媒体の取り下げは未対応です")
+
+    def own_post(self, post_id: str) -> dict:
+        """**自分の口座の投稿 1 件**を読む（設計 持ち主の依頼で消す §3・読むだけ）。
+
+        `thth retract` が THTH の記録の無い投稿を消す前に、**id 1 件を読んで持ち主を比べる**ための口
+        （直近 25 件の一覧を探すのはやめた）。返す形:
+        `{"post_id", "text", "timestamp", "url", "kind"}`（`kind` は post・story・repost）。
+
+        - 読めたが自分の物でない（持ち主の欄が無く確かめられないときも）→ `PostNotOwn`
+        - 読めない（5xx・時間切れ・形の違う応答・見せない種類）→ `PostUnreadable`
+        - 権限が乗っていない → `PermissionMissing`
+
+        持たない媒体は `PostUnreadable`（読めないので消さない）。`fetch_post`（枝の根を引く口）は
+        媒体ごとに持ち主の見方がばらばらなので流用しない。
+        """
+        raise PostUnreadable(f"{type(self).__name__}: この媒体で投稿 1 件を読む口がありません")
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):

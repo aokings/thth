@@ -839,6 +839,43 @@ class BlueskyAdapter(base.Adapter):
             pass
         return {"deleted": True, "post_id": value}
 
+    def own_post(self, post_id: str) -> dict:
+        """自分の投稿 1 件（`com.atproto.repo.getRecord`・設計 持ち主の依頼で消す §3）。
+
+        持ち主は id の形で決まる: `at://<自分の DID>/app.bsky.feed.post/<rkey>`（他人の DID・別の
+        collection は `PostNotOwn`）。足すのは本文を一段目に出すことだけ（消すのは `delete_post`）。
+        """
+        try:
+            session = self.session()
+        except base.PermissionMissing:
+            raise
+        except Exception as e:
+            raise base.PostUnreadable(self._scrub(f"投稿を読めません（ログインに失敗）: {e}")) from None
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        prefix = f"at://{session['did']}/{POST_COLLECTION}/"
+        rkey = rkey_of(value) if value.startswith(prefix) else None
+        if (not rkey or value != prefix + rkey
+                or not re.fullmatch(r"[A-Za-z0-9._:~-]{1,512}", rkey) or rkey in (".", "..")):
+            raise base.PostNotOwn(
+                "自分の投稿の uri（at://<自分の DID>/app.bsky.feed.post/<rkey>）ではありません")
+        where = {"repo": session["did"], "collection": POST_COLLECTION, "rkey": rkey}
+        try:
+            found = self._request("GET", "com.atproto.repo.getRecord", params=where)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise base.PermissionMissing(self.DELETE_PERMISSION, f"HTTP {e.code}") from None
+            raise base.PostUnreadable(f"投稿を読めません（HTTP {e.code}）") from None
+        except Exception as e:
+            raise base.PostUnreadable(self._scrub(f"投稿を読めません: {e}")) from None
+        if not isinstance(found, dict) or found.get("uri") != value:
+            raise base.PostUnreadable("getRecord の uri が要求と一致しません")
+        record = found.get("value") if isinstance(found.get("value"), dict) else {}
+        return {"post_id": value,
+                "text": record.get("text") if isinstance(record.get("text"), str) else "",
+                "timestamp": record.get("createdAt"),
+                "url": post_url(session.get("handle"), value) if session.get("handle") else None,
+                "kind": "post"}
+
     def repost(self, post_id: str) -> dict:
         return self._react("repost", post_id)
 

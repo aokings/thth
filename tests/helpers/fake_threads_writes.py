@@ -9,6 +9,10 @@
   - "delete"   : "ok" | "permission" | "4xx" | "no_success"（200 だが success 無し）
   - "location" : "ok" | "permission" | "empty"
   - "recent"   : "ok" | "absent"（404。URL を引けない経路の試験用）
+  - "own"      : 1 件読み（`GET /v1.0/<数字>`・`own_post`・11/23 設計 持ち主の依頼で消す）
+                 "ok"（777 は自分・888 は他人の投稿・ほかは 404）| "5xx" | "timeout" |
+                 "no_owner"（`owner` を返さず username だけ）| "repost"（777 が再投稿）
+  - "own_text" : 777 の本文（試験の途中で書き換えて「見せた後に本文が変わった」を作る）
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     create_params: list
     deletes: list          # DELETE を受けたパス（access_token は落として記録）
     locations: list        # /location_search に届いた params
+    reads: list            # 1 件読み（GET /v1.0/<数字>）の id
     permalink = "https://www.threads.net/@fake/post/ABC"
 
     def _respond_json(self, status: int, payload) -> None:
@@ -105,6 +110,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                      "country": "JP"},
                 ]})
             return
+        own = parsed.path.rsplit("/", 1)[-1]
+        if parsed.path.startswith("/v1.0/") and own.isdigit():
+            self.__class__.reads.append(own)
+            mode = self.behavior.get("own", "ok")
+            if mode == "5xx":
+                self._respond_json(500, {"error": {"message": "server error (fake)"}})
+                return
+            if mode == "timeout":
+                import time
+                time.sleep(1.5)
+                self._respond_json(500, {"error": {"message": "late (fake)"}})
+                return
+            if own not in ("777", "888"):
+                self._respond_json(404, {"error": {"message": "not found"}})
+                return
+            row = {"id": own, "username": "fake" if own == "777" else "someone",
+                   "text": self.behavior.get("own_text", "出した本文") if own == "777" else "他人の本文",
+                   "timestamp": "2026-11-20T10:00:00+0000", "permalink": self.permalink,
+                   "media_type": "REPOST_FACADE" if mode == "repost" and own == "777" else "TEXT_POST"}
+            if mode != "no_owner":
+                row["owner"] = {"id": "12345" if own == "777" else "99999"}
+            self._respond_json(200, row)
+            return
         if parsed.path.endswith("/threads"):
             if self.behavior.get("recent", "ok") == "absent":
                 self._respond_json(404, {"error": {"message": "not found"}})
@@ -127,7 +155,7 @@ class _ServerURL(str):
 def fake_threads_writes_server(behavior: dict | None = None):
     handler_cls = type("Handler", (_Handler,),
                        {"behavior": dict(behavior or {}), "counter": [1],
-                        "create_params": [], "deletes": [], "locations": []})
+                        "create_params": [], "deletes": [], "locations": [], "reads": []})
     server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

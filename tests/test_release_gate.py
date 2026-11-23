@@ -296,6 +296,13 @@ def test_設計の表の名前がすべて危ない領域にある():
         assert name in gate.DANGER_AREAS
 
 
+def test_投稿を消す口は危ない領域に入る():
+    """設計 持ち主の依頼で消す §4: DELETE の 1 か所（`retract_cli.py`）が表に無く、11/23 の e96d8d7 は
+    `retract_cli.py` だけなら監査を素通りしていた。直す・隠す・消すの口と反応の取り消しも入れる。"""
+    for path in ("thth/retract_cli.py", "thth/edit_cli.py", "thth/reaction_cli.py"):
+        assert "retract" in gate.areas_of(path), path
+
+
 def test_雛形の頭は関門が読める():
     text = (ROOT / gate.AUDIT_TEMPLATE).read_text(encoding="utf-8")
     audit = gate.parse_audit(gate.AUDIT_TEMPLATE, text)

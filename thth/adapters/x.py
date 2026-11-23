@@ -554,6 +554,9 @@ class XAdapter(base.Adapter):
         rest = data.get('rest_id') or data.get('id')
         return {'reaction_id': rest if isinstance(rest, str) and POST_ID.fullmatch(rest) else value}
 
+    # 取り消しは元の投稿の id で打つ（`DELETE /2/users/:id/retweets/:tweet_id`・`/likes/:tweet_id`）。
+    REACTION_UNDO_BY_POST = frozenset({'repost', 'like'})
+
     def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
         value = self._tweet_id(post_id)
         self._react('repost', 'DELETE', '/2/users/' + self.user_id + '/retweets/' + value,
@@ -989,6 +992,38 @@ class XAdapter(base.Adapter):
         self._post_cache[value] = row
         return dict(row)
 
+    # 持ち主を比べるための 1 件読み（設計 持ち主の依頼で消す §3）。自分の投稿の読み（Owned Reads・
+    # 1 本 0.001 USD・`budget_x.owned_read`）の台帳に載せる。月の上限に当たれば読まずに断る（消さない）。
+    OWN_POST_FIELDS = 'author_id,created_at,text,note_tweet,referenced_tweets'
+
+    def own_post(self, post_id: str) -> dict:
+        """自分の投稿 1 件（`GET /2/tweets?ids=<id>`）。`author_id` を `.token` の `user_id` と比べる。
+
+        `thth retract` が THTH の記録の無い投稿を消す前にだけ呼ぶ。再投稿（`referenced_tweets` に
+        `retweeted`）は `kind: repost`。読めない（予算・5xx・形の違い）は `PostUnreadable`。
+        """
+        value = str(post_id or '').strip()
+        if not POST_ID.fullmatch(value):
+            raise base.PostUnreadable('x_post_id_invalid: ' + self.POST_ID_FORM_HINT)
+        if not POST_ID.fullmatch(self.user_id or ''):
+            raise base.PostUnreadable('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
+        try:
+            body = self._owned_get([value], fields=self.OWN_POST_FIELDS)
+        except base.PermissionMissing:
+            raise
+        except Exception as exc:
+            raise base.PostUnreadable('投稿を読めません: ' + self._scrub(exc)) from None
+        data = body.get('data') if isinstance(body, dict) else None
+        row = data[0] if isinstance(data, list) and len(data) == 1 else data if isinstance(data, dict) else None
+        if not isinstance(row, dict) or row.get('id') != value:
+            raise base.PostUnreadable('投稿を読めません（応答に要求した id がありません）')
+        if str(row.get('author_id') or '') != self.user_id:
+            raise base.PostNotOwn('この口座の投稿ではありません（author_id が違います）')
+        refs = row.get('referenced_tweets') if isinstance(row.get('referenced_tweets'), list) else []
+        repost = any(isinstance(ref, dict) and ref.get('type') == 'retweeted' for ref in refs)
+        return {'post_id': value, 'text': full_text(row) or '', 'timestamp': row.get('created_at'),
+                'url': post_url(self.username, value), 'kind': 'repost' if repost else 'post'}
+
     @classmethod
     def check_conversation_limit(cls, limit):
         """`thth thread --limit N` の N（10〜50）。範囲外は**要求も予約もせずに**断る。"""
@@ -1111,7 +1146,7 @@ class XAdapter(base.Adapter):
         out['usd_estimate'] = self._owned['usd']
         return out
 
-    def _owned_get(self, chunk, *, private=False):
+    def _owned_get(self, chunk, *, private=False, fields=None):
         """1 回の `GET /2/tweets?ids=…` を `budget_x.owned_read(account, len(chunk))` の中で。
 
         作法は `_paid_get` と同じ: 断りの応答（4xx・5xx）は 0 本で確定、応答が読めなければ
@@ -1127,7 +1162,7 @@ class XAdapter(base.Adapter):
         from .. import budget_x
         limit = len(chunk)
         query = {'ids': ','.join(chunk), **(self.OWNED_PRIVATE_QUERY if private
-                                            else {'tweet.fields': self.OWNED_FIELDS})}
+                                            else {'tweet.fields': fields or self.OWNED_FIELDS})}
         charged = limit
         try:
             with budget_x.owned_read(self.auth_account, limit) as slot:

@@ -172,6 +172,8 @@ class InstagramAdapter(fb.FacebookAdapter):
                                          "creator_marketplace", "shopping_tags"})
     UNSUPPORTED_REACTIONS = UNSUPPORTED
     REACTION_PERMISSIONS = {"like": LIKE_PERMISSION}
+    # いいねの取り消しは元の投稿の id で打つ（`DELETE /{ig-user-id}/likes` に `media_id`）。
+    REACTION_UNDO_BY_POST = frozenset({"like"})
     MESSAGING_PLATFORM = "instagram"
     MESSAGING_PERMISSION = "instagram_manage_messages"
     DM_TEXT_LIMIT = ("bytes", DM_TEXT_BYTES)
@@ -522,6 +524,52 @@ class InstagramAdapter(fb.FacebookAdapter):
         if isinstance(row.get("permalink"), str):
             out["permalink"] = row["permalink"]
         return out
+
+    def own_post(self, post_id: str) -> dict:
+        """自分の口座の投稿かストーリーズ 1 件（`GET /{media}`・設計 持ち主の依頼で消す §3）。
+
+        `owner.id` を口座の id と比べる（違えば `PostNotOwn`）。ストーリーズの 1 件読みで `owner` が
+        返るかは**未確認**なので、`owner` が無いとき・読めないときだけ、今のストーリーズ
+        （`recent_stories`・24 時間の物は全部入る）の中に id を探す。そこにも無ければ、読めたなら
+        `PostNotOwn`、読めなかったなら `PostUnreadable`。
+        """
+        value = str(post_id or "").strip()
+        if not IG_ID.fullmatch(value):
+            raise base.PostUnreadable("instagram_post_id_invalid: " + self.POST_ID_FORM_HINT)
+        row = None
+        try:
+            row = self._get(f"/{value}", "投稿の取得",
+                            params={"fields": "id,caption,timestamp,permalink,owner,media_type,"
+                                              "media_product_type"},
+                            permission=self.READ_PERMISSION)
+        except base.PermissionMissing:
+            raise
+        except Exception:
+            row = None
+        if isinstance(row, dict) and str(row.get("id") or "") != value:
+            row = None
+        owner = row.get("owner") if isinstance(row, dict) and isinstance(row.get("owner"), dict) else None
+        if owner is not None and owner.get("id") is not None:
+            if not self.ig_user_id or str(owner.get("id")) != self.ig_user_id:
+                raise base.PostNotOwn("この口座の投稿ではありません（owner.id が違います）")
+            return {"post_id": value,
+                    "text": row.get("caption") if isinstance(row.get("caption"), str) else "",
+                    "timestamp": row.get("timestamp"),
+                    "url": row.get("permalink") if isinstance(row.get("permalink"), str) else None,
+                    "kind": "story" if row.get("media_product_type") == "STORY" else "post"}
+        try:
+            stories = self.recent_stories(limit=RECENT_POSTS_MAX)
+        except base.PermissionMissing:
+            raise
+        except Exception as e:
+            raise base.PostUnreadable("投稿もストーリーズも読めません: " + self._scrub(e)) from None
+        for story in stories:
+            if story.get("story_id") == value:
+                return {"post_id": value, "text": "", "timestamp": story.get("timestamp"),
+                        "url": story.get("url"), "kind": "story"}
+        if row is None:
+            raise base.PostUnreadable("投稿を読めません（今のストーリーズにもありません）")
+        raise base.PostNotOwn("この口座の投稿か確かめられません（owner が返らず、今のストーリーズにもありません）")
 
     # ----- 実測 ------------------------------------------------------------
 

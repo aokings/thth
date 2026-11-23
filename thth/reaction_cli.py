@@ -14,8 +14,10 @@ fail-closed:
     公開の枠（`daily_max_posts`・burst）には数えない。
 
 冪等: 取り消していない同じ反応が記録にあれば SNS に送らずに返す（`already_done`）。
-取り消しは記録の `platform_id` を使い、記録に `undone_at` を足す。記録が無ければ
-`not_found`（THTH を通していない反応には触らない）。
+取り消しは記録の `platform_id` を使い、記録に `undone_at` を足す。記録が無くても、元の投稿の
+id だけで自分の反応を外せる媒体（`REACTION_UNDO_BY_POST`・X・Mastodon・Instagram のいいね）は
+1 回頼み、`reactions/` に「THTH の外で付けた反応を外した」（`outside_thth: true`）と残す
+（設計 持ち主の依頼で消す §5）。それ以外の媒体は `not_found`（直し方を添える）。
 
 **SNS への要求は 1 回だけ・再試行しない**（応答を失ったら結果不明として言い、記録は
 書かない）。X は従量なので、料金の目安（作る 0.015 USD・消す 0.010 USD）を出力に添える。
@@ -219,10 +221,16 @@ def _locked(args, account_cfg, adapter_cls, token, state_dir, *, kind, undo, pos
     if not undo and existing is not None:
         # 冪等: SNS に送らない（ガードにも数えない）。
         return _done(args, existing, kind=kind, undo=undo, word=word, already=True, cost=None)
-    if undo and existing is None:
+    outside = undo and existing is None
+    if outside and kind not in adapter_cls.REACTION_UNDO_BY_POST:
+        # 記録が無く、元の投稿の id からは取り消しの先が引けない媒体（Threads の再投稿・Bluesky）。
+        hint = (f"Threads の再投稿は再投稿そのものの id に打つ口です。thth posts {account} で再投稿の id を"
+                f"確かめ、thth retract {account} <再投稿の id> --reason … --by … で消せます（二段確認）"
+                if kind == "repost" and media == "threads" else "媒体の画面から手で外してください")
         return _fail(args, 1, "not_found",
-                     f"{account}: {post_id} への{WORDS[(kind, False)]}の記録がありません"
-                     "（THTH を通していない反応には触りません。媒体の画面から手で）")
+                     f"{account}: {post_id} への{WORDS[(kind, False)]}の記録がありません — なぜ: THTH の記録に無く、"
+                     f"この媒体は元の投稿の id だけでは取り消しの先が分かりません。直し方: {hint}。"
+                     "より良く: THTH から反応すると記録が残り、取り消しも thth からそのまま打てます")
     try:
         guard_mod.check_reaction(account, account_cfg, kind, undo=undo)
     except guard_mod.GuardRefused as e:
@@ -234,7 +242,8 @@ def _locked(args, account_cfg, adapter_cls, token, state_dir, *, kind, undo, pos
     try:
         if undo:
             method = getattr(adapter, "un" + kind)
-            method(existing["platform_id"], post_id=post_id)   # ← SNS への要求はここ 1 回
+            # 記録の無い反応（THTH の外で付けた）は元の投稿の id で外す（自分の反応にしか届かない）。
+            method(post_id if outside else existing["platform_id"], post_id=post_id)   # ← SNS への要求はここ 1 回
         else:
             result = getattr(adapter, kind)(post_id)            # ← SNS への要求はここ 1 回
     except adapter_base.UnsupportedOnPlatform as e:
@@ -252,7 +261,10 @@ def _locked(args, account_cfg, adapter_cls, token, state_dir, *, kind, undo, pos
                      f"{word}できませんでした（記録は変えていません）: " + redact_mod.redact(str(e)))
 
     cost = _x_cost(media, adapter_cls, undo)
-    if undo:
+    if outside:
+        row = reactions_mod.write_outside_undo(state_dir, kind=kind, post_id=post_id, by=by, via=via,
+                                               media=media)
+    elif undo:
         row = reactions_mod.mark_undone(existing, by=by, via=via)
     else:
         reaction_id = (result or {}).get("reaction_id") if isinstance(result, dict) else None

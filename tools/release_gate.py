@@ -82,6 +82,11 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # 店の臨時の時間・投稿を書く口（二段確認）。5.27.0 の版を作るときに表に無いと気づいて足した。認可・PKCE・loopback・
     # 鍵のファイルの実体は `thth/google_oauth.py`（gads・gsc と共通）にあるので一緒に入れる（監査 5.27.0 の 8）。
     "gbp_write": ("thth/gbp/*", "thth/google_oauth.py"),
+    # 投稿を消す口（設計 持ち主の依頼で消す §4・11/23）: DELETE の 1 か所（`retract_cli._do_retract`）と、記録の無い
+    # 投稿の持ち主を確かめる 1 件読み（`outside_post`）。直す・隠す・消すの口（`edit_cli`）と反応の取り消し
+    # （`reaction_cli`・Threads の DELETE に届く）も。adapter の `delete_post` は大きなファイルの中なので入れず、呼ぶ側で縛る
+    # （Facebook の `_write` と同じ理由）。11/23 の e96d8d7 は `retract_cli.py` だけなら素通りしていた。
+    "retract": ("thth/retract_cli.py", "thth/edit_cli.py", "thth/reaction_cli.py"),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

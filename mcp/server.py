@@ -902,7 +902,8 @@ SERVER_TOOLS = [
                       'not_after'),('body','publish_at')),
         # 4.4.1 ⑦: approval（hub の承認の番号）。口座の台帳が require_gate: true なら要る。
         ('send_request',('body','topic','reply_to','approval'),('body',)),
-        ('retract_request',('post_id','reason'),('post_id','reason')),
+        # 設計 持ち主の依頼で消す: confirm（記録の無い自分の投稿の二段目・一段目が返した digest）。
+        ('retract_request',('post_id','reason','confirm'),('post_id','reason')),
         ('schedule_request',('draft_id','confirm','approval'),('draft_id',)),
         # 4.0 S1 §7.3: はてなブックマーク（2 段・送信は S4）。tags は a,b の 1 行。
         # 4.0 S4 §11: delivery（自分の記事）か url（参照先）のどちらか 1 つ・op は add（既定）か delete。
@@ -916,7 +917,11 @@ _PUBLISHING_DESCRIPTIONS = {
                          "（口座の hold_minutes が 1 以上なら、その分先の予約になり、その間は持ち主が /activity で取り消せる）。"
                          "返信（reply_to）が急な連投（burst）を超えるときは口座を止めず、窓が空く時刻の順番待ちに並べて "
                          "status: queued と publish_at を返す",
-    'thth_retract_request': "公開済みの投稿をその場で削除する",
+    'thth_retract_request': ("公開済みの自分の投稿を削除する。持ち主が消すと言った投稿だけに使う。"
+                             "THTH が出した投稿（記録のある投稿）はその場で消す。THTH の記録の無い自分の投稿は 2 段: "
+                             "confirm 無しで呼ぶと status: confirm_required と本文・日時・URL・digest を返すだけで消えない。"
+                             "その中身を持ち主に見せて消すと言われたら、同じ digest を confirm に付けて呼ぶと消す"
+                             "（自分の口座の投稿でなければ post_not_own・読めなければ post_unreadable で断る）"),
     'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。"
                              "はてなブログの口座は 2 段: confirm が無ければ stage 1 と digest と表示を返し、同じ digest を confirm に付けると刻む",
 }
@@ -1278,9 +1283,11 @@ REMOTE_CLI = {
     "thth_send_request": (lambda a: ["send", a["account"], "--production", "--json", *_opt("--topic", a.get("topic")),
                                      *_opt("--reply-to", a.get("reply_to")),
                                      *_opt("--approval", a.get("approval"))], "body"),
-    # MCP の取り下げは呼べば消す（今までどおり）。CLI の遠くの道は二段なので digest を付けて呼ぶ（10/15）。
+    # MCP の取り下げは、記録のある投稿は呼べば消す（今までどおり）。CLI の遠くの道は二段なので digest を
+    # 付けて呼ぶ（10/15）。confirm があればそれを渡す。記録の無い投稿は、口座・id・理由の digest では
+    # サーバが一段目（confirm_required）を返すだけで消えない（設計 持ち主の依頼で消す §2）。
     "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"],
-                                        "--confirm=" + _retract_digest(a), "--json"], None),
+                                        "--confirm=" + (a.get("confirm") or _retract_digest(a)), "--json"], None),
     # 予約も同じ: MCP は呼べば刻む。CLI の遠くの道は --production が無ければ刻まない（10/16）。
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json",
                                          *_opt("--confirm", a.get("confirm")),

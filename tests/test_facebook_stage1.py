@@ -409,7 +409,7 @@ def test_editはTHTHで出していない投稿を断り媒体を呼ばない(en
     _write_ledger(env, production=True)
     before = len(env["calls"])
     assert edit_cli.cmd_edit(_edit_args()) == 1
-    assert "THTH で出していない投稿は直しません" in json.loads(capsys.readouterr().out)["error"]
+    assert "Meta の決まり" in json.loads(capsys.readouterr().out)["error"]
     _sent(env, retracted_at="2026-10-29T11:00:00+09:00")
     assert edit_cli.cmd_edit(_edit_args()) == 1
     assert "取り下げ済み" in json.loads(capsys.readouterr().out)["error"]

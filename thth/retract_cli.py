@@ -14,20 +14,24 @@
 
 fail-closed:
   - 台帳に `production: true` が無ければ**二段目でも DELETE を呼ばない**。
-  - 手元に記録（queue か `sent/`）の無い `post_id` は、**その口座の鍵で読んだ自分の
-    直近の投稿（25 件）とストーリーズに見えるときだけ**取り下げる（11/23 masaru
-    「自分のアカウントでしょ」）。見えなければ断る（他人の投稿・古い投稿には触らない）。
+  - 手元に記録（queue か `sent/`）の無い `post_id` は、**その口座の鍵で id 1 件を読み
+    （`outside_post`→ adapter の `own_post`）、自分の投稿だと確かめたときだけ**取り下げる
+    （11/23 masaru「自分のアカウントでしょ」・設計 持ち主の依頼で消す §3）。自分の物でなければ
+    `post_not_own`、読めなければ `post_unreadable` で断る（古いかどうかは理由にしない）。
+    digest には一段目で読んだ本文の指紋を入れる（`approval.compute_outside_retract_digest`）。
     記録は `sent/` に入れず `retracted_outside/` に置く（THTH が出したものに数えない）。
   - トークンに媒体の取り下げ権限（Threads `threads_delete`・X `tweet.write`・
     Mastodon `write:statuses`）が乗っていなければ rc=2（`thth auth` のやり直し）。
   - 取り下げを持たない媒体は rc=2「この媒体の取り下げは未対応」。
     Mastodon は 3.1.1、Bluesky は 3.22.0 から対応。
-  - 手元の MCP には出さない（`approve` と同じ線）。サーバ型 MCP には
-    `thth_retract_request`（承認の段を通す・3.13.0）がある。
+  - 手元の MCP には出さない（`approve` と同じ線）。サーバ型 MCP と遠くの道には
+    `thth_retract_request` がある（承認の頁は無く、持ち主が発行した鍵で頼む・3.13.0）。
+    記録の無い投稿は、そちらでも `confirm` が合うまで消さない（一段目を返すだけ）。
 
 **DELETE が飛ぶ経路はこのモジュールの `_do_retract()` が呼ぶ `delete_post` だけ**
 （各 adapter の `delete_post` は他のどこからも呼ばれない——
-`tests/test_v21b_approved_writes.py` が source を見て固定する）。
+`tests/test_v21b_approved_writes.py` が source を見て固定する）。記録の無い投稿の持ち主を
+確かめる `own_post` を呼ぶのも、このモジュールの `outside_post()` の 1 か所だけ。
 """
 from __future__ import annotations
 
@@ -57,7 +61,8 @@ def register(sub) -> None:
     """`thth/cli.py` の `build_parser()` から 1 行で呼ばれる。"""
     p = sub.add_parser(
         "retract",
-        help="公開済みの投稿を取り下げる（二段確認・記録は消さない・Threads／X／Mastodon／Bluesky）")
+        help="公開済みの投稿を取り下げる（二段確認・記録は消さない・"
+             "Threads／X／Mastodon／Bluesky／Facebook／Instagram）")
     p.add_argument("account")
     p.add_argument("post_id")
     p.add_argument("--reason", default=None, help="なぜ取り下げるか（記録に残す・必須）")
@@ -220,39 +225,65 @@ def _find_record(account_cfg: dict, account_name: str, post_id: str) -> dict | N
     return None
 
 
-# THTH の記録が無い投稿を探す件数（どの媒体の読む口でも通る既定の数）。
-OWN_POST_LOOKUP = 25
+# 種類の言い方（一段目に出す）。再投稿の id に DELETE すると、再投稿の取り消しになる。
+KIND_WORDS = {"post": "投稿", "story": "ストーリーズ", "repost": "再投稿"}
 
 
-def _find_own_post(account_cfg: dict, token, post_id: str) -> dict | None:
-    """THTH の記録が無い `post_id` を、**その口座の鍵で読んだ自分の投稿**の中に探す（11/23）。
+def outside_post(account_cfg: dict, token, post_id: str) -> dict:
+    """THTH の記録が無い `post_id` を、**その口座の鍵で 1 件読み、自分の投稿か確かめる**（設計 §3）。
 
-    直近の投稿（`recent_posts`・25 件）と、あればストーリーズ（`recent_stories`・24 時間）。
-    見えたら `{"source": "media", "kind": "post"|"story", ...}`、見えなければ・読めなければ `None`。
-    **読むだけ**（DELETE はここで呼ばない）。
+    adapter の `own_post` を呼ぶのは**ここ 1 か所だけ**（手元の CLI も thth.me の口もここを通る）。
+    **読むだけ**（DELETE はここで呼ばない）。返り値は `_find_record` と同じ形に `kind`・`posted_at` を
+    足したもの（`source: "media"`）。
+
+    断り: 自分の物でない → `PostNotOwn`、読めない → `PostUnreadable`、権限 → `PermissionMissing`。
     """
     try:
         adapter = adapters_mod.make_adapter(account_cfg, token)
-    except Exception:
-        return None
-    if "recent_posts" in adapters_mod.capabilities_for(account_cfg.get("media")):
-        try:
-            for row in adapter.recent_posts(limit=OWN_POST_LOOKUP):
-                if row.get("post_id") == post_id:
-                    return {"source": "media", "kind": "post", "path": "（THTH の記録なし・媒体から読んだ自分の投稿）",
-                            "text": row.get("text") or "", "front_matter": {}, "url": row.get("url")}
-        except Exception:
-            pass
-    if callable(getattr(adapter, "recent_stories", None)):
-        try:
-            for row in adapter.recent_stories(limit=OWN_POST_LOOKUP):
-                if row.get("story_id") == post_id:
-                    return {"source": "media", "kind": "story",
-                            "path": "（THTH の記録なし・媒体から読んだ自分のストーリーズ）",
-                            "text": "", "front_matter": {}, "url": row.get("url")}
-        except Exception:
-            pass
-    return None
+        row = adapter.own_post(post_id)
+    except (adapter_base.PostNotOwn, adapter_base.PostUnreadable, adapter_base.PermissionMissing):
+        raise
+    except Exception as e:
+        raise adapter_base.PostUnreadable(redact_mod.redact(str(e))) from None
+    if not isinstance(row, dict) or str(row.get("post_id") or "") != post_id:
+        raise adapter_base.PostUnreadable("読んだ投稿の id が要求と一致しません")
+    kind = row.get("kind") if row.get("kind") in KIND_WORDS else "post"
+    text = row.get("text") if isinstance(row.get("text"), str) else ""
+    posted_at = row.get("timestamp") if isinstance(row.get("timestamp"), str) else None
+    return {"source": "media", "kind": kind,
+            "path": f"（THTH の記録なし・媒体から読んだ自分の{KIND_WORDS[kind]}）",
+            "text": text, "front_matter": {}, "url": row.get("url") if isinstance(row.get("url"), str) else None,
+            "posted_at": posted_at}
+
+
+def retract_digest(account_name: str, post_id: str, reason: str, record: dict) -> str:
+    """二段確認の digest。記録の無い投稿（`source: media`）は本文の指紋を入れた別の版の語。"""
+    if record.get("source") == "media":
+        return approval_mod.compute_outside_retract_digest(
+            post_id=post_id, account=account_name, reason=reason, text=record.get("text") or "",
+            posted_at=record.get("posted_at"), kind=record.get("kind") or "post")
+    return approval_mod.compute_retract_digest(post_id=post_id, account=account_name, reason=reason)
+
+
+def not_own_message(account_name: str, post_id: str, detail: str = "") -> str:
+    """`post_not_own` の 1 行（なぜ・直し方・より良く）。"""
+    tail = f"（{detail}）" if detail else ""
+    return (f"post_not_own: post_id {post_id} を取り下げません — なぜ: THTH の記録（queue・sent/）に無く、"
+            f"{account_name} の鍵でその id を読んだら、この口座の投稿ではありませんでした{tail}。"
+            "他の人の投稿には触りません。"
+            f"直し方: thth posts {account_name}（IG のストーリーズは --stories も）で自分の投稿の id を"
+            "確かめて打ち直してください。より良く: 消したい投稿の URL から id を写すと、"
+            "別の口座の id との取り違えが起きません")
+
+
+def unreadable_message(account_name: str, post_id: str, detail: str = "") -> str:
+    """`post_unreadable` の 1 行（なぜ・直し方・より良く）。"""
+    tail = f"（{detail}）" if detail else ""
+    return (f"post_unreadable: post_id {post_id} を取り下げません — なぜ: THTH の記録（queue・sent/）に無く、"
+            f"{account_name} の鍵でその投稿を読めませんでした{tail}。本文を見せられない削除はしません。"
+            f"直し方: 少し置いて打ち直すか、thth doctor {account_name} で鍵を確かめてください。"
+            "すぐ消すなら媒体の画面から手で消せます。"
+            f"より良く: thth posts {account_name} で id を確かめてから打つと、打ち間違いで読めないことを避けられます")
 
 
 def _lookup_url(account_cfg: dict, token, post_id: str) -> str | None:
@@ -304,8 +335,10 @@ def _cmd_retract(args) -> int:
                               "配信原稿を op: delete で書いて thth approve で承認し、timer が消します")
     adapter_cls = adapters_mod.adapter_class(media)
     if not getattr(adapter_cls, "DELETE_PERMISSION", None):
+        able = "／".join(name for name in adapters_mod.known_media()
+                        if getattr(adapters_mod.adapter_class(name), "DELETE_PERMISSION", None))
         return _fail(args, 2, f"{media}: この媒体の取り下げは未対応です"
-                              "（取り下げられるのは Threads／X／Mastodon／Bluesky）。消すなら媒体の画面から手で")
+                              f"（取り下げられるのは {able}）。消すなら媒体の画面から手で")
 
     already_gone = bool(getattr(args, "already_gone", False))
     token = accounts_mod.load_token(account_cfg)
@@ -315,16 +348,21 @@ def _cmd_retract(args) -> int:
         if done is not None:
             return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
                                   f"（{done.get('retracted_at')}・{done.get('retracted_by')}）")
-        if not already_gone:
-            # THTH の記録が無くても、自分の口座の投稿なら消せる（11/23 masaru）。
-            record = _find_own_post(account_cfg, token, post_id)
-    if record is None:
-        return _fail(args, 1, f"post_id {post_id} を取り下げません — なぜ: THTH の記録（queue・sent/）に無く、"
-                              f"{args.account} の鍵で読んだ自分の直近の投稿（{OWN_POST_LOOKUP} 件）と"
-                              "ストーリーズにも見当たりません。他の人の投稿や古い投稿には触りません。"
-                              f"直し方: thth posts {args.account}（IG のストーリーズは --stories も）で id を"
-                              "確かめて打ち直してください。より良く: それより古い投稿は媒体の画面から手で消し、"
-                              "既に消したものは THTH の記録があれば --already-gone で記録だけ足せます")
+        if already_gone:
+            return _fail(args, 1, f"post_id {post_id} に記録だけ足すことはしません — なぜ: --already-gone は "
+                                  "THTH の記録（queue・sent/）に取り下げの印を足す口で、この id には足す先の記録が"
+                                  f"ありません。直し方: まだ媒体に残っているなら --already-gone を外して "
+                                  f"thth retract {args.account} {post_id} で消してください。より良く: 媒体の画面で"
+                                  "消えていれば、THTH の側で足す物はありません（そのままで構いません）")
+        # THTH の記録が無くても、自分の口座の投稿なら消せる（11/23 masaru）。id 1 件を読んで確かめる。
+        try:
+            record = outside_post(account_cfg, token, post_id)
+        except adapter_base.PostNotOwn as e:
+            return _fail(args, 1, not_own_message(args.account, post_id, redact_mod.redact(str(e))))
+        except adapter_base.PermissionMissing:
+            raise
+        except adapter_base.PostUnreadable as e:
+            return _fail(args, 1, unreadable_message(args.account, post_id, redact_mod.redact(str(e))))
     fm = record["front_matter"]
     if fm.get("retracted_at"):
         return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
@@ -332,9 +370,10 @@ def _cmd_retract(args) -> int:
 
     # 媒体の画面で既に消した投稿（要望 #1560・関東 10/8）。記録だけ足し、DELETE は呼ばない。
     # 消す取り下げの digest を流用できないよう、digest の材料に印を足す。
-    digest = approval_mod.compute_retract_digest(
-        post_id=post_id, account=args.account,
-        reason=reason + ("\x1falready_gone" if already_gone else ""))
+    digest = (retract_digest(args.account, post_id, reason, record) if record["source"] == "media"
+              else approval_mod.compute_retract_digest(
+                  post_id=post_id, account=args.account,
+                  reason=reason + ("\x1falready_gone" if already_gone else "")))
 
     url = record.get("url") or _lookup_url(account_cfg, token, post_id)
 
@@ -347,6 +386,7 @@ def _cmd_retract(args) -> int:
                          "account": args.account, "post_id": post_id, "url": url,
                          "permalink": url,  # 他の答えと同じ名前（10/15 調べ_JSONの欄 §5 1-3・url は残す）
                          "source": record["source"], "file": record["path"],
+                         "kind": record.get("kind") or "post", "posted_at": record.get("posted_at"),
                          "text": record["text"], "reason": reason, "by": by,
                          "digest": digest})
             return 1
@@ -355,7 +395,11 @@ def _cmd_retract(args) -> int:
             print("  媒体の画面で既に消えている投稿として、記録だけ足します（DELETE は呼びません）")
         print(f"  記録: {record['source']}（{record['path']}）")
         if record["source"] == "media":
+            kind = record.get("kind") or "post"
             print("  THTH を通していない自分の投稿です。消したことは retracted_outside/ に残します")
+            print(f"  種類: {KIND_WORDS.get(kind, kind)}"
+                  + ("（消すと再投稿の取り消しになります。元の投稿は残ります）" if kind == "repost" else ""))
+            print(f"  日時: {record.get('posted_at') or '（媒体の答えに無し）'}")
         print(f"  URL : {url or '（記録に無く、引けませんでした。thth posts で確かめられます）'}")
         print(f"  理由: {reason}")
         print(f"  by  : {by}")
@@ -482,7 +526,8 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                 wrote.append(sent_mod.write_outside_retraction(
                     state_dir, post_id, kind=record.get("kind") or "post", url=url,
                     text=record.get("text") or "", retracted_at=retracted_at,
-                    retracted_by=by, retract_reason=reason, origin=origin))
+                    retracted_by=by, retract_reason=reason, origin=origin,
+                    posted_at=record.get("posted_at")))
             # `sent/` の記録があれば、こちらにも同じ 3 項目を足す（消さない）。
             elif sent_mod.read(state_dir, post_id) is not None:
                 sent_mod.mark_retracted(state_dir, post_id, retracted_at=retracted_at,

@@ -262,7 +262,9 @@ def bind(adapter,cfg):
              # 商品タグ（`thth/meta_shop.py`）。
              'shop_eligibility','shop_catalogs','shop_products','shop_tags','shop_tag',
              # 計画 Meta 全部盛り 段 M5: 権限の不使用の見張りの最小の読み。
-             'keepalive_read'}
+             'keepalive_read',
+             # 設計 持ち主の依頼で消す §3: 記録の無い投稿を消す前の 1 件読み（`own_post`）。
+             'own_post'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

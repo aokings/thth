@@ -381,9 +381,14 @@ def outside_path_for(state_dir: str, post_id: str) -> str:
 
 def write_outside_retraction(state_dir: str, post_id: str, *, kind: str, url, text: str,
                              retracted_at: str, retracted_by: str, retract_reason: str,
-                             origin: dict | None = None) -> str:
-    """消した事実を 1 本（媒体から読んだ本文・URL・誰が・なぜ）。返り値は書いたパス。"""
+                             origin: dict | None = None, posted_at=None) -> str:
+    """消した事実を 1 本（媒体から読んだ本文・URL・種類・媒体の日時・誰が・なぜ）。返り値は書いたパス。
+
+    遠くの道（thth.me・MCP）から消したときは `origin` に道の名（`retracted_via`）と鍵の id
+    （`retracted_credential`）が入る（設計 持ち主の依頼で消す §4）。
+    """
     data = {"post_id": post_id, "kind": kind, "outside_thth": True, "url": url, "text": text,
+            "posted_at": posted_at if isinstance(posted_at, str) else None,
             "retracted_at": retracted_at, "retracted_by": retracted_by, "retract_reason": retract_reason}
     if origin is not None:
         data.update(_origin_fields(origin, prefix="retracted_"))

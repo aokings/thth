@@ -964,6 +964,33 @@ ENTRIES = {
         "no_better": "internal",
         "doors": ("mcp", "remote"),
     },
+    # 設計 持ち主の依頼で消す §5（11/23）: THTH の記録の無い自分の投稿の取り下げ。
+    "post_not_own": {
+        "kind": "refusal",
+        "why": "THTH の記録に無いその投稿を口座の鍵で 1 件読んだら、この口座の投稿ではありませんでした（他の人の投稿には触りません）",
+        "fix": "thth posts <口座> で自分の投稿の id を確かめて、その id で頼み直してください",
+        "command": "thth posts <口座>",
+        "better": "消したい投稿の URL から id を写すと、別の口座の id との取り違えが起きません",
+        "doors": ("cli", "mcp", "remote"),
+        "since": "5.28.1",
+    },
+    "post_unreadable": {
+        "kind": "refusal",
+        "why": "THTH の記録に無いその投稿を、口座の鍵で読めませんでした（本文を見せられない削除はしません）",
+        "fix": "少し置いて頼み直すか、thth doctor <口座> で鍵を確かめてください。すぐ消すなら媒体の画面から手で消せます",
+        "command": "thth doctor <口座>",
+        "better": "thth posts <口座> で id を確かめてから頼むと、打ち間違いで読めないことを避けられます",
+        "doors": ("cli", "mcp", "remote"),
+        "since": "5.28.1",
+    },
+    "confirm_required": {
+        "kind": "refusal",
+        "why": "THTH の記録に無い自分の投稿は、一回の呼び出しでは消しません（これは確認の一段目で、まだ何も消していません）",
+        "fix": "返した本文・日時・URL を持ち主に見せ、消すと言われたら同じ digest を confirm に付けて頼み直してください",
+        "better": "持ち主が消すと言った投稿だけを頼むと、消してはいけない投稿を消す取り違えが起きません",
+        "doors": ("cli", "mcp", "remote"),
+        "since": "5.28.1",
+    },
     "deletion_sync_incomplete": {
         "kind": "refusal",
         "why": "削除の受付の照合を終えられなかったので、完了扱いにしていません",

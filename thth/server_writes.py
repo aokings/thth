@@ -47,7 +47,10 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
                             'schedule_unavailable',
                             # 4.0 S1: はてなの口座の送信の口（adapter）がまだ無い・自分の記事でない・digest の食い違い。
                             'unsupported_medium','bookmark_target_not_own','comment_too_long','comment_required',
-                            'too_many_tags'))
+                            'too_many_tags',
+                            # 設計 持ち主の依頼で消す §5: 記録の無い投稿の取り下げ。読めたが自分の物でない・
+                            # 読めなかった・confirm が無い（断りではなく一段目として返す status の語）。
+                            'post_not_own','post_unreadable','confirm_required'))
 # 4.0 S4: ブックマークの対象・柵・送信の断り（`hatena_bookmark.REASONS`・静的な語だけ）。
 from .hatena_bookmark import REASONS as BOOKMARK_REASONS
 DIRECT_REASONS = DIRECT_REASONS | BOOKMARK_REASONS
@@ -335,22 +338,54 @@ def direct_send(context, request, via):
 
 
 def direct_retract(context, request, via):
-    """その場で削除する（DELETE は `retract_cli._do_retract` の 1 回だけ）。"""
-    _schema(request,('post_id','reason'),('post_id','reason'))
+    """その場で削除する（DELETE は `retract_cli._do_retract` の 1 回だけ）。
+
+    **記録のある投稿**（THTH が出した物）は今までどおり一回で消す（`confirm` は省ける・付ければ照らす）。
+    **記録の無い自分の投稿**（設計 持ち主の依頼で消す §2・§3・masaru 11/23「推しでオケ」）は、
+    持ち主が発行した鍵（＝前もって任せた）＋二段: `retract_cli.outside_post` で id 1 件を読んで持ち主を
+    確かめ、`confirm` が一段目の番号（本文の指紋入り）と合うまで消さない。`confirm` が無い（または口座・
+    id・理由だけから作った番号）なら一段目（`status: confirm_required`・本文・日時・URL・digest）を返す。
+    `stage: "1"` は記録の有無によらず一段目だけを返す（遠くの道の CLI の一段目）。
+    """
+    _schema(request,('post_id','reason','confirm','stage'),('post_id','reason'))
+    for key in ('confirm','stage'):
+        if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
+    if request.get('stage') not in (None,'1'): error('invalid_request')
     account=request['account'];cfg=current(context,account,write=True)
     from types import SimpleNamespace
-    from . import adapters, postid, retract_cli
-    if not postid.is_usable(request['post_id']) or writeback.has_control_chars(request['reason']): error('invalid_request')
+    from . import adapters, postid, retract_cli, sent
+    from .adapters import base as adapter_base
+    post_id=request['post_id'];reason=request['reason'].strip()
+    if not postid.is_usable(post_id) or writeback.has_control_chars(request['reason']): error('invalid_request')
     cls=adapters.adapter_class(cfg['media'])
     if not getattr(cls,'DELETE_PERMISSION',None): error('unsupported_operation')
-    record=retract_cli._find_record(cfg,account,request['post_id'])
-    if not record or record.get('front_matter',{}).get('retracted_at'): error('scope_unavailable')
-    if record['source']=='queue':
+    record=retract_cli._find_record(cfg,account,post_id)
+    if record and record.get('front_matter',{}).get('retracted_at'): error('scope_unavailable')
+    if record is None and sent.read_outside_retraction(accounts.state_dir_for(account),post_id) is not None:
+        error('scope_unavailable')
+    if record and record['source']=='queue':
         owned=[item for item in _rows(cfg,account) if str(_queue(cfg)[1]/item[0])==record['path']]
         if len(owned)!=1 or not owned[0][3]: error('draft_not_verified')
     if cfg.get('production') is not True: error('production_disabled')
     token=accounts.load_token(cfg)
     if not cls.has_token(token) or cls.missing_permissions(token,[cls.DELETE_PERMISSION]): error('permission_unavailable')
+    outside=record is None
+    if outside:
+        try:
+            record=retract_cli.outside_post(cfg,token,post_id)
+        except adapter_base.PostNotOwn: error('post_not_own')
+        except adapter_base.PermissionMissing: error('permission_unavailable')
+        except adapter_base.PostUnreadable: error('post_unreadable')
+    digest=retract_cli.retract_digest(account,post_id,reason,record)
+    confirm=request.get('confirm')
+    # 口座・id・理由だけから作った番号（記録のある投稿の番号）は、記録の無い投稿では「confirm 無し」と同じ。
+    plain=approval.compute_retract_digest(post_id=post_id,account=account,reason=reason)
+    if request.get('stage')=='1' or (outside and confirm in (None,plain)):
+        return {'account':account,'status':'confirm_required','stage':1,'retracted':False,'post_id':post_id,
+                'digest':digest,'recorded':not outside,'kind':record.get('kind') or 'post',
+                'text':record.get('text') or '','posted_at':record.get('posted_at'),
+                'permalink':record.get('url'),'via':via}
+    if confirm is not None and confirm!=digest: error('confirm_mismatch')
     origin=_origin(context,via);check=_guarded(context,account,'retract',origin)
     check(cfg)
     def before(locked_cfg):
@@ -359,12 +394,13 @@ def direct_retract(context, request, via):
         return accounts.load_token(locked_cfg)
     outcome={}
     retract_cli._do_retract(SimpleNamespace(account=account,wait=0,json=False,result_sink=outcome.update),
-            cfg,cls,token,record,request['post_id'],reason=request['reason'],by=context.actor,url=record.get('url'),
+            cfg,cls,token,record,post_id,reason=reason,by=context.actor,url=record.get('url'),
             before_execute=before,lock_context=server_files.account_locks(account,cfg),origin=origin)
     if outcome.get('retracted') is not True: error('deletion_failed')
     # permalink は手元の道の答えと同じ名前（10/15 調べ_JSONの欄 §5 1-3・足すだけ）。
-    return {'account':account,'status':'retracted','post_id':request['post_id'],'retracted_at':outcome.get('retracted_at'),
-            'permalink':outcome.get('permalink'),'push_pending':bool(outcome.get('push_error')),'via':via}
+    return {'account':account,'status':'retracted','post_id':post_id,'retracted_at':outcome.get('retracted_at'),
+            'permalink':outcome.get('permalink'),'push_pending':bool(outcome.get('push_error')),'via':via,
+            'recorded':not outside}
 
 
 # 予約の時刻がこれより古ければ断る（時計のずれと打つ間の分だけ許す・`thth/remote.py` と同じ値）。
