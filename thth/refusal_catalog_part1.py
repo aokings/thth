@@ -972,7 +972,7 @@ ENTRIES = {
         "command": "thth posts <口座>",
         "better": "消したい投稿の URL から id を写すと、別の口座の id との取り違えが起きません",
         "doors": ("cli", "mcp", "remote"),
-        "since": "5.28.1",
+        "since": "5.29.0",
     },
     "post_unreadable": {
         "kind": "refusal",
@@ -981,15 +981,15 @@ ENTRIES = {
         "command": "thth doctor <口座>",
         "better": "thth posts <口座> で id を確かめてから頼むと、打ち間違いで読めないことを避けられます",
         "doors": ("cli", "mcp", "remote"),
-        "since": "5.28.1",
+        "since": "5.29.0",
     },
     "confirm_required": {
         "kind": "refusal",
         "why": "THTH の記録に無い自分の投稿は、一回の呼び出しでは消しません（これは確認の一段目で、まだ何も消していません）",
-        "fix": "返した本文・日時・URL を持ち主に見せ、消すと言われたら同じ digest を confirm に付けて頼み直してください",
+        "fix": "返した本文・日時・URL を持ち主に見せ、消すと言われたら同じ digest を confirm に付けて頼み直してください。thth.me の道で digest が出ないときは、thth を新しくしてから（pip install -U thth）打ち直してください",
         "better": "持ち主が消すと言った投稿だけを頼むと、消してはいけない投稿を消す取り違えが起きません",
         "doors": ("cli", "mcp", "remote"),
-        "since": "5.28.1",
+        "since": "5.29.0",
     },
     "deletion_sync_incomplete": {
         "kind": "refusal",
