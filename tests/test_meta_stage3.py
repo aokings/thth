@@ -704,3 +704,27 @@ def test_sendのタイアップの指定はpost_optionsとして渡る(monkeypat
     seen.clear()
     cli.main(["send", "kopicha-ig", "--text", "x", "--media", "a.jpg", "--alt", "a"])
     assert "post_options" not in seen
+
+
+# 監査 5.28.0 B4: タイアップの書き方の断りは、頭の符丁を残して なぜ・直し方・より良く を日本語で添える。
+@pytest.mark.parametrize("options,head", [
+    ({"sponsor_ids": [SPONSOR]}, "post_options: sponsor_ids requires paid_partnership: true"),
+    ({"paid_partnership": True, "sponsor_ids": ["kopi_chaba"]}, "post_options: sponsor_ids needs 1-2 numeric"),
+    ({"story": True, "paid_partnership": True}, "post_options: paid_partnership is not for stories"),
+])
+def test_監査528_タイアップの断りは理由と直し方とより良くを添える(options, head):
+    with pytest.raises(media.MediaError) as caught:
+        media.validate_declarations({"media": [{"file": "a.jpg", "alt": "a"}], "post_options": options}, "instagram")
+    message = str(caught.value)
+    assert message.startswith(head)
+    assert all(word in message for word in ("なぜ:", "直し方:", "より良く:"))
+    assert "\n" not in message
+
+
+# 監査 5.28.0 B8: dry-run（と承認の表示）にタイアップを人の言葉で 1 行出す。
+def test_監査528_タイアップは表示に人の言葉で1行出る():
+    base = {"files": [], "attachments": [], "captions": []}
+    shown = media.display({**base, "post_options": {"paid_partnership": True, "sponsor_ids": [SPONSOR]}})
+    assert f"タイアップ: 「タイアップ」の印を付けて出します（ブランドの Instagram id: {SPONSOR}" in shown
+    assert "ブランドの id なし" in media.display({**base, "post_options": {"paid_partnership": True}})
+    assert "タイアップ" not in media.display({**base, "post_options": {"is_ai_generated": True}})

@@ -56,6 +56,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **検索の語ごとの数を残す・絞る**（3.18.0）: `thth where … --also|--aggregate --keep` で語ごとの数だけを日付つきで残し（5 未満は欠測・本文や名前は残さない）、`thth where-log <project> [--budget N --medium x]` で当たり率と翌日の配り直しを見ます。`--ja`・`--question`・`--no-replies` で表示を絞ります（X の `--ja` は検索に `lang:ja` を足して読む本数を減らす）（[リリースノート 3.18.0](docs/リリースノート_3.18.0_2026-10-12.md)）。
 - **X の非公開リスト**: `thth list create|add|remove|show`（3.17.0 から・X だけ）。公開のリストは作らない。足す・外すは人が選んだ少数だけ（1 回 10 人まで）。アカウントを認可し直してから（[リリースノート 3.17.0](docs/リリースノート_3.17.0_2026-10-12.md)）。
 - **X のコミュニティ**: `thth community search <account> <語…>` で探し、`thth send <account> --community <id>` か queue の front-matter `community_id:` で出す（3.19.0 から・X だけ）。参加は X の画面で先に（API に参加の口は無い）。返信とは同時に使えない。各コミュニティの規則は人が読んで守る（[リリースノート 3.19.0](docs/リリースノート_3.19.0_2026-10-13.md)）。
+- **Instagram のタイアップ投稿**（5.28.0）: `thth send <口座> --paid-partnership [--sponsor <ブランドの IG の数字の id>]`（`--sponsor` は 2 つまで）か、原稿の `post_options: {paid_partnership: true, sponsor_ids: ["…"]}` で出します。カルーセルは親の投稿にだけ付き、ストーリーには付けません（断ります）。印と相手の id は digest と承認の指紋に入り、dry-run に「タイアップ:」の 1 行で出ます。thth.me の鍵の道の `thth send` はこの旗を読まず、付けたまま打つと出さずに断ります（[リリースノート 5.28.0](docs/リリースノート_5.28.0_2026-11-21.md)）。
 - **X のトレンドと語ごとの投稿数**: `thth trends <account> [--woeid N] [--max N]`（既定は日本）と `thth counts <account> <語> [--granularity hour|day]`（直近 7 日）（3.19.0 から・X だけ・1 回の有償の読み取り・保存しない）。
 
 ## はじめ方

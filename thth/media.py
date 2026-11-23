@@ -24,6 +24,22 @@ class MediaError(ValueError):
     pass
 
 
+# タイアップ投稿の書き方の断り（監査 5.28.0 B4・原則「前向きな断り」）。頭の英語の符丁は
+# runs の error と lint の行で今までどおり読める形に残し、後ろに なぜ・直し方・より良く を 1 行で添える。
+SPONSOR_SHAPE = ('post_options: sponsor_ids needs 1-2 numeric Instagram user ids (strings)'
+                 ' — なぜ: ブランドは Instagram の数字の id で 1〜2 個・重複なしで受けます（@名前は Meta に渡せません）。'
+                 '直し方: --sponsor 17841400000000000 のように数字で渡す（原稿なら sponsor_ids: ["17841400000000000"]）。'
+                 'より良く: id はブランドに聞いて控えておくと確かです（名前は変わっても id は変わりません）')
+SPONSOR_WITHOUT_LABEL = ('post_options: sponsor_ids requires paid_partnership: true'
+                         ' — なぜ: ブランドの id はタイアップの印と一緒のときだけ付けられます。'
+                         '直し方: --paid-partnership を足す（原稿なら post_options に paid_partnership: true）。'
+                         'より良く: 案件の投稿なら印とブランドの id を両方付けると、誰との案件かが見る人に伝わります')
+PAID_PARTNERSHIP_STORY = ('post_options: paid_partnership is not for stories'
+                          ' — なぜ: THTH はストーリーにタイアップの印を付けません（フィードの投稿とカルーセルだけ）。'
+                          '直し方: 原稿の story: true を外してフィードに出すか、タイアップの印と sponsor_ids を外す。'
+                          'より良く: 案件は印つきでフィードに出し、ストーリーではその投稿を紹介すると、印が付いたまま届きます')
+
+
 def _scalar(raw):
     raw = raw.strip()
     if raw.startswith('"'):
@@ -449,10 +465,10 @@ def validate_declarations(fm,medium):
     if medium=='instagram' and 'sponsor_ids' in options:
         ids=options['sponsor_ids']
         if type(ids) is not list or not 1<=len(ids)<=2 or any(type(v) is not str or not re.fullmatch(r'[0-9]{1,32}',v) for v in ids) or len(set(ids))!=len(ids):
-            raise MediaError('post_options: sponsor_ids needs 1-2 numeric Instagram user ids (strings)')
-        if options.get('paid_partnership') is not True: raise MediaError('post_options: sponsor_ids requires paid_partnership: true')
+            raise MediaError(SPONSOR_SHAPE)
+        if options.get('paid_partnership') is not True: raise MediaError(SPONSOR_WITHOUT_LABEL)
     if medium=='instagram' and options.get('story') is True and ('paid_partnership' in options or 'sponsor_ids' in options):
-        raise MediaError('post_options: paid_partnership is not for stories')
+        raise MediaError(PAID_PARTNERSHIP_STORY)
     for key,value in options.items():
         if key=='text_spoiler' and type(value) is list:
             for span in value:
@@ -621,6 +637,12 @@ def display(manifest):
         lines.append(f"public SHA256: {row['public_sha256']}")
     for key in ('attachments','post_options','captions'):
         if manifest[key]:lines.append(key+': '+json.dumps(manifest[key],ensure_ascii=False,sort_keys=True))
+    # 監査 5.28.0 B8: タイアップは JSON の 1 行だけでは見落とすので、人の言葉の 1 行を添える。
+    if manifest['post_options'].get('paid_partnership') is True:
+        sponsors=manifest['post_options'].get('sponsor_ids') or []
+        lines.append('タイアップ: 「タイアップ」の印を付けて出します（'
+                     +(f"ブランドの Instagram id: {'・'.join(sponsors)}" if sponsors else 'ブランドの id なし・印だけ')
+                     +'・digest に入ります）')
     return '\n'.join(lines)
 
 
