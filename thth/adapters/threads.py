@@ -123,6 +123,25 @@ PROBE_KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
               "reply_quota_usage", "reply_config", "values", "timestamp", "permalink")
 
 
+def ig_share_status(post, publish_body) -> str | None:
+    """Instagram ストーリーズへの共有の成否（5.29.1・11/24）。
+
+    **L2** https://developers.facebook.com/docs/threads/create-posts/share-to-ig-stories
+    「Check the `crossreshare_to_ig_status` field」——`threads_publish` の応答に
+    `SUCCESS`・`FAILED` が乗る。共有に失敗しても媒体はエラーにせず Threads の投稿だけ
+    出す（11/23 こぴちゃで 2 本とも黙って共有されなかった）。後から訊く口は無いので、
+    ここで読む。共有を頼んでいなければ None。知らない語・欄が無いときは `unknown`。
+    """
+    if not getattr(post, "share_to_instagram", False):
+        return None
+    word = publish_body.get("crossreshare_to_ig_status") if isinstance(publish_body, dict) else None
+    if word == "SUCCESS":
+        return "success"
+    if word == "FAILED":
+        return "failed"
+    return "unknown"
+
+
 class ProbeBodyError(base.AdapterError):
     """HTTP 200 だが本文に `error` が入っている（`_get()` と同じ考え方——
     200 でも「取れた」ことにしない）。`thth/doctor.py` の `_get()` が投げる。"""
@@ -535,7 +554,8 @@ class ThreadsAdapter(base.Adapter):
             # 200 だが id が無い＝サーバ側で成立した可能性を排除できない＝分からない。
             return base.PublishResult(None, None, ts, error="公開失敗: id無し",
                                        failure="publish_ambiguous")
-        return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
+        return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none",
+                                   ig_share=ig_share_status(post, publish))
 
     # ---- 公開の結果が分からないとき（設計 3.3.1 §2）--------------------------
 
@@ -672,7 +692,8 @@ class ThreadsAdapter(base.Adapter):
             if not post_id:
                 return dataclasses.replace(failed, remote_state="retry_failed")
             return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None,
-                                       failure="none", remote_state="retried")
+                                       failure="none", remote_state="retried",
+                                       ig_share=ig_share_status(post, again))
         if status in ("ERROR", "EXPIRED"):
             # 出ていない。この container ではもう出せないので、inflight を解いて
             # 次の run が新しい container から出す（select の検査を通り直す）。

@@ -244,7 +244,8 @@ def test_ストーリーズへの共有はThreadsの投稿に付きdigestに入�
     assert rc == 0 and "ストーリーズにも出します" in out
     digest = re.search(r"digest: (\S+)", out).group(1)
     assert digest != plain
-    with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
+    with fake_threads_server({"create": "ok", "publish": "ok",
+                              "publish_extra": {"crossreshare_to_ig_status": "SUCCESS"}}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         monkeypatch.setenv("THTH_THREADS_WAIT_SECONDS", "0")
         # 共有なしの digest では通らない（共有の有無は承認の中身）。
@@ -255,7 +256,45 @@ def test_ストーリーズへの共有はThreadsの投稿に付きdigestに入�
                             "--production", "--confirm", digest)
         assert rc == 0, out + err
         assert base_url.handler_cls.create_params[0]["crossreshare_to_ig"] == "true"
+        assert "ストーリーズにも共有しました" in out + err
     assert "share_to_instagram" in found(TH_ACCOUNT)
+
+
+def _share_once(m4, capsys, monkeypatch, extra):
+    from tests.test_fake_api import fake_threads_server
+    body = m4["tmp"] / "body.txt"
+    body.write_text("ストーリーズにも\n", encoding="utf-8")
+    rc, out, _err = main(capsys, "send", TH_ACCOUNT, "--text-file", str(body), "--share-to-instagram")
+    digest = re.search(r"digest: (\S+)", out).group(1)
+    with fake_threads_server({"create": "ok", "publish": "ok", "publish_extra": extra}) as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        monkeypatch.setenv("THTH_THREADS_WAIT_SECONDS", "0")
+        rc, out, err = main(capsys, "send", TH_ACCOUNT, "--text-file", str(body), "--share-to-instagram",
+                            "--production", "--confirm", digest)
+    sent_dir = m4["tmp"]
+    rows = [json.loads(p.read_text(encoding="utf-8")) for p in pathlib.Path(sent_dir).rglob("sent/*.json")]
+    return rc, out + err, rows
+
+
+def test_ストーリーズへの共有を媒体が失敗と返したら出たとだけ言わず直し方を言う(m4, capsys, monkeypatch):
+    # 11/23 こぴちゃ: crossreshare_to_ig つきで 2 本出したのに、ストーリーズは 1 本も無かった。
+    # 媒体は共有の失敗をエラーにせず threads_publish の応答の欄で言うだけ（L2 share-to-ig-stories）。
+    rc, out, rows = _share_once(m4, capsys, monkeypatch, {"crossreshare_to_ig_status": "FAILED"})
+    assert rc == 0, out
+    assert "共有は媒体が失敗と返しました" in out and "thth auth" in out
+    assert "共有しました" not in out.replace("失敗と返しました", "")
+    assert rows and rows[-1].get("share_to_instagram_status") == "failed"
+    # 権限の見張りが「最後に成功した日」に数える印は立てない。
+    assert "share_to_instagram" not in rows[-1]
+    assert "share_to_instagram" not in found(TH_ACCOUNT)
+
+
+def test_ストーリーズへの共有の成否が返らなければ分からないと言う(m4, capsys, monkeypatch):
+    rc, out, rows = _share_once(m4, capsys, monkeypatch, {})
+    assert rc == 0, out
+    assert "成否を返さなかったので分かりません" in out
+    assert rows and rows[-1].get("share_to_instagram_status") == "unknown"
+    assert "share_to_instagram" not in rows[-1]
 
 
 @pytest.mark.parametrize("account,extra", [(FB_ACCOUNT, ()), (TH_ACCOUNT, ("--reply-to", "123"))])

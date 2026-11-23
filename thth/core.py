@@ -628,6 +628,35 @@ _REMOTE_RECOVERED = {
 }
 
 
+def _ig_share_report(publish_result, log) -> tuple[dict, str]:
+    """Instagram ストーリーズへの共有の成否を言う（5.29.1・11/24 こぴちゃで黙って共有されなかった）。
+
+    返り値は (`sent.write` に足す引数, 「投稿しました」の後ろに足す一言)。共有を頼んで
+    いなければ ({}, "")。媒体は共有に失敗しても Threads の投稿だけ出してエラーにしない
+    ので、ここで言わないと「出しました」だけになる。`share_to_instagram` の印（権限の
+    見張りが「最後に成功した日」に数える）は、成功と言われたときだけ立てる。
+    """
+    status = getattr(publish_result, "ig_share", None)
+    if status not in ("success", "failed", "unknown"):
+        return {}, ""
+    kw = {"share_to_instagram_status": status}
+    if status == "success":
+        kw["share_to_instagram"] = True
+        log("Instagram のストーリーズにも共有しました")
+        return kw, "（Instagram のストーリーズにも共有しました）"
+    if status == "failed":
+        note = ("Threads には出ましたが、Instagram のストーリーズへの共有は媒体が失敗と返しました"
+                "（ストーリーズには出ていません）。よくある理由は、Threads と Instagram の口座が"
+                "つながっていないか、鍵に threads_share_to_instagram が無いかです。Threads のアプリの"
+                "設定で Instagram とのつながりを確かめ、thth auth をやり直してから次の投稿で試して"
+                "ください。この投稿をストーリーズに出したいときは、Threads のアプリから手で共有できます")
+    else:
+        note = ("Threads には出ました。Instagram のストーリーズへの共有は、媒体が成否を返さなかった"
+                "ので分かりません。Instagram のアプリでストーリーズを確かめてください")
+    log(note)
+    return kw, f"（{note}）"
+
+
 def _remote_extra(publish_result) -> dict:
     state = getattr(publish_result, "remote_state", None)
     return {"remote_state": state} if state in inflight_resolve_mod.REMOTE_STATES else {}
@@ -1548,6 +1577,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                                   f"公開の応答は分からなかったが媒体に訊いて決まりました: {publish_result.remote_state}"))
 
     post_id = publish_result.post_id
+    ig_kw, ig_note = _ig_share_report(publish_result, log)
     # **媒体が返した `post_id` を、確かめずに書き戻さない**（セキュリティ監査
     # 2026-09-14・P1-4）。`post_id` は front-matter の 1 行になり、台帳の
     # ファイル名にもなる。改行の入った `id` を返すサーバ（乗っ取られた媒体・
@@ -1588,7 +1618,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         **({"media":publish_result.media} if publish_result.media else {}),
                         **({"community_id": post.community_id} if post.community_id else {}),
                         # 計画 Meta 全部盛り M4: ストーリーズへの共有を出した印（`permission_watch` の最後に成功した日）。
-                        **({"share_to_instagram": True} if getattr(post, "share_to_instagram", False) else {}),
+                        **(ig_kw if getattr(publish_result, "ig_share", None) else
+                           ({"share_to_instagram": True} if getattr(post, "share_to_instagram", False) else {})),
                         **({"announces": announced["announces"], "article_url": announced["article_url"],
                             **({"article": announced["article"]} if announced.get("article") else {})}
                            if announced is not None else {}))
@@ -1717,7 +1748,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                 extra={**_remote_extra(publish_result), "goal": goal_value,
                        "goal_change": goal_change,
                        queuefile.CROSSED_QUIET_HOURS: True if crossed_quiet_hours else None})
-    return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
+    return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました" + ig_note,
                         file=chosen.path, post_id=post_id)
 
 
@@ -2364,6 +2395,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
                                 error="unusable_post_id")
 
+        ig_kw, ig_note = _ig_share_report(result, log)
         # **送った本文そのものを残す**（`state/<account>/sent/<post_id>.json`）。
         # 不在の様態（`_throw_chosen()`）は書き戻しの照合のためにこれを書いていたが、
         # **同席の様態は書いていなかった**——`thth send` には書き戻す front-matter が
@@ -2383,7 +2415,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             **_link_urls_kwargs(manifest),
                             **({"media":result.media} if result.media else {}),
                             **({"community_id": community_value} if community_value else {}),
-                            **({"share_to_instagram": True} if share_value else {}),
+                            **(ig_kw if getattr(result, "ig_share", None) else
+                               ({"share_to_instagram": True} if share_value else {})),
                             **({"origin": origin} if origin is not None else {}))
         except (OSError,ValueError):
             if not manifest:raise
@@ -2417,5 +2450,5 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # 組み立てた推測を URL として出さない）。
         if result.url:
             log(f"URL: {result.url}")
-        return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
+        return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました" + ig_note,
                             post_id=result.post_id, url=result.url)

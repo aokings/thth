@@ -94,6 +94,11 @@ class PublishResult:
     # core は inflight に「最後の問い合わせ結果」として写すだけで、分岐は `failure`
     # で決める（HTTP の意味をアダプタに閉じるのと同じ理由）。
     remote_state: str | None = None
+    # Threads の Instagram ストーリーズへの共有（`crossreshare_to_ig`）を頼んだときだけ入る
+    # 共有の成否（5.29.1・11/24）。`threads_publish` の応答の `crossreshare_to_ig_status`
+    # の語を小文字で（`success`・`failed`）、欄が無ければ `unknown`。媒体は共有に失敗しても
+    # エラーにせず Threads の投稿だけ出す（L2 share-to-ig-stories）ので、core はこれで言い分ける。
+    ig_share: str | None = None
 
 
 class AdapterError(RuntimeError):

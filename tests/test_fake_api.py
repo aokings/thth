@@ -69,7 +69,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if mode == "ok":
             _id = str(self.counter[0])
             self.counter[0] += 1
-            self._respond_json(200, {"id": _id})
+            extra = (self.behavior.get("publish_extra") or {}) if self.path.endswith("/threads_publish") else {}
+            self._respond_json(200, {"id": _id, **extra})
         elif mode == "4xx":
             self._respond_json(400, {"error": "bad request"})
         elif mode == "5xx":

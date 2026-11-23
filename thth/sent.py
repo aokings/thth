@@ -51,7 +51,7 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           remote: dict | None = None, announces: str | None = None,
           article_url: str | None = None, retry_not_found: bool = False,
           crossed_quiet_hours: bool = False, share_to_instagram: bool = False,
-          seeds=None) -> str:
+          seeds=None, share_to_instagram_status: str | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -122,6 +122,10 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     if share_to_instagram is True:
         # 計画 Meta 全部盛り M4: Threads の投稿を Instagram のストーリーズにも出した（真のときだけ足す）。
         data["share_to_instagram"] = True
+    if share_to_instagram_status in ("success", "failed", "unknown"):
+        # 共有の成否（5.29.1）: 媒体の `crossreshare_to_ig_status`。頼んだのに出なかった
+        # ことを後から辿れるように、頼んだ印とは別に残す。
+        data["share_to_instagram_status"] = share_to_instagram_status
     if resolved_from is not None:
         # reply_to_file（設計 3.2.0 §3）。`reply_to` は解決した post_id（記録は事実）。
         # どの原稿から解決したかを足す——あとから「なぜこの投稿に返したか」を辿れる。
