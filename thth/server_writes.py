@@ -380,6 +380,9 @@ def direct_retract(context, request, via):
     confirm=request.get('confirm')
     # 口座・id・理由だけから作った番号（記録のある投稿の番号）は、記録の無い投稿では「confirm 無し」と同じ。
     plain=approval.compute_retract_digest(post_id=post_id,account=account,reason=reason)
+    # 監査 5.29.0 D1: 5.28.1 までの遠くの道の CLI は confirm も stage も付けずに頼み、答えの status を見ずに
+    # 「取り下げました」と言う。記録の無い投稿で api の道からそう来たら、一段目を返さず断る（消えてもいない）。
+    if outside and via=='api' and confirm is None and request.get('stage') is None: error('confirm_required')
     if request.get('stage')=='1' or (outside and confirm in (None,plain)):
         return {'account':account,'status':'confirm_required','stage':1,'retracted':False,'post_id':post_id,
                 'digest':digest,'recorded':not outside,'kind':record.get('kind') or 'post',

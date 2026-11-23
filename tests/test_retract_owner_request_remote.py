@@ -188,3 +188,15 @@ def test_MCPの道具はconfirmを持ち_説明は持ち主の依頼だけ():
     assert build({"account": "alpha", "post_id": "777", "reason": "誤字"})[-2] == "--confirm=" + plain
     assert build({"account": "alpha", "post_id": "777", "reason": "誤字",
                   "confirm": "abcdef123456"})[-2] == "--confirm=abcdef123456"
+
+
+def test_監査5290D1_古いCLIの形のapiの依頼は記録の無い投稿を断る(env, remote, medium):
+    """5.28.1 までの遠くの道の CLI は confirm も stage も付けず、status を見ずに「取り下げました」と言う。"""
+    assert refused(env, via="api", post_id="777", reason="誤字") == "confirm_required"
+    assert medium.deletes == []
+    # 新しい CLI（stage・confirm を付ける）と MCP（via=mcp）は今までどおり
+    first = call(env, via="api", post_id="777", reason="誤字", stage="1")
+    assert first["status"] == "confirm_required"
+    assert call(env, via="mcp", post_id="777", reason="誤字")["status"] == "confirm_required"
+    assert call(env, via="api", post_id="777", reason="誤字", confirm=first["digest"])["status"] == "retracted"
+    assert medium.deletes == ["777"]
