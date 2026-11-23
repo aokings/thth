@@ -365,6 +365,64 @@ def mark_retracted(state_dir: str, post_id: str, *, retracted_at: str,
     return p
 
 
+# THTH を通していない自分の投稿を `thth retract` で消した記録（11/23 masaru「自分のアカウントでしょ」）。
+# `sent/` に入れると「THTH が出したもの」（`post_ids`・board・採取）に数えられるので別の置き場。
+# 安全装置（`guard._action_rows`）は削除の 1 件として数える。
+OUTSIDE_DIR = "retracted_outside"
+
+
+def outside_dir_for(state_dir: str) -> str:
+    return os.path.join(state_dir, OUTSIDE_DIR)
+
+
+def outside_path_for(state_dir: str, post_id: str) -> str:
+    return os.path.join(outside_dir_for(state_dir), f"{postid_mod.to_filename(post_id)}.json")
+
+
+def write_outside_retraction(state_dir: str, post_id: str, *, kind: str, url, text: str,
+                             retracted_at: str, retracted_by: str, retract_reason: str,
+                             origin: dict | None = None) -> str:
+    """消した事実を 1 本（媒体から読んだ本文・URL・誰が・なぜ）。返り値は書いたパス。"""
+    data = {"post_id": post_id, "kind": kind, "outside_thth": True, "url": url, "text": text,
+            "retracted_at": retracted_at, "retracted_by": retracted_by, "retract_reason": retract_reason}
+    if origin is not None:
+        data.update(_origin_fields(origin, prefix="retracted_"))
+    os.makedirs(outside_dir_for(state_dir), exist_ok=True)
+    p = outside_path_for(state_dir, post_id)
+    _save(p, data)
+    return p
+
+
+def read_outside_retraction(state_dir: str, post_id: str) -> dict | None:
+    p = outside_path_for(state_dir, post_id)
+    if not os.path.exists(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, dict) else None
+
+
+def outside_retractions(state_dir: str) -> list:
+    """`retracted_outside/` の記録を全部（壊れた 1 本・post_id の無い物は飛ばす）。"""
+    d = outside_dir_for(state_dir)
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("post_id"), str) and data["post_id"].strip():
+            out.append(data)
+    return out
+
+
 def mark_bookmark_result(state_dir: str, post_id: str, *, result: str, at: str, remote: dict | None = None) -> str:
     """ブックマークの行の `result` を `unknown` から決まった値へ（設計 4.0 S4 §3.2・§7）。**足す**だけ。
 

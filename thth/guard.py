@@ -280,6 +280,11 @@ def _action_rows(account):
                 at = jst.parse(attempt.get("sent_at")) if isinstance(attempt, dict) else None
                 if at is not None:
                     out.append(("bookmark", "bookmark_add", at, blog, ("bm", post_id, "attempt", index)))
+    # THTH を通していない自分の投稿を消した記録（11/23）も削除の 1 件に数える（日の上限・連投の窓）。
+    for row in sent_mod.outside_retractions(accounts.state_dir_for(account)):
+        at = jst.parse(row.get("retracted_at"))
+        if at is not None:
+            out.append(("retract", "retract", at, None, ("retract", row["post_id"])))
     return out
 
 

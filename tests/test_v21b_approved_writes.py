@@ -375,7 +375,7 @@ def test_retract_記録の無いpost_idは取り下げない(isolated_account_fa
                                          by="masaru", confirm=_digest("999")))
         deletes = list(base_url.handler_cls.deletes)
     assert rc == 1 and deletes == []
-    assert "記録が手元にありません" in capsys.readouterr().err
+    assert "THTH の記録（queue・sent/）に無く" in capsys.readouterr().err
 
 
 def test_retract_同席送信はsentに3項目を足す(isolated_account_factory, tmp_path, point_at):

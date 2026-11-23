@@ -14,8 +14,10 @@
 
 fail-closed:
   - 台帳に `production: true` が無ければ**二段目でも DELETE を呼ばない**。
-  - 手元に記録（queue か `sent/`）の無い `post_id` は取り下げない
-    （THTH を通していない投稿には触らない）。
+  - 手元に記録（queue か `sent/`）の無い `post_id` は、**その口座の鍵で読んだ自分の
+    直近の投稿（25 件）とストーリーズに見えるときだけ**取り下げる（11/23 masaru
+    「自分のアカウントでしょ」）。見えなければ断る（他人の投稿・古い投稿には触らない）。
+    記録は `sent/` に入れず `retracted_outside/` に置く（THTH が出したものに数えない）。
   - トークンに媒体の取り下げ権限（Threads `threads_delete`・X `tweet.write`・
     Mastodon `write:statuses`）が乗っていなければ rc=2（`thth auth` のやり直し）。
   - 取り下げを持たない媒体は rc=2「この媒体の取り下げは未対応」。
@@ -218,6 +220,41 @@ def _find_record(account_cfg: dict, account_name: str, post_id: str) -> dict | N
     return None
 
 
+# THTH の記録が無い投稿を探す件数（どの媒体の読む口でも通る既定の数）。
+OWN_POST_LOOKUP = 25
+
+
+def _find_own_post(account_cfg: dict, token, post_id: str) -> dict | None:
+    """THTH の記録が無い `post_id` を、**その口座の鍵で読んだ自分の投稿**の中に探す（11/23）。
+
+    直近の投稿（`recent_posts`・25 件）と、あればストーリーズ（`recent_stories`・24 時間）。
+    見えたら `{"source": "media", "kind": "post"|"story", ...}`、見えなければ・読めなければ `None`。
+    **読むだけ**（DELETE はここで呼ばない）。
+    """
+    try:
+        adapter = adapters_mod.make_adapter(account_cfg, token)
+    except Exception:
+        return None
+    if "recent_posts" in adapters_mod.capabilities_for(account_cfg.get("media")):
+        try:
+            for row in adapter.recent_posts(limit=OWN_POST_LOOKUP):
+                if row.get("post_id") == post_id:
+                    return {"source": "media", "kind": "post", "path": "（THTH の記録なし・媒体から読んだ自分の投稿）",
+                            "text": row.get("text") or "", "front_matter": {}, "url": row.get("url")}
+        except Exception:
+            pass
+    if callable(getattr(adapter, "recent_stories", None)):
+        try:
+            for row in adapter.recent_stories(limit=OWN_POST_LOOKUP):
+                if row.get("story_id") == post_id:
+                    return {"source": "media", "kind": "story",
+                            "path": "（THTH の記録なし・媒体から読んだ自分のストーリーズ）",
+                            "text": "", "front_matter": {}, "url": row.get("url")}
+        except Exception:
+            pass
+    return None
+
+
 def _lookup_url(account_cfg: dict, token, post_id: str) -> str | None:
     """URL を**読み取りだけ**で引く（`recent_posts`）。引けなければ `None`。"""
     try:
@@ -270,24 +307,35 @@ def _cmd_retract(args) -> int:
         return _fail(args, 2, f"{media}: この媒体の取り下げは未対応です"
                               "（取り下げられるのは Threads／X／Mastodon／Bluesky）。消すなら媒体の画面から手で")
 
+    already_gone = bool(getattr(args, "already_gone", False))
+    token = accounts_mod.load_token(account_cfg)
     record = _find_record(account_cfg, args.account, post_id)
     if record is None:
-        return _fail(args, 1, f"post_id {post_id} の記録が手元にありません"
-                              "（queue にも sent/ にも無い）。**THTH を通していない投稿は"
-                              "取り下げません**——消すなら媒体の画面から手で")
+        done = sent_mod.read_outside_retraction(accounts_mod.state_dir_for(args.account), post_id)
+        if done is not None:
+            return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
+                                  f"（{done.get('retracted_at')}・{done.get('retracted_by')}）")
+        if not already_gone:
+            # THTH の記録が無くても、自分の口座の投稿なら消せる（11/23 masaru）。
+            record = _find_own_post(account_cfg, token, post_id)
+    if record is None:
+        return _fail(args, 1, f"post_id {post_id} を取り下げません — なぜ: THTH の記録（queue・sent/）に無く、"
+                              f"{args.account} の鍵で読んだ自分の直近の投稿（{OWN_POST_LOOKUP} 件）と"
+                              "ストーリーズにも見当たりません。他の人の投稿や古い投稿には触りません。"
+                              f"直し方: thth posts {args.account}（IG のストーリーズは --stories も）で id を"
+                              "確かめて打ち直してください。より良く: それより古い投稿は媒体の画面から手で消し、"
+                              "既に消したものは THTH の記録があれば --already-gone で記録だけ足せます")
     fm = record["front_matter"]
     if fm.get("retracted_at"):
         return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
                               f"（{fm.get('retracted_at')}・{fm.get('retracted_by')}）")
 
-    already_gone = bool(getattr(args, "already_gone", False))
     # 媒体の画面で既に消した投稿（要望 #1560・関東 10/8）。記録だけ足し、DELETE は呼ばない。
     # 消す取り下げの digest を流用できないよう、digest の材料に印を足す。
     digest = approval_mod.compute_retract_digest(
         post_id=post_id, account=args.account,
         reason=reason + ("\x1falready_gone" if already_gone else ""))
 
-    token = accounts_mod.load_token(account_cfg)
     url = record.get("url") or _lookup_url(account_cfg, token, post_id)
 
     if not args.confirm:
@@ -306,6 +354,8 @@ def _cmd_retract(args) -> int:
         if already_gone:
             print("  媒体の画面で既に消えている投稿として、記録だけ足します（DELETE は呼びません）")
         print(f"  記録: {record['source']}（{record['path']}）")
+        if record["source"] == "media":
+            print("  THTH を通していない自分の投稿です。消したことは retracted_outside/ に残します")
         print(f"  URL : {url or '（記録に無く、引けませんでした。thth posts で確かめられます）'}")
         print(f"  理由: {reason}")
         print(f"  by  : {by}")
@@ -427,8 +477,14 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                     message=f"取り下げ: {os.path.basename(record['path'])} post_id {post_id}（{by}）")
                 if pushed:
                     push_err = None
+            if record["source"] == "media":
+                # THTH を通していない自分の投稿（11/23）。`sent/` には入れない（THTH が出したものに数えない）。
+                wrote.append(sent_mod.write_outside_retraction(
+                    state_dir, post_id, kind=record.get("kind") or "post", url=url,
+                    text=record.get("text") or "", retracted_at=retracted_at,
+                    retracted_by=by, retract_reason=reason, origin=origin))
             # `sent/` の記録があれば、こちらにも同じ 3 項目を足す（消さない）。
-            if sent_mod.read(state_dir, post_id) is not None:
+            elif sent_mod.read(state_dir, post_id) is not None:
                 sent_mod.mark_retracted(state_dir, post_id, retracted_at=retracted_at,
                                         retracted_by=by, retract_reason=reason, origin=origin)
                 wrote.append(sent_mod.path_for(state_dir, post_id))
