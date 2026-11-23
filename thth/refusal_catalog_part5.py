@@ -991,7 +991,7 @@ ENTRIES = {
                "広告に使う許可を許す・取り消すときは --sponsor <ブランドのビジネス口座の id> と --by <名前> が要ります",
         "command": "thth brand creators <IG の口座> list <数字の id>",
         "better": "先に list や旗なしの promote で今の状態を読むと、足す・外すの一段目で何が変わるかを迷わず確かめられます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "creator_marketplace_not_ready": {
@@ -1000,7 +1000,7 @@ ENTRIES = {
         "fix": "Business Suite（Facebook は利用規約の同意の画面）でブランドを onboard し、規約に同意してから打ち直してください。資格は Meta が判定します",
         "command": "thth creators search <口座> --country JP",
         "better": "Standard Access の間は Meta が試験用のデータを返すので、onboard が済めば審査の前でも呼び出しの成功を作れます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     # 会話から起きた出来事を Meta に送る口（Conversions API for Business Messaging・thth/meta_events.py）。
@@ -1010,7 +1010,7 @@ ENTRIES = {
         "fix": "上の名前のどれかを --type に付けて打ち直してください（購入は purchase、問い合わせは lead）",
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --by <名前>",
         "better": "購入のあとに届いた注文を order_created、発送を order_shipped と段ごとに送ると、広告の最適化に使える流れが残ります",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "meta_event_value_invalid": {
@@ -1019,7 +1019,7 @@ ENTRIES = {
         "fix": "--value 1200 --currency JPY の形で両方を付けて打ち直してください（金額が無い出来事は両方を外します）",
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --by <名前>",
         "better": "購入の金額を付けると、Meta が広告の費用に対する売上を数えられ、最適化に使われます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "meta_event_already_sent": {
@@ -1028,7 +1028,7 @@ ENTRIES = {
         "fix": "まず Meta のイベントマネージャで、前の 1 件が届いているかを確かめてください。届いていて、それとは別の購入（同じ相手が同じ金額でもう一度買った など）なら、--nth 2 を付けて一段目から打ち直します。届いていないなら、少し時間を置けば同じ形で送れます",
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --nth 2 --by <名前>",
         "better": "出来事は起きたときに 1 回だけ送る流れにしておくと、計測が正しくなり、広告の最適化にもそのまま効きます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.1",
     },
     "meta_event_marks_unreadable": {
@@ -1037,7 +1037,7 @@ ENTRIES = {
         "fix": "運営者が state/<口座>/ の event_sent.json と event_mark.key の持ち主と権限を確かめて直し、一段目から打ち直してください。壊れているなら、控えを取ってから両方を消すと、空から数え直します（鍵だけを消すと、残った印と合わなくなるので断り続けます。消すなら両方。そのときは直前に送った出来事を二重に送らないよう、イベントマネージャで確かめてから）",
         "command": "thth doctor <口座>",
         "better": "状態の置き場を THTH を動かす利用者だけが書ける形にしておくと、柵が止まらずに済みます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.1",
     },
     "meta_event_nth_unused": {
@@ -1046,7 +1046,7 @@ ENTRIES = {
         "fix": "1 回目なら --nth を外し、2 回目なら --nth 2 のように、送った回の次の番号で一段目から打ち直してください",
         "command": "thth dm event <口座> --type purchase --psid <相手の id> --value 1200 --currency JPY --by <名前>",
         "better": "同じ相手の同じ金額の購入が続くときは、起きた順に 1 回ずつ送ると、番号を考えずに済みます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.1",
     },
     "meta_event_recipient_unknown": {
@@ -1055,7 +1055,7 @@ ENTRIES = {
         "fix": "thth dm list に出る会話の id を --conversation に 1 つだけ、または数字の相手の id を --psid に 1 つだけ渡してください",
         "command": "thth dm list <口座>",
         "better": "thth dm read で相手と会話の中身を確かめてから送ると、別の人の出来事にしてしまう間違いを防げます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "meta_event_channel_unknown": {
@@ -1064,7 +1064,7 @@ ENTRIES = {
         "fix": "--channel を外すと口座の媒体から決まります（Facebook ページは messenger、Instagram は instagram）",
         "command": "thth dm event <口座> --type lead --psid <相手の id> --by <名前>",
         "better": "口座の名前を正しく選べば --channel は要りません。迷うときは thth account <口座> で媒体を確かめてください",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "meta_event_whatsapp_unavailable": {
@@ -1073,7 +1073,7 @@ ENTRIES = {
         "fix": "いまは --channel を外し、Facebook ページか Instagram の口座で送ってください（同じ命令で Messenger・Instagram のイベントが送れます）",
         "command": "thth dm event <口座> --type lead --psid <相手の id> --by <名前>",
         "better": "WhatsApp の口座の台帳（thth wa add）は用意できています。dataset の path と広告クリックの id（ctwa_clid）の取り方を本物で確かめたら、同じ命令で --channel whatsapp を付けるだけで送れるようにします。開発のセッションに伝えてください",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     # Instagram の商品タグ（thth/meta_shop.py）。since は版上げのときに直す。
@@ -1085,7 +1085,7 @@ ENTRIES = {
         "command": "thth shop tag <IG の口座> <media の id> --product <商品の id> --x 0.5 --y 0.5 --by <名前>",
         "better": "先に thth shop eligibility で資格を、thth shop tags で今のタグを読むと、付ける一段目で何が変わるかを迷わず確かめられます。"
                   "ショップが承認前のときは、自社のドメインで実際に売っている物を載せたショップを作って承認を受けるのが、Meta のコマースの要件に沿う近道です",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.14.0",
     },
     "shop_tag_carousel": {
@@ -1096,7 +1096,7 @@ ENTRIES = {
         "command": "thth shop tag <IG の口座> <中の画像の id> --product <商品の id> --x 0.5 --y 0.5 --by <名前>",
         "better": "商品が写っている 1 枚を選び、写っている所に --x・--y を合わせると、見る人がタグを押しやすくなります。"
                   "同じ商品を何枚かに付けても構いません。付けたあとは thth shop tags で、その画像のタグを読んで確かめられます",
-        "doors": _C,
+        "doors": _CR,
         "since": "5.27.0",
     },
     # WhatsApp の口（thth/wa/）。since は版上げのときに直す。

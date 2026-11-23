@@ -438,7 +438,9 @@ REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured",
 # `--remote` を子の命令（`bookmark add`・`page cta`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
 REMOTE_CHILD_PARSERS = ("bookmark", "page",
                         # 設計 広告の資格と遠くの道 段 4: `thth ads <verb> --remote`（子の命令に旗を足す）。
-                        "ads")
+                        "ads",
+                        # 11/23 B1: 11/09 以降の Meta の口と webhook（出す子の命令にだけ旗を足す・`_register_children`）。
+                        "brand", "creators", "shop", "webhook")
 
 
 def command_key(command, args) -> str:
@@ -451,6 +453,8 @@ def command_key(command, args) -> str:
         return command + " " + str(getattr(args, "action", "") or "")
     if command == "page":
         return f"page {getattr(args, 'page_command', '')} {getattr(args, 'action', '')}"
+    if command in ("brand", "creators", "shop", "webhook"):
+        return f"{command} {getattr(args, command + '_command', '') or ''}"
     if command == "account":
         verb = getattr(args, "account", None)
         return "account " + verb if verb in ("status", "set", "add", "leave", "resume", "migrate") else "account"
@@ -1463,6 +1467,222 @@ def _meta_reply(args, account):
     return _say(f"{word}: {account} comment {args.comment_id}（{value.get('at')}）")
 
 
+# --------------------------------------------------------------------------
+# 11/23（一覧_Meta申請の録画までに要る物 B1）: 11/09 以降の口と webhook。審査員の手順（貼り紙 §9 の C-5・
+# C-9〜C-16）を鍵の道から打てるように。中身は VM の `thth/server_meta.py` が手元の関数（`meta_events`・
+# `meta_brand`・`meta_shop`・`webhook`）で行う。書く口の digest は VM が作り VM が照合する（上と同じ）。
+# --------------------------------------------------------------------------
+
+def _stage_lines_production(value) -> list:
+    return [] if value.get("production") is not False else ["  ⚠ 台帳に production: true が無いので、二段目でも媒体は呼びません"]
+
+
+def _by_text(value) -> str:
+    return f"--by {_quoted(value.get('by') or '<名前>')}"
+
+
+def _meta_event(args, account):
+    """`thth dm event <口座> --type …`（会話から起きた出来事を Meta に送る・二段）。"""
+    _refuse_unread(args, "dm event", {"wait": "--wait"})
+    nth = getattr(args, "nth", None) or 1
+    value = call("dm_event", account, type=args.type, conversation=args.conversation, psid=args.psid,
+                 value=args.value, currency=args.currency, channel=args.channel, nth=nth if nth > 1 else None,
+                 refresh_dataset=True if getattr(args, "refresh_dataset", False) else None, confirm=args.confirm)
+    if value.get("stage") == 1:
+        money = f"{value.get('value')} {value.get('currency')}" if value.get("value") is not None else "—"
+        return _meta_stage_one(args, value, [
+            f"送りません（確認の一段目です）: {account} → {value.get('channel')} の相手 {value.get('to')}",
+            f"  出来事: {value.get('event_name')}  金額: {money}",
+            ("  dataset: 前に作ったものを使います" if value.get("dataset") == "saved"
+             else "  dataset: 無いので二段目で作ります（1 ページ 1 つ・既にあれば Meta が同じ id を返します）"),
+            "  Meta に送るのは出来事の種類・金額・相手の id です（広告の最適化と計測のため）。同じ出来事は 1 回だけ送ってください",
+            "  THTH に残すのは dataset の id・送った印と、いつ・種類・件数の 1 行だけです（相手の id・金額は残しません）",
+            *_stage_lines_production(value)],
+            f"thth dm event {account} --type {args.type}"
+            + (f" --conversation {args.conversation}" if args.conversation else f" --psid {value.get('to')}")
+            + (f" --value {args.value} --currency {args.currency}" if args.value is not None else "")
+            + (f" --nth {nth}" if nth > 1 else ""))
+    return _shown(args, value, lambda v: _say(
+        f"送りました: {account} → {v.get('channel')} に {v.get('event_name')} を 1 件（相手の id と金額は保存していません）"))
+
+
+def _brand_creators(args, account):
+    _refuse_unread(args, "brand creators", {"wait": "--wait"})
+    ids = ",".join(str(v) for v in args.ids or []) or None
+    if args.action == "list":
+        value = call("brand_creators_list", account, ids=ids)
+        if _meta_json(args):
+            _print_json(value)
+            return 0
+        present = [str(v) for v in value.get("approved") or []]
+        print(f"{account}  尋ねた {value.get('checked')} 件のうち承認済み {len(present)} 件（保存しません）")
+        for item in present:
+            print(f"  承認済み id={item}")
+        asked = [part.strip() for part in (ids or "").split(",") if part.strip()]
+        for item in dict.fromkeys(asked):
+            if item not in present:
+                print(f"  載っていない id={item}")
+        print("  Meta の公開の口は、尋ねた id が載っているかを返します（引数なしの全件一覧は公式の頁に無い）")
+        if value.get("note"):
+            print(f"  {value['note']}")
+        return 0
+    value = call("brand_creators_" + args.action, account, ids=ids, confirm=args.confirm)
+    word = "足す" if args.action == "approve" else "外す"
+    if value.get("stage") == 1:
+        targets = [str(v) for v in value.get("ids") or []]
+        already = [str(v) for v in value.get("already") or []]
+        todo = [v for v in targets if (v not in already) == (args.action == "approve")]
+        return _meta_stage_one(args, value, [
+            f"{word}ことはしません（確認の一段目です）: {account} 承認クリエイター",
+            f"  対象 {len(targets)} 件: " + "、".join(targets),
+            f"  いま一覧に載っている: {len(already)} 件・実際に変わる: {len(todo)} 件",
+            "  Meta は 1 つでも失敗すると 1 つも変えません", *_stage_lines_production(value)],
+            f"thth brand creators {account} {args.action} {' '.join(targets)}")
+    return _shown(args, value, lambda v: _say(
+        f"{'足しました' if args.action == 'approve' else '外しました'}: {account} 承認クリエイター {v.get('count')} 件"))
+
+
+def _brand_promote(args, account):
+    _refuse_unread(args, "brand promote", {"wait": "--wait"})
+    verb = "allow" if args.allow else ("deny" if args.deny else "show")
+    value = call("brand_promote_" + verb, account, media_id=str(args.media_id), sponsor=args.sponsor,
+                 confirm=args.confirm if verb != "show" else None)
+    if verb == "show":
+        if _meta_json(args):
+            _print_json(value)
+            return 0
+        approved = value.get("approved") or []
+        print(f"{account}  投稿 {value.get('media_id')} を広告に使ってよいと許したブランド {len(approved)} 件（保存しません）")
+        for item in approved:
+            print(f"  ブランド id={item}")
+        print(f"  許す・取り消すとき: thth brand promote {account} {value.get('media_id')} --allow|--deny --sponsor <ブランドの id>")
+        return 0
+    allow = verb == "allow"
+    if value.get("stage") == 1:
+        return _meta_stage_one(args, value, [
+            f"{'許し' if allow else '取り消し'}ません（確認の一段目です）: {account} 投稿 {value.get('media_id')}",
+            f"  ブランド: {value.get('sponsor_id')}（いま許可 {'あり' if value.get('already') else 'なし'}）",
+            f"  やること: そのブランドが、この投稿を広告（パートナーシップ広告）に使うのを{'許す' if allow else '取り消す'}",
+            *_stage_lines_production(value)],
+            f"thth brand promote {account} {value.get('media_id')} --{verb} --sponsor {value.get('sponsor_id')}")
+    return _shown(args, value, lambda v: _say(
+        f"{'許しました' if allow else '取り消しました'}: {account} 投稿 {v.get('media_id')}"))
+
+
+def _brand_ads_permissions(args, account):
+    value = call("brand_ads_permissions", account, creator=args.creator)
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    rows = value.get("permissions") or []
+    counts = value.get("by_status") or {}
+    print(f"{account}  広告に使ってよいの許可 {len(rows)} 件（先頭 1 頁・保存しません）"
+          + ("  " + "・".join(f"{k} {v}" for k, v in sorted(counts.items())) if counts else ""))
+    for row in rows:
+        print(f"  {row.get('status') or '—'}  クリエイター id={row.get('creator_id') or '—'}")
+    if not rows:
+        print("  0 件です（許可がまだ無いだけで、読みは通っています）")
+    return 0
+
+
+def _brand_content(args, account):
+    value = call("brand_content", account, business=args.business, limit=args.limit)
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    rows = value.get("content") or []
+    print(f"{account}  提携広告に使える投稿 {len(rows)} 件（先頭 1 頁・本文は頼まない・保存しません）")
+    for row in rows:
+        print(f"  content_id={row.get('content_id')}  {row.get('platform') or '—'}  {row.get('media_type') or '—'}  "
+              f"{row.get('post_type') or '—'}  {row.get('ad_usage') or '—'}")
+    return 0
+
+
+def _creators_search(args, account):
+    value = call("creators_search", account, country=args.country, q=args.q, acting_business=args.acting_business,
+                 limit=args.limit)
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    rows = value.get("creators") or []
+    print(f"{account}  クリエイター {len(rows)} 件（id まで・名前と自己紹介は頼まない・保存しません）")
+    for row in rows:
+        print(f"  creator_id={row.get('creator_id')}")
+    print("  Standard Access の間は、Meta が試験用（模擬）のデータを返します")
+    return 0
+
+
+def _shop(args, account):
+    verb = args.shop_command
+    _refuse_unread(args, "shop " + verb, {"wait": "--wait"})
+    get = lambda name: getattr(args, name, None)  # noqa: E731
+    value = call("shop_" + verb, account, media_id=get("media_id"), catalog=get("catalog"), q=get("q"),
+                 product=get("product"), x=get("x"), y=get("y"), confirm=get("confirm"))
+    if value.get("stage") == 1:
+        place = f"({value.get('x')}, {value.get('y')})" if value.get("x") is not None else "位置なし（動画・リール）"
+        return _meta_stage_one(args, value, [
+            f"付けません（確認の一段目です）: {account} 投稿 {value.get('media_id')}",
+            f"  商品: {value.get('product_id')}（いま{'付いています・位置の更新になります' if value.get('already') else '付いていません'}）",
+            f"  位置: {place}", f"  いま付いているタグ: {value.get('tags_now')} 件",
+            "  承認前（approved でない）の商品は、付けても公開された投稿には出ません", *_stage_lines_production(value)],
+            f"thth shop tag {account} {value.get('media_id')} --product {value.get('product_id')}"
+            + (f" --x {value.get('x')} --y {value.get('y')}" if value.get("x") is not None else ""))
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    if verb == "eligibility":
+        print(f"{account}  商品タグ: {'付けられます' if value.get('eligible') else '付けられません'}（保存しません）")
+        if not value.get("eligible"):
+            print("  承認済みの Instagram ショップに結ばれていないと、Meta は資格なしと返します（Commerce Manager で結んで承認を受けます）")
+    elif verb == "catalogs":
+        rows = value.get("catalogs") or []
+        print(f"{account}  使えるカタログ {len(rows)} 件（保存しません）")
+        for row in rows:
+            count = row.get("product_count")
+            print(f"  catalog_id={row.get('catalog_id')}  {row.get('catalog_name') or '—'}  "
+                  f"店={row.get('shop_name') or '—'}  商品数={count if count is not None else '—'}")
+    elif verb == "products":
+        rows = value.get("products") or []
+        print(f"{account}  商品 {len(rows)} 件（先頭 1 頁・保存しません）")
+        for row in rows:
+            print(f"  product_id={row.get('product_id')}  {row.get('product_name') or '—'}  "
+                  f"審査={row.get('review_status') or '—'}")
+    elif verb == "tags":
+        rows = value.get("tags") or []
+        print(f"{account}  投稿 {value.get('media_id')} の商品タグ {len(rows)} 件（保存しません）")
+        for row in rows:
+            place = f"  位置=({row['x']}, {row['y']})" if row.get("x") is not None and row.get("y") is not None else ""
+            print(f"  product_id={row.get('product_id')}  {row.get('name') or '—'}  "
+                  f"審査={row.get('review_status') or '—'}{place}")
+    else:
+        print(f"付けました: {account} 投稿 {value.get('media_id')}")
+    return 0
+
+
+def _webhook(args, account):
+    from . import webhook
+    if args.webhook_command == "status":
+        return _shown(args, call("webhook_status", account), webhook.show_status_for)
+    value = call("webhook_subscribe", account)
+    if _meta_json(args):
+        _print_json(value)
+        return 0
+    added = "・".join(value.get("added") or []) or "（足す欄なし・もう購読済み）"
+    print(f"{account}: Webhook を購読しました。欄: {'・'.join(value.get('fields') or [])}（今回足した欄: {added}）")
+    print(f"  届いたかは thth webhook status {account} で見ます（届いた通知は thth replies・thth mentions・thth events に出ます）")
+    return 0
+
+
+COMMANDS.update({
+    "dm event": _meta_event,
+    "brand creators": _brand_creators, "brand promote": _brand_promote,
+    "brand ads-permissions": _brand_ads_permissions, "brand content": _brand_content,
+    "creators search": _creators_search,
+    **{"shop " + verb: _shop for verb in ("eligibility", "catalogs", "products", "tags", "tag")},
+    "webhook subscribe": _webhook, "webhook status": _webhook,
+})
+
+
 COMMANDS.update({
     "doctor": _meta_doctor, "page cta show": _meta_page_cta, "page cta delete": _meta_page_cta,
     "live create": _meta_live, "live end": _meta_live,
@@ -1577,12 +1797,16 @@ def register(sub) -> None:
             action.choices["cta"].add_argument("--remote", action="store_true",
                                                help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
     _register_ads(choices.get("ads"))
+    _register_children(choices)
     for name in ("dm", "live", "edit", "reply"):
         _tell(sub, name, "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
         _tell(sub, name, "wait", "thth.me の道: 使えない（付けると断る）")
     _tell(sub, "reply", None, "thth.me の道は hide・unhide だけ（delete・pending・approve・ignore は手元の道）")
     _tell(sub, "dm", None, "thth.me の道も二段・digest は VM が作って照合する")
     _tell(sub, "live", None, "thth.me の道も二段・配信の宛先は端末に 1 回だけ返り VM に残さない")
+    for name in ("brand", "shop", "webhook"):
+        _tell(sub, name, None, "thth.me の道も同じ（書く口は二段・digest は VM が作って照合する）"
+              if name != "webhook" else "thth.me の道は subscribe と status <口座> だけ（pull は運営者の常駐）")
     send = choices["send"]
     send.add_argument("--text", default=None, help="本文（1 行の文。長い本文は --text-file か標準入力）")
     send.add_argument("--dry-run", dest="dry_run", action="store_true",
@@ -1664,6 +1888,29 @@ def _register_ads(ads) -> None:
                 for option in target._actions:
                     if option.dest == "by" and verb in ("boost", "pause", "stop"):
                         option.help = "打った人の名前（thth.me の道: 読まない・鍵の持ち主が記録される）"
+
+
+def _register_children(choices) -> None:
+    """11/23 B1: `thth brand|creators|shop|webhook <verb>` のうち遠くの道に出す子の命令にだけ `--remote` を足す。
+
+    出さない子（`thth shop add` などの店を読む口・`thth webhook pull`）は変えない。書く口の `--by` の help に
+    遠くの道での扱いを添える（読まない・鍵の持ち主が記録される）。
+    """
+    remote_help = "台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）"
+    for command in ("brand", "creators", "shop", "webhook"):
+        parser = choices.get(command)
+        for action in (parser._actions if parser is not None else ()):
+            if not isinstance(action, argparse_subparsers()):
+                continue
+            for verb, child in action.choices.items():
+                if f"{command} {verb}" not in COMMANDS:
+                    continue
+                child.add_argument("--remote", action="store_true", help=remote_help)
+                for option in child._actions:
+                    if option.dest == "by":
+                        option.help = f"{option.help or '誰が頼んだか'}（thth.me の道: 読まない・鍵の持ち主が記録される）"
+                    elif option.dest == "wait":
+                        option.help = f"{option.help}（thth.me の道: 使えない・付けると断る）"
 
 
 def _tell(sub, command, dest, text) -> None:

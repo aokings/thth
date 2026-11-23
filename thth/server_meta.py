@@ -7,6 +7,16 @@
     like|unlike                 thth like|unlike <口座> <投稿>
     edit_post                   thth edit <FB の口座> <post_id> --text …
     reply_hide|unhide           thth reply hide|unhide <口座> <comment_id>
+    dm_event                    thth dm event <FB|IG の口座> --type … （二段・会話から起きた出来事を Meta に送る）
+    brand_*・creators_search    thth brand creators|promote|ads-permissions|content・thth creators search（書く口は二段）
+    shop_*                      thth shop eligibility|catalogs|products|tags|tag <IG の口座> …（tag は二段）
+    webhook_subscribe|status    thth webhook subscribe|status <口座>（購読は 1 段・足すだけ・status はその口座の分だけ）
+
+11/23（一覧_Meta申請の録画までに要る物 B1）: 11/09 以降に足した口（dm event・brand・creators・shop の商品タグ）と
+webhook を足した。審査員の手順（貼り紙 §9 の C-5・C-9〜C-16）を鍵の道から打てるように。webhook subscribe は
+口座の持ち主のページを THTH のアプリに購読させるだけで（足すだけ・外さない・お金も運営者の承認の番号も要らない・
+審査の区間 fb-webhook にある）、手元の道と同じ 1 段で出す。status は運営者の全体の数（Worker・知らない id）を返さず、
+その口座の購読と数と最後の取り込みだけを返す（`webhook.status_for`）。`webhook pull` は運営者の常駐の仕事なので出さない。
 
 **手元の道の命令の関数をそのまま VM で呼ぶ**（`meta_write`・`edit_cli`・`reaction_cli`）。柵は同じ 1 本:
 
@@ -52,11 +62,36 @@ _FIELDS = {
     'edit_post': (('post_id', 'text', 'reason', 'confirm'), ('post_id',)),
     'reply_hide': (('comment_id', 'reason'), ('comment_id',)),
     'reply_unhide': (('comment_id', 'reason'), ('comment_id',)),
+    # 11/23 B1: 11/09 以降の口（`meta_events`・`meta_brand`・`meta_shop`）と webhook。
+    'dm_event': (('type', 'conversation', 'psid', 'value', 'currency', 'channel', 'nth', 'refresh_dataset',
+                  'confirm'), ()),
+    'brand_creators_list': (('ids',), ()),
+    'brand_creators_approve': (('ids', 'confirm'), ()),
+    'brand_creators_remove': (('ids', 'confirm'), ()),
+    'brand_promote_show': (('media_id', 'sponsor'), ('media_id',)),
+    'brand_promote_allow': (('media_id', 'sponsor', 'confirm'), ('media_id',)),
+    'brand_promote_deny': (('media_id', 'sponsor', 'confirm'), ('media_id',)),
+    'brand_ads_permissions': (('creator',), ()),
+    'brand_content': (('business', 'limit'), ('business',)),
+    'creators_search': (('country', 'q', 'acting_business', 'limit'), ()),
+    'shop_eligibility': ((), ()),
+    'shop_catalogs': ((), ()),
+    'shop_products': (('catalog', 'q'), ('catalog',)),
+    'shop_tags': (('media_id',), ('media_id',)),
+    'shop_tag': (('media_id', 'product', 'x', 'y', 'confirm'), ('media_id', 'product')),
+    'webhook_subscribe': ((), ()),
+    'webhook_status': ((), ()),
 }
 OPERATIONS = frozenset(_FIELDS)
 # 読むだけの口（writes の無い鍵でも通る）。ほかは書く口の資格が要る（一段目も）。
-READS = frozenset(('doctor', 'page_cta_show', 'dm_list', 'dm_read'))
-_BOOLS = frozenset(('profile', 'human_agent'))
+READS = frozenset(('doctor', 'page_cta_show', 'dm_list', 'dm_read',
+                   'brand_creators_list', 'brand_promote_show', 'brand_ads_permissions', 'brand_content',
+                   'creators_search', 'shop_eligibility', 'shop_catalogs', 'shop_products', 'shop_tags',
+                   'webhook_status'))
+_BOOLS = frozenset(('profile', 'human_agent', 'refresh_dataset'))
+# 整数の欄（手元の argparse の型と同じ範囲は手元の関数が見る。ここは型と大まかな幅だけ）と、位置の小数の欄。
+_INTS = frozenset(('nth', 'limit'))
+_FLOATS = frozenset(('x', 'y'))
 TEXT_MAX = 20_000
 FIELD_MAX = 4_000
 # 手元の口の符丁のうち、遠くの道でもそのまま言うもの（目録の doors に remote がある）。
@@ -64,9 +99,16 @@ REASONS = frozenset((
     'messaging_window_closed', 'private_reply_window_closed', 'dm_text_invalid', 'dm_recipient_unknown',
     'meta_write_unsupported', 'meta_write_permission_missing', 'meta_ig_message_access_off', 'meta_write_digest_mismatch', 'meta_write_refused',
     'meta_write_unknown', 'meta_write_busy', 'page_cta_not_found', 'live_title_invalid', 'live_not_this_page',
-    'remote_command_refused'))
+    'remote_command_refused',
+    # 11/23 B1: dm event・brand・creators・shop・webhook の手元の符丁（目録の doors に remote を足した）。
+    'meta_event_type_unknown', 'meta_event_value_invalid', 'meta_event_already_sent', 'meta_event_marks_unreadable',
+    'meta_event_nth_unused', 'meta_event_recipient_unknown', 'meta_event_channel_unknown',
+    'meta_event_whatsapp_unavailable', 'brand_args_invalid', 'creator_marketplace_not_ready', 'shop_args_invalid',
+    'shop_tag_carousel', 'webhook_unsupported_medium', 'webhook_account_id_missing'))
 # 依頼の印に書かない欄（本文・相手・相手の属性・配信の宛先）。
-SECRET_FIELDS = ('stream_url', 'conversation', 'conversations', 'text', 'previous_text', 'to', 'profile')
+SECRET_FIELDS = ('stream_url', 'conversation', 'conversations', 'text', 'previous_text', 'to', 'profile',
+                 # dm event の金額（手元の道も「相手の id・金額は残しません」と言う）。
+                 'value', 'currency')
 # doctor の probe の欄（VM の path・本文を返さない）。
 PROBE_FIELDS = ('key', 'label', 'permission', 'ok', 'detail', 'status', 'http_status', 'http', 'reason', 'failure',
                 'scopes', 'missing', 'extra')
@@ -93,6 +135,12 @@ def _validate(request):
             continue
         if name in _BOOLS:
             if type(request[name]) is not bool:
+                error('invalid_request')
+        elif name in _INTS:
+            if type(request[name]) is not int or not 0 <= request[name] <= 1000:
+                error('invalid_request')
+        elif name in _FLOATS:
+            if type(request[name]) not in (int, float) or not -1e6 <= request[name] <= 1e6:
                 error('invalid_request')
         elif not isinstance(request[name], str) or len(request[name]) > (TEXT_MAX if name == 'text' else FIELD_MAX):
             error('invalid_request')
@@ -128,12 +176,30 @@ def _command(operation, account, request, actor):
                                                           live_id=request.get('live_id'),
                                                           title=request.get('title'),
                                                           description=request.get('description'))
+    if operation == 'dm_event':
+        if request.get('nth') is not None and not 1 <= request['nth'] <= 100:
+            error('invalid_request', '--nth は 1〜100 の整数です')   # 手元の argparse の型（`meta_events._nth`）と同じ幅
+        return meta_write._run(meta_write.cmd_dm), dict(
+            base, action='event', type=request.get('type'), conversation=request.get('conversation'),
+            psid=request.get('psid'), value=request.get('value'), currency=request.get('currency'),
+            channel=request.get('channel'), nth=request.get('nth') or 1,
+            refresh_dataset=bool(request.get('refresh_dataset')))
     if operation.startswith('dm_'):
         return meta_write._run(meta_write.cmd_dm), dict(base, action=operation[len('dm_'):],
                                                         target=request.get('target'), comment=request.get('comment'),
                                                         text=request.get('text'), text_file=None,
                                                         human_agent=bool(request.get('human_agent')),
                                                         profile=bool(request.get('profile')))
+    if operation.startswith(('brand_', 'creators_')):
+        return _brand_command(operation, base, request)
+    if operation.startswith('shop_'):
+        from . import meta_shop
+        func = {'shop_eligibility': meta_shop.cmd_eligibility, 'shop_catalogs': meta_shop.cmd_catalogs,
+                'shop_products': meta_shop.cmd_products, 'shop_tags': meta_shop.cmd_tags,
+                'shop_tag': meta_shop.cmd_tag}[operation]
+        return meta_write._run(func), dict(base, media_id=request.get('media_id'), catalog=request.get('catalog'),
+                                           q=request.get('q'), product=request.get('product'),
+                                           x=request.get('x'), y=request.get('y'))
     if operation in ('like', 'unlike'):
         return reaction_cli.cmd_reaction, dict(base, post=request['post'], reaction_command=operation, via='api')
     if operation == 'edit_post':
@@ -141,6 +207,27 @@ def _command(operation, account, request, actor):
                                        reason=request.get('reason'))
     return edit_cli.cmd_reply, dict(base, action=operation[len('reply_'):], comment_id=request['comment_id'],
                                     reason=request.get('reason'), confirm=None)
+
+
+def _brand_command(operation, base, request):
+    from . import meta_brand, meta_write
+    if operation.startswith('brand_creators_'):
+        # 手元の位置引数はコンマ区切りも受ける（`meta_brand._ids`）。遠くの道は 1 本の文字列で送る。
+        return meta_write._run(meta_brand.cmd_creators), dict(base, action=operation[len('brand_creators_'):],
+                                                               ids=[request['ids']] if request.get('ids') else [])
+    if operation.startswith('brand_promote_'):
+        verb = operation[len('brand_promote_'):]
+        return meta_write._run(meta_brand.cmd_promote), dict(base, media_id=request['media_id'],
+                                                              sponsor=request.get('sponsor'),
+                                                              allow=verb == 'allow', deny=verb == 'deny')
+    if operation == 'brand_ads_permissions':
+        return meta_write._run(meta_brand.cmd_ads_permissions), dict(base, creator=request.get('creator'))
+    if operation == 'brand_content':
+        return meta_write._run(meta_brand.cmd_content), dict(base, business=request['business'],
+                                                              limit=request.get('limit'))
+    return meta_write._run(meta_brand.cmd_search), dict(base, country=request.get('country'), q=request.get('q'),
+                                                         acting_business=request.get('acting_business'),
+                                                         limit=request.get('limit'))
 
 
 def _call(operation, account, request, actor):
@@ -172,6 +259,11 @@ def _refused(payload):
         code = 'meta_write_unknown'
     elif payload.get('guard') == 'stopped':
         code = 'account_stopped'
+    if code == 'shop_tag_carousel' and isinstance(payload.get('children'), list):
+        # 断りの文は長く（例の命令に --by を含む）切れるので、要る所（中の画像の id）だけを短く返す。
+        images = [c for c in payload['children'] if isinstance(c, str) and c.isdigit()][:5]  # 160 字に収まる数
+        message = ('カルーセルの親には付けられません。中の画像: ' + '・'.join(images)) if images else \
+            'カルーセルの親には付けられません（中に画像がありません）'
     if code not in SAFE_ERRORS:
         message = f'{code}: {message}' if code and message else (message or code)
         code = 'remote_command_refused'
@@ -205,6 +297,31 @@ def _doctor(account):
     return out
 
 
+# --------------------------------------------------------------------------
+# webhook（購読は手元の `webhook.subscribe` と同じ 1 段・status はその口座の分だけ）
+# --------------------------------------------------------------------------
+
+def _webhook(operation, account, actor):
+    from . import refusal, webhook
+    from .adapters import base
+    from .server_reads import short
+    if operation == 'webhook_status':
+        return webhook.status_for(account)
+    try:
+        result = webhook.subscribe(account, by=actor)
+    except base.PermissionMissing as exc:
+        error('meta_write_permission_missing', short(f'{exc.permission} がトークンに乗っていません（購読していません）'))
+    except webhook.WebhookError as exc:
+        code = refusal.code_of(str(exc))
+        if code in ('webhook_unsupported_medium', 'webhook_account_id_missing'):
+            error(code)
+        error('meta_write_refused', short(f'購読できませんでした（何も変えていません）: {exc}'))
+    except base.AdapterError as exc:
+        error('meta_write_refused', short(f'Meta が断りました（購読していません）: {exc}'))
+    return {'ok': True, 'account': account, 'medium': result.get('medium'), 'fields': result.get('fields'),
+            'added': result.get('added'), 'page_id': result.get('page_id')}
+
+
 def execute(context, request):
     """遠くの道の Meta の口の入口（`server_writes.serve` から来る）。"""
     if type(request) is not dict or request.get('operation') not in OPERATIONS:
@@ -219,6 +336,8 @@ def execute(context, request):
             recover_repo(account, cfg)
             if operation == 'doctor':
                 return _doctor(account)
+            if operation.startswith('webhook_'):
+                return _webhook(operation, account, context.actor)
             return _call(operation, account, request, context.actor)
     except accounts.AccountLeaving:
         error('account_leaving')

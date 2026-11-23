@@ -83,6 +83,11 @@ def _note(args, action, media, permission) -> None:
     mw._record(args.account, action, media, "ok", permission=permission, mode="read")
 
 
+def _production(account_cfg) -> bool:
+    """一段目の JSON に添える（遠くの道の画面が「二段目でも呼ばない」を言えるように・11/23 B1）。"""
+    return approval_mod.is_true(account_cfg.get("production"))
+
+
 def _production_note(account_cfg) -> list:
     return ([] if approval_mod.is_true(account_cfg.get("production"))
             else ["  ⚠ 台帳に production: true が無いので、二段目でも媒体は呼びません"])
@@ -127,7 +132,7 @@ def cmd_creators(args) -> int:
     word = "足す" if args.action == "approve" else "外す"
     if not args.confirm:
         return mw._stage_one(args, digest=digest, payload={"action": args.action, "ids": ids, "already": present,
-                                                          "by": by},
+                                                          "by": by, "production": _production(account_cfg)},
                              lines=[f"{word}ことはしません（確認の一段目です）: {args.account} 承認クリエイター",
                                     f"  対象 {len(ids)} 件: " + "、".join(ids),
                                     f"  いま一覧に載っている: {len(present)} 件・実際に変わる: {len(todo)} 件",
@@ -178,7 +183,8 @@ def cmd_promote(args) -> int:
                           ",".join(sorted(approved)))
     if not args.confirm:
         return mw._stage_one(args, digest=digest, payload={"media_id": media_id, "sponsor_id": sponsor,
-                                                          "allow": allow, "already": sponsor in approved, "by": by},
+                                                          "allow": allow, "already": sponsor in approved, "by": by,
+                                                          "production": _production(account_cfg)},
                              lines=[f"{'許し' if allow else '取り消し'}ません（確認の一段目です）: {args.account} 投稿 {media_id}",
                                     f"  ブランド: {sponsor}（いま許可 {'あり' if sponsor in approved else 'なし'}）",
                                     f"  やること: そのブランドが、この投稿を広告（パートナーシップ広告）に使うのを"

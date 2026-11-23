@@ -183,7 +183,8 @@ def cmd_tag(args) -> int:
         return mw._stage_one(
             args, digest=digest,
             payload={"media_id": media_id, "product_id": product, "x": args.x, "y": args.y, "already": already,
-                     "tags_now": len(current), "by": by},
+                     "tags_now": len(current), "by": by,
+                     "production": approval_mod.is_true(account_cfg.get("production"))},
             lines=[f"付けません（確認の一段目です）: {args.account} 投稿 {media_id}",
                    f"  商品: {product}（いま{'付いています・位置の更新になります' if already else '付いていません'}）",
                    f"  位置: {place}",

@@ -563,7 +563,53 @@ def cmd_pull(args) -> int:
     return 0
 
 
+# 口座ごとの status に返す購読の欄（`by` は運営者の名前でありうるので返さない）。
+STATUS_FIELDS = ("medium", "object", "entry_id", "page_id", "fields", "wanted", "subscribed_at")
+
+
+def status_for(account: str) -> dict:
+    """その口座の分だけの様子（購読・記録の数・届いているか・最後の取り込み）。
+
+    遠くの道（`server_meta` の `webhook_status`）と `thth webhook status <口座>` が使う。ほかの口座・Worker の数・
+    知らない id の数（運営者の全体の数）は返さない。本文は元から持たない（数と時刻だけ）。"""
+    row = subscriptions().get(account)
+    state = status()
+    return {"ok": True, "account": account, "subscribed": isinstance(row, dict),
+            "subscription": {k: row.get(k) for k in STATUS_FIELDS if k in row} if isinstance(row, dict) else None,
+            "counts": counts_for(account), "live": live(account),
+            "last_ok_at": state.get("last_ok_at"), "down_since": state.get("down_since"),
+            "down_reason": state.get("down_reason") if state.get("down_since") else None}
+
+
+def show_status_for(value) -> int:
+    """`status_for` の人向けの画面（手元の `thth webhook status <口座>` と遠くの道で同じ）。"""
+    name = value.get("account")
+    row = value.get("subscription")
+    if not value.get("subscribed") or not isinstance(row, dict):
+        print(f"{name}: Webhook を購読していません（thth webhook subscribe {name} --by <名前>）")
+        return 0
+    counts = value.get("counts") or {}
+    print(f"{name}: {row.get('medium')} {row.get('object')} {row.get('entry_id')}  欄 {'・'.join(row.get('fields') or [])}"
+          f"  記録 {counts.get('rows', 0)} 件 {counts.get('by_field', {})}  届いている: {'はい' if value.get('live') else 'いいえ'}")
+    print(f"最後の取り込み: {value.get('last_ok_at') or 'まだ'}"
+          + (f"  取り込めていない: {value['down_since']} から（{value.get('down_reason')}）"
+             if value.get("down_since") else ""))
+    if counts.get("last_received_at"):
+        print(f"この口座に最後に届いた通知: {counts['last_received_at']}（本文は出しません）")
+    return 0
+
+
 def cmd_status(args) -> int:
+    if getattr(args, "account", None):
+        if not accounts.name_is_safe(args.account):
+            from . import refusal
+            return refusal.emit(args, "invalid_account",
+                                line=f"invalid_account: 口座の名前に使えない字が入っています（{args.account!r}）", rc=2)
+        value = status_for(args.account)
+        if args.json:
+            _print(value, True)
+            return 0
+        return show_status_for(value)
     subs = subscriptions()
     state = status()
     payload = {"subscriptions": subs, "status": state,
@@ -590,7 +636,7 @@ def cmd_status(args) -> int:
 
 def register(sub) -> None:
     parser = sub.add_parser("webhook", help="Meta の Webhook（Facebook・Instagram・Threads）の購読と取り込みの様子")
-    ops = parser.add_subparsers(required=True)
+    ops = parser.add_subparsers(dest="webhook_command", required=True)
     p = ops.add_parser("subscribe", help="口座の Webhook を購読する（足すだけ・外さない）")
     p.add_argument("account")
     p.add_argument("--by", required=True)
@@ -600,5 +646,7 @@ def register(sub) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_pull)
     p = ops.add_parser("status", help="購読・最後の取り込み・口座ごとの数・取り込めなかった時間（読むだけ）")
+    p.add_argument("account", nargs="?", default=None,
+                   help="その口座の分だけを見る（購読・数・届いているか。thth.me の鍵の道は口座が要る）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)

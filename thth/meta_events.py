@@ -340,7 +340,8 @@ def cmd_event(args) -> int:
         shown = f"{value} {currency}" if value is not None else "—"
         return mw._stage_one(args, digest=digest, payload={
             "channel": channel, "event_name": name, "value": value, "currency": currency, "to": person, "by": by,
-            "dataset": "saved" if saved and not refresh else "will_create", "storage": "display_only"}, lines=[
+            "dataset": "saved" if saved and not refresh else "will_create", "storage": "display_only",
+            "production": approval_mod.is_true(account_cfg.get("production"))}, lines=[
             f"送りません（確認の一段目です）: {args.account} → {channel} の相手 {person}",
             f"  出来事: {name}  金額: {shown}", f"  by    : {by}",
             ("  dataset: 前に作ったものを使います" if saved and not refresh

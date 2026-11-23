@@ -1557,7 +1557,7 @@ ENTRIES = {
         "fix": "`thth webhook status` で購読している口座を確かめ、Meta の口座を指して打ち直してください",
         "command": "thth webhook status",
         "better": "通知の口が無い媒体は `thth collect` の巡回が返信を拾うので、そのまま使えます",
-        "doors": ("cli",),
+        "doors": ("cli", "remote"),
         "since": "5.13.0",
     },
     "webhook_account_id_missing": {
@@ -1566,7 +1566,7 @@ ENTRIES = {
         "fix": "`thth auth <口座>` で認可をやり直して id を鍵に書いてから、もう一度打ってください",
         "command": "thth auth <口座>",
         "better": "認可のあとに `thth doctor <口座>` まで通しておくと、id と権限をまとめて確かめられます",
-        "doors": ("cli",),
+        "doors": ("cli", "remote"),
         "since": "5.13.0",
     },
     "permission_unused": {

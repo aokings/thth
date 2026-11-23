@@ -151,7 +151,7 @@ SEGMENTS = (
     _seg("fb-webhook", "facebook", "pages_manage_metadata — subscribe the Page to webhooks.",
          ["pages_manage_metadata"],
          ("cmd", "thth webhook subscribe {FB} --by {BY}"),
-         ("hand", "別のテストの口座からページにコメントを付けたら Return"), ("cmd", "thth webhook status")),
+         ("hand", "別のテストの口座からページにコメントを付けたら Return"), ("cmd", "thth webhook status {FB}")),
     _seg("fb-live", "facebook", "publish_video, Live Video API — start and end a live video on the Page.",
          ["publish_video", "live_video_api"],
          ("prep", "ページのフォロワーが 100 人以上かを確かめる（2024-06-10 からの条件）。ffmpeg の配信の命令を用意する"),

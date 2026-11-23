@@ -205,6 +205,8 @@ META_SHOP_SHAPES = {
             ("wait", ("--wait",), False, None), ("json", ("--json",), False, None), ("media_id", (), True, None),
             ("product", ("--product",), True, None), ("x", ("--x",), False, None), ("y", ("--y",), False, None)],
 }
+# 11/23 B1: 商品タグの 5 つは thth.me の鍵の道にも出した（`remote._register_children` が最後に `--remote` を足す）。
+META_SHOP_SHAPES = {name: shape + [("remote", ("--remote",), False, None)] for name, shape in META_SHOP_SHAPES.items()}
 
 
 def test_柵_Instagramの商品タグの動詞と引数は変わらない():
