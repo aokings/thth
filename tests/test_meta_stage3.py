@@ -749,3 +749,13 @@ def test_postsのstoriesはInstagram以外では引けないと言う(monkeypatc
     assert cli.main(["posts", "alpha", "--stories"]) == 1
     assert "ストーリーズを読む口がありません" in capsys.readouterr().err
     assert account_report.recent_stories("alpha")["stories"] == []
+
+
+def test_監査5281_ストーリーズは鍵が読めなくても例外でなく引けないと言う(monkeypatch):
+    from thth import account_report
+    monkeypatch.setattr(accounts, "load_account", lambda n: {"account": n, "media": "instagram"})
+    def broken(cfg, **kw):
+        raise accounts.AccountError("token が壊れています")
+    monkeypatch.setattr(accounts, "load_token", broken)
+    got = account_report.recent_stories("alpha")
+    assert got["stories"] == [] and "引けませんでした" in got["error"]

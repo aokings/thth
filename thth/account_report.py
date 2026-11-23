@@ -183,10 +183,11 @@ def recent_stories(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     if not callable(getattr(adapter_cls, "recent_stories", None)):
         return {"account": account_name, "stories": [],
                 "error": f"{account_cfg.get('media')} にはストーリーズを読む口がありません（Instagram の口座だけ）"}
-    token = accounts_mod.load_token(account_cfg)
-    if not adapter_cls.has_token(token):
-        return {"account": account_name, "stories": [], "error": "token が無いので引けません"}
     try:
+        # 監査 5.28.1 L5: 鍵が壊れている・口座が止まっているときも、例外でなく「引けません」の 1 行で返す。
+        token = accounts_mod.load_token(account_cfg)
+        if not adapter_cls.has_token(token):
+            return {"account": account_name, "stories": [], "error": "token が無いので引けません"}
         rows = adapters_mod.make_adapter(account_cfg, token).recent_stories(limit=limit)
     except Exception as e:                      # noqa: BLE001 — 引けないことを引けないと言う
         return {"account": account_name, "stories": [], "error": "引けませんでした: " + redact_mod.redact(str(e))}
