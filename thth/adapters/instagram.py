@@ -942,7 +942,10 @@ class InstagramAdapter(fb.FacebookAdapter):
         return out
 
     # 権限の不使用の見張り（`permission_watch`）の最小の読み。**読むだけの権限だけ。**
-    KEEPALIVE_READS = frozenset({"instagram_basic", "instagram_manage_comments", "instagram_manage_insights"})
+    # 11/23: Threads 広告の下地（connected_threads_user）と予定（upcoming_events）も足した（本線 第17 の頼み・
+    # Standard の権限も審査の前 30 日に使った記録が要る）。
+    KEEPALIVE_READS = frozenset({"instagram_basic", "instagram_manage_comments", "instagram_manage_insights",
+                                 "threads_business_basic", UPCOMING_PERMISSION})
 
     def keepalive_read(self, permission: str) -> None:
         """その権限を使う読みを 1 回（コメントだけ投稿を引くので 2 回）。答えの中身は使わない・残さない。"""
@@ -950,6 +953,11 @@ class InstagramAdapter(fb.FacebookAdapter):
             self.whoami()
         elif permission == "instagram_manage_comments":
             self._keepalive_comments(permission)
+        elif permission == "threads_business_basic":
+            self._get(f"/{self.ig_user_id}/connected_threads_user", "Threads の口座（connected_threads_user）",
+                      params={"fields": "threads_user_id"}, permission=permission)
+        elif permission == UPCOMING_PERMISSION:
+            self.upcoming_events()
         else:
             now = int(jst.now_jst().timestamp())
             name, spec = ACCOUNT_DAILY_SPECS[0]

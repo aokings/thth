@@ -149,6 +149,25 @@ WATCHED_BASE = frozenset({
     "ads_read", "ads_management"})
 # 最小の読みを打てる広告の権限（媒体の口座は各 adapter の `KEEPALIVE_READS`）。
 ADS_KEEPALIVE_READS = frozenset({"ads_read"})
+# 読む権限のうち、最小の読みを持たないもの → 理由（`tests/test_m5_permission_watch.py` が、読む権限は
+# 打てるかここに載るかのどちらかであることを縛る。黙って漏れないように）。
+NO_KEEPALIVE = {
+    "public_profile": "認可のときにだけ使う（API の読みの口が無い）",
+    "business_management": "認可のときにだけ使う（ページの一覧を引く道）",
+    "email": "認可のときに 1 回だけ読む（値を残さない決め・何度も読まない）",
+    "pages_user_locale": "DM の相手が要る（相手のいない読みが無い）",
+    "pages_user_timezone": "DM の相手が要る（相手のいない読みが無い）",
+    "pages_user_gender": "DM の相手が要る（相手のいない読みが無い）",
+    "catalog_management": "カタログの id が要る（口座から引く読みは未実装・足す候補）",
+    "leads_retrieval": "リード獲得フォームの id が要る（足す候補）",
+    "read_audience_network_insights": "Audience Network の口座が要る（足す候補）",
+    "commerce_account_read_settings": "コマースの口座の id が要る（足す候補）",
+    "ads_mcp_management": "THTH に口が無い（外の公式の広告 MCP で使う）",
+    "instagram_branded_content_ads_brand": "ブランドの口座の側の読み（相手の id が要る・足す候補）",
+    "facebook_branded_content_ads_brand": "ブランドの口座の側の読み（相手の id が要る・足す候補）",
+    "instagram_creator_marketplace_discovery": "検索の語が要る（足す候補）",
+    "facebook_creator_marketplace_discovery": "検索の語が要る（足す候補）",
+}
 
 RUN_ACTIONS = ("collect", "where_to_appear", "mentions", "thread_read", "who_is_this", "upcoming_events", ACTION,
                # 計画 Meta 全部盛り M4 の書く口（`thth/meta_write.py`・`thth/reaction_cli.py` の Instagram のいいね）。
@@ -630,8 +649,10 @@ def _plan(rows, view) -> list:
             seen.add((row["name"], permission))
             out.append((row, permission))
 
+    # 11/23（本線 第17 の頼み）: Standard の読む権限も打つ。知らせは見張る権限だけ（鳴らさない決めは変えない）が、
+    # 審査は申請の前 30 日に権限ごとの成功した呼び出しを求めるので、使える読みは保っておく。
     for item in view["permissions"]:
-        if item["watched"] and item["kind"] == READ and item["stage"] in ("keep", "over"):
+        if item["kind"] == READ and item["stage"] in ("keep", "over"):
             holders = [row for row in rows if row["owner"] and item["permission"] in row["held"]]
             if holders:
                 add(sorted(holders, key=lambda row: row["name"])[0], item["permission"])

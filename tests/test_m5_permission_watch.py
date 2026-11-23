@@ -514,7 +514,9 @@ def test_Instagramの読み(world, monkeypatch):
               ("GET", V + "/me"): (200, {"id": "77", "username": "u"}),
               ("GET", V + "/77/media"): (200, {"data": [post]}),
               ("GET", V + "/1/comments"): (200, {"data": []}),
-              ("GET", V + "/77/insights"): (200, {"data": []})}
+              ("GET", V + "/77/insights"): (200, {"data": []}),
+              ("GET", V + "/77/connected_threads_user"): (200, {"threads_user_id": "88"}),
+              ("GET", V + "/77/upcoming_events"): (200, {"data": []})}
     with fake_graph(routes) as (base, seen):
         monkeypatch.setenv(meta_graph.BASE_URL_ENV, base)
         result = pw.keepalive()
@@ -726,3 +728,30 @@ def test_watchとledgerの口は読むだけで何も書かない(world, capsys)
     assert "ads_tier" in json.loads(capsys.readouterr().out)
     assert sorted(os.listdir(accounts.state_dir_for(name))) == before
     assert not os.path.exists(pw.ledger_path())
+
+
+def test_読む権限は打てるか_打てない理由が表にある():
+    # 11/23 本線 第17: 読む権限が warn になっても打つ先が 0 件になる漏れ。黙って漏れないように縛る。
+    from thth.adapters import REGISTRY
+    doors = set(pw.ADS_KEEPALIVE_READS)
+    for name in pw.META_MEDIA:
+        doors |= set(REGISTRY[name].KEEPALIVE_READS)
+    reads = {name for name, spec in pw.PERMISSIONS.items() if spec["kind"] == pw.READ}
+    assert sorted(reads - doors - set(pw.NO_KEEPALIVE)) == []
+    assert sorted(set(pw.NO_KEEPALIVE) & doors) == []        # 打てるようになったら表から消す
+    assert sorted(set(pw.NO_KEEPALIVE) - reads) == []
+
+
+def test_Standardの読む権限も25日で打つが_知らせは鳴らさない(world, monkeypatch):
+    # 11/23 本線 第17: pages_manage_metadata（Standard・24 日）が打つ先 0 件だった。審査は申請の前 30 日の
+    # 成功した呼び出しを求めるので、Standard の読みも保つ。知らせは見張る権限だけ（決めは変えない）。
+    world.add("a-fb", "facebook", obtained=26, ledger={"page_id": "55"}, user_id="55",
+              scopes=["pages_manage_metadata"])
+    monkeypatch.setattr(meta_graph, "load_app_secret", lambda: None)
+    with fake_graph({("GET", V + "/55/subscribed_apps"): (200, {"data": []})}) as (base, seen):
+        monkeypatch.setenv(meta_graph.BASE_URL_ENV, base)
+        result = pw.keepalive()
+    assert [(row["permission"], row["result"]) for row in result["results"]] == [("pages_manage_metadata", "ok")]
+    view = pw.build()
+    assert row_of(view, "pages_manage_metadata")["days_idle"] == 0
+    assert view["notices"] == []
