@@ -755,3 +755,12 @@ def test_Standardの読む権限も25日で打つが_知らせは鳴らさない
     view = pw.build()
     assert row_of(view, "pages_manage_metadata")["days_idle"] == 0
     assert view["notices"] == []
+
+
+def test_監査5281_打てない口座が名前順で先でも打てる口座に打つ(world, monkeypatch):
+    # threads_business_basic は広告の鍵にも IG の鍵にも乗る。名前順で広告（kopicha-ads）が先でも IG に打つ。
+    world.add_ads("a-ads", obtained=26, scopes=["threads_business_basic"])
+    world.add("b-ig", "instagram", obtained=26, ledger={"page_id": "55", "ig_user_id": "77"}, user_id="77",
+              scopes=["threads_business_basic"])
+    plan = pw._plan(pw._rows(NOW), pw._view(pw._rows(NOW), NOW))
+    assert [(row["name"], permission) for row, permission in plan] == [("b-ig", "threads_business_basic")]

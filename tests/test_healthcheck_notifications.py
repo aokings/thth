@@ -359,3 +359,9 @@ def test_監査528_符丁の後ろに添えたMetaの文で理由を読み違え
     # 符丁でない文は今までどおり。
     assert healthcheck.sanitize_reason("権限がありません: 詳細", action="post") == "permission_missing"
     assert healthcheck.sanitize_reason("permission_missing: instagram_content_publish") == "permission_missing"
+
+
+def test_監査5281_長い数字の途中の3桁はHTTPの番号と読まない():
+    from thth import healthcheck
+    assert healthcheck.sanitize_reason("post_options: sponsor_ids needs ids — 例 17841400000000000") != "publish_http_414"
+    assert healthcheck.sanitize_reason("HTTP 403 forbidden") == healthcheck.sanitize_reason("HTTP 403")

@@ -27,7 +27,8 @@ from . import runs as runs_mod
 ENV_KEY = "HEALTHCHECK_URL"
 STATUS_FILE = "healthcheck-status.json"
 TIMEOUT_SECONDS = 8.0
-_HTTP_STATUS = re.compile(r"(?:HTTP\s*)?([45][0-9]{2})", re.IGNORECASE)
+# 長い数字（IG の id など）の途中の 3 桁は番号と読まない（監査 5.28.1 L2: 例の id の「414」を読んでいた）。
+_HTTP_STATUS = re.compile(r"(?:HTTP\s*)?(?<![0-9])([45][0-9]{2})(?![0-9])", re.IGNORECASE)
 _KNOWN_REASONS = {
     "account_config_error", "account_locked", "approval_stale", "healthy",
     "missing_token", "permission_missing", "publish_failed",

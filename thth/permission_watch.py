@@ -653,7 +653,9 @@ def _plan(rows, view) -> list:
     # 審査は申請の前 30 日に権限ごとの成功した呼び出しを求めるので、使える読みは保っておく。
     for item in view["permissions"]:
         if item["kind"] == READ and item["stage"] in ("keep", "over"):
-            holders = [row for row in rows if row["owner"] and item["permission"] in row["held"]]
+            # 打てる口座の中から選ぶ（監査 5.28.1 L1: 名前順の先頭が広告の口座だと IG の読みが 0 件になっていた）。
+            holders = [row for row in rows if row["owner"] and item["permission"] in row["held"]
+                       and _can_call(row, item["permission"])]
             if holders:
                 add(sorted(holders, key=lambda row: row["name"])[0], item["permission"])
     by_name = {row["name"]: row for row in rows}
