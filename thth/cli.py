@@ -2385,6 +2385,19 @@ def cmd_posts(args) -> int:
 
     手で出した分も含めて全部出し、1 本ごとに THTH 経由かどうかを付ける。
     """
+    if getattr(args, "stories", False):
+        result = account_report_mod.recent_stories(args.account, limit=args.limit)
+        if args.json:
+            _print_json(result)
+            return 0 if not result.get("error") else 1
+        if result.get("error"):
+            print(f"{args.account}: {result['error']}", file=sys.stderr)
+            return 1
+        if not result["stories"]:
+            print(f"{args.account}: 24 時間以内のストーリーズはありません")
+        for row in result["stories"]:
+            print(f"{row['story_id']}  {row['timestamp'] or '時刻なし'}  {row['media_type'] or ''}  {row['url'] or ''}")
+        return 0
     result = account_report_mod.recent_posts(args.account, limit=args.limit)
     if args.json:
         _print_json(result)
@@ -5006,6 +5019,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_posts.add_argument("account")
     p_posts.add_argument("--limit", type=int, default=25)
     p_posts.add_argument("--json", action="store_true")
+    p_posts.add_argument("--stories", action="store_true",
+                         help="Instagram の口座の 24 時間以内のストーリーズ（id・時刻・URL）を出す（読むだけ）")
     p_posts.set_defaults(func=cmd_posts)
 
     p_replies = sub.add_parser(

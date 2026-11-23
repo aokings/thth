@@ -541,6 +541,25 @@ class InstagramAdapter(fb.FacebookAdapter):
                         "topic": None})
         return out
 
+    def recent_stories(self, *, limit: int = 25) -> list:
+        """`GET /{ig}/stories`（自分の口座の 24 時間以内のストーリーズ・読むだけ・11/23）。
+
+        Threads から共有したストーリーズの id を知るため（運用が消す先を探す）。本文は無い。
+        """
+        body = self._get(f"/{self.ig_user_id}/stories", "ストーリーズ",
+                         params={"fields": "id,timestamp,permalink,media_type",
+                                 "limit": max(1, min(int(limit), RECENT_POSTS_MAX))},
+                         permission=self.READ_PERMISSION)
+        out = []
+        for row in self._rows(body, "ストーリーズ"):
+            if not isinstance(row.get("id"), str) or not IG_ID.fullmatch(row["id"]):
+                continue
+            out.append({"story_id": row["id"],
+                        "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else None,
+                        "url": row.get("permalink") if isinstance(row.get("permalink"), str) else None,
+                        "media_type": row.get("media_type") if isinstance(row.get("media_type"), str) else None})
+        return out
+
     def insights(self, post_id: str) -> dict:
         """いいね・コメントの数（`GET /{media}?fields=like_count,comments_count`）と、
         `GET /{media}/insights?metric=views,reach,shares,saved,total_interactions`。

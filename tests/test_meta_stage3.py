@@ -728,3 +728,24 @@ def test_監査528_タイアップは表示に人の言葉で1行出る():
     assert f"タイアップ: 「タイアップ」の印を付けて出します（ブランドの Instagram id: {SPONSOR}" in shown
     assert "ブランドの id なし" in media.display({**base, "post_options": {"paid_partnership": True}})
     assert "タイアップ" not in media.display({**base, "post_options": {"is_ai_generated": True}})
+
+
+# 11/23（本線 第17）: Threads から共有したストーリーズの id を知る口（自分の口座の stories を読むだけ）。
+def test_ストーリーズは自分の口座のidと時刻とURLだけを読む():
+    rows = [{"id": "17900000000000011", "timestamp": "2026-11-23T05:00:00+0000",
+             "permalink": "https://www.instagram.com/stories/u/1/", "media_type": "IMAGE"},
+            {"id": "not-a-number"}]
+    with fake_graph({("GET", f"{V}/{IG}/stories"): (200, {"data": rows})}) as (url, calls):
+        got = adapter(url).recent_stories(limit=5)
+    assert got == [{"story_id": "17900000000000011", "timestamp": "2026-11-23T05:00:00+0000",
+                    "url": "https://www.instagram.com/stories/u/1/", "media_type": "IMAGE"}]
+    assert [c["method"] for c in calls] == ["GET"]
+    assert calls[0]["query"]["fields"] == ["id,timestamp,permalink,media_type"]
+
+
+def test_postsのstoriesはInstagram以外では引けないと言う(monkeypatch, capsys):
+    from thth import account_report, cli
+    monkeypatch.setattr(accounts, "load_account", lambda n: {"account": n, "media": "threads"})
+    assert cli.main(["posts", "alpha", "--stories"]) == 1
+    assert "ストーリーズを読む口がありません" in capsys.readouterr().err
+    assert account_report.recent_stories("alpha")["stories"] == []

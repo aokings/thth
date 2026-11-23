@@ -552,6 +552,8 @@ def test_send_は_production_が無ければ出さずにlintだけ(worker, capsy
     # 監査 5.28.0 の A1: タイアップの印を捨てると、案件の投稿が印なしで公開される。
     ["send", ACCOUNT, "--production", "--text", "案件", "--paid-partnership"],
     ["send", ACCOUNT, "--production", "--text", "案件", "--paid-partnership", "--sponsor", "17841400000000001"],
+    # 11/23: ストーリーズを読むのは手元の道だけ（捨てると普段の投稿の一覧をストーリーズと読み違える）。
+    ["posts", ACCOUNT, "--stories"],
 ])
 def test_遠くの道が読まない旗は黙って捨てずに断る(worker, capsys, argv):
     """`retract --already-gone` が本当の DELETE に、`send --community` が普段の公開になっていた（10/15）。"""

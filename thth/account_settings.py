@@ -239,6 +239,48 @@ def change_scheduled(account, value, *, by) -> dict:
     return {"account": account, "key": "scheduled", "before": before, "after": after, "changed": True}
 
 
+INSTAGRAM_LINKED_KEY = "instagram_linked"
+
+
+def change_instagram_linked(account, value, *, by) -> dict:
+    """台帳の `instagram_linked`（Threads の投稿を IG のストーリーズにも出せるか）を変える（**運営者の CLI だけ**・11/23）。
+
+    `send --share-to-instagram` と原稿の `share_to_instagram:` はこの印が無いと断る。それまでは ssh で JSON を
+    手で書き換えるしかなかった（11/23 運用が kopicha-threads で手で直した）。Threads の口座だけ。
+    MCP・遠くの道（`thth.me`）からは変えられない（`KEYS` に無いので `change()` が断る）。
+    """
+    admin_log.actor(by)
+    if not accounts.name_is_safe(account):
+        raise SettingsError("invalid_setting")
+    key = str(value or "").strip().lower()
+    if key not in SCHEDULED_VALUES:
+        raise SettingsError("invalid_setting")
+    after = SCHEDULED_VALUES[key]
+    cfg = accounts.load_account(account)
+    if cfg.get("media") != "threads":
+        raise SettingsError("invalid_setting")
+    before = cfg.get(INSTAGRAM_LINKED_KEY) is True
+    if before == after:
+        return {"account": account, "key": INSTAGRAM_LINKED_KEY, "before": before, "after": after, "changed": False}
+    path = _ledger_path(account)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SettingsError("ledger_unavailable") from exc
+    if not isinstance(raw, dict):
+        raise SettingsError("ledger_unavailable")
+    original = json.loads(json.dumps(raw))
+    raw[INSTAGRAM_LINKED_KEY] = after
+    secrets_fs.atomic_write_json(str(path), raw)
+    try:
+        accounts.load_account(account)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(str(path), original)
+        raise SettingsError("ledger_unavailable") from None
+    admin_log.append("settings_set", account, cfg, by=by, via="cli", diff={INSTAGRAM_LINKED_KEY: [before, after]})
+    return {"account": account, "key": INSTAGRAM_LINKED_KEY, "before": before, "after": after, "changed": True}
+
+
 STOCK_DAILY_MIN_KEY = "stock_daily_min"
 STOCK_DAILY_MIN_MAX = 100
 
@@ -457,12 +499,14 @@ def cmd_set(args) -> int:
         results = [change_handle(args.name, value, by=args.by) if key == "handle"
                    else change_scheduled(args.name, value, by=args.by) if key == "scheduled"
                    else change_stock_daily_min(args.name, value, by=args.by) if key == STOCK_DAILY_MIN_KEY
+                   else change_instagram_linked(args.name, value, by=args.by) if key == INSTAGRAM_LINKED_KEY
                    else change(args.name, key, value, by=args.by, via="cli") for key, value in pairs]
     except SettingsError as exc:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
             reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）・"
-                       f"{STOCK_DAILY_MIN_KEY}（1 日の本数・- で外す）"
+                       f"{STOCK_DAILY_MIN_KEY}（1 日の本数・- で外す）・"
+                       f"{INSTAGRAM_LINKED_KEY}（true／false・Threads の口座だけ）"
                        "（burst は `burst <件数> <分>` でも）・柵の行の id（"
                        + "・".join(limits_config.ACCOUNT_ROWS) + "）")
         elif reason == "invalid_handle":

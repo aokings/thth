@@ -980,6 +980,7 @@ def _limit(args):
 
 def _posts(args, account):
     from . import cli
+    _refuse_unread(args, "posts", {"stories": "--stories"})
     value = call("posts", account, limit=_limit(args), refresh=True if getattr(args, "refresh", False) else None)
     return _shown(args, value, lambda v: cli.show_posts(account, v))
 
