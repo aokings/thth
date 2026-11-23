@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 
@@ -358,3 +359,32 @@ def test_知らない欄と型の違う欄と幅の外のnthは断る(b1):
             server_writes.serve(b1["context"], request, via="api")
         assert str(caught.value) == "invalid_request", request
     assert writes(b1) == []
+
+
+# 審査員は login の道で打つ（貼り紙 §9）。手順に書いた命令が遠くの道の口を持ち、旗も通ること（11/23 C-4・retract の --production）。
+_REVIEWER_LOCAL_ONLY = {"login", "logout", "account leave", "ads leave", "admin invite create"}
+
+
+def test_審査員の手順の命令はどれも遠くの道で打てる形():
+    from thth import cli as cli_mod
+    text = open(os.path.join(os.path.dirname(__file__), "..", "docs", "貼り紙_Meta全部盛り申請_2026-11-05.md"),
+                encoding="utf-8").read()
+    section = text.split("## 9. ", 1)[1].split("\n## ", 1)[0]
+    parser = cli_mod.build_parser()
+    bad = []
+    for command in sorted(set(re.findall(r"`(thth [^`]+)`", section))):
+        tokens = command.split()
+        if "…" in tokens[1:3] or "|" in command or command.endswith("--help"):
+            continue
+        if not re.search(r"\b[A-Z][A-Z_]+\b|<[^>]+>", command):
+            continue                       # 口座の無い名前だけの言及（例 `thth dm event`）は命令ではない
+        argv = shlex.split(re.sub(r"\b[A-Z][A-Z_]+\b", "123", re.sub(r"<[^>]+>", "123", command)))[1:]
+        try:
+            args = parser.parse_args(argv)
+        except SystemExit:
+            bad.append(("parse", command))
+            continue
+        key = remote.command_key(argv[0], args)
+        if key not in remote.COMMANDS and key not in _REVIEWER_LOCAL_ONLY:
+            bad.append(("remote", command))
+    assert bad == []
