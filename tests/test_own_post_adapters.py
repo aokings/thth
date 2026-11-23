@@ -194,3 +194,19 @@ def test_持たない媒体の既定はPostUnreadable():
         pass
     with pytest.raises(base.PostUnreadable):
         Bare().own_post("1")
+
+
+def test_Threadsの消えたidは権限の不足でなく見つからないと言う(monkeypatch):
+    """11/23 本物: 消した直後の id を読むと Meta は 400「does not exist … missing permissions」。"""
+    from thth.adapters import base as adapter_base
+    from thth.adapters import threads as threads_mod
+    ad = threads_mod.ThreadsAdapter(base_url="http://127.0.0.1:9", access_token="x",
+                                    user_id="12345", wait_seconds=0, timeout=1.0)
+
+    def gone(*_a, **_k):
+        raise adapter_base.PermissionMissing("threads_basic", "HTTP 400 Unsupported get request. Object with ID '1' does not exist, cannot be loaded due to missing permissions")
+    monkeypatch.setattr(ad, "_read", gone)
+    import pytest
+    with pytest.raises(adapter_base.PostUnreadable) as caught:
+        ad.own_post("1")
+    assert "見つかりません" in str(caught.value)

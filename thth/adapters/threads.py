@@ -1947,7 +1947,14 @@ class ThreadsAdapter(base.Adapter):
             body = self._read(
                 lambda: self._get(f"/v1.0/{value}", {"fields": self.OWN_POST_FIELDS}),
                 permission="threads_basic", what="投稿の取得")
-        except base.PermissionMissing:
+        except base.PermissionMissing as e:
+            # Meta は消えた id にも 400「does not exist, cannot be loaded due to missing permissions」を
+            # 返す（11/23 本物で消した直後に読んで見た）。鍵に threads_basic が乗っているなら
+            # 「権限が無い」と言わず「見つからない」と言う（`thth auth` へ誤って案内しない）。
+            if "does not exist" in str(e):
+                raise base.PostUnreadable(
+                    "投稿が見つかりません（既に消えているか、この鍵から見えません）。"
+                    "thth posts で id を確かめてください") from None
             raise
         except Exception as e:
             raise base.PostUnreadable(redact_mod.redact(f"投稿を読めません: {e}")) from None
