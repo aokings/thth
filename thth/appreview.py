@@ -244,7 +244,11 @@ SEGMENTS = (
          ("two", "thth brand creators {IG} approve {CREATOR} --by {BY}"),
          ("cmd", "thth brand creators {IG} list {CREATOR}"),
          ("two", "thth brand creators {IG} remove {CREATOR} --by {BY}"),
-         real_first="user_ids の GET が引数なしの全件を返すか・ページの鍵で通るかが【未確認】（公式の頁は Business access token）"),
+         # 11/18 GET（list）はページの鍵で通った・11/21 引数なしは 400（id を渡す形で正しい）・11/20 approve（POST）は
+         # soh-ig で success true（段取り 録画 §6・申し送り 第21〜22）。DELETE（remove）は本物で未・list は承認の直後も 0 件
+         # （Meta 側の挙動・`thth/meta_brand.py` が注を出す）なので、印は残して中身を今の未確認に合わせた（11/23）。
+         real_first="remove（DELETE）を本物で 1 回打つ【未】。GET はページの鍵で通り、approve（POST）は 11/20 に通った。"
+                    "list は承認の直後も 0 件に映りうる（Meta 側・2 回目の list の 0 件を録画で説明する）"),
     _seg("ig-brand-promote", "instagram", "instagram_branded_content_creator — allow or revoke a brand's use of a "
          "tagged post in partnership ads.", ["instagram_branded_content_creator"],
          ("prep", "クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく"),
@@ -351,10 +355,9 @@ DEFERRED_SEGMENTS = (
 
 # 計画 §1.10 の判断で申請に入れるが、THTH の認可がまだ求めない権限（媒体）。口を作ったら `PERMISSIONS` へ移す
 # （ブランドとクリエイターの 6 つ・商品タグと、`email`・`pages_events`・`instagram_manage_events`・`whatsapp_business_manage_events`・`whatsapp_business_management`・`whatsapp_business_messaging` は 11/09 に口ができて移した）。
-PLANNED = {
-    "instagram_creator_marketplace_messaging": "instagram",
-    "commerce_manage_accounts": "ads",
-}
+# 残っていた `instagram_creator_marketplace_messaging`・`commerce_manage_accounts` は口が無いので 11/23 に `DEFERRED` へ
+# 移した（点検 2026-11-23）。口を作ったら、`PERMISSIONS` に足して `DEFERRED` から外す。
+PLANNED = {}
 
 # 今回の申請の範囲から外した権限・機能と理由（masaru 2026-11-18）。`names()`・区間・privacy の語の表から除く。
 # 口（`thth wa`・`thth embed` など）と `permission_watch.PERMISSIONS`・`FEATURES` の行はそのまま残す。
@@ -365,6 +368,7 @@ _OEMBED_DEFERRED = ("oEmbed は鍵なしで呼べるようになり、公開の�
                     "（Meta の告知 2026-06-15 Tokenless Access to Meta oEmbed APIs）")
 _USER_DEFERRED = ("Messenger のユースケースでは「テスト準備完了」だが、Facebook Login for Business の構成の選択肢に出ず、"
                   "THTH の鍵に乗らない（11/18 の Dashboard）。計画 §3.4 ④ でも落とす推し")
+_NO_DOOR = "THTH に口が無く、録画に映せる成功の呼び出しを作れない（点検 2026-11-23・11/08 の基準）"
 DEFERRED = {
     "whatsapp_business_management": _WA_DEFERRED,
     "whatsapp_business_messaging": _WA_DEFERRED,
@@ -383,6 +387,14 @@ DEFERRED = {
                                       "ユースケースの中は public_profile だけ（11/18 の Dashboard）",
     "commerce_account_read_settings": "コマース API のシステムユーザーの鍵で求める権限（commerce-platform/api-setup・2026-06-28）。"
                                       "カタログ API のユースケースに無く、ショップは catalog_management と商品タグで足りる",
+    # 以下は 2026-11-23（docs/点検_Meta全部盛り申請の出せる状態_2026-11-23.md）。THTH に口が無い（録画に映せない）ので、
+    # 11/08 の基準（成功の呼び出しを作れないものは入れない）で外す。口を作ったら区間を足して戻す。
+    "pages_utility_messaging": _NO_DOOR + "（utility のテンプレートを送る口 `thth dm send --template` が無い。"
+                               "認可はまだ pages_messaging と一緒に求める・`thth/scopes.py`）",
+    "instagram_creator_marketplace_messaging": _NO_DOOR + "（クリエイターマーケットプレイスでクリエイターへ送る口が無い。"
+                                               "探すだけの creators search は instagram_creator_marketplace_discovery）",
+    "commerce_manage_accounts": _NO_DOOR + "（コマースの口座を作る・直す口が無い。ショップは catalog_management と"
+                                "商品タグ `thth shop` で足りる）",
 }
 
 # 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。

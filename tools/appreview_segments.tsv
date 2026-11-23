@@ -249,7 +249,7 @@ hand	Instagram から消えたのを見せたら Return
 end
 seg	ig-brand-creators	instagram	instagram_branded_content_brand — view, add and remove creators on the brand's approved list.
 items	instagram_branded_content_brand
-real	user_ids の GET が引数なしの全件を返すか・ページの鍵で通るかが【未確認】（公式の頁は Business access token）
+real	remove（DELETE）を本物で 1 回打つ【未】。GET はページの鍵で通り、approve（POST）は 11/20 に通った。list は承認の直後も 0 件に映りうる（Meta 側・2 回目の list の 0 件を録画で説明する）
 prep	Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする。追加の相手に 2 つ目のテスト口座を用意する
 cmd	thth brand creators {IG} list {CREATOR}
 two	thth brand creators {IG} approve {CREATOR} --by {BY}

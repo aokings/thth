@@ -52,8 +52,8 @@ def test_落とした権限は申請の表にも_privacyの語にも出ない():
     assert all(reason.strip() for reason in appreview.DROPPED.values())
     # 16 のうち、ブランドとクリエイターの 6 つ（2949689）と email・pages_events・instagram_manage_events・
     # whatsapp_business_manage_events の 4 つ（1c5a5e0）と商品タグ（e500d33）は口ができて PERMISSIONS へ移した（11/09）。
-    # manage_app_solution（WhatsApp）は 11/18 に DEFERRED へ移した。
-    assert len(appreview.PLANNED) == 2
+    # manage_app_solution（WhatsApp）は 11/18 に DEFERRED へ移した。残る 2 つ（口が無い）は 11/23 に DEFERRED へ移した。
+    assert appreview.PLANNED == {}
 
 
 def test_WhatsAppは今回の申請から外し_口と見張りは残す():
@@ -176,8 +176,20 @@ def test_本物で確かめていない口の区間には印がある():
     assert not row("threads_basic")["real_first"]
 
 
+def test_口の無い3つは今回外し_表に口の無い名前が残らない():
+    """点検 2026-11-23: 口の無い pages_utility_messaging・instagram_creator_marketplace_messaging・
+    commerce_manage_accounts は 11/08 の基準で外す。`thth admin appreview check` の no_door は 0。"""
+    gone = {"pages_utility_messaging", "instagram_creator_marketplace_messaging", "commerce_manage_accounts"}
+    assert gone <= set(appreview.DEFERRED) and all(appreview.DEFERRED[name].strip() for name in gone)
+    assert not gone & set(appreview.names()) and not gone & set(appreview.PLANNED)
+    assert appreview.script_view()["counts"]["no_door"] == 0
+    assert [item["name"] for item in appreview.items() if not item["doors"]] == []
+    # 口と見張りの行は残す（認可はまだ pages_utility_messaging を求める）
+    assert "pages_utility_messaging" in pw.PERMISSIONS
+
+
 def test_口の無い権限は表で口が無いと言う():
-    assert row("pages_utility_messaging")["doors"] == []
+    assert "pages_utility_messaging" not in {item["name"] for item in appreview.items()}   # 口が無いので外した（11/23）
     # 口ができた 4 権限は PERMISSIONS に移り、口（thth dm event・thth doctor）が表に出る。
     assert row("pages_events")["doors"] == ["thth dm event"] and row("pages_events")["requested_by_thth"]
     assert row("instagram_manage_events")["doors"] == ["thth dm event"]
@@ -192,7 +204,8 @@ def test_scriptの人向けと_jsonは1つの値(capsys):
     assert cli.main(["admin", "appreview", "script"]) == 0
     out = capsys.readouterr().out
     assert "| `threads_basic` | 読む | `thth posts` |" in out
-    assert "**口が無い**" in out and "（本物で 1 回打ってから）" in out
+    # 口の無い名前は 11/23 に全部外した（表に「**口が無い**」の行は出ない・末尾の数は 0）
+    assert "**口が無い**" not in out and "口が無い 0" in out and "（本物で 1 回打ってから）" in out
     assert cli.main(["admin", "appreview", "script", "--json"]) == 0
     view = json.loads(capsys.readouterr().out)
     assert view["counts"]["segments"] == len(appreview.SEGMENTS)
@@ -294,6 +307,11 @@ def subset(*names):
     return [item for item in appreview.items() if item["name"] in names]
 
 
+def doorless(name, privacy_words=("Messenger", "utility")):
+    """口の無い権限の行（申請の表から外したので、evaluate の柵を見るために作る）。"""
+    return {"name": name, "type": "permission", "media": "facebook", "doors": [], "privacy_words": list(privacy_words)}
+
+
 def test_全部そろえば問題は無い():
     result = appreview.evaluate(fake_view(threads_basic=1, pages_manage_posts=29), TEXT, now=NOW, rows=subset(*ITEMS))
     assert result["ok"] and result["problems"] == []
@@ -318,7 +336,7 @@ def test_機能は呼び出しを数えず_口とprivacyだけ見る():
 
 
 def test_口の無い権限は赤():
-    result = appreview.evaluate(fake_view(), "Messenger utility", now=NOW, rows=subset("pages_utility_messaging"))
+    result = appreview.evaluate(fake_view(), "Messenger utility", now=NOW, rows=[doorless("pages_utility_messaging")])
     codes = {problem["code"]: problem["names"] for problem in result["problems"]}
     assert codes["appreview_no_door"] == ["pages_utility_messaging"]
     assert codes["appreview_no_recent_call"] == ["pages_utility_messaging"]
@@ -430,9 +448,10 @@ def test_今の表では口の無い権限と申請の前の呼び出しが赤�
     view = fake_view(**{name: 1 for name in pw.PERMISSIONS})
     result = appreview.evaluate(view, every, now=NOW)
     codes = {problem["code"]: problem["names"] for problem in result["problems"]}
-    no_door = sorted(item["name"] for item in appreview.items() if not item["doors"])
-    assert sorted(codes["appreview_no_door"]) == no_door
-    assert set(codes["appreview_no_recent_call"]) == set(appreview.PLANNED)   # 認可が求めないので呼べない
+    # 11/23 に口の無い 3 つを DEFERRED へ移したので、口の無い権限も、認可が求めず呼べない権限（PLANNED）も残らない
+    assert [item["name"] for item in appreview.items() if not item["doors"]] == []
+    assert "appreview_no_door" not in codes and "appreview_no_recent_call" not in codes
+    assert result["ok"]
     assert "appreview_privacy_missing" not in codes
     assert appreview.CALL_DAYS == 30
 
@@ -440,11 +459,11 @@ def test_今の表では口の無い権限と申請の前の呼び出しが赤�
 def test_記録に残らない権限は赤の中でそう分けて言う():
     """evidence の空の権限と PLANNED は、1 回打っても記録に残らない（Dashboard の呼び出しの欄で確かめる）。"""
     assert pw.PERMISSIONS["threads_basic"]["evidence"] and not pw.PERMISSIONS["pages_utility_messaging"]["evidence"]
-    names = ("threads_basic", "pages_utility_messaging", "commerce_manage_accounts")
-    result = appreview.evaluate(fake_view(), "", now=NOW, rows=subset(*names))
+    names = ("threads_basic", "ads_mcp_management")
+    result = appreview.evaluate(fake_view(), "", now=NOW, rows=subset(*names) + [doorless("pages_utility_messaging")])
     problem = next(p for p in result["problems"] if p["code"] == "appreview_no_recent_call")
-    assert set(problem["names"]) == set(names)
-    assert set(problem["unrecorded"]) == {"pages_utility_messaging", "commerce_manage_accounts"}
+    assert set(problem["names"]) == {*names, "pages_utility_messaging"}
+    assert set(problem["unrecorded"]) == {"ads_mcp_management", "pages_utility_messaging"}
     fix = rc.CATALOG["appreview_no_recent_call"]["fix"]["text"]
     assert "Dashboard" in fix and "記録に残らない" in fix
 
