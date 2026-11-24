@@ -643,6 +643,10 @@ def display(manifest):
         lines.append('タイアップ: 「タイアップ」の印を付けて出します（'
                      +(f"ブランドの Instagram id: {'・'.join(sponsors)}" if sponsors else 'ブランドの id なし・印だけ')
                      +'・digest に入ります）')
+    # 11/24: ストーリーも JSON の 1 行だけでは見落とすので、人の言葉の 1 行を添える。
+    if manifest['post_options'].get('story') is True:
+        lines.append('ストーリー: Instagram のストーリーとして出します（字幕は付きません・本文は THTH の記録にだけ残ります'
+                     '・digest に入ります）')
     return '\n'.join(lines)
 
 

@@ -686,6 +686,9 @@ def _send(args, account):
                                   "share_to_instagram": "--share-to-instagram",
                                   # タイアップの印を捨てると、案件の投稿が印なしで公開される（監査 5.28.0 の A1）。
                                   "paid_partnership": "--paid-partnership", "sponsor_ids": "--sponsor",
+                                  # ストーリーの印を捨てると、ストーリーのつもりの写真がフィードに出る（11/24）。
+                                  # thth.me の send は post_options を運ばない（Worker と VM の口を足す仕事・手元の CLI だけ）。
+                                  "story": "--story",
                                   "reply_to_root": "--reply-to-root",
                                   "reply_to_author_key": "--reply-to-author-key", "confirm": "--confirm"})
     has_media = bool(getattr(args, "media_files", None))

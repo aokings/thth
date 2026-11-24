@@ -938,6 +938,51 @@ ENTRIES = {
         "doors": _C,
         "since": "5.13.0",
     },
+    # 11/24: Instagram のストーリーを IG の口座から直接出す口（`thth send --story`・`thth/story.py`）。
+    # since は版上げのときに次の版へ直す（今の版を越えない柵があるので、今は今の版を置く）。
+    "story_unavailable": {
+        "kind": "refusal",
+        "why": "ストーリーは Instagram の口座から、写真 1 枚か本文のカード 1 枚を、返信やタイアップと混ぜずに出します。",
+        "fix": "1 行目の（）が指す旗を外して、写真 1 枚なら --media と --alt、本文なら --text だけを付けて打ち直してください",
+        "command": "thth send <口座> --story --media <写真> --alt <説明>",
+        "better": "ストーリーの画面は 9:16（1080×1920）です。写真を縦長で用意すると、どこも切れずに届きます",
+        "doors": _C,
+        "since": "5.29.1",
+        "by_detail": {
+            "medium": {
+                "fix": "Instagram の口座を指して打ち直してください（Threads・Facebook などの口座はストーリーを持ちません）",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "Threads の投稿を見せたいときも、同じ写真を Instagram の口座から --story で出すと確かに届きます"},
+            "reply": {
+                "fix": "--reply-to を外して打ち直してください（返信は返信のまま --story なしで出せます）",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "返したい話題をストーリーに載せるなら、元の投稿の写真や要点を 1 枚にすると流れが伝わります"},
+            "paid_partnership": {
+                "fix": "--paid-partnership と --sponsor を外して打ち直すか、--story を外してフィードに印つきで出してください",
+                "command": "thth send <口座> --media <写真> --alt <説明> --paid-partnership",
+                "better": "案件は印つきでフィードに出し、ストーリーではその投稿を紹介すると、印が付いたまま届きます"},
+            "other_flags": {
+                "fix": "1 行目に出た旗を外して打ち直してください（ストーリーには字幕もトピックも付きません）",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "言葉を添えたいときは、写真の中に文字を入れるか、本文だけを --text でカードにすると読まれます"},
+            "media_count": {
+                "fix": "--media と --alt を 1 組だけにして打ち直してください（2 枚目は別の --story で出せます）",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "何枚も見せたいときは、1 枚ずつ続けて出すと、見る人が順にめくれます"},
+            "text_and_photo": {
+                "fix": "写真だけなら --text を外し、本文だけなら --media と --alt を外して打ち直してください（本文はカードの絵になります）",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "写真に言葉を添えたいときは、写真の中に文字を入れておくと、ストーリーでもそのまま読めます"},
+            "empty": {
+                "fix": "--media <写真> --alt <説明> か、--text \"本文\" を付けて打ち直してください",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "縦長（9:16）の写真を選ぶと、ストーリーの画面いっぱいに届きます"},
+            "text_only": {
+                "fix": "本文を絵にした写真を用意して、--media と --alt で渡してください",
+                "command": "thth send <口座> --story --media <写真> --alt <説明>",
+                "better": "縦長（9:16）の絵にすると、ストーリーの画面いっぱいに届きます"},
+        },
+    },
     # ------------------------------------------------------------------
     # 計画 Meta 全部盛り M5 の (e): 提出の前の点検（`thth admin appreview check`・`thth/appreview.py`）
     # ------------------------------------------------------------------

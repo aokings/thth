@@ -4430,6 +4430,22 @@ def cmd_send(args) -> int:
         send_options['paid_partnership'] = True
     if getattr(args, 'sponsor_ids', None):
         send_options['sponsor_ids'] = [str(v) for v in args.sponsor_ids]
+    if getattr(args, 'story', False):
+        # 11/24: Instagram のストーリーを IG の口座から直接出す（`thth/story.py`）。story は post_options として
+        # 添付の manifest に入り、承認の指紋（digest）に入る。組み合わせの誤りは なぜ・通すには・もっと良く で断る。
+        from . import refusal
+        from . import story as story_mod
+        try:
+            story_cfg = accounts_mod.load_account(args.account)
+        except accounts_mod.AccountError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        found = story_mod.problem(story_cfg, args, text=text, declarations=declarations)
+        if found is not None:
+            detail, line = found
+            return refusal.emit(args, 'story_unavailable', line=f'story_unavailable: {line}', reason=detail,
+                                payload={'account': args.account, 'error': 'story_unavailable', 'reason': detail})
+        send_options['story'] = True
     try:
         media_mod.validate(declarations)
     except media_mod.MediaError as exc:
@@ -5336,6 +5352,9 @@ def build_parser() -> argparse.ArgumentParser:
     # 11/20: Instagram のタイアップ投稿（`is_paid_partnership`・`branded_content_sponsor_ids`）。digest に入る。
     p_send.add_argument('--paid-partnership', dest='paid_partnership', action='store_true',
                         help='Instagram の「タイアップ投稿」のラベルを付ける（画像の投稿だけ・ストーリーには付けない）')
+    # 11/24: Instagram のストーリー（IG の口座から直接・`media_type=STORIES`）。digest に入る。
+    p_send.add_argument('--story', dest='story', action='store_true',
+                        help='Instagram のストーリーとして出す（写真 1 枚を --media と --alt で。字幕は付きません）')
     p_send.add_argument('--sponsor', dest='sponsor_ids', action='append', metavar='IG_USER_ID',
                         help='タイアップのブランドの Instagram の数字の id（2 つまで・--paid-partnership と一緒に）。'
                              'ブランドの側で「手動で承認」なら、先に承認の一覧に載っている必要があります')
