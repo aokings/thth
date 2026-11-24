@@ -947,7 +947,7 @@ ENTRIES = {
         "command": "thth send <口座> --story --media <写真> --alt <説明>",
         "better": "ストーリーの画面は 9:16（1080×1920）です。写真を縦長で用意すると、どこも切れずに届きます",
         "doors": _C,
-        "since": "5.29.1",
+        "since": "5.29.2",
         "by_detail": {
             "medium": {
                 "fix": "Instagram の口座を指して打ち直してください（Threads・Facebook などの口座はストーリーを持ちません）",
@@ -987,7 +987,7 @@ ENTRIES = {
         "command": "thth send <口座> --story --media <写真> --alt <説明>",
         "better": "カードは短い本文ほど字が大きく組まれます。言いたいことを 1〜3 文にすると、流し見でも読まれます",
         "doors": _C,
-        "since": "5.29.1",
+        "since": "5.29.2",
         "by_detail": {
             "image_tool": {
                 "fix": "THTH を動かす機械に Pillow を入れて打ち直してください（pip install 'thth[image]'、Ubuntu なら apt の python3-pil）",
