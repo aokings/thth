@@ -57,6 +57,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **X の非公開リスト**: `thth list create|add|remove|show`（3.17.0 から・X だけ）。公開のリストは作らない。足す・外すは人が選んだ少数だけ（1 回 10 人まで）。アカウントを認可し直してから（[リリースノート 3.17.0](docs/リリースノート_3.17.0_2026-10-12.md)）。
 - **X のコミュニティ**: `thth community search <account> <語…>` で探し、`thth send <account> --community <id>` か queue の front-matter `community_id:` で出す（3.19.0 から・X だけ）。参加は X の画面で先に（API に参加の口は無い）。返信とは同時に使えない。各コミュニティの規則は人が読んで守る（[リリースノート 3.19.0](docs/リリースノート_3.19.0_2026-10-13.md)）。
 - **Instagram のタイアップ投稿**（5.28.0）: `thth send <口座> --paid-partnership [--sponsor <ブランドの IG の数字の id>]`（`--sponsor` は 2 つまで）か、原稿の `post_options: {paid_partnership: true, sponsor_ids: ["…"]}` で出します。カルーセルは親の投稿にだけ付き、ストーリーには付けません（断ります）。印と相手の id は digest と承認の指紋に入り、dry-run に「タイアップ:」の 1 行で出ます。thth.me の鍵の道の `thth send` はこの旗を読まず、付けたまま打つと出さずに断ります（[リリースノート 5.28.0](docs/リリースノート_5.28.0_2026-11-21.md)）。
+- **Instagram のストーリー**（11/24）: `thth send <IG の口座> --story --media <写真> --alt <説明>` で写真 1 枚を IG の口座から直接ストーリーに出します（Threads の `--share-to-instagram` は媒体が SUCCESS と返しても作られないことがあったため）。9:16 でない写真は一段目に「上下か左右が切れます」と言い、Pillow（`pip install 'thth[image]'`）がある機械では余白を足した 1080×1920 の絵に替えて出します。写真なしの `--story --text "本文"` は本文を 1080×1920 のカードの絵にします（Pillow と日本語の書体が要る・`THTH_STORY_FONT` で書体を指せる）。作った絵は口座の repo の `thth-story/` に置き、送る絵そのものが digest に入ります。返信・タイアップ・2 枚以上とは組めず、thth.me の鍵の道はこの旗を読まずに断ります。
 - **X のトレンドと語ごとの投稿数**: `thth trends <account> [--woeid N] [--max N]`（既定は日本）と `thth counts <account> <語> [--granularity hour|day]`（直近 7 日）（3.19.0 から・X だけ・1 回の有償の読み取り・保存しない）。
 
 ## はじめ方

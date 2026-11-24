@@ -977,10 +977,31 @@ ENTRIES = {
                 "fix": "--media <写真> --alt <説明> か、--text \"本文\" を付けて打ち直してください",
                 "command": "thth send <口座> --story --media <写真> --alt <説明>",
                 "better": "縦長（9:16）の写真を選ぶと、ストーリーの画面いっぱいに届きます"},
-            "text_only": {
-                "fix": "本文を絵にした写真を用意して、--media と --alt で渡してください",
-                "command": "thth send <口座> --story --media <写真> --alt <説明>",
-                "better": "縦長（9:16）の絵にすると、ストーリーの画面いっぱいに届きます"},
+        },
+    },
+    # 11/24: 本文を 1080×1920 のカードの絵にする（`thth send <口座> --story --text "…"`・`thth/story_image.py`）。
+    "story_card_unavailable": {
+        "kind": "refusal",
+        "why": "本文のカードは、絵を作る部品（Pillow）と日本語の字の書体のある機械で、1 枚に収まる長さの本文だけを絵にします。",
+        "fix": "1 行目の（）が指す所を直して打ち直すか、カードの代わりに縦長の写真を --media と --alt で渡してください",
+        "command": "thth send <口座> --story --media <写真> --alt <説明>",
+        "better": "カードは短い本文ほど字が大きく組まれます。言いたいことを 1〜3 文にすると、流し見でも読まれます",
+        "doors": _C,
+        "since": "5.29.1",
+        "by_detail": {
+            "image_tool": {
+                "fix": "THTH を動かす機械に Pillow を入れて打ち直してください（pip install 'thth[image]'、Ubuntu なら apt の python3-pil）",
+                "command": "thth send <口座> --story --text \"本文\"",
+                "better": "入れるまでの間は、本文を写した縦長の絵を自分で作って --media で渡すと、同じストーリーが出せます"},
+            "font": {
+                "fix": "日本語の書体を入れて打ち直してください（Ubuntu なら apt の fonts-noto-cjk。"
+                       "置き場が違うなら THTH_STORY_FONT に書体のファイルの道を入れる）",
+                "command": "thth send <口座> --story --text \"本文\"",
+                "better": "Noto Sans CJK のような字の多い書体だと、記号や旧字も欠けずに組まれます"},
+            "too_long": {
+                "fix": "本文を短くして（おおむね 350 字まで・改行が多いともっと短く）打ち直してください",
+                "command": "thth send <口座> --story --text \"本文\"",
+                "better": "長い話はフィードの投稿に書き、ストーリーではその要点だけをカードにすると、続きを読みに来てもらえます"},
         },
     },
     # ------------------------------------------------------------------

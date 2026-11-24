@@ -4446,6 +4446,24 @@ def cmd_send(args) -> int:
             return refusal.emit(args, 'story_unavailable', line=f'story_unavailable: {line}', reason=detail,
                                 payload={'account': args.account, 'error': 'story_unavailable', 'reason': detail})
         send_options['story'] = True
+        # 写真は 9:16 でなければ切れる側を言い、部品があれば余白を足した 1080×1920 の絵に替える。本文だけなら
+        # カードの絵にする。どちらも作った絵が送る添付になり、digest はその絵で決まる（本文は記録にだけ残る）。
+        try:
+            if declarations:
+                chosen, story_notes = story_mod.fit_photo(story_cfg, declarations[0])
+            else:
+                chosen, story_notes = story_mod.make_card(story_cfg, args.account, text)
+        except story_mod.CardRefused as exc:
+            return refusal.emit(args, 'story_card_unavailable', line=f'story_card_unavailable: {exc.line}',
+                                reason=exc.detail,
+                                payload={'account': args.account, 'error': 'story_card_unavailable',
+                                         'reason': exc.detail})
+        except (media_mod.MediaError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        declarations = [chosen]
+        for line in story_notes:
+            print(line, file=sys.stderr if getattr(args, 'json', False) else sys.stdout)
     try:
         media_mod.validate(declarations)
     except media_mod.MediaError as exc:
@@ -5354,7 +5372,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Instagram の「タイアップ投稿」のラベルを付ける（画像の投稿だけ・ストーリーには付けない）')
     # 11/24: Instagram のストーリー（IG の口座から直接・`media_type=STORIES`）。digest に入る。
     p_send.add_argument('--story', dest='story', action='store_true',
-                        help='Instagram のストーリーとして出す（写真 1 枚を --media と --alt で。字幕は付きません）')
+                        help='Instagram のストーリーとして出す（写真 1 枚を --media と --alt で・9:16 でなければ余白を足す。写真なしの --text は本文を 1080×1920 のカードの絵にする。字幕は付きません）')
     p_send.add_argument('--sponsor', dest='sponsor_ids', action='append', metavar='IG_USER_ID',
                         help='タイアップのブランドの Instagram の数字の id（2 つまで・--paid-partnership と一緒に）。'
                              'ブランドの側で「手動で承認」なら、先に承認の一覧に載っている必要があります')

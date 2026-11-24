@@ -45,6 +45,10 @@ dev = ["pytest>=7", "pytest-xdist>=3"]
 # だけが中を見る。入れていない機械では YAML の記録は「置く・戻す・版を取る」までで、「中は見ていない」と言う。
 # 本体の依存は 0 のまま（import は thth/register/yamlread.py の 1 枚だけ・柵 tests/test_register_base.py）。
 yaml = ["PyYAML>=6"]
+# ストーリーの絵（11/24・`thth send --story`）: 9:16 でない写真に余白を足す・本文をカードの絵にする。標準ライブラリに
+# JPEG を読み書きし字を描く部品が無いので、入れた機械だけが絵を作る。入れていない機械では写真は注意を言うだけ、
+# カードは断る（import は thth/story_image.py の 1 枚だけ・柵 tests/test_story.py）。
+image = ["Pillow>=10"]
 
 [project.urls]
 Homepage = "https://thth.me"
