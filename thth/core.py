@@ -642,8 +642,13 @@ def _ig_share_report(publish_result, log) -> tuple[dict, str]:
     kw = {"share_to_instagram_status": status}
     if status == "success":
         kw["share_to_instagram"] = True
-        log("Instagram のストーリーズにも共有しました")
-        return kw, "（Instagram のストーリーズにも共有しました）"
+        # 11/24 こぴちゃで 2 本とも SUCCESS と返ったのに、ストーリーズは作られていなかった（手で共有すると出る・
+        # API の一覧にも出る）。媒体の SUCCESS は当てにならないので言い切らない。審査前の権限が疑わしい（未確認）。
+        note = ("Instagram のストーリーズへの共有は、媒体が成功と返しました。ただし媒体が成功と返しても"
+                "ストーリーズが作られないことがあります（threads_share_to_instagram の審査の前など）。"
+                "Instagram のアプリで確かめてください。出ていなければ、Threads のアプリから手で共有できます")
+        log(note)
+        return kw, f"（{note}）"
     if status == "failed":
         note = ("Threads には出ましたが、Instagram のストーリーズへの共有は媒体が失敗と返しました"
                 "（ストーリーズには出ていません）。よくある理由は、Threads と Instagram の口座が"

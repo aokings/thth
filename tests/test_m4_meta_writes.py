@@ -256,7 +256,7 @@ def test_ストーリーズへの共有はThreadsの投稿に付きdigestに入�
                             "--production", "--confirm", digest)
         assert rc == 0, out + err
         assert base_url.handler_cls.create_params[0]["crossreshare_to_ig"] == "true"
-        assert "ストーリーズにも共有しました" in out + err
+        assert "媒体が成功と返しました" in out + err and "Instagram のアプリで確かめてください" in out + err
     assert "share_to_instagram" in found(TH_ACCOUNT)
 
 
