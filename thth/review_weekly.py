@@ -203,6 +203,21 @@ def _streak(drops):
     return streak
 
 
+def _missing_reason(metric, current, *previous):
+    """比べられない訳を分ける。表示の和が null なのが「その週に根の投稿が無い」だけなら、数の欠けとは言わない
+    （新しいシリーズ・試しの期間が終わった物）。24 時間の数が採れていない・フォロワーの数が無いは value_missing。"""
+    if metric != "views":
+        return "value_missing"
+
+    def no_posts(row):
+        return row["totals"]["views"]["reason"] == "no_root_posts_in_week"
+
+    if current["totals"]["views"]["sum"] is None:
+        return "current_week_no_posts" if no_posts(current) else "value_missing"
+    missing = [row for row in previous if row["totals"]["views"]["sum"] is None]
+    return "previous_week_no_posts" if all(no_posts(row) for row in missing) else "value_missing"
+
+
 def _drop(rows, index, metrics=("views", "followers_delta")):
     """前の 2 週の平均の半分を切ったか（表示の和・フォロワーの増え。シリーズと糸は表示の和だけ）。"""
     if index < 2:
@@ -217,7 +232,7 @@ def _drop(rows, index, metrics=("views", "followers_delta")):
                   "previous_2_weeks": previous, "previous_average": None, "ratio": None,
                   "change": None, "dropped": None, "reason": None}
         if current is None or None in previous:
-            signal["reason"] = "value_missing"
+            signal["reason"] = _missing_reason(metric, rows[index], rows[index - 1], rows[index - 2])
         else:
             average = sum(previous) / 2
             signal["previous_average"] = average
@@ -441,6 +456,8 @@ REASON_JA = {
     "no_root_posts_in_week": "根の投稿が無い週",
     "no_24h_observation_in_week": "24 時間の数がまだ無い",
     "value_missing": "数が欠けていて比べられない",
+    "current_week_no_posts": "その週に投稿が無く比べられない",
+    "previous_week_no_posts": "前の週に投稿が無く比べられない",
     "previous_average_not_positive": "前の 2 週の平均が 0 以下で比べられない",
     "fewer_than_2_previous_weeks": "前の 2 週が無い",
     "no_metric_judged": "比べられる数が無い",
@@ -488,7 +505,7 @@ def render_text(payload) -> str:
                   "|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for row in node["weeks"]:
             posts, totals = row["posts"], row["totals"]
-            mark = {True: "落ち込み", False: "", None: "—"}[row["drop"]]
+            mark = {True: "落ち込み", False: "なし", None: "—"}[row["drop"]]
             lines.append(
                 f"| {row['week_start']}{'（途中）' if row['partial'] else ''} | {posts['roots']} | "
                 f"{posts['own_thread_replies']} | {posts['replies_to_others']} | "

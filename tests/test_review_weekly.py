@@ -367,3 +367,56 @@ def test_動いている糸は段の進みにその週の数を添える(units):
     assert set(odai["this_week"]) == {"clicks_72h", "visits"}
     assert odai["this_week"]["visits"]["cannot_say"] == "site_visits_not_imported"
     assert "### odai-run「お題の糸」" in review_weekly.render_text(payload)
+
+
+# ------------------------------------------------------------ 人の読む形の粗（VM の本物で見つかった 3 つ・11/25）
+
+def test_週の並びの印の列は_立たない週はなしで比べられない週はダッシュ(two):
+    text = review_weekly.render_text(review_weekly.answer("kanto-threads", now=NOW))
+    rows = {line.split(" | ")[0][2:]: line for line in text.splitlines() if line.startswith("| 2026-")}
+    assert rows["2026-11-09"].endswith("| なし |")
+    assert rows["2026-11-16"].endswith("| 落ち込み |")
+    assert rows["2026-10-19"].endswith("| — |") and rows["2026-11-02"].endswith("| — |")
+    assert all(not line.endswith("|  |") for line in rows.values())
+
+
+def _row(views_sum, reason=None):
+    return {"totals": {"views": {"sum": views_sum, "n": 0 if views_sum is None else 2, "reason": reason}},
+            "followers": {"delta": None}}
+
+
+@pytest.mark.parametrize("rows,reason,words", [
+    # 前の週にそのシリーズの投稿が無いだけ（新しいシリーズ・試しの期間が終わった物）。
+    ([_row(None, "no_root_posts_in_week"), _row(300), _row(100)], "previous_week_no_posts",
+     "前の週に投稿が無く比べられない"),
+    ([_row(300), _row(300), _row(None, "no_root_posts_in_week")], "current_week_no_posts",
+     "その週に投稿が無く比べられない"),
+    # 投稿はあるのに 24 時間の数が採れていない（今までの言い方）。
+    ([_row(None, "no_24h_observation_in_week"), _row(300), _row(100)], "value_missing",
+     "数が欠けていて比べられない"),
+])
+def test_比べられない訳を分ける(rows, reason, words):
+    result = review_weekly._drop(rows, 2, metrics=("views",))
+    (signal,) = result["signals"]
+    assert result["drop"] is None and signal["reason"] == reason
+    assert review_weekly._why(reason) == words
+
+
+def test_表示が0で採れている週は欠けと言わない(isolated_account_factory):
+    """asmon-kanto-fb（11/25 の VM）: 表示 0 が 2 本ずつ採れている。0 は欠けではない。"""
+    account = isolated_account_factory("fb", project="fb", media="facebook")
+    for day in ("10", "12", "17", "19"):                     # 11/2 の週は根の投稿なし
+        _seed_post(account, f"F{day}", jst.parse(f"2026-11-{day}T12:04:00+09:00"), views=0)
+    payload = review_weekly.answer("fb", now=NOW)
+    node = payload["by_account"]["fb"]
+    views = node["drop_detail"]["signals"][0]
+    assert node["week"]["totals"]["views"] == {"sum": 0, "n": 2, "reason": None}
+    assert views["value"] == 0 and views["reason"] == "previous_week_no_posts"
+    text = review_weekly.render_text(payload)
+    assert "- 表示: 0（前の週に投稿が無く比べられない）" in text
+    assert "数が欠けていて" not in text.split("### 週の並び")[0].split("- 表示:")[1].split("\n")[0]
+    # 前の 2 週とも 0 が採れていれば、平均が 0 で比べられない、と言う。
+    _seed_post(account, "F04", jst.parse("2026-11-04T12:04:00+09:00"), views=0)
+    views = review_weekly.answer("fb", now=NOW)["by_account"]["fb"]["drop_detail"]["signals"][0]
+    assert views["reason"] == "previous_average_not_positive" and views["previous_average"] == 0
+    assert review_weekly._why(views["reason"]) == "前の 2 週の平均が 0 以下で比べられない"
