@@ -5085,6 +5085,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     from . import study_cli
     study_cli.register(sub)
+    # 週の振り返りの材料（2026-11-25・skill thth-weekly-review）。
+    from . import review_weekly
+    review_weekly.register(sub)
     p_study = sub.add_parser("study-report", help="施策の宣言と自分の観測を結ぶ（読むだけ）")
     p_study.add_argument("file")
     p_study.add_argument("--min-n", type=int, default=5)

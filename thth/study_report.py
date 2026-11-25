@@ -75,9 +75,25 @@ def parse_declaration_bytes(data, now):
     return validate_declaration(value, now)
 
 
+def _period(value):
+    """期間で宣言する形（週の振り返り・2026-11-25）。`start` から変えた。比べる前の群は
+    `baseline_start` ≦ posted_at < `start`、変えた群は `start` ≦ posted_at < `end`（null なら生成時刻まで）。
+    始まりは先の日でもよい（次の週に変えると宣言する）。"""
+    _keys(value, {"start", "end", "baseline_start"}, {"basis"})
+    if value.get("basis", "posted_at") != "posted_at":
+        raise StudyError("period.basisはposted_atだけに対応しています")
+    start, baseline = _time(value["start"]), _time(value["baseline_start"])
+    end = None if value["end"] is None else _time(value["end"])
+    if start is None or baseline is None or (value["end"] is not None and end is None):
+        raise StudyError("periodのstart・end・baseline_startはtimezone付き日時です（endはnullも可）")
+    if not baseline < start or (end is not None and not start < end):
+        raise StudyError("periodはbaseline_start < start < end の順です")
+    return baseline, start, end
+
+
 def validate_declaration(value, now):
     required = {"schema_version", "id", "account", "hypothesis", "change", "decision", "baseline_post_ids", "changed_post_ids"}
-    _keys(value, required)
+    _keys(value, required, {"period"})
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise StudyError("施策JSONのschema_versionは1だけに対応しています")
     for key, maximum in (("id", 256), ("account", 256), ("hypothesis", 4000), ("change", 4000)):
@@ -104,6 +120,10 @@ def validate_declaration(value, now):
             raise StudyError("投稿IDが群内で重複しています")
     if set(value["baseline_post_ids"]) & set(value["changed_post_ids"]):
         raise StudyError("投稿IDが両群で重複しています")
+    if "period" in value:
+        _period(value["period"])
+        if value["baseline_post_ids"] or value["changed_post_ids"]:
+            raise StudyError("期間で宣言した施策に投稿IDの列は混ぜません（どちらか一方の形で書いてください）")
     return value
 
 
@@ -160,6 +180,12 @@ def answer(path, *, min_n=5, now=None, verified_declaration=None,
     known_replies = {str(row["post_id"]) for row in eng["rows"]
                      if isinstance(row, dict) and row.get("account") == name and row.get("post_id")}
     decision_at = _time(declaration["decision"]["at"])
+    if "period" in declaration:
+        result["selection"] = {"basis": "declared_period_and_posted_at", "timezone": "Asia/Tokyo",
+                               "baseline": "period.baseline_start <= posted_at < period.start",
+                               "changed": "period.start <= posted_at < min(period.end, generated_at)"}
+        return _by_period(result, declaration, name, measured_result, by_id, known_replies, now, min_n,
+                          allowed_names=allowed_names, eng=eng)
     populations = {}
     for group in ("baseline", "changed"):
         items, excluded = [], []
@@ -187,6 +213,31 @@ def answer(path, *, min_n=5, now=None, verified_declaration=None,
         population.update(n_requested=len(declaration[group + "_post_ids"]), excluded=excluded,
                           n_excluded=len(excluded))
         populations[group] = population
+    return _finish(result, populations, measured_result, eng, min_n)
+
+
+def _by_period(result, declaration, name, measured_result, by_id, known_replies, now, min_n, *,
+               allowed_names, eng):
+    """期間の形: 根の投稿（比較と同じ `_root_exclusion`）を posted_at で 2 群に分ける。"""
+    baseline_start, start, end = _period(declaration["period"])
+    stop = now if end is None or end > now else end
+    items = []
+    for post_id, post in by_id.items():
+        if comparison._root_exclusion(post, known_reply=post_id in known_replies) is None:
+            items.append((post_id, _time(post.get("posted_at")), post))
+    from .analytics_shapes import attach as attach_shapes
+    populations = {}
+    for group, lo, hi in (("baseline", baseline_start, min(start, now)), ("changed", start, stop)):
+        population = comparison._population(items, lo, hi, now, min_n)  # lo ≧ hi なら 0 本
+        attach_shapes(name, population, now, allowed_names=allowed_names)
+        population.update(n_requested=population["n_total"], excluded=[], n_excluded=0)
+        populations[group] = population
+    if now < start:
+        result["cannot_say"].append("宣言した期間がまだ始まっていないので、変えた群は 0 本です")
+    return _finish(result, populations, measured_result, eng, min_n)
+
+
+def _finish(result, populations, measured_result, eng, min_n):
     result["observations"] = populations
     result["comparison"] = comparison._differences(populations["baseline"], populations["changed"], min_n)
     updates = [p["data_updated_at"] for p in populations.values() if p["data_updated_at"]]
@@ -207,7 +258,13 @@ def render_markdown(payload):
     lines = ["# Study review", "", f"施策: {_markdown_text(declaration['id'])}",
              f"宣言: {_markdown_text(declaration['decision']['status'])}（利用者入力・本人確認なし）",
              f"仮説: {_markdown_text(declaration['hypothesis'])}",
-             f"変更: {_markdown_text(declaration['change'])}", ""]
+             f"変更: {_markdown_text(declaration['change'])}"]
+    if "period" in declaration:
+        period = declaration["period"]
+        lines.append(f"期間: {_markdown_text(period['start'])} から"
+                     f"{' ' + _markdown_text(period['end']) + ' まで' if period['end'] else '（終わりは決めていない）'}"
+                     f"・比べる前: {_markdown_text(period['baseline_start'])} から")
+    lines.append("")
     if payload["observations"] is not None:
         for label, population in payload["observations"].items():
             lines.append(f"{label}: 指定 {population['n_requested']}、対象 {population['n_total']}、時間適合 {population['n_eligible']}、欠測 {population['n_missing']}、除外 {population['n_excluded']}")

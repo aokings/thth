@@ -189,7 +189,7 @@ def _differences(previous, current, min_n):
     return deltas
 
 
-def _tag_strata(items, previous_start, current_start, now, min_n):
+def _tag_strata(items, previous_start, current_start, now, min_n, *, end=None):
     """Presence partitions exactly; named tags may overlap across one post."""
     groups = {"tagged": [], "untagged": [], "unknown": []}
     for item in items:
@@ -208,7 +208,7 @@ def _tag_strata(items, previous_start, current_start, now, min_n):
     strata = {}
     for label, members in sorted(groups.items()):
         before = _population(members, previous_start, current_start, now, min_n)
-        current = _population(members, current_start, now, now, min_n)
+        current = _population(members, current_start, now if end is None else end, now, min_n)
         strata[label] = {"previous": before, "current": current,
                          "comparison": _differences(before, current, min_n)}
     return {"by": "tag", "strata": strata, "tag_groups_overlap": True,
@@ -217,11 +217,11 @@ def _tag_strata(items, previous_start, current_start, now, min_n):
                                    for label in ("tagged", "untagged", "unknown")),
                 "n_total": sum(1 for _post_id, posted, _post in items
                                if (previous_start <= posted < current_start if period == "previous"
-                                   else current_start <= posted < now))}
+                                   else current_start <= posted < (now if end is None else end)))}
                 for period in ("previous", "current")}}
 
 
-def _attachment_kind_strata(items, previous_start, current_start, now, min_n):
+def _attachment_kind_strata(items, previous_start, current_start, now, min_n, *, end=None):
     """Presence partitions exactly; one row counts in every kind it carries.
 
     設計 2.13.0 §5・C6。`image` と `poll` の両方が付いた 1 本は**両方の層に
@@ -250,7 +250,7 @@ def _attachment_kind_strata(items, previous_start, current_start, now, min_n):
     strata = {}
     for label, members in sorted(groups.items()):
         before = _population(members, previous_start, current_start, now, min_n)
-        current = _population(members, current_start, now, now, min_n)
+        current = _population(members, current_start, now if end is None else end, now, min_n)
         strata[label] = {"previous": before, "current": current,
                          "comparison": _differences(before, current, min_n)}
     return {"by": "attachment_kind", "strata": strata, "attachment_kind_groups_overlap": True,
@@ -259,12 +259,12 @@ def _attachment_kind_strata(items, previous_start, current_start, now, min_n):
                                    for label in ("attached", "none", "unknown")),
                 "n_total": sum(1 for _post_id, posted, _post in items
                                if (previous_start <= posted < current_start if period == "previous"
-                                   else current_start <= posted < now))}
+                                   else current_start <= posted < (now if end is None else end)))}
                 for period in ("previous", "current")}}
 
 
-def _account(name, previous_start, current_start, now, min_n, by=None,
-             *, allowed_names=None):
+def _items(name):
+    """1 account の母集団の材料（根・他の人への返信・除外の数）。比較と週の振り返りが同じものを使う。"""
     cfg = accounts.load_account(name)
     # Existing loader supplies account-at-observation ownership guarantees. A
     # malformed ledger that prevents loading is an error, never an empty sample.
@@ -303,6 +303,21 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
         posted = _timestamp(post.get("posted_at"))
         root_items.append((post_id, posted, post))
     exclusions["unknown_ownership"] = len(measured_result.get("posts_unknown_ownership", []))
+    return {"cfg": cfg, "measured": measured_result, "engagements": eng, "by_id": by_id,
+            "own_engagements": own_engagements, "root_items": root_items,
+            "reply_items": reply_items, "exclusions": exclusions}
+
+
+def _account(name, previous_start, current_start, now, min_n, by=None,
+             *, allowed_names=None, end=None):
+    # `end` は現在期間の終わり（既定は now）。過ぎた週を見るとき、成熟と採取の時刻は now のまま、
+    # 期間だけを閉じる（`review_weekly`）。
+    end = now if end is None else end
+    loaded = _items(name)
+    cfg, measured_result, eng = loaded["cfg"], loaded["measured"], loaded["engagements"]
+    by_id, own_engagements = loaded["by_id"], loaded["own_engagements"]
+    root_items, reply_items, exclusions = (loaded["root_items"], loaded["reply_items"],
+                                           loaded["exclusions"])
     broken = {"measured_files": len(measured_result.get("broken", [])),
               "engagement_files": eng.get("broken", 0)}
     node = {"medium": cfg.get("media"), "excluded_records": dict(exclusions),
@@ -312,7 +327,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
     recorded_goals = click_index = None
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
-        current = _population(items, current_start, now, now, min_n)
+        current = _population(items, current_start, end, now, min_n)
         if kind == "posts":
             from .analytics_shapes import attach as attach_shapes
             attach_shapes(name, previous, now, allowed_names=allowed_names)
@@ -322,11 +337,11 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
         if by:
             if by == "tag":
                 node[kind]["stratified"] = _tag_strata(items, previous_start,
-                                                       current_start, now, min_n)
+                                                       current_start, now, min_n, end=end)
                 continue
             if by == "attachment_kind":
                 node[kind]["stratified"] = _attachment_kind_strata(
-                    items, previous_start, current_start, now, min_n)
+                    items, previous_start, current_start, now, min_n, end=end)
                 continue
             if by == "goal":
                 # 投稿の目的（設計 3.6.0 §A2）。公開の時点の記録から層を作り、目的ごとの
@@ -346,7 +361,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
                     account_daily=measured_result.get("account_daily"),
                     recorded=recorded_goals, previous_start=previous_start,
                     current_start=current_start, now=now, min_n=min_n,
-                    click_index=click_index)
+                    click_index=click_index, end=end)
                 continue
             from . import threadshape, topics
             lookup, shelf_broken = after_cli._kind_lookup(name)
@@ -364,7 +379,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             strata = {}
             for label, members in sorted(groups.items()):
                 before = _population(members, previous_start, current_start, now, min_n)
-                after = _population(members, current_start, now, now, min_n)
+                after = _population(members, current_start, end, now, min_n)
                 if before["n_total"] or after["n_total"]:
                     strata[label] = {"previous": before, "current": after,
                                      "comparison": _differences(before, after, min_n)}
@@ -376,7 +391,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
                 "kind_shelf_broken": shelf_broken() if by == "kind" else None}
 
     from .analytics_threads import summarize
-    node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, now, now,
+    node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, end, now,
                                          min_n, allowed_names=allowed_names))
     if any(broken.values()):
         node["cannot_say"].append("読めない台帳があり、母集団全体の件数・変化は判断できない")

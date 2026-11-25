@@ -168,6 +168,8 @@ COMMANDS += ['register erase request', 'register erase scope', 'register erase r
 COMMANDS += ['reply-mark']
 # 店の変化の連動（`thth/link/`・設計 店の変化の連動 段 3〜6・send は二段か同意のある物だけ）。--json は 1 つの値。
 COMMANDS += ['link check', 'link consent', 'link make', 'link show', 'link send', 'link run']
+# 2026-11-25: 週の振り返りの材料（skill thth-weekly-review）。
+COMMANDS += ['review weekly']
 
 
 def test_json_table_covers_every_parser():

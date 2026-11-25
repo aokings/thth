@@ -93,7 +93,7 @@ Facebook ページと Instagram では `thth doctor`・`thth dm`・`thth live`�
 claude mcp add thth -- thth-mcp
 ```
 
-MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけです。スキル（`skills/thth/`）は「投稿する前に何を見るか」「返信をどう扱うか」をアシスタントに教えます。記事を軸に告知・セルクマ・広告までつなぐ流れと、印（UTM）・測り方は `skills/thth-flow/` が教えます。広告を出すときの手順は別のスキル（`skills/thth-ads/`・pip で入れた場合は `thth ads skill` が場所を出します）です。キーはアシスタントに渡しません。`thth login` が手元に置いたキーを `thth` コマンドが使います。
+MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけです。スキル（`skills/thth/`）は「投稿する前に何を見るか」「返信をどう扱うか」をアシスタントに教えます。記事を軸に告知・セルクマ・広告までつなぐ流れと、印（UTM）・測り方は `skills/thth-flow/` が教えます。広告を出すときの手順は別のスキル（`skills/thth-ads/`・pip で入れた場合は `thth ads skill` が場所を出します）です。週に 1 回の振り返り（PDCA）は `skills/thth-weekly-review/` で、材料は `thth review weekly <口座|project>` が出します。キーはアシスタントに渡しません。`thth login` が手元に置いたキーを `thth` コマンドが使います。
 
 ## ガード
 
@@ -124,7 +124,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`withdraw`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`reply-mark`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`embed`・`upcoming`・`retract`・`edit`・`reply`・`comments`・`page`・`live`・`dm`・`brand`・`creators`・`shop`・`register`・`project`・`owner`・`wa`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`ads`・`gads`・`gsc`・`gbp`・`link`・`webhook`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`withdraw`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`review`・`unanswered`・`reply-mark`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`embed`・`upcoming`・`retract`・`edit`・`reply`・`comments`・`page`・`live`・`dm`・`brand`・`creators`・`shop`・`register`・`project`・`owner`・`wa`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`ads`・`gads`・`gsc`・`gbp`・`link`・`webhook`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 `gsc` は Google Search Console を読むだけの口です。`thth gsc auth` で 1 度だけ認可し（`gads` と同じ Desktop の OAuth クライアント・scope は `webmasters.readonly` だけ・鍵は `~/.config/thth/google-gsc-token.json` に 600 で別に置く）、`sites` で見えるプロパティと権限、`query --site <プロパティ>` でクリック・表示回数・CTR・平均掲載順位（既定は 3 日前までの 28 日・太平洋時間）、`compare --site <プロパティ>` で直近 N 日とその前の N 日の差（伸びた・落ちた語か頁）、`inspect --site <プロパティ> --url <頁>` で URL の検査（Google の索引にある版）を読みます。書く命令はありません。
 

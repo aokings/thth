@@ -1,6 +1,6 @@
 """skill の lint（設計「監査と審査の機械化と前向きな断り」2026-11-03 §0 の 1・§5・§7 段 C）。
 
-skill 4 本（`skills/*/SKILL.md`）の本文が、道具の実物とずれていないかを縛る。
+skill 5 本（`skills/*/SKILL.md`・2026-11-25 に thth-weekly-review を足した）の本文が、道具の実物とずれていないかを縛る。
 **regex で命令の形を当てるのでなく、`thth.cli.build_parser()` の argparse と
 `mcp/server.py` の道具一覧を import して突き合わせる**（§5 の試作で、regex だと
 `"thth_"+name` の動的生成を「無い」と誤検知した）。
@@ -52,6 +52,8 @@ SIZE_LIMITS = {
     "thth-flow": 18_000,
     "thth-ads": 13_000,
     "thth-admin": 4_200,
+    # 週の振り返り（2026-11-25・PDCA の回し方）。書いた時の大きさの少し上。
+    "thth-weekly-review": 7_600,
 }
 
 # ① 実在しない命令のうち、今は直さずに通すもの（skill, 命令の文字列）→ 理由。

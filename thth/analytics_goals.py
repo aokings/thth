@@ -256,8 +256,12 @@ def goal_days(items, recorded):
 
 
 def strata(*, name, medium, items, all_items, account_daily, recorded,
-           previous_start, current_start, now, min_n, click_index=None):
-    """`--by goal` の層。目的ごとの母集団（既存の 24h の比較）と、目的ごとの物差し。"""
+           previous_start, current_start, now, min_n, click_index=None, end=None):
+    """`--by goal` の層。目的ごとの母集団（既存の 24h の比較）と、目的ごとの物差し。
+
+    `end` は現在期間の終わり（既定は now・週の振り返りが過ぎた週を閉じるときに渡す）。
+    """
+    end = now if end is None else end
     groups = {label: [] for label in goals.LAYERS}
     for item in items:
         groups.setdefault(goals.goal_for(recorded, item[0]), []).append(item)
@@ -266,7 +270,7 @@ def strata(*, name, medium, items, all_items, account_daily, recorded,
     out = {}
     for label, members in groups.items():
         before = comparison._population(members, previous_start, current_start, now, min_n)
-        after = comparison._population(members, current_start, now, now, min_n)
+        after = comparison._population(members, current_start, end, now, min_n)
         out[label] = {"previous": before, "current": after,
                       "comparison": comparison._differences(before, after, min_n),
                       "label": goals.LABELS.get(label, label),
@@ -275,7 +279,7 @@ def strata(*, name, medium, items, all_items, account_daily, recorded,
                                             goal_days=days, daily=daily, start=start, end=end,
                                             now=now, min_n=min_n, click_index=click_index)
                           for period, start, end in (("previous", previous_start, current_start),
-                                                     ("current", current_start, now))}}
+                                                     ("current", current_start, end))}}
     return {"by": "goal", "strata": out,
             "goal_source": "recorded_at_publish",
             "goal_basis": ("公開の時点の記録（sent・連投の実行記録）。いまの原稿は読まない。"
@@ -285,7 +289,7 @@ def strata(*, name, medium, items, all_items, account_daily, recorded,
                 "sum_n_total": sum(out[label][period]["n_total"] for label in out),
                 "n_total": sum(1 for _pid, posted, _post in items
                                if (previous_start <= posted < current_start if period == "previous"
-                                   else current_start <= posted < now))}
+                                   else current_start <= posted < end))}
                 for period in ("previous", "current")}}
 
 
