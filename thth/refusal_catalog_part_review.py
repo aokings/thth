@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.29.2"
+_SINCE = "5.30.0"
 _WEEKLY = "thth review weekly <口座>"
 
 
