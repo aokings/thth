@@ -156,7 +156,8 @@ def test_jsonの形(two, monkeypatch, capsys):
     assert cli.main(["review", "weekly", PROJECT, "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {"schema_version", "report_type", "generated_at", "target", "scope", "week",
-                            "min_n", "drop_rule", "drop", "drop_accounts", "by_account", "studies",
+                            "min_n", "drop_rule", "drop", "drop_accounts", "drop_units", "by_account",
+                            "series", "campaigns", "seeds", "studies",
                             "cannot_say", "cannot_say_details", "limitations", "provenance"}
     assert payload["schema_version"] == 1 and payload["report_type"] == "weekly_review"
     assert payload["provenance"]["advice"] == "excluded"
@@ -239,3 +240,130 @@ def test_study_reportは期間がまだ始まっていない宣言を0本と言�
     assert result["observations"]["changed"]["n_total"] == 0
     assert result["observations"]["baseline"]["n_total"] == 5    # 11/16〜11/29（出したのは 11/16 の週の 5 本）
     assert any("まだ始まっていない" in line for line in result["cannot_say"])
+
+
+# ------------------------------------------------------------ シリーズ・未分類・閉じた糸（依頼 §1-2）
+
+SERIES_NAYAMI = """---
+thth_scenario: 1
+kind: series
+id: nayami
+title: 悩み相談
+project: pdca
+accounts: kanto-threads
+---
+"""
+
+THREAD_MATCHA = """---
+thth_scenario: 1
+kind: thread
+id: num-04-matcha
+title: 数字で淹れる No.4 抹茶
+goal_text: 抹茶の湯温を数字で覚えてもらう
+project: pdca
+started: 2026-10-26
+---
+- promote: threads need=2
+
+- 2026-11-01 closed 見届けた
+"""
+
+
+THREAD_ODAI = """---
+thth_scenario: 1
+kind: thread
+id: odai-run
+title: お題の糸
+project: pdca
+started: 2026-11-16
+---
+- promote: threads need=3
+"""
+
+
+@pytest.fixture
+def units(two, nigamilab_repo):
+    from tests.test_v500_scenario import _sns, _write
+    scen = os.path.join(nigamilab_repo, "docs", "sns", "scenarios")
+    queue = os.path.join(nigamilab_repo, "docs", "sns", "queue")
+    _write(os.path.join(scen, "nayami.md"), SERIES_NAYAMI, commit=False)
+    _write(os.path.join(scen, "num-04-matcha.md"), THREAD_MATCHA, commit=False)
+    _write(os.path.join(scen, "odai-run.md"), THREAD_ODAI, commit=False)
+    for account, table, prefix in (("kanto-threads", KANTO, "K"), ("kopicha-threads", KOPICHA, "P")):
+        for week in table:
+            monday = datetime.date.fromisoformat(f"2026-{week}")
+            for i in range(5):
+                at = f"{(monday + datetime.timedelta(days=i)).isoformat()}T09:00:00+09:00"
+                series = "nayami" if prefix == "K" and i < 3 else None
+                thread = ("num-04-matcha" if prefix == "P" and week == "10-26" and i < 2 else
+                          "odai-run" if prefix == "K" and week == "11-16" and i == 4 else None)
+                _write(os.path.join(queue, f"{prefix}{week}-{i}.md"),
+                       _sns(account, status="posted", publish_at=at, series=series, thread=thread,
+                            extra={"post_id": f"{prefix}{week}-{i}", "posted_at": at}), commit=False)
+    return two
+
+
+def test_シリーズごとに材料と印が出る_札の無い原稿は未分類に束ねる(units):
+    payload = review_weekly.answer(PROJECT, now=NOW)
+    series = {entry["id"]: entry for entry in payload["series"]}
+    assert set(series) == {"nayami", None}
+    nayami = series["nayami"]
+    assert nayami["declared"] and nayami["label"] == "悩み相談" and set(nayami["by_account"]) == {"kanto-threads"}
+    node = nayami["by_account"]["kanto-threads"]
+    assert [row["totals"]["views"]["sum"] for row in node["weeks"]] == \
+        [None] + [sum(_split(KANTO[w][0])[:3]) for w in KANTO]
+    assert node["week"]["posts"] == {"roots": 3, "own_thread_replies": 0, "replies_to_others": None}
+    (signal,) = node["drop_detail"]["signals"]          # シリーズは表示の和だけで見る
+    assert signal["metric"] == "views" and signal["dropped"] is True and node["drop"] is True
+    assert nayami["drop"] is True
+    unclassified = series[None]
+    assert unclassified["unclassified"] and unclassified["label"] == "未分類"
+    kanto = unclassified["by_account"]["kanto-threads"]
+    assert kanto["week"]["totals"]["views"]["sum"] == _split(8_526)[3]     # 4 本目は糸の原稿
+    kopicha = unclassified["by_account"]["kopicha-threads"]
+    # こぴちゃの 10/26 の週の 5 本のうち 2 本は糸の原稿なので、未分類には 3 本。
+    assert [row["posts"]["roots"] for row in kopicha["weeks"]] == [0, 3, 5, 5, 5]
+    units_with_drop = {(u["unit"], u["id"], u["account"]) for u in payload["drop_units"]}
+    assert ("series", "nayami", "kanto-threads") in units_with_drop
+    assert ("account", "kanto-threads", "kanto-threads") in units_with_drop
+    assert payload["drop"] is True
+
+
+def test_閉じた糸は宣言した段と結果を並べ_印は付けない(units):
+    payload = review_weekly.answer(PROJECT, now=NOW)
+    matcha = next(entry for entry in payload["campaigns"] if entry["id"] == "num-04-matcha")
+    assert matcha["id"] == "num-04-matcha" and matcha["state"] == "closed"
+    assert matcha["drop"] is None and matcha["drop_reason"] == "closed"
+    assert [(s["name"], s["need"], s["done"], s["satisfied"]) for s in matcha["stages"]] == \
+        [("promote", 2, 2, True)]
+    result = matcha["result"]
+    assert result["by_account"]["kopicha-threads"]["posts"] == 2
+    assert result["by_account"]["kopicha-threads"]["views_sum"] == sum(_split(18_716)[:2])
+    assert result["visits"]["cannot_say"] == "site_visits_not_imported"   # 控えが無いのは 0 でなく言えない
+    assert matcha["period"]["from"] == "2026-10-26" and matcha["period"]["to"] == "2026-11-01"
+    assert "columns" in payload["seeds"]                                 # scenario seeds も同じ束
+    text = review_weekly.render_text(payload)
+    assert "### num-04-matcha「数字で淹れる No.4 抹茶」（閉じた・段 1/1 promote）" in text
+    assert "- 結果 kopicha-threads: 2 本・表示の和 7,487" in text
+    assert "| 未分類 | kopicha-threads | 5 |" in text
+    assert "## 次の糸の種（thth scenario seeds）" in text
+
+
+def test_口座で絞ると_その口座の原稿の無い糸とシリーズは出さない(units):
+    payload = review_weekly.answer("kanto-threads", now=NOW)
+    assert [entry["id"] for entry in payload["campaigns"]] == ["odai-run"]
+    assert {entry["id"] for entry in payload["series"] if entry["by_account"]} == {"nayami", None}
+    assert all(set(entry["by_account"]) <= {"kanto-threads"} for entry in payload["series"])
+
+
+def test_動いている糸は段の進みにその週の数を添える(units):
+    payload = review_weekly.answer(PROJECT, now=NOW)
+    odai = next(entry for entry in payload["campaigns"] if entry["id"] == "odai-run")
+    assert odai["state"] in ("active", "stalled") and odai["stage"]["name"] == "promote"
+    assert [(s["need"], s["done"]) for s in odai["stages"]] == [(3, 1)]
+    node = odai["by_account"]["kanto-threads"]
+    assert node["week"]["posts"]["roots"] == 1 and node["week"]["totals"]["views"]["sum"] == _split(8_526)[4]
+    assert node["drop"] is None                      # 前の 2 週に糸の投稿が無いので比べない（0 にしない）
+    assert set(odai["this_week"]) == {"clicks_72h", "visits"}
+    assert odai["this_week"]["visits"]["cannot_say"] == "site_visits_not_imported"
+    assert "### odai-run「お題の糸」" in review_weekly.render_text(payload)

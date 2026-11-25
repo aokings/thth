@@ -104,11 +104,12 @@ def _resolve_target(target):
 
 # ------------------------------------------------------------ 週ごとの数
 
-def _week_numbers(loaded, monday, now, min_n):
+def _week_numbers(loaded, monday, now, min_n, ids=None):
     from . import analytics_comparison as comparison
     start = _midnight(monday)
     end = _midnight(monday + datetime.timedelta(days=7))
-    population = comparison._population(loaded["root_items"], start, end, now, min_n)
+    roots = loaded["root_items"] if ids is None else [item for item in loaded["root_items"] if item[0] in ids]
+    population = comparison._population(roots, start, end, now, min_n)
     eligible = [row for row in population["evidence"] if row["observation"]]
     totals = {}
     for key in METRICS:
@@ -126,9 +127,10 @@ def _week_numbers(loaded, monday, now, min_n):
              if row["observation"]["metrics"]["views"] is not None]
     own_thread = sum(1 for post_id, post in loaded["by_id"].items()
                      if post.get("reply_to") and post_id not in loaded["own_engagements"]
-                     and _in(post.get("posted_at"), start, end))
-    others = sum(1 for _pid, posted, _post in loaded["reply_items"]
-                 if posted is not None and start <= posted < end)
+                     and (ids is None or post_id in ids) and _in(post.get("posted_at"), start, end))
+    # 他の人への返信はシリーズや糸の原稿に結ばれない（単位で切るときは null）。
+    others = None if ids is not None else sum(1 for _pid, posted, _post in loaded["reply_items"]
+                                              if posted is not None and start <= posted < end)
     not_counted = {
         "immature": [row["post_id"] for row in population["evidence"] if row["status"] == "immature"],
         "incomplete": [row["post_id"] for row in population["evidence"] if row["status"] == "incomplete"],
@@ -169,30 +171,44 @@ def _followers(name, mondays, now):
     return out
 
 
-def _clicks(name, medium, mondays, now):
-    """Threads の投稿ごとの 72 時間のクリック（`analytics_clicks`）を週に分ける。ほかの媒体は null と理由。"""
+def _click_rows(name, medium, mondays, now):
+    """Threads の投稿ごとの 72 時間のクリック（`analytics_clicks`）の行。`(行, 理由)`。ほかの媒体は行なしと理由。"""
     if medium != "threads":
-        return {monday.isoformat(): {"sum": None, "n": 0,
-                                     "reason": f"per_post_clicks_unavailable:{medium}"}
-                for monday in mondays}
+        return [], f"per_post_clicks_unavailable:{medium}"
     from . import analytics_clicks
     payload = analytics_clicks.answer(name, since=jst.iso(_midnight(min(mondays))), now=now)
-    out = {}
-    for monday in mondays:
-        start, end = _midnight(monday), _midnight(monday + datetime.timedelta(days=7))
-        values = [row["clicks_72h"] for row in payload["posts"]
-                  if _in(row["posted_at"], start, end) and row["clicks_72h"] is not None]
-        out[monday.isoformat()] = {"sum": sum(values) if values else None, "n": len(values),
-                                   "reason": None if values else "no_attributable_clicks_in_week"}
-    return out
+    return payload["posts"], None
 
 
-def _drop(rows, index):
-    """前の 2 週の平均の半分を切ったか（表示の和・フォロワーの増え）。"""
+def _bucket_clicks(found, week_start, ids=None):
+    """クリックの行をその週（と、単位なら post_id）に絞って足す。"""
+    rows, reason = found if found is not None else ([], "per_post_clicks_unavailable")
+    if reason is not None:
+        return {"sum": None, "n": 0, "reason": reason}
+    monday = datetime.date.fromisoformat(week_start)
+    start, end = _midnight(monday), _midnight(monday + datetime.timedelta(days=7))
+    values = [row["clicks_72h"] for row in rows
+              if _in(row["posted_at"], start, end) and row["clicks_72h"] is not None
+              and (ids is None or str(row["post_id"]) in ids)]
+    return {"sum": sum(values) if values else None, "n": len(values),
+            "reason": None if values else "no_attributable_clicks_in_week"}
+
+
+def _streak(drops):
+    streak = 0
+    for result in reversed(drops):
+        if result["drop"] is not True:
+            break
+        streak += 1
+    return streak
+
+
+def _drop(rows, index, metrics=("views", "followers_delta")):
+    """前の 2 週の平均の半分を切ったか（表示の和・フォロワーの増え。シリーズと糸は表示の和だけ）。"""
     if index < 2:
         return {"drop": None, "signals": [], "reason": FEWER_WEEKS}
     signals = []
-    for metric in ("views", "followers_delta"):
+    for metric in metrics:
         def value(row):
             return row["totals"]["views"]["sum"] if metric == "views" else row["followers"]["delta"]
         current = value(rows[index])
@@ -299,23 +315,25 @@ def _studies(paths, names, now, min_n):
 
 # ------------------------------------------------------------ 束ねる
 
-def _node(name, monday, now, min_n):
+def _mondays(monday):
+    return [monday - datetime.timedelta(weeks=back) for back in range(WEEKS_BEFORE, -1, -1)]
+
+
+def _node(name, monday, now, min_n, cache=None):
     from . import analytics_comparison as comparison
     loaded = comparison._items(name)
     medium = loaded["cfg"].get("media")
-    mondays = [monday - datetime.timedelta(weeks=back) for back in range(WEEKS_BEFORE, -1, -1)]
+    mondays = _mondays(monday)
     rows = [_week_numbers(loaded, m, now, min_n) for m in mondays]
     followers = _followers(name, mondays, now)
-    clicks = _clicks(name, medium, mondays, now)
+    clicks = _click_rows(name, medium, mondays, now)
+    if cache is not None:
+        cache[name] = (loaded, clicks)     # シリーズと糸の単位が同じ台帳を使う（読み直さない）
     for row in rows:
         row["followers"] = followers[row["week_start"]]
-        row["clicks_72h"] = clicks[row["week_start"]]
+        row["clicks_72h"] = _bucket_clicks(clicks, row["week_start"])
     drops = [_drop(rows, i) for i in range(len(rows))]
-    streak = 0
-    for result in reversed(drops):
-        if result["drop"] is not True:
-            break
-        streak += 1
+    streak = _streak(drops)
     target = rows[-1]
     population = target.pop("_population")
     for row in rows[:-1]:
@@ -350,16 +368,28 @@ def answer(target, *, week=None, now=None, min_n=after_cli.DEFAULT_MIN_N, studie
     now = jst.to_jst(now if now is not None else jst.now_jst()).replace(microsecond=0)
     monday = resolve_week(week, now)
     scope, names, cannot_say = _resolve_target(target)
-    nodes = {}
+    nodes, cache = {}, {}
     for name in names:
         try:
-            nodes[name] = _node(name, monday, now, min_n)
+            nodes[name] = _node(name, monday, now, min_n, cache)
         except accounts.AccountError as exc:
             if scope == "account":
                 raise
             cannot_say.append(f"{name}: {exc}")
     if not nodes:
         refuse("review_target_unknown", "読める口座がありません")
+    from . import review_units
+    units = review_units.build(target, list(nodes), _mondays(monday), now, min_n,
+                               {name: cache[name][0] for name in cache},
+                               {name: cache[name][1] for name in cache})
+    drop_units = [{"unit": "account", "id": name, "account": name}
+                  for name, node in sorted(nodes.items()) if node["drop"] is True]
+    for unit, key in (("series", "series"), ("campaign", "campaigns")):
+        for entry in units[key]:
+            for name, node in entry["by_account"].items():
+                if node["drop"] is True:
+                    drop_units.append({"unit": unit, "id": entry["id"], "account": name})
+    cannot_say += [f"scenario: {code}" for code in units["cannot_say"]]
     return {"schema_version": 1, "report_type": "weekly_review",
             "generated_at": jst.iso(now), "target": target, "scope": scope,
             "week": {"start": monday.isoformat(),
@@ -367,9 +397,13 @@ def answer(target, *, week=None, now=None, min_n=after_cli.DEFAULT_MIN_N, studie
                      "basis": "月曜始まり（JST）・posted_at の週", "weeks_before": WEEKS_BEFORE},
             "min_n": min_n, "drop_rule": {"ratio": DROP_RATIO, "basis": DROP_BASIS,
                                          "metrics": ["views", "followers_delta"]},
-            "drop": any(node["drop"] is True for node in nodes.values()),
+            # 印は 3 つの単位（口座・シリーズ・糸）それぞれ。`drop` はどれか 1 つでも立てば true。
+            "drop": bool(drop_units),
             "drop_accounts": sorted(name for name, node in nodes.items() if node["drop"] is True),
-            "by_account": nodes, "studies": _studies(studies, set(nodes), now, min_n),
+            "drop_units": drop_units,
+            "by_account": nodes,
+            "series": units["series"], "campaigns": units["campaigns"], "seeds": units["seeds"],
+            "studies": _studies(studies, set(nodes), now, min_n),
             "cannot_say": cannot_say,
             "limitations": [
                 "原因・推奨・次の手は出さない。読むのは利用者とその LLM",
@@ -379,9 +413,11 @@ def answer(target, *, week=None, now=None, min_n=after_cli.DEFAULT_MIN_N, studie
                 "クリックは Threads の投稿ごとの 72 時間（analytics-report --per-post-clicks と同じ）。ほかの媒体は null",
                 "落ち込みの印は前の 2 週の平均との機械の比べ。良い悪いの判断ではない",
                 "媒体・口座をまたいだ和や順位は作らない",
+                "シリーズと糸は thth scenario の割り当て（原稿の series:・thread:）のまま。札の無い原稿は未分類。"
+                "シリーズと糸の印は表示の和だけで見る（フォロワーの増えは単位に割れない）",
             ],
             "provenance": {"source": "own-ledgers",
-                           "calculation": "analytics_comparison・analytics_weekly・analytics_clicks・study_report",
+                           "calculation": "analytics_comparison・analytics_weekly・analytics_clicks・study_report・scenario・scenario_seeds",
                            "advice": "excluded"}}
 
 
@@ -496,6 +532,7 @@ def render_text(payload) -> str:
                      + (f"（{t('・'.join(nc['incomplete']))}）" if nc["incomplete"] else ""))
         lines += ["- " + t(reason) for reason in node["cannot_say"]]
         lines.append("")
+    lines += _units_text(payload, t)
     lines += ["## 先週の宣言（study）", ""]
     if not payload["studies"]:
         lines += ["渡されていません。先週 thth study add で宣言したなら、--study <施策JSON> を付けると"
@@ -518,6 +555,96 @@ def render_text(payload) -> str:
     lines += ["## この材料で言えないこと", ""]
     lines += ["- " + t(item) for item in payload["limitations"] + payload["cannot_say"]]
     return "\n".join(lines) + "\n"
+
+
+STATE_JA = {"active": "動いている", "stalled": "止まっている", "done": "全部の段が済んだ", "closed": "閉じた"}
+
+
+def _unit_line(t, label, name, node):
+    week, detail = node["week"], node["drop_detail"]
+    signal = next(iter(detail["signals"]), None)
+    if node["drop"] is True:
+        mark = "落ち込み" + (f"（{node['drop_streak']} 週続き）" if node["drop_streak"] >= 2 else "")
+    elif node["drop"] is False:
+        mark = "なし"
+    else:
+        mark = "判断できない" + (f"（{_why(signal['reason'])}）" if signal and signal["reason"] else
+                              f"（{_why(detail['reason'])}）")
+    average = _n(signal["previous_average"]) if signal else "—"
+    return (f"| {t(label)} | {t(name)} | {week['posts']['roots']} | {_n(week['totals']['views']['sum'])} | "
+            f"{_n(week['per_post_24h']['views_median'])} | {average} | "
+            f"{week['n_immature'] + week['n_incomplete']} | {mark} |")
+
+
+def _units_text(payload, t):
+    lines = ["## シリーズ（ルーチン投稿）ごと", "",
+             "シリーズは thth scenario の割り当て（原稿の series:）。札の無い原稿は「未分類」に束ねています。"
+             "印は表示の和だけで見ます。", "",
+             "| シリーズ | 口座 | 根 | 表示 | 1 本あたりの中央値 | 前の 2 週の平均 | 24 時間の数が無い | 印 |",
+             "|---|---|---|---|---|---|---|---|"]
+    rows = 0
+    for entry in payload["series"]:
+        label = entry["label"] + ("" if entry["declared"] or entry["unclassified"] else "（宣言なし）")
+        for name, node in entry["by_account"].items():
+            lines.append(_unit_line(t, label, name, node))
+            rows += 1
+    if not rows:
+        lines.append("| （出した原稿がありません） | | | | | | | |")
+    lines += ["", "## キャンペーン（糸）ごと", ""]
+    if not payload["campaigns"]:
+        lines += ["宣言した糸がありません（thth scenario <project> で確かめられます）。", ""]
+    for entry in payload["campaigns"]:
+        stage = entry["stage"]
+        title = f"{t(entry['id'])}" + (f"「{t(entry['title'])}」" if entry["title"] else "")
+        lines.append(f"### {title}（{STATE_JA.get(entry['state'], entry['state'])}・"
+                     f"段 {stage['index']}/{stage['of']} {t(stage['name'] or '—')}）")
+        steps = []
+        for row in entry["stages"]:
+            done = row["replies"] if row.get("need") is None else row.get("done")
+            need = row.get("need")
+            steps.append(f"{t(row['label'] or row['name'])} {_n(done)}"
+                         + (f"/{need}" if need is not None else "") + ("（済み）" if row["satisfied"] else ""))
+        lines.append("- 段: " + "・".join(steps))
+        if entry["stalled"]:
+            lines.append(f"- 止まり: {t(entry['stalled'].get('label') or '')}")
+        for name, node in entry["by_account"].items():
+            if entry["state"] == "closed":
+                break      # 閉じた糸はその週の数でなく、下の結果を並べる
+            week = node["week"]
+            lines.append(f"- {t(name)}: その週 {week['posts']['roots']} 本・表示 {_n(week['totals']['views']['sum'])}"
+                         f"・返信 {_n(week['totals']['replies']['sum'])}"
+                         + ("" if entry["state"] == "closed" else
+                            f"・印 {({True: '落ち込み', False: 'なし', None: '判断できない'})[node['drop']]}"))
+        if entry["state"] == "closed":
+            result = entry["result"]
+            for name, r in result["by_account"].items():
+                lines.append(f"- 結果 {t(name)}: {r['posts']} 本・表示の和 {_n(r['views_sum'])}"
+                             f"・中央値 {_n(r['views_median'])}（数えた {r['n_counted']} 本）")
+            visits = result["visits"]
+            lines.append(f"- 結果 訪問: {_n(visits['sessions'])}"
+                         + (f"（{t(visits['cannot_say'])}）" if visits["cannot_say"] else "")
+                         + f"・クリック（72 時間）: {_n(result['clicks_72h'].get('clicks_72h'))}")
+            closed = [e for e in result["events"] if e.get("name") == "closed"]
+            if closed:
+                lines.append(f"- 閉じた日: {t(closed[-1].get('at') or '')}")
+        else:
+            week = entry["this_week"]
+            visits = week["visits"]
+            lines.append(f"- その週のクリック（72 時間）: {_n(week['clicks_72h']['sum'])}・訪問: {_n(visits['sessions'])}"
+                         + (f"（{t(visits['cannot_say'])}）" if visits["cannot_say"] else ""))
+        lines.append("")
+    lines += ["## 次の糸の種（thth scenario seeds）", ""]
+    seeds = payload["seeds"]
+    if not seeds or "error" in seeds:
+        lines += ["並べられませんでした。thth scenario seeds <project> で確かめてください。", ""]
+    else:
+        from .scenario_cli import render_seeds
+        collected = []
+        render_seeds(seeds, out=collected.append)
+        lines += ["    " + line for line in collected] + [""]
+    while len(lines) > 1 and lines[-1] == "" and lines[-2] == "":
+        lines.pop()
+    return lines
 
 
 def _refuse(args, code, message):
