@@ -170,6 +170,8 @@ COMMANDS += ['reply-mark']
 COMMANDS += ['link check', 'link consent', 'link make', 'link show', 'link send', 'link run']
 # 2026-11-25: 週の振り返りの材料（skill thth-weekly-review）。
 COMMANDS += ['review weekly']
+# 11/25: 意図して止めた draft の印（期限と理由・未承認の数えから外す）。
+COMMANDS += ['hold']
 
 
 def test_json_table_covers_every_parser():

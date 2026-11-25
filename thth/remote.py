@@ -426,7 +426,9 @@ UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh",
                          "reply delete",
                          # 監査 2026-11-06 #2: Threads の承認待ちの返信（読む・承認・無視）は手元の道だけ。
                          # 審査の区間に無く、承認は返信を公開する（遠くの道の資格と記録の形を決めていない）。
-                         "reply pending", "reply approve", "reply ignore"))
+                         "reply pending", "reply approve", "reply ignore",
+                         # 11/25: 止めの印（`thth hold`）は VM の承認の台帳に書く手元の道だけ。
+                         "hold"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",

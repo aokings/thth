@@ -2199,6 +2199,9 @@ def cmd_approvals(args) -> int:
         elif row["state"] == approval_ledger.WITHDRAWN:
             print(f"  閉じた {row['file']} — {row['at']} {row['by']}"
                   + (f"（{row['withdrawn_reason']}）" if row.get("withdrawn_reason") else ""))
+        elif row["state"] == approval_ledger.HELD:
+            print(f"  止めた {row['file']} — {row['at']} {row['by']}・{row.get('held_until')} まで"
+                  + (f"（{row['held_reason']}）" if row.get("held_reason") else ""))
         else:
             print(f"  取り消し {row['file']} — {row['at']} {row['by']}"
                   + (f"（{row['revoked_reason']}）" if row.get("revoked_reason") else ""))
@@ -2372,6 +2375,225 @@ def cmd_withdraw(args) -> int:
         print(f"{verb} {len(done)} 本・断った {len(refused)} 本（{by}・VM の承認の台帳に記録・"
               "repo には書いていません）。本文はそのままです"
               + ("" if undo else "。戻すなら thth withdraw --undo"))
+    return 1 if refused else 0
+
+
+def _hold_one(path: str, repo_dir: str, *, account, by: str, at: str, until, reason, undo: bool) -> str | None:
+    """1 本を止める（`undo` なら止めたのを戻す）。**repo のロックの中・同期のあとで呼ぶ**。断るなら理由。
+
+    記録先は `thth withdraw` と同じ VM の承認の台帳（state `held`）。repo には書かない。status は
+    draft のままなので、select（throw・run）は今の draft と同じく出さない。`thth approve` で承認すると
+    承認の行で上書きされ、止めは解ける（台帳の記録の順）。断りは なぜ・通すには・もっと良く の 3 つ
+    （docs/原則_前向きな断り.md）。
+    """
+    from . import approval_ledger
+    from . import bundle as bundle_mod
+    try:
+        raw_text = open(path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"読めないので止められません（{exc.__class__.__name__}）: {path}"
+    if bundle_mod.is_bundle_text(raw_text):
+        b = bundle_mod.parse_text(raw_text, path)
+        fm, malformed = b.front_matter, b.malformed
+        any_posted = bool(fm.get("post_id")) or any(p.get("post_id") for p in b.posts)
+    else:
+        qf = queuefile.parse(path)
+        fm, malformed = qf.front_matter, qf.malformed
+        any_posted = bool(fm.get("post_id"))
+    if malformed:
+        return (f"front-matter が読めないので止められません: {path}。"
+                f"通すには thth lint {path} で直す所を見てから打ち直してください")
+    if account and fm.get("account") != account:
+        return f"{path}: 指定 account（{account}）と一致しないので止めません（原稿の account は {fm.get('account')}）"
+    outside = (_outside_account_repo(path, fm["account"])
+               if isinstance(fm.get("account"), str) and fm.get("account") else None)
+    if outside:
+        return outside + "（止めていません）"
+    trouble = (approval_ledger.problem(fm["account"])
+               if approval_ledger._safe_account(fm.get("account")) else "account が読めません")
+    if trouble or fm.get(approval_ledger.UNREADABLE_MARK):
+        return (f"台帳が読めないので受け付けられません（{trouble or '承認の台帳'}）。"
+                f"台帳を直してから打ち直してください: {path}")
+    if any_posted:
+        return (f"もう出ています（post_id あり）。止められるのは出ていない draft だけです。"
+                f"出たものを消すなら thth retract: {path}")
+    key = approval_ledger.rel_key(path, repo_dir)
+    entry = approval_ledger.entry_for(fm["account"], key) if key else None
+    if undo:
+        if not entry or entry.get("state") != approval_ledger.HELD:
+            return (f"止めた記録がありません（status: {fm.get('status')}）。"
+                    f"止めている原稿は thth schedule の held_until で見られます: {path}")
+        change = {"state": "unhold", "at": at, "by": by}
+    else:
+        status = fm.get("status")
+        if status == "approved":
+            return (f"承認済みなので止めません（止めるのは承認を待つ draft を数えから外すためで、承認済みは"
+                    f"もともと未承認に数えません）。止めて出さないなら、先に thth revoke {path} --by <名乗り> で"
+                    f"承認を取り消してから thth hold を打ってください。もっと良く: 出す日を延ばすだけなら "
+                    f"publish_at を直して承認し直すと、止めずに済みます: {path}")
+        if status == "withdrawn":
+            return (f"閉じた原稿です（status: withdrawn）。閉じた原稿は未承認に数えないので、止める必要は"
+                    f"ありません。期限付きで止める形に替えるなら、thth withdraw --undo {path} --by <名乗り> で"
+                    f"戻してから thth hold を打ってください: {path}")
+        if status != "draft":
+            return (f"止められるのは draft だけです（status: {status}）。draft の原稿を名指しするか、"
+                    f"thth schedule --unapproved で数えに出ている原稿を確かめてください: {path}")
+        if entry and entry.get("state") not in (approval_ledger.HELD, approval_ledger.REVOKED):
+            return (f"台帳に承認の記録があります（draft に見えるのは repo の status の書き換えか、hub の番号の"
+                    f"無い承認のためです）。止めるなら先に thth revoke {path} --by <名乗り> で承認の記録を"
+                    f"取り消してから打ってください。thth approvals {fm['account']} で記録を見られます: {path}")
+        change = {"state": approval_ledger.HELD,
+                  "fields": {"held_until": until, "held_reason": reason, "held_by": by, "held_at": at}}
+    try:
+        approval_ledger.record([{"account": fm.get("account"), "file": key, "via": "cli",
+                                 "repo": repo_dir, **change}])
+    except (approval_ledger.LedgerError, ValueError) as exc:
+        return f"台帳に書けませんでした: {exc}"
+    return None
+
+
+def _hold_until(text) -> tuple:
+    """`--until` を検査する。`(YYYY-MM-DD, None)` か `(None, 断りの文)`。今日（JST）より後の日だけ。"""
+    today = jst.now_jst().date()
+    day = report_mod.held_until_date(text)
+    if day is None:
+        return None, (f"--until は YYYY-MM-DD の形の日付にしてください（例 {today + datetime.timedelta(days=7)}）。"
+                      "その日の終わり（JST）まで止め、過ぎたら自動で未承認の数えに戻します。")
+    if day <= today:
+        return None, (f"--until は今日（{today}）より後の日にしてください（渡された日 {day}）。"
+                      "期限はその日の終わりまでで、過ぎると未承認の数えに戻るので、今日以前では止まりません。"
+                      "もっと良く: 試しの終わりの日を入れると、終わった翌日から自動で数えに戻ります。")
+    return day.isoformat(), None
+
+
+def cmd_hold(args) -> int:
+    """`thth hold <file|dir...> --until YYYY-MM-DD --reason "…" --by <名乗り> [--account …] [--undo] [--json]`（11/25）。
+
+    試しなどで意図して止めた draft に理由と期限を付け、「未承認・急ぎ」の数え（board の
+    `unapproved_soon`・`thth schedule --unapproved`）から外す（masaru 11/25 の決定 6・正本は media-hub の
+    設計_h2dの要望の発展と設計_2026-11-25.md）。外した分は board の `held_soon` に別の数で出る。期限
+    （その日の終わり・JST）を過ぎたら自動で未承認に戻る。判定は `report.is_held()` の 1 か所。
+
+    status は draft のままなので、select（throw・run）は今と同じく出さない。`thth approve` で承認すると
+    止めは解ける（台帳の承認の行が止めの行を上書きする）。本文には触らない。記録先は VM の承認の台帳。
+
+    形は `thth withdraw` に合わせる: 複数本・ディレクトリ（`--undo` 無しなら draft、有りなら止めたもの）・
+    `-` で標準入力・repo ごとに同期とロック 1 回・断る本はその本だけ断って他は進める。
+    遠くの道（thth.me）には出さない（`remote.UNSUPPORTED` に載せてある）。
+    """
+    files = args.file if isinstance(args.file, list) else [args.file]
+    account = getattr(args, "account", None)
+    undo = bool(getattr(args, "undo", False))
+    if "-" in files:
+        if files != ["-"]:
+            print("- （標準入力からパスを読む）は単独で渡してください。", file=sys.stderr)
+            return 2
+        files = _revoke_paths_from_stdin()
+    if not files:
+        print("止めるファイル（またはディレクトリ）を渡してください。", file=sys.stderr)
+        return 2
+    by = args.by or os.environ.get("THTH_ACTOR")
+    if not by:
+        print("--by を付けてください（誰が止めたかを記録します）。環境変数 THTH_ACTOR でも指定できます。",
+              file=sys.stderr)
+        return 2
+    until = reason = None
+    if not undo:
+        reason = (args.reason or "").strip()
+        if not reason:
+            print("--reason を付けてください（なぜ止めたかを記録し、board の held_soon に出します）。"
+                  "例 --reason \"12/02 までの試しでわざと止めている\"。"
+                  "もっと良く: 試しの名前や hub の番号を書くと、後から来た人が止めた訳をたどれます。",
+                  file=sys.stderr)
+            return 2
+        until, problem = _hold_until(args.until)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
+    elif args.until or args.reason:
+        print("--undo には --until・--reason を付けません（止める前の記録に戻すだけです）。", file=sys.stderr)
+        return 2
+    try:
+        writeback_mod.check_front_matter_field("held_by", by)
+        writeback_mod.check_front_matter_field("held_reason", reason)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    dirs = [os.path.realpath(f) for f in files if os.path.isdir(f)]
+    paths, note = _expand_targets(files, only_draft=False, only_status="draft",
+                                  account=account, purpose="hold", wait=getattr(args, "wait", 0))
+    if paths is None:
+        return 2
+    if undo and dirs:
+        # ディレクトリから拾った draft のうち、止めた記録のあるものだけ（名指しはそのまま渡して断りを見せる）。
+        def _from_dir(p):
+            real = os.path.realpath(p)
+            return any(real.startswith(d + os.sep) for d in dirs)
+        def _held(p):
+            try:
+                return bool(queuefile.parse(p).front_matter.get("held_until"))
+            except (OSError, ValueError):
+                return False
+        paths = [p for p in paths if not _from_dir(p) or _held(p)]
+    if not paths:
+        print(f"{'戻せるもの（止めたもの）' if undo else '止められるもの（draft）'}がありません{note}",
+              file=sys.stderr)
+        return 1
+    refused = []
+    by_repo = {}
+    for path in paths:
+        repo_dir = writeback_mod.repo_toplevel(path)
+        if repo_dir is None:
+            refused.append((path, f"git repo の中のファイルではないので記録できません: {path}"))
+            continue
+        by_repo.setdefault(os.path.realpath(repo_dir), []).append(path)
+    at = jst.iso()
+    done = []
+    for repo_dir in sorted(by_repo):
+        repo_paths = by_repo[repo_dir]
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+        try:
+            lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
+        except lock_mod.LockBusy:
+            refused += [(p, f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+                            "--wait <秒> で空くのを待てます。") for p in repo_paths]
+            continue
+        try:
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+            if not synced:
+                refused += [(p, f"repo を同期できないので記録しません（いまの状態が判りません）: {sync_err}")
+                            for p in repo_paths]
+                continue
+            for path in repo_paths:
+                problem = _hold_one(path, repo_dir, account=account, by=by, at=at,
+                                    until=until, reason=reason, undo=undo)
+                if problem:
+                    refused.append((path, problem))
+                else:
+                    done.append(path)
+        finally:
+            repo_lock.release()
+    from . import approval_ledger
+    if args.json:
+        _print_json({"undo": undo, "count": len(done), "refused_count": len(refused),
+                     "at": at, "by": by, "until": until, "reason": reason, "recorded": "ledger",
+                     "done": [{"file": p, "path": approval_ledger.rel_key(p), "status": "draft",
+                               "held_until": None if undo else until} for p in done],
+                     "refused": [{"file": p, "reason": r} for p, r in refused]})
+    else:
+        if note:
+            print(note.strip("（）"), file=sys.stderr)
+        verb = "戻しました" if undo else "止めました"
+        for path in done:
+            print(f"{verb}: {path}" + ("" if undo else f"（{until} まで・{reason}）"))
+        for path, why in refused:
+            print(f"していません: {why}" if path in why else f"していません: {path} — {why}", file=sys.stderr)
+        print(f"{verb} {len(done)} 本・断った {len(refused)} 本（{by}・VM の承認の台帳に記録・"
+              "repo には書いていません）。本文はそのままです")
+        if done and not undo:
+            print(f"未承認の数えから {until} の終わり（JST）まで外し、board の held_soon に出します。"
+                  "過ぎたら自動で未承認に戻ります。出すなら thth approve（承認すると止めは解けます）、"
+                  "戻すなら thth hold --undo")
     return 1 if refused else 0
 
 
@@ -3847,14 +4069,17 @@ def _schedule_unapproved(args, window: str) -> int:
             continue
         rows.extend(cell["rows"])
     rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
+    held = sum(len(cell.get("held_rows") or []) for cell in cells.values() if "cannot_say" not in cell)
     if args.json:
         _print_json(rows)
         return 0
+    held_note = f"。thth hold で止めている {held} 本は数えていません" if held else ""
     if not rows:
-        print(f"未承認で時刻が近い原稿はありません（窓 {window}）")
+        print(f"未承認で時刻が近い原稿はありません（窓 {window}{held_note}）")
         return 0
     show_schedule(rows)
-    print(f"（未承認だけ・窓 {window}。承認は thth approve、出さないなら thth withdraw）")
+    print(f"（未承認だけ・窓 {window}{held_note}。承認は thth approve、出さないなら thth withdraw、"
+          "期限を付けて止めるなら thth hold）")
     return 0
 
 
@@ -3875,6 +4100,12 @@ def show_schedule(rows) -> int:
         elif row.get("queued_for") == "burst":
             # 返信の burst の順番待ち（3.25.0）。時刻を過ぎていれば timer の次の run で出る。
             overdue = "  ← burst の順番待ち（返信）" + ("・時刻を過ぎています" if row["past"] else "")
+        elif row.get("held_until") and row.get("status") == "draft":
+            # 11/25: thth hold で止めた（期限の内は未承認に数えない・過ぎたら戻る）。
+            why = f"・{row['held_reason']}" if row.get("held_reason") else ""
+            overdue = (f"  ← 止めています（{row['held_until']} まで{why}）"
+                       if report_mod.is_held(row, now=jst.now_jst())
+                       else f"  ← 止めの期限 {row['held_until']} を過ぎました（未承認に戻っています）")
         topic = f" [{row['topic']}]" if row["topic"] else ""
         # 10/30: 緊急の札（静かな時間帯だけ越えて出す）。遠くの道の行に鍵が無ければ出さない。
         urgent = " [緊急]" if row.get("urgent") else ""
@@ -5047,6 +5278,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_withdraw.add_argument("--json", action="store_true")
     p_withdraw.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_withdraw.set_defaults(func=cmd_withdraw)
+
+    p_hold = sub.add_parser(
+        "hold", help="試しなどで意図して止めた draft に期限と理由を付け、未承認の数えから外す"
+                     "（期限を過ぎたら戻る・本文は触らない・VM の承認の台帳に記録・複数本・ディレクトリ可）")
+    p_hold.add_argument("file", nargs="+",
+                        help="原稿ファイル・ディレクトリ（中の draft を拾う）・- （標準入力からパスを 1 行ずつ）")
+    p_hold.add_argument("--until", default=None,
+                        help="この日の終わり（JST）まで止める（YYYY-MM-DD・今日より後・--undo 以外で必須）")
+    p_hold.add_argument("--reason", default=None, help="なぜ止めたか（記録し board の held_soon に出す・必須）")
+    p_hold.add_argument("--by", default=None, help="誰が止めたか（記録に残す・必須。THTH_ACTOR でも可）")
+    p_hold.add_argument("--account", default=None, help="この account の原稿だけ")
+    p_hold.add_argument("--undo", action="store_true", help="止めたのを止める前に戻す")
+    p_hold.add_argument("--json", action="store_true")
+    p_hold.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    p_hold.set_defaults(func=cmd_hold)
 
     p_posts = sub.add_parser(
         "posts", help="実際に出ている投稿を一覧する（手で出した分も含む・読むだけ）")

@@ -326,6 +326,10 @@ def _schedule_rows(name: str, account_cfg: dict, *, now, days: int | None = None
             # 11/06: repo の中の相対パス（hub が原稿を名指しする・足すだけ）。
             "path": (approve_pending_mod.rel_path(qf.path, repo_dir).replace(os.sep, "/")
                      if repo_dir else os.path.basename(qf.path)),
+            # 11/25: `thth hold` で止めた期限（JST の日・その日の終わりまで）と理由。止めていなければ None。
+            # 期限を過ぎても記録は見せる（数えの上で止めているかは `is_held()`）。
+            "held_until": fm.get("held_until") or None,
+            "held_reason": fm.get("held_reason") or None,
         })
     return rows
 
@@ -350,15 +354,28 @@ def parse_window(text: str) -> tuple:
     return span(match.group(1), match.group(2)), span(match.group(3), match.group(4))
 
 
-def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
-    """`schedule()` の 1 行が「未承認で時刻が近い」か（判定はここだけ）。
+def held_until_date(value):
+    """`held_until`（`YYYY-MM-DD`）を日付に。形が違えば None（止めていないと見る・数えに戻す）。"""
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
 
-    - 実効の status が `draft`（承認の台帳を重ねたあと。取り消し済みは draft・閉じた
-      `withdrawn` と承認済みは入らない）
-    - post_id が無い（`schedule()` が除いている）
-    - publish_at が 今-過去へ 〜 今+先へ（両端を含む）
-    - 出さない期限（not_after）を過ぎていない
+
+def is_held(row: dict, *, now) -> bool:
+    """`thth hold` で止めていて、期限の内か（11/25・判定はここだけ）。
+
+    期限はその日の終わり（JST）まで。過ぎたら（読めない期限も）止めていないと見て、未承認の数えに戻す。
     """
+    until = held_until_date(row.get("held_until"))
+    if until is None:
+        return False
+    return jst.to_jst(now).date() <= until
+
+
+def _is_soon_draft(row: dict, *, now, window: tuple) -> bool:
     if row.get("status") != "draft" or row.get("expired"):
         return False
     try:
@@ -367,6 +384,26 @@ def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
         return False
     before, after = window
     return now - before <= publish_at <= now + after
+
+
+def is_held_soon(row: dict, *, now, window: tuple) -> bool:
+    """未承認で時刻が近いが、`thth hold` で止めていて期限の内（board の `held_soon` に数える）。"""
+    return _is_soon_draft(row, now=now, window=window) and is_held(row, now=now)
+
+
+def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
+    """`schedule()` の 1 行が「未承認で時刻が近い」か（判定はここだけ）。
+
+    - 実効の status が `draft`（承認の台帳を重ねたあと。取り消し済みは draft・閉じた
+      `withdrawn` と承認済みは入らない）
+    - post_id が無い（`schedule()` が除いている）
+    - publish_at が 今-過去へ 〜 今+先へ（両端を含む）
+    - 出さない期限（not_after）を過ぎていない
+    - `thth hold` で止めていて期限の内なら入らない（11/25・`held_soon` に数える）。期限を過ぎたら入る
+    """
+    if not _is_soon_draft(row, now=now, window=window):
+        return False
+    return not is_held(row, now=now)
 
 
 def unapproved_soon(account_name: str | None = None, *, now=None,
@@ -414,10 +451,12 @@ def _unapproved_one(name, *, now, window, window_text, ledger) -> dict:
             rows = _schedule_rows(name, account_cfg, now=now)
         except (OSError, ValueError, KeyError) as exc:
             return {"cannot_say": f"queue_unreadable: {exc.__class__.__name__}"}
-    hits = sorted((row for row in rows if is_unapproved_soon(row, now=now, window=window)),
-                  key=lambda r: (r["publish_at"], r["file"]))
+    order = lambda r: (r["publish_at"], r["file"])  # noqa: E731
+    hits = sorted((row for row in rows if is_unapproved_soon(row, now=now, window=window)), key=order)
+    held = sorted((row for row in rows if is_held_soon(row, now=now, window=window)), key=order)
     return {"count": len(hits), "first_at": hits[0]["publish_at"] if hits else None,
-            "window": window_text, "paths": [row["path"] for row in hits], "rows": hits}
+            "window": window_text, "paths": [row["path"] for row in hits], "rows": hits,
+            "held_rows": held}
 
 
 def board_unapproved_cell(cell: dict) -> dict:
@@ -425,6 +464,22 @@ def board_unapproved_cell(cell: dict) -> dict:
     if "cannot_say" in cell:
         return {"cannot_say": cell["cannot_say"]}
     return {k: cell[k] for k in ("count", "first_at", "window", "paths")}
+
+
+def board_held_cell(cell: dict) -> dict:
+    """board の `held_soon`（11/25・hub と決めた形）: `{"count", "until_min", "items": [{"path", "until", "reason"}]}`。
+
+    `unapproved_soon` と同じ窓の draft のうち、`thth hold` で止めていて期限の内のもの（`is_held_soon()`）。
+    `unapproved_soon` の count には入らない（足すと止める前の数）。`until_min` は一番早い期限（無ければ None）。
+    数えられなければ `unapproved_soon` と同じ `{"cannot_say": 理由}`。
+    """
+    if "cannot_say" in cell:
+        return {"cannot_say": cell["cannot_say"]}
+    rows = cell.get("held_rows") or []
+    items = [{"path": row["path"], "until": row["held_until"], "reason": row.get("held_reason") or ""}
+             for row in rows]
+    return {"count": len(items), "until_min": min((i["until"] for i in items), default=None),
+            "items": items}
 
 
 def _thread_rows(account_name: str) -> list:
@@ -570,11 +625,12 @@ def board_summary(now=None) -> dict:
             from .stop_observation import reason
             code=reason(e)
             accounts_out.append({'account':name,'error':code,'stop_reason':code,'cannot_say':[code],
-                                 'unapproved_soon':{'cannot_say':code}})
+                                 'unapproved_soon':{'cannot_say':code},'held_soon':{'cannot_say':code}})
             continue
         except accounts_mod.AccountError as e:
             accounts_out.append({"account": name, "error": str(e),
-                                 "unapproved_soon": {"cannot_say": f"account_unreadable: {e}"}})
+                                 "unapproved_soon": {"cannot_say": f"account_unreadable: {e}"},
+                                 "held_soon": {"cannot_say": f"account_unreadable: {e}"}})
             continue
         # 同期を伴わない読み手の照合先（外部レビュー第 5 巡 P2）。
         files = core.list_queue_files(
@@ -651,6 +707,7 @@ def board_summary(now=None) -> dict:
         approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
         waiting = waiting_items(needs_review)
         approval = approve_pending_mod.summary(approve_pending_mod.split(name, account_cfg, files, now))
+        soon_cell = unapproved_soon(name, now=now)[name]
         accounts_out.append({
             "account": name,
             "project": account_cfg.get("project"),
@@ -771,8 +828,10 @@ def board_summary(now=None) -> dict:
             "repo_running_pid": repo_running_pid,
             # 未承認（draft）で publish_at が 今-3d〜今+24h の原稿（11/06・hub と約束した形・
             # `{"count","first_at","window","paths"}` か `{"cannot_say": 理由}`）。count は 0 でも出す。
-            "unapproved_soon": board_unapproved_cell(
-                unapproved_soon(name, now=now)[name]),
+            "unapproved_soon": board_unapproved_cell(soon_cell),
+            # 11/25: `thth hold` で理由と期限を付けて止めた分（同じ窓・期限の内）。unapproved_soon の
+            # count からは外れている。形は `board_held_cell()`。期限を過ぎたら unapproved_soon に戻る。
+            "held_soon": board_held_cell(soon_cell),
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。**取りに行かない**

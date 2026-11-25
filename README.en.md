@@ -182,6 +182,7 @@ All subcommands `thth --help` lists, one line each:
 - `approvals` — list the approval ledger on the VM (approvals are not committed to your repo since 4.4.1)
 - `revoke` — undo an approval and return the file to draft
 - `withdraw` — close a draft you decided not to publish (recorded in the VM approval ledger; `--undo` reopens it)
+- `hold` — mark a draft you are holding on purpose, with `--until YYYY-MM-DD` and `--reason`; it leaves the unapproved count until the end of that day (JST) and shows as `held_soon` on the board (recorded in the VM approval ledger; approving it releases the hold; `--undo` reverts it)
 - `queue` — draft, approved and posted counts and what is next
 - `throw` — post one approved file (dry run by default)
 - `run` — throw, collect and refresh in one call (what the timer runs)

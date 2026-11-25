@@ -30,6 +30,10 @@ front-matter の `status`・`approved_sha` を見るだけでよい。
 - 台帳に `withdrawn`（11/06・`thth withdraw`）があり、原稿がまだ出ていない: `status: withdrawn` にし、
   承認の項目を外し、`withdrawn_*` を見せる（出さないと決めて閉じた原稿。select・schedule・board の
   未承認の数え上げのどれにも出ない）。
+- 台帳に `held`（11/25・`thth hold`）があり、原稿がまだ出ていない: 止める前の行（`prior`・無いか
+  取り消し）を重ねた上に `held_until`・`held_reason`・`held_by`・`held_at` を見せる。**status は
+  draft のまま**（出ない点は今の draft と同じ）。数えの上で「止めている」と見るかどうか（期限の内か）は
+  `report.is_held()` の 1 か所で決める。承認すると承認の行で上書きされ、止めは解ける（記録の順）。
 - 台帳に何も無い: repo のまま（**移行期間**: 4.4.0 までに repo に書いた承認はそのまま効く）。
 
 **指紋は今までどおり読み手が照合する。** 台帳の承認のあとで原稿の中身（本文・account・reply_to・
@@ -58,7 +62,9 @@ REVOKED = "revoked"
 # 出さないと決めて閉じた（11/06・`thth withdraw`）。repo の front-matter の `status: withdrawn`
 # （queuefile.KNOWN_STATUSES）と同じ意味を、repo に commit を積まずに重ねる。
 WITHDRAWN = "withdrawn"
-STATES = (APPROVED, REVOKED, WITHDRAWN)
+# 理由と期限を付けて止めた draft（11/25・`thth hold`・masaru の決定 6）。status は draft のまま。
+HELD = "held"
+STATES = (APPROVED, REVOKED, WITHDRAWN, HELD)
 
 # 原稿の front-matter に重ねてよい項目。**指紋の材料（本文・account・reply_to・topic・
 # publish_at・場所・共有・media・community・announces）は入れない**。
@@ -66,7 +72,9 @@ OVERLAY_KEYS = ("status", "approved_sha", "approved_at", "approved_by", "approve
                 "approved_kind", "delivery", "approved_via", "approved_credential",
                 "approved_gate", "held_minutes", "queued_for",
                 "revoked_at", "revoked_by", "revoked_reason",
-                "withdrawn_at", "withdrawn_by", "withdrawn_reason")
+                "withdrawn_at", "withdrawn_by", "withdrawn_reason",
+                "held_until", "held_reason", "held_by", "held_at")
+_HOLD_SHOW = ("held_until", "held_reason", "held_by", "held_at")
 _WITHDRAW_SHOW = ("withdrawn_at", "withdrawn_by", "withdrawn_reason")
 # 出たあとの原稿に「無ければ足す」だけの控え（status は変えない）。
 _POSTED_INFO_KEYS = ("approved_sha", "approved_at", "approved_by", "approved_goal",
@@ -290,6 +298,25 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
             same = False
         if not same:
             entry = None
+    held = None
+    if entry is not None and entry["state"] == HELD:
+        # 止めた（11/25）。止める前の行（無いか取り消し）を重ねた上に、止めの項目を見せる。
+        held = entry
+        prior = entry.get("prior")
+        entry = prior if _valid_entry(prior) and prior.get("state") == REVOKED else None
+        out = _overlay_entry(fm, entry, account=account, is_open=is_open)
+        if not is_open or out.get("status") != "draft":
+            return out
+        out = dict(out)
+        for k in _HOLD_SHOW:
+            if held["fields"].get(k) is not None:
+                out[k] = held["fields"][k]
+        return out
+    return _overlay_entry(fm, entry, account=account, is_open=is_open)
+
+
+def _overlay_entry(fm: dict, entry, *, account: str, is_open: bool) -> dict:
+    """`overlay()` の本体（repo の照合を済ませた 1 行を重ねる・`entry` が None なら repo のまま）。"""
     if entry is None:
         if is_open and fm.get("status") == "approved" and _requires_gate(account):
             # 4.4.1（監査）: require_gate の口座では、台帳に記録の無い repo の承認（4.4.0 までの形）は
@@ -490,6 +517,36 @@ def _apply(items: dict, change: dict) -> None:
                                       "reason": fields.get("withdrawn_reason"), "via": change.get("via")}),
         }
         return
+    if change["state"] == HELD:
+        fields = _clean_fields(change["fields"])
+        fields["status"] = "draft"
+        # 止める前の行（無いか取り消し）を `prior` に持つ。`thth hold --undo` はこれに戻す。
+        # 止め直し（期限・理由の変更）は前の `prior` を引き継ぐ。
+        if old is not None and old.get("state") not in (HELD, REVOKED):
+            raise ValueError(f"止められるのは記録の無い draft か取り消した原稿だけです: {key}")
+        prior = (old.get("prior") if old is not None and old.get("state") == HELD
+                 else ({k: v for k, v in old.items() if k != "history"} if old is not None else None))
+        items[key] = {
+            "file": key, "state": HELD, "fields": fields,
+            "approved_sha": None, "at": fields.get("held_at"), "by": fields.get("held_by"),
+            "gate": None, "via": change.get("via") or "cli", "repo": change.get("repo"),
+            "prior": prior,
+            "history": _history(old, {"event": "held", "at": fields.get("held_at"),
+                                      "by": fields.get("held_by"), "until": fields.get("held_until"),
+                                      "reason": fields.get("held_reason"), "via": change.get("via")}),
+        }
+        return
+    if change["state"] == "unhold":
+        # `thth hold --undo`: 止める前の行に戻す（前が無ければ行を消す＝repo のまま）。
+        if old is None or old.get("state") != HELD:
+            raise ValueError(f"止めた記録がありません: {key}")
+        prior = old.get("prior")
+        if isinstance(prior, dict) and _valid_entry(prior):
+            items[key] = {**prior, "history": _history(old, {
+                "event": "unheld", "at": change.get("at"), "by": change.get("by"), "via": change.get("via")})}
+        else:
+            del items[key]
+        return
     if change["state"] == "reopen":
         # `thth withdraw --undo`: 閉じる前の行に戻す（前が無ければ行を消す＝repo のまま）。
         if old is None or old.get("state") != WITHDRAWN:
@@ -545,8 +602,8 @@ def record(changes: list) -> None:
     """
     by_account: dict = {}
     for change in changes:
-        if change.get("state") not in STATES + ("reopen",):
-            raise ValueError("state は approved・revoked・withdrawn・reopen のどれかです")
+        if change.get("state") not in STATES + ("reopen", "unhold"):
+            raise ValueError("state は approved・revoked・withdrawn・held・reopen・unhold のどれかです")
         if not _safe_account(change.get("account")) or not isinstance(change.get("file"), str):
             raise ValueError("account と file が要ります")
         if not isinstance(change.get("repo"), str) or not change["repo"]:
@@ -593,5 +650,7 @@ def export(account_name: str) -> list:
                     "revoked_reason": entry["fields"].get("revoked_reason") if entry["state"] == REVOKED else None,
                     "withdrawn_reason": (entry["fields"].get("withdrawn_reason")
                                          if entry["state"] == WITHDRAWN else None),
+                    "held_until": entry["fields"].get("held_until") if entry["state"] == HELD else None,
+                    "held_reason": entry["fields"].get("held_reason") if entry["state"] == HELD else None,
                     "history": entry.get("history") or []})
     return out
