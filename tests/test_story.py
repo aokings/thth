@@ -236,3 +236,11 @@ def test_壊れた例_Pillowの柵はほかのfileのimportを拾う(tmp_path):
     (tmp_path / "story_image.py").write_text("from PIL import Image\n", encoding="utf-8")
     (tmp_path / "other.py").write_text("import PIL.Image\n", encoding="utf-8")
     assert pillow_imports(tmp_path) == ["other.py"]
+
+
+def test_カードの名札に数字だけのhandleを使わない():
+    from thth.story import _label
+    assert _label({"handle": "17841437318552220", "project": "kopicha"}, "kopicha-ig") == "kopicha"
+    assert _label({"handle": "17841437318552220", "username": "kopi_chaba"}, "kopicha-ig") == "@kopi_chaba"
+    assert _label({"handle": "@kopicha_test"}, "kopicha-ig") == "@kopicha_test"
+    assert _label({}, "kopicha-ig") == "kopicha-ig"

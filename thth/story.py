@@ -125,8 +125,14 @@ CARD_LINES = {
 
 
 def _label(account_cfg: dict, account: str) -> str:
-    handle = str((account_cfg or {}).get("handle") or "").strip().lstrip("@")
-    return f"@{handle}" if handle else account
+    """カードの名札。IG の台帳の handle は数字の利用者の id のことがある（11/25 の本物で
+    「@17841437318552220」と出た）ので、数字だけの handle は名札に使わない。"""
+    cfg = account_cfg or {}
+    for key in ("username", "handle"):
+        name = str(cfg.get(key) or "").strip().lstrip("@")
+        if name and not name.isdigit():
+            return f"@{name}"
+    return str(cfg.get("project") or account)
 
 
 def make_card(account_cfg: dict, account: str, text: str) -> tuple[dict, list[str]]:
