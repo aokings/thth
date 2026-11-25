@@ -375,20 +375,25 @@ def is_held(row: dict, *, now) -> bool:
     return jst.to_jst(now).date() <= until
 
 
-def _is_soon_draft(row: dict, *, now, window: tuple) -> bool:
-    if row.get("status") != "draft" or row.get("expired"):
-        return False
-    try:
-        publish_at = datetime.datetime.fromisoformat(row["publish_at"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    before, after = window
-    return now - before <= publish_at <= now + after
+def _open_draft(row: dict) -> bool:
+    return row.get("status") == "draft" and not row.get("expired")
 
 
-def is_held_soon(row: dict, *, now, window: tuple) -> bool:
-    """未承認で時刻が近いが、`thth hold` で止めていて期限の内（board の `held_soon` に数える）。"""
-    return _is_soon_draft(row, now=now, window=window) and is_held(row, now=now)
+def _hold_end(row: dict):
+    """止めの期限の終わり（期限の日の翌日 0:00 JST）。止めの記録が無い・読めなければ None。"""
+    until = held_until_date(row.get("held_until"))
+    if until is None:
+        return None
+    return datetime.datetime.combine(until + datetime.timedelta(days=1), datetime.time(0, 0), tzinfo=jst.JST)
+
+
+def is_held_soon(row: dict, *, now, window: tuple | None = None) -> bool:
+    """`thth hold` で止めていて期限の内の draft（board の `held_soon` に数える）。
+
+    **窓で切らない**（監査 5.31.0 L3）: 止めている間は publish_at が窓の外（3 日より前・24 時間より先）でも
+    出す。止めていなければ未承認に上がっていたはずの物が、止めたまま黙って窓を抜けないように。
+    """
+    return _open_draft(row) and is_held(row, now=now)
 
 
 def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
@@ -399,11 +404,21 @@ def is_unapproved_soon(row: dict, *, now, window: tuple) -> bool:
     - post_id が無い（`schedule()` が除いている）
     - publish_at が 今-過去へ 〜 今+先へ（両端を含む）
     - 出さない期限（not_after）を過ぎていない
-    - `thth hold` で止めていて期限の内なら入らない（11/25・`held_soon` に数える）。期限を過ぎたら入る
+    - `thth hold` で止めていて期限の内なら入らない（11/25・`held_soon` に数える）
+    - **止めの期限が切れた原稿は、窓の基準を publish_at と期限の終わりの遅いほうにする**（監査 5.31.0 L3）。
+      期限が切れてから「過去へ」の間（既定 3 日）は、publish_at が古くても未承認に数える
     """
-    if not _is_soon_draft(row, now=now, window=window):
+    if not _open_draft(row) or is_held(row, now=now):
         return False
-    return not is_held(row, now=now)
+    try:
+        anchor = datetime.datetime.fromisoformat(row["publish_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    end = _hold_end(row)
+    if end is not None and end > anchor:
+        anchor = end
+    before, after = window
+    return now - before <= anchor <= now + after
 
 
 def unapproved_soon(account_name: str | None = None, *, now=None,
@@ -469,7 +484,7 @@ def board_unapproved_cell(cell: dict) -> dict:
 def board_held_cell(cell: dict) -> dict:
     """board の `held_soon`（11/25・hub と決めた形）: `{"count", "until_min", "items": [{"path", "until", "reason"}]}`。
 
-    `unapproved_soon` と同じ窓の draft のうち、`thth hold` で止めていて期限の内のもの（`is_held_soon()`）。
+    `thth hold` で止めていて期限の内の draft（`is_held_soon()`・窓で切らない）。
     `unapproved_soon` の count には入らない（足すと止める前の数）。`until_min` は一番早い期限（無ければ None）。
     数えられなければ `unapproved_soon` と同じ `{"cannot_say": 理由}`。
     """

@@ -30,15 +30,32 @@ front-matter の `status`・`approved_sha` を見るだけでよい。
 - 台帳に `withdrawn`（11/06・`thth withdraw`）があり、原稿がまだ出ていない: `status: withdrawn` にし、
   承認の項目を外し、`withdrawn_*` を見せる（出さないと決めて閉じた原稿。select・schedule・board の
   未承認の数え上げのどれにも出ない）。
-- 台帳に `held`（11/25・`thth hold`）があり、原稿がまだ出ていない: 止める前の行（`prior`・無いか
-  取り消し）を重ねた上に `held_until`・`held_reason`・`held_by`・`held_at` を見せる。**status は
-  draft のまま**（出ない点は今の draft と同じ）。数えの上で「止めている」と見るかどうか（期限の内か）は
-  `report.is_held()` の 1 か所で決める。承認すると承認の行で上書きされ、止めは解ける（記録の順）。
 - 台帳に何も無い: repo のまま（**移行期間**: 4.4.0 までに repo に書いた承認はそのまま効く）。
 
 **指紋は今までどおり読み手が照合する。** 台帳の承認のあとで原稿の中身（本文・account・reply_to・
 topic・publish_at など）が変われば、select が `approval_stale` で落とす（今と同じ fail-closed）。
 重ねる項目に指紋の材料は入れない（`OVERLAY_KEYS`）。
+
+## 止め（11/25・`thth hold`・masaru の決定 6）
+
+試しなどで意図して止めた draft の印は、**承認の台帳の `items` に入れず、同じ置き場の別のファイル
+`holds.json`（ロックは同じ `approvals.lock`）に持つ**（監査 5.31.0 D1）。止めは承認の状態ではなく
+（status は draft のまま）、数えの上の印だから。古い版（5.30.1 以前）は `holds.json` を読まないので、
+版を戻しても承認・取り消し・閉じたは今までどおり読め、止めた分が未承認の数えに戻るだけ（安全な側）。
+
+- `overlay()` は、承認の台帳を重ねた結果が **draft でまだ出ていない**ときだけ、止めの行の
+  `held_until`・`held_reason`・`held_by`・`held_at` を見せる。承認済み・閉じた・出たものには見せない。
+- 承認（`record()` の `approved`）は、同じロックの中で同じ原稿の止めの行を消す（記録の順で、承認の
+  あとで取り消しても止めには戻らない）。消した止めは承認の行の `history` に `hold_released` で残す。
+- 期限の内かどうかは `report.is_held()` の 1 か所で決める。
+- `holds.json` が読めなければ止めは無いものとして見せる（未承認に数える側・安全な側）。`thth hold` は
+  `holds_problem()` を見て断る。
+
+## 知らない state の行
+
+`approvals.json` の行の state が知らない値（新しい版が足した state を古い版が読む、など）でも、
+**台帳ごと読めない扱いにはしない**。その行だけ、まだ出ていない原稿を draft に倒して見せる
+（`UNKNOWN_ROW_MARK`・fail-closed）。`thth approvals` にはそのまま出る。
 
 **台帳が読めないとき**（壊れた JSON など）は、その口座の「まだ出ていない承認済み」を全部
 `status: draft` に倒して見せる（取り消しを読み落として出さないため・fail-closed）。
@@ -62,9 +79,7 @@ REVOKED = "revoked"
 # 出さないと決めて閉じた（11/06・`thth withdraw`）。repo の front-matter の `status: withdrawn`
 # （queuefile.KNOWN_STATUSES）と同じ意味を、repo に commit を積まずに重ねる。
 WITHDRAWN = "withdrawn"
-# 理由と期限を付けて止めた draft（11/25・`thth hold`・masaru の決定 6）。status は draft のまま。
-HELD = "held"
-STATES = (APPROVED, REVOKED, WITHDRAWN, HELD)
+STATES = (APPROVED, REVOKED, WITHDRAWN)
 
 # 原稿の front-matter に重ねてよい項目。**指紋の材料（本文・account・reply_to・topic・
 # publish_at・場所・共有・media・community・announces）は入れない**。
@@ -72,9 +87,7 @@ OVERLAY_KEYS = ("status", "approved_sha", "approved_at", "approved_by", "approve
                 "approved_kind", "delivery", "approved_via", "approved_credential",
                 "approved_gate", "held_minutes", "queued_for",
                 "revoked_at", "revoked_by", "revoked_reason",
-                "withdrawn_at", "withdrawn_by", "withdrawn_reason",
-                "held_until", "held_reason", "held_by", "held_at")
-_HOLD_SHOW = ("held_until", "held_reason", "held_by", "held_at")
+                "withdrawn_at", "withdrawn_by", "withdrawn_reason")
 _WITHDRAW_SHOW = ("withdrawn_at", "withdrawn_by", "withdrawn_reason")
 # 出たあとの原稿に「無ければ足す」だけの控え（status は変えない）。
 _POSTED_INFO_KEYS = ("approved_sha", "approved_at", "approved_by", "approved_goal",
@@ -95,6 +108,13 @@ GATE_LEGACY_MARK = "approval_gate_missing"
 GATE_ABSENT_MARK = "approval_gate_absent"
 # 承認のあと人が repo の status を書き換えたので重ねなかった、の印（親の裁定 ①）。
 REPO_STATUS_MARK = "approval_repo_status_changed"
+# 知らない state の行なので draft に倒した、の印（監査 5.31.0 D1 の付け足し）。
+UNKNOWN_ROW_MARK = "approval_ledger_unknown_row"
+
+# 止め（11/25・`thth hold`）。承認の台帳とは別のファイル（同じロック）。
+HOLDS_FILE = "holds.json"
+HOLDS_VERSION = 1
+HOLD_SHOW = ("held_until", "held_reason", "held_by", "held_at")
 
 
 class LedgerError(Exception):
@@ -181,6 +201,12 @@ def _valid_entry(entry) -> bool:
             and isinstance(entry.get("file"), str) and isinstance(entry.get("fields"), dict))
 
 
+def _readable_row(key, entry) -> bool:
+    """台帳の行として読める形か（state は知らない値でもよい・その行は overlay が draft に倒す）。"""
+    return (isinstance(entry, dict) and isinstance(entry.get("state"), str) and entry.get("file") == key
+            and isinstance(entry.get("fields"), dict))
+
+
 def _read(path: str) -> dict:
     """`{鍵: 記録}`。無ければ空。**読めなければ `LedgerError`**（空に倒さない）。"""
     try:
@@ -201,7 +227,7 @@ def _read(path: str) -> dict:
     if not isinstance(data, dict) or data.get("version") != VERSION or not isinstance(data.get("items"), dict):
         raise LedgerError(f"承認の台帳の形が違います（version {VERSION} の items が要ります）: {path}")
     items = data["items"]
-    if not all(_valid_entry(v) and v["file"] == k for k, v in items.items()):
+    if not all(_readable_row(k, v) for k, v in items.items()):
         raise LedgerError(f"承認の台帳に読めない行があります: {path}")
     _LOAD_CACHE[path] = (stamp, items)
     return items
@@ -266,7 +292,27 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
     """台帳の承認を front-matter に重ねた写しを返す（重ねるものが無ければ同じ dict）。
 
     `posted` は「もう出ているか」（束は呼び出し側が決める）。省略時は `post_id` と `status`。
+    重ねた結果が draft でまだ出ていなければ、止め（`holds.json`）の項目も見せる（11/25）。
     """
+    out = _overlay_ledger(path, front_matter, posted=posted)
+    if not isinstance(out, dict) or out.get("status") != "draft":
+        return out
+    is_open = not (posted if posted is not None else bool(out.get("post_id")))
+    if not is_open:
+        return out
+    row = hold_for(path, out.get("account"))
+    if row is None:
+        return out
+    out = dict(out)
+    for k in HOLD_SHOW:
+        value = row.get(k[len("held_"):])
+        if value is not None:
+            out[k] = value
+    return out
+
+
+def _overlay_ledger(path: str, front_matter: dict, *, posted: bool | None = None) -> dict:
+    """承認の台帳（`approvals.json`）だけを重ねる（`overlay()` の本体）。"""
     fm = front_matter
     if not isinstance(fm, dict) or not path or not os.path.isfile(path):
         return fm
@@ -298,25 +344,6 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
             same = False
         if not same:
             entry = None
-    held = None
-    if entry is not None and entry["state"] == HELD:
-        # 止めた（11/25）。止める前の行（無いか取り消し）を重ねた上に、止めの項目を見せる。
-        held = entry
-        prior = entry.get("prior")
-        entry = prior if _valid_entry(prior) and prior.get("state") == REVOKED else None
-        out = _overlay_entry(fm, entry, account=account, is_open=is_open)
-        if not is_open or out.get("status") != "draft":
-            return out
-        out = dict(out)
-        for k in _HOLD_SHOW:
-            if held["fields"].get(k) is not None:
-                out[k] = held["fields"][k]
-        return out
-    return _overlay_entry(fm, entry, account=account, is_open=is_open)
-
-
-def _overlay_entry(fm: dict, entry, *, account: str, is_open: bool) -> dict:
-    """`overlay()` の本体（repo の照合を済ませた 1 行を重ねる・`entry` が None なら repo のまま）。"""
     if entry is None:
         if is_open and fm.get("status") == "approved" and _requires_gate(account):
             # 4.4.1（監査）: require_gate の口座では、台帳に記録の無い repo の承認（4.4.0 までの形）は
@@ -330,6 +357,16 @@ def _overlay_entry(fm: dict, entry, *, account: str, is_open: bool) -> dict:
         return fm
     out = dict(fm)
     fields = entry["fields"]
+    if entry["state"] not in STATES:
+        # 知らない state の行（新しい版が足した state など）。まだ出ていなければ draft に倒す。
+        if not is_open:
+            return fm
+        out["status"] = "draft"
+        for k in _REVOKE_DROP + ("approved_kind", "approved_via", "approved_credential", "approved_gate",
+                                 "held_minutes", "queued_for"):
+            out.pop(k, None)
+        out[UNKNOWN_ROW_MARK] = "true"
+        return out
     if entry["state"] == APPROVED:
         if is_open and fm.get("status") != (entry.get("repo_status") or "draft"):
             # **人の手の止めを尊重する**（親の裁定 ① 10/21）。承認のときの repo の status
@@ -447,6 +484,166 @@ def approved_under_other_account(path: str, account_name) -> str | None:
     return None
 
 
+# ---- 止め（holds.json） ---------------------------------------------------
+
+_HOLDS_CACHE: dict = {}
+
+
+def holds_path_for(account_name: str) -> str:
+    from . import accounts
+    return os.path.join(accounts.state_dir_for(account_name), HOLDS_FILE)
+
+
+def _valid_hold(key, row) -> bool:
+    return (isinstance(row, dict) and row.get("file") == key and isinstance(row.get("until"), str)
+            and isinstance(row.get("reason"), str) and isinstance(row.get("repo"), str))
+
+
+def _read_holds(path: str) -> dict:
+    """`{鍵: 止めの行}`。無ければ空。読めなければ `LedgerError`。形の合わない行は落とす（未承認に数える側）。"""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise LedgerError(f"止めの台帳を読めません（{exc.__class__.__name__}）: {path}") from None
+    stamp = (st.st_ino, st.st_mtime_ns, st.st_size)
+    cached = _HOLDS_CACHE.get(path)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise LedgerError(f"止めの台帳を読めません（{exc.__class__.__name__}）: {path}") from None
+    if not isinstance(data, dict) or data.get("version") != HOLDS_VERSION or not isinstance(data.get("items"), dict):
+        raise LedgerError(f"止めの台帳の形が違います（version {HOLDS_VERSION} の items が要ります）: {path}")
+    items = {k: v for k, v in data["items"].items() if _valid_hold(k, v)}
+    _HOLDS_CACHE[path] = (stamp, items)
+    return items
+
+
+def load_holds(account_name: str) -> dict:
+    """口座の止め（`{repo の中の相対パス: 行}`）。読めなければ `LedgerError`。"""
+    return _read_holds(holds_path_for(account_name))
+
+
+def holds_problem(account_name: str) -> str | None:
+    try:
+        load_holds(account_name)
+    except LedgerError as exc:
+        return str(exc)
+    return None
+
+
+def hold_for(path: str, account) -> dict | None:
+    """原稿の止めの行（同じ repo の同じ相対パス）。無い・読めない・別の clone なら None（未承認に数える側）。"""
+    if not _safe_account(account) or not path:
+        return None
+    key = rel_key(path)
+    if key is None:
+        return None
+    try:
+        row = load_holds(account).get(key)
+    except LedgerError:
+        return None
+    if row is None:
+        return None
+    try:
+        same = os.path.realpath(row["repo"]) == repo_root_of(path)
+    except (OSError, ValueError, TypeError):
+        same = False
+    return row if same else None
+
+
+def _save_holds(account_name: str, items: dict) -> None:
+    path = holds_path_for(account_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temp = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(temp, "w", encoding="utf-8") as f:
+            json.dump({"version": HOLDS_VERSION, "items": {k: items[k] for k in sorted(items)}},
+                      f, ensure_ascii=False, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def record_hold(account_name: str, key: str, *, repo: str, until: str, reason: str, by: str, at: str,
+                via: str = "cli", check=None) -> dict | None:
+    """止めの行を書く（止め直しなら上書き）。前の行（無ければ None）を返す。
+
+    `check` は承認の台帳のロックの中で呼ぶ検査（断るなら理由の文を返す）。読んでから書くまでの間に
+    承認・閉じるが入ったら、ここで断る（承認済みに止めの行を残さない）。断れば `LedgerError`。
+    """
+    if not _safe_account(account_name) or not isinstance(key, str) or not key:
+        raise ValueError("account と file が要ります")
+    if not isinstance(repo, str) or not repo:
+        raise ValueError("repo が要ります（原稿の repo の頂上）")
+    with _locked(account_name):
+        if check is not None:
+            problem = check()
+            if problem:
+                raise LedgerError(problem)
+        items = dict(_read_holds(holds_path_for(account_name)))
+        old = items.get(key)
+        history = list((old or {}).get("history") or [])
+        history.append({"event": "held", "at": at, "by": by, "until": until, "reason": reason, "via": via})
+        items[key] = {"file": key, "until": until, "reason": reason, "by": by, "at": at, "via": via,
+                      "repo": repo, "history": history[-HISTORY_MAX:]}
+        try:
+            _save_holds(account_name, items)
+        except OSError as exc:
+            raise LedgerError(f"止めの台帳に書けません（{exc}）") from None
+    return old
+
+
+def release_hold(account_name: str, key: str) -> dict | None:
+    """止めの行を消す（`thth hold --undo`）。消した行を返す（無ければ None・何も書かない）。"""
+    if not _safe_account(account_name) or not isinstance(key, str):
+        raise ValueError("account と file が要ります")
+    with _locked(account_name):
+        items = dict(_read_holds(holds_path_for(account_name)))
+        old = items.pop(key, None)
+        if old is not None:
+            try:
+                _save_holds(account_name, items)
+            except OSError as exc:
+                raise LedgerError(f"止めの台帳に書けません（{exc}）") from None
+    return old
+
+
+def _release_on_approval(account_name: str, items: dict, keys: list) -> None:
+    """承認した原稿の止めの行を消す（`record()` のロックの中）。消した止めは承認の行の history に残す。
+
+    止めの台帳が読めない・書けないときは何もしない（承認はもう書いてある。止めの行が残っても、承認済み
+    には見せないので数えは変わらない）。
+    """
+    try:
+        holds = dict(_read_holds(holds_path_for(account_name)))
+    except LedgerError:
+        return
+    gone = [k for k in keys if k in holds]
+    if not gone:
+        return
+    for k in gone:
+        row = holds.pop(k)
+        entry = items.get(k)
+        if isinstance(entry, dict):
+            entry["history"] = _history(entry, {"event": "hold_released", "until": row.get("until"),
+                                                "reason": row.get("reason"), "by": entry.get("by"),
+                                                "at": entry.get("at")})
+    try:
+        _save_holds(account_name, holds)
+        _save(account_name, items)
+    except OSError:
+        pass
+
+
 # ---- 書く ------------------------------------------------------------------
 
 @contextlib.contextmanager
@@ -517,36 +714,6 @@ def _apply(items: dict, change: dict) -> None:
                                       "reason": fields.get("withdrawn_reason"), "via": change.get("via")}),
         }
         return
-    if change["state"] == HELD:
-        fields = _clean_fields(change["fields"])
-        fields["status"] = "draft"
-        # 止める前の行（無いか取り消し）を `prior` に持つ。`thth hold --undo` はこれに戻す。
-        # 止め直し（期限・理由の変更）は前の `prior` を引き継ぐ。
-        if old is not None and old.get("state") not in (HELD, REVOKED):
-            raise ValueError(f"止められるのは記録の無い draft か取り消した原稿だけです: {key}")
-        prior = (old.get("prior") if old is not None and old.get("state") == HELD
-                 else ({k: v for k, v in old.items() if k != "history"} if old is not None else None))
-        items[key] = {
-            "file": key, "state": HELD, "fields": fields,
-            "approved_sha": None, "at": fields.get("held_at"), "by": fields.get("held_by"),
-            "gate": None, "via": change.get("via") or "cli", "repo": change.get("repo"),
-            "prior": prior,
-            "history": _history(old, {"event": "held", "at": fields.get("held_at"),
-                                      "by": fields.get("held_by"), "until": fields.get("held_until"),
-                                      "reason": fields.get("held_reason"), "via": change.get("via")}),
-        }
-        return
-    if change["state"] == "unhold":
-        # `thth hold --undo`: 止める前の行に戻す（前が無ければ行を消す＝repo のまま）。
-        if old is None or old.get("state") != HELD:
-            raise ValueError(f"止めた記録がありません: {key}")
-        prior = old.get("prior")
-        if isinstance(prior, dict) and _valid_entry(prior):
-            items[key] = {**prior, "history": _history(old, {
-                "event": "unheld", "at": change.get("at"), "by": change.get("by"), "via": change.get("via")})}
-        else:
-            del items[key]
-        return
     if change["state"] == "reopen":
         # `thth withdraw --undo`: 閉じる前の行に戻す（前が無ければ行を消す＝repo のまま）。
         if old is None or old.get("state") != WITHDRAWN:
@@ -602,8 +769,8 @@ def record(changes: list) -> None:
     """
     by_account: dict = {}
     for change in changes:
-        if change.get("state") not in STATES + ("reopen", "unhold"):
-            raise ValueError("state は approved・revoked・withdrawn・held・reopen・unhold のどれかです")
+        if change.get("state") not in STATES + ("reopen",):
+            raise ValueError("state は approved・revoked・withdrawn・reopen のどれかです")
         if not _safe_account(change.get("account")) or not isinstance(change.get("file"), str):
             raise ValueError("account と file が要ります")
         if not isinstance(change.get("repo"), str) or not change["repo"]:
@@ -624,6 +791,9 @@ def record(changes: list) -> None:
                     _apply(items, change)
                 _save(account, items)
                 done.append((account, dict(before) if existed else None))
+                # 承認した原稿の止めを、同じロックの中で消す（11/25・記録の順で止めは解ける）。
+                _release_on_approval(account, items,
+                                     [c["file"] for c in rows if c["state"] == APPROVED])
     except (OSError, ValueError, LedgerError) as exc:
         for account, before in reversed(done):
             try:
@@ -650,7 +820,5 @@ def export(account_name: str) -> list:
                     "revoked_reason": entry["fields"].get("revoked_reason") if entry["state"] == REVOKED else None,
                     "withdrawn_reason": (entry["fields"].get("withdrawn_reason")
                                          if entry["state"] == WITHDRAWN else None),
-                    "held_until": entry["fields"].get("held_until") if entry["state"] == HELD else None,
-                    "held_reason": entry["fields"].get("held_reason") if entry["state"] == HELD else None,
                     "history": entry.get("history") or []})
     return out
