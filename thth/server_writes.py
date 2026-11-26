@@ -24,7 +24,9 @@ DRAFT_ID = re.compile(r'[0-9a-f]{64}\Z')
 SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scope','invalid_options','scope_unavailable',
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving',
-    'credential_unavailable','write_unavailable'))
+    'credential_unavailable','write_unavailable',
+    # 括りの段 3: 読むだけの通り道（`server_passthrough.PASS` に無い命令・旗）。
+    'pass_unsupported'))
 from .lint import REASONS as LINT_REASONS
 # `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
 # path をそのままサーバの口から出さない（2.14.1）。
@@ -775,6 +777,10 @@ def serve(context, request, *, via):
     operation=request.get('operation') if type(request) is dict else None
     if operation in WRITE_OPERATIONS: return execute(context,request,via=via)
     if operation in READ_OPERATIONS: return read(context,request)
+    # 括りの段 3: 読むだけの命令を括りの中で打つ通り道（括りとレーンの書かれた鍵だけ）。
+    if operation=='ws_command':
+        from . import server_passthrough
+        return server_passthrough.execute(context,request)
     # 段 1 の読む口（設計 §3.2・`thth/server_reads.py`）と、状態・設定（MCP と同じ関数）。
     from . import server_reads
     if operation in server_reads.OPERATIONS: return server_reads.execute(context,request)

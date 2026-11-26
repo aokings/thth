@@ -72,3 +72,38 @@ def test_leading_lane_flag_selects_file_for_logout(home, capsys):
 
 def test_lane_flag_only_at_the_head():
     assert cli._take_lane_flag(["send", "--lane", "x"]) == ["send", "--lane", "x"]
+
+
+def _lane_file(home, lane="gamma-desk", account="gamma-garden"):
+    lanes = home / ".config/thth/lanes"
+    lanes.mkdir(parents=True, exist_ok=True)
+    (lanes / (lane + ".json")).write_text(json.dumps({"url": "https://thth.me", "key": "k" * 24,
+                                                      "account": account, "lane": lane}))
+
+
+def test_passthrough_sends_ws_command(home, monkeypatch, capsys):
+    _lane_file(home)
+    sent = []
+
+    def fake_call(operation, account, **fields):
+        sent.append((operation, account, fields))
+        return {"command": "board", "rc": 0, "stdout": "BOARD\n", "stderr": "", "truncated": False}
+
+    monkeypatch.setattr(remote, "call", fake_call)
+    assert cli.main(["--lane", "gamma-desk", "board", "--json"]) == 0
+    assert sent == [("ws_command", "gamma-garden", {"argv": ["board", "--json"]})]
+    assert capsys.readouterr().out == "BOARD\n"
+
+
+def test_passthrough_only_for_named_lane_and_table(home, monkeypatch):
+    monkeypatch.setattr(remote, "call", lambda *a, **k: pytest.fail("網に出た"))
+    assert remote.passthrough(["board"]) is None              # レーンの名指しが無い
+    monkeypatch.setenv("THTH_LANE", "gamma-desk")
+    _lane_file(home)
+    assert remote.passthrough(["send", "x"]) is None          # 表に無い命令は手元のまま
+
+
+def test_passthrough_without_lane_key_refuses(home, monkeypatch, capsys):
+    monkeypatch.setattr(remote, "call", lambda *a, **k: pytest.fail("網に出た"))
+    assert cli.main(["--lane", "nobody", "board"]) == 2
+    assert "not_logged_in" in capsys.readouterr().err

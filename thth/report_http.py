@@ -100,7 +100,7 @@ def load_credentials(path: Path):
         credentials = []
         seen = set()
         for item in config["credentials"]:
-            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor", "workspace"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
+            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor", "workspace", "lane"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
                 raise ValueError("invalid_credential")
             digest = item["sha256"]
             if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -119,7 +119,7 @@ def load_credentials(path: Path):
                     allowed[ledger.stem] = registry_project(value)
             context = ReportContext(allowed, scope=scope, writes=item.get('writes', False), actor=item.get('actor'),
                                     credential_digest=digest, credentials_path=str(Path(path).absolute()),
-                                    workspace=item.get('workspace'))
+                                    workspace=item.get('workspace'), lane=item.get('lane'))
             from . import accounts, leave, leave_gate
             from dataclasses import replace
             if scope == 'admin':

@@ -6029,6 +6029,14 @@ def _take_lane_flag(argv):
 def _entry(argv=None) -> int:
     from . import refusals
     argv = _take_lane_flag(list(sys.argv[1:] if argv is None else argv))
+    # レーンを名指しした読むだけの命令は、鍵で VM の括りの中に通す（括りの段 3・`remote.passthrough`）。
+    from . import remote as _remote
+    try:
+        passed = _remote.passthrough(argv)
+    except _remote.RemoteError as exc:
+        passed = _remote._fail(exc.code)
+    if passed is not None:
+        return passed
     real_argv = list(argv)
     _PARSED.clear()
     refusals.clear_first_stage()

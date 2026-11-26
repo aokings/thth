@@ -17,6 +17,13 @@ def _entry(why, fix, command, better):
 
 
 ENTRIES = {
+    "pass_unsupported": {
+        "kind": "refusal",
+        "why": "その命令か旗は、鍵で括りの中に通す表にありません（読むだけの物だけを通します）。何も打っていません。",
+        "fix": "表にある命令（board・morning・observe・schedule の一覧・where-log・handoff-report・analytics-report・unanswered）と旗で打ち直してください。",
+        "command": None,
+        "better": "書く命令や目印を付ける旗が要るときは、括りの窓口のレーンか管理者に頼むと、記録に誰が打ったかが残ります。",
+        "doors": ("remote",), "since": _SINCE},
     "lane_invalid": {
         "kind": "refusal",
         "why": "レーンの名の形が違います（鍵のファイルの名前になる所です）。何も読んでいません。",

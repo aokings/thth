@@ -408,6 +408,46 @@ def call(operation, account, **fields):
     return _answer(status, value)
 
 
+def lane_account() -> str | None:
+    """レーンの鍵のファイルに控えた口座（鍵を受け取ったときの口座・Worker の束の宛先）。"""
+    try:
+        with open(config_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    account = data.get("account") if type(data) is dict else None
+    return account if isinstance(account, str) and ACCOUNT_NAME.fullmatch(account) else None
+
+
+def passthrough(argv) -> int | None:
+    """`thth --lane <レーン> <読むだけの命令> …` を、鍵で VM の括りの中に通す（括りの段 3）。
+
+    レーンを名指ししていない・命令が通り道の表に無いときは None（今までどおり手元で打つ）。
+    通すかどうか・旗の検めは VM が決める（`server_passthrough.PASS`）。ここは頼んで、答えを出すだけ。
+    """
+    from . import server_passthrough
+    if not argv or argv[0] not in server_passthrough.PASS or current_lane() is None:
+        return None
+    if load() is None:
+        return _fail("not_logged_in", f"レーン {current_lane()} の鍵がありません。`thth login --lane {current_lane()}` で受け取ってください")
+    account = lane_account()
+    if account is None:
+        return _fail("remote_config_invalid", "レーンの鍵のファイルに口座がありません。`thth login --lane` をやり直してください")
+    try:
+        value = call("ws_command", account, argv=list(argv))
+    except RemoteError as exc:
+        return _fail(exc.code)
+    out, err = value.get("stdout"), value.get("stderr")
+    if isinstance(out, str) and out:
+        sys.stdout.write(out)
+    if isinstance(err, str) and err:
+        sys.stderr.write(err)
+    if value.get("truncated"):
+        print("（答えが長いので途中で切りました）", file=sys.stderr)
+    rc = value.get("rc")
+    return rc if isinstance(rc, int) and 0 <= rc < 256 else 1
+
+
 def _wait(cfg, request_id):
     deadline = _clock() + POLL_MAX_SECONDS
     while True:

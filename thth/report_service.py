@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import re
 import os
 from pathlib import Path
 import stat
@@ -35,6 +36,8 @@ class ReportContext:
     excluded_accounts: Mapping[str, str | None] = field(default_factory=dict, compare=False, repr=False)
     # 鍵が結び付く括り（括りの段 2）。None は書いていない古い鍵＝口座の台帳のある括りで動く。
     workspace: str | None = None
+    # 鍵の持ち主のレーン（括りの段 3）。括りと一緒に書かれた鍵だけが、括り全体を読む通り道に入れる。
+    lane: str | None = None
 
     def __post_init__(self):
         if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
@@ -46,6 +49,9 @@ class ReportContext:
         if (type(self.writes) is not bool or self.writes and (self.scope != 'user'
                 or not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))
                 or self.actor is not None and (not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))):
+            raise ReportServiceError("invalid_context")
+        if self.lane is not None and (self.workspace is None or not isinstance(self.lane, str)
+                                      or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", self.lane)):
             raise ReportServiceError("invalid_context")
         allowed = dict(self.allowed_accounts)
         for account, project in allowed.items():
