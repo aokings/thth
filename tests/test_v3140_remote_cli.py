@@ -67,7 +67,15 @@ class FakeWorker:
             do_POST = _answer
             do_PUT = _answer  # 添付の置き場（10/15 点検 B-18）
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                # 例外の写しを stderr に書くと、同じプロセスの capsys が断りの文と一緒に拾い、
+                # 試験がたまに揺れる（11/26 CI 1470acd9）。手元に溜めるだけにする。
+                import traceback
+                worker.errors.append(traceback.format_exc())
+
+        self.errors = []
+        self.server = Server(("127.0.0.1", 0), Handler)
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
