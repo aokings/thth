@@ -271,8 +271,9 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
         data["handle"] = data["ig_user_id"]
         data["page_id"] = (page_id or "").strip()
     data["repo_dir"] = repo_dir or f"$THTH_ROOT/repos/{project}"
-    data["env"] = f"~/.config/thth/{name}.env"
-    data["token"] = f"~/.config/thth/{name}.token"
+    # 括りの段 4 の準備: main は ~/.config/thth/・ほかの括りは括りの secrets/（`accounts.secret_ref`）。
+    data["env"] = accounts_mod.secret_ref(name, ".env")
+    data["token"] = accounts_mod.secret_ref(name, ".token")
     if article_media.is_article_media(media):
         # **はてなの口座は「主体 ＋ ブログ 1 つ」を指すだけ**（設計 4.0 S1 §3.3）。
         # token と handle の正本は主体の台帳——同じパス・同じ名乗りを写す（loader が強制する）。

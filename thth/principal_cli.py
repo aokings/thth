@@ -80,10 +80,11 @@ def build_ledger(name: str, *, hatena_id: str | None = None, blogs: list | None 
     if owner is not None:
         data["owner"] = owner
     data["principal"] = name
-    data["token"] = f"~/.config/thth/{name}.token"
+    # 括りの段 4 の準備: main は ~/.config/thth/・ほかの括りは括りの secrets/（`accounts.secret_ref`）。
+    data["token"] = accounts.secret_ref(name, ".token")
     if kind == "hatena":
         data["hatena_id"] = hatena_id
-        data["consumer"] = f"~/.config/thth/{name}.consumer"
+        data["consumer"] = accounts.secret_ref(name, ".consumer")
     else:
         data["wp_user"] = wp_user
     if blogs:

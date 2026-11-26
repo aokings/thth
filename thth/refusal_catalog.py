@@ -79,6 +79,8 @@ FIX_VIEWS = {
     "ws_admin.NEXT": (
         "workspace_name_invalid", "workspace_unknown", "workspace_exists", "workspace_folder_exists",
         "medium_name_invalid", "medium_in_other_workspace", "workspace_unavailable",
+        # 括りの段 4 の準備: 秘密の置き場・2 つの括りに同じ口座の名（timer の入口）。
+        "workspace_secret_outside", "account_in_two_workspaces",
     ),
     "remote.NEXT": (
         "not_logged_in", "invalid_key", "key_expired", "remote_config_invalid", "remote_unavailable",

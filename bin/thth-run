@@ -4,4 +4,7 @@
 # ここには置かない（§3.7: 入口を増やしてもロックを踏まない経路を作らないため）。
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 括りの段 4 の準備: timer の単位（thth@<口座>）は口座の台帳のある括りに入って打つ（`cli._enter_account_workspace`）。
+# 単位のファイル（systemd/thth@.service）は配った姿と同じに保つので、印はここで付ける。
+export THTH_WS_FROM_ACCOUNT=1
 exec "$DIR/thth" run "$@"

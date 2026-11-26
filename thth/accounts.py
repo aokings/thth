@@ -587,6 +587,35 @@ def _expand(value):
     return value
 
 
+SECRET_OUTSIDE = "workspace_secret_outside"
+
+
+def secret_ref(name: str, suffix: str) -> str:
+    """新しく書く台帳の秘密（env・token・consumer）の綴り。
+
+    `main` は今までどおり `~/.config/thth/`（本番の 28 本と同じ・段 5 でも動かさない）。
+    ほかの括りは初めから括りの中の `secrets/`（`$THTH_ROOT` は括りの根に展開される）。
+    """
+    if current_workspace() == MAIN_WS:
+        return f"~/.config/thth/{name}{suffix}"
+    return f"$THTH_ROOT/secrets/{name}{suffix}"
+
+
+def secret_path_problem(raw) -> bool:
+    """`main` でない括りで、秘密の道が括りの `secrets/` の外を指すか（設計 §3 の段 5 の注）。
+
+    `~` を指す台帳・絶対の道でほかの括りや共通の根を指す台帳を、新しい括りでは読まない
+    （括りを消す・移すときに秘密だけが取り残される／ほかの括りの token を読めてしまうのを防ぐ）。
+    """
+    if current_workspace() == MAIN_WS or not isinstance(raw, str):
+        return False
+    if raw.startswith("~"):
+        return True
+    expanded = os.path.normpath(_expand(raw))
+    base = os.path.normpath(os.path.join(ws_root(), "secrets"))
+    return not os.path.isabs(expanded) or os.path.commonpath([base, expanded]) != base or expanded == base
+
+
 def dir_is_unreadable(d: str) -> bool:
     """**ディレクトリはあるのに読めない**（権限）か。
 
@@ -703,6 +732,12 @@ def load_account(name: str) -> dict:
     if "link_base" in data and article_media.is_article_account(data) and not valid_link_base(data["link_base"]):
         raise AccountError(f"{name}: 台帳の link_base が受け取れません（invalid_link_base・https の URL・"
                            f"query と # は付けない）")
+    for key in ("env", "token"):
+        if secret_path_problem(data.get(key)):
+            raise AccountError(
+                f"{name}: 台帳の {key} が括り {current_workspace()} の secrets/ の外を指しています"
+                f"（{SECRET_OUTSIDE}・main でない括りの秘密は $THTH_ROOT/secrets/<口座>{'.env' if key == 'env' else '.token'}"
+                f" に置く）")
     out = AccountConfig(data)
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):

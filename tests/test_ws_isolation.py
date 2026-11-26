@@ -70,7 +70,8 @@ def two_workspaces(tmp_path, monkeypatch):
     ws_admin.add("garden", lead="gamma")
     garden = root / "ws" / "garden"
     (garden / "accounts").mkdir()
-    make_account_json(str(garden / "accounts"), "gamma-garden", repo_dir=str(repo_b), project="gammaproj")
+    make_account_json(str(garden / "accounts"), "gamma-garden", repo_dir=str(repo_b), project="gammaproj",
+                      env="$THTH_ROOT/secrets/gamma-garden.env", token="$THTH_ROOT/secrets/gamma-garden.token")
     for name, base in (("alpha-main", root), ("gamma-garden", garden)):
         (base / "state" / name).mkdir(parents=True)
     return root, garden

@@ -73,6 +73,16 @@ ENTRIES = {
         "括りを移すのは、置き場ごと移す管理者の段取りで行ってください。",
         _LIST,
         "新しい媒体群は新しい媒体の名前（新しい repo）で始めると、移す作業が要りません。"),
+    "workspace_secret_outside": _entry(
+        "main でない括りの台帳が、括りの secrets/ の外（`~` や、ほかの括り・共通の根）の秘密を指しています。読んでいません。",
+        "秘密のファイルを `ws/<括り>/secrets/` に移し、台帳の env・token（主体なら token・consumer）を `$THTH_ROOT/secrets/<名前>.<種類>` に直してください。",
+        "thth admin ws show <括り>",
+        "新しい括りの口座は、その括りの中で `thth account add` すると、初めから括りの secrets/ を指す台帳ができます。"),
+    "account_in_two_workspaces": _entry(
+        "同じ名前の口座の台帳が 2 つの括りにあります。どちらにも入らずに止めました。",
+        "どちらの括りの口座かを確かめ、もう一方の台帳の名前を替えて退けてください（口座の名前は全部の括りを通して 1 つ）。",
+        _LIST,
+        "口座は `thth account add` でだけ作ると、ほかの括りにある名前を先に断れます。"),
     "workspaces_map_invalid": _entry(
         "括りの台帳（workspaces.json）が読めないか、形が違います。新しく書く操作はしていません。",
         "`tools/workspaces_check.py` で台帳の形を確かめ、誤りの行を直してください。",

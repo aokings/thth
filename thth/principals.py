@@ -296,6 +296,11 @@ def load_principal(name: str) -> dict:
     except (OSError, ValueError) as e:
         raise PrincipalError("principal_unreadable", f"主体の台帳が読めません: {name}") from e
     validate(name, data)
+    for key in ("token", "consumer"):
+        if accounts.secret_path_problem(data.get(key)):
+            raise PrincipalError(accounts.SECRET_OUTSIDE,
+                                 f"主体 {name} の {key} が括り {accounts.current_workspace()} の secrets/ の外を指しています"
+                                 f"（main でない括りの秘密は $THTH_ROOT/secrets/ に置く）")
     out = dict(data)
     for key in ("token", "consumer"):
         if key in out:

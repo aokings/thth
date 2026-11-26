@@ -152,7 +152,8 @@ def garden_draft(two_workspaces, tmp_path):  # noqa: F811
     from tests.conftest import init_real_repo, make_account_json, write_queue_file
     root, garden = two_workspaces
     repo = init_real_repo(tmp_path, "gamma-repo")
-    make_account_json(str(garden / "accounts"), "gamma-garden", repo_dir=str(repo), project="gammaproj")
+    make_account_json(str(garden / "accounts"), "gamma-garden", repo_dir=str(repo), project="gammaproj",
+                      env="$THTH_ROOT/secrets/gamma-garden.env", token="$THTH_ROOT/secrets/gamma-garden.token")
     path = write_queue_file(os.path.join(str(repo), "docs/sns/queue"), "drop.md",
                             fm_overrides={"status": "draft", "approved_sha": None, "account": "gamma-garden"},
                             body="## threads\n\ngarden の本文です。\n")
@@ -197,7 +198,8 @@ def test_write_only_on_the_keys_accounts(garden_draft):
     """同じ括りの口座でも、鍵に書いていない口座には書かない（読むのは括り全体・書くのは鍵の口座だけ）。"""
     from tests.conftest import make_account_json
     root, garden, repo, path = garden_draft
-    make_account_json(str(garden / "accounts"), "delta-garden", repo_dir=str(repo), project="deltaproj")
+    make_account_json(str(garden / "accounts"), "delta-garden", repo_dir=str(repo), project="deltaproj",
+                      env="$THTH_ROOT/secrets/delta-garden.env", token="$THTH_ROOT/secrets/delta-garden.token")
     with pytest.raises(ReportServiceError, match="pass_target_invalid"):
         sp.execute(_writer(), {"operation": "ws_command", "account": "gamma-garden",
                                "argv": ["withdraw", "--account", "delta-garden", "docs/sns/queue/drop.md"]})

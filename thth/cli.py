@@ -6026,9 +6026,42 @@ def _take_lane_flag(argv):
     return argv
 
 
+# timer の単位が打つ命令。`thth@<口座>` は `bin/thth-run` が印を付ける。`thth-collect@<口座>` の単位に印を
+# 足すのは段 4（単位の bytes は配った姿に固定・tests/test_v213_systemd_worker.py）。口座の名前は先頭の旗でない引数。
+TIMER_COMMANDS = ("run", "collect")
+FROM_ACCOUNT_ENV = "THTH_WS_FROM_ACCOUNT"
+
+
+def _enter_account_workspace(argv) -> int | None:
+    """timer の単位から呼ばれたとき（`THTH_WS_FROM_ACCOUNT=1`）だけ、口座の台帳のある括りに入る（括りの段 4 の準備）。
+
+    systemd の雛形の単位は `%i`（口座の名前）しか渡せず、括りを書けない。`THTH_WS` が書いてあればそれが勝つ。
+    印が無い打ち方（人・レーン）は今までどおり `THTH_WS` か `main` の中で動き、名前で別の括りへは入らない。
+    2 つの括りに同じ名前の台帳があれば、どちらにも入らずに断る（rc 2）。
+    """
+    if os.environ.get(FROM_ACCOUNT_ENV) != "1" or os.environ.get(accounts_mod.WS_ENV):
+        return None
+    if not argv or argv[0] not in TIMER_COMMANDS:
+        return None
+    name = next((a for a in argv[1:] if not a.startswith("-")), None)
+    if name is None:
+        return None
+    try:
+        ws = accounts_mod.workspace_of_account(name)
+    except accounts_mod.WorkspaceError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if ws and ws != accounts_mod.MAIN_WS:
+        os.environ[accounts_mod.WS_ENV] = ws
+    return None
+
+
 def _entry(argv=None) -> int:
     from . import refusals
     argv = _take_lane_flag(list(sys.argv[1:] if argv is None else argv))
+    refused = _enter_account_workspace(argv)
+    if refused is not None:
+        return refused
     # レーンを名指しした読むだけの命令は、鍵で VM の括りの中に通す（括りの段 3・`remote.passthrough`）。
     from . import remote as _remote
     try:
