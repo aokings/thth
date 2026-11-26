@@ -478,6 +478,53 @@ def run_maintain(account: str | None = None, *, check: bool = False,
     return 1 if attention else 0
 
 
+def run_maintain_workspaces(*, check: bool = False, as_json: bool = False, log=print, now=None,
+                            refresh=None) -> int:
+    """全部の括りの口座のトークンを保つ（括りの段 4 の準備・timer は引数無しで `thth maintain` を打つ）。
+
+    括りが `main` だけなら `run_maintain()` そのもの（出力も終了コードも今の本番と同じ）。
+    括りが 2 つ以上なら 1 つずつ入って回し、文は「括り <名>:」の見出しの下に、JSON は 1 つにまとめて
+    各行に `workspace` を付ける。口座の無い括り（main 以外）は飛ばす。1 つの括りが読めなくても
+    ほかの括りの更新は続ける（token の期限は括りごとに待ってくれない）。終了コードは悪いほう。
+    """
+    workspaces = accounts_mod.list_workspace_dirs()
+    if workspaces == [accounts_mod.MAIN_WS]:
+        return run_maintain(None, check=check, as_json=as_json, log=log, now=now, refresh=refresh)
+    from .ads import ledger as ads_ledger
+    worst, rows, done = 0, [], []
+    for ws in workspaces:
+        lines = []
+        try:
+            with accounts_mod.use_workspace(ws):
+                if ws != accounts_mod.MAIN_WS and not accounts_mod.list_account_names() and not ads_ledger.list_names():
+                    continue
+                rc = run_maintain(None, check=check, as_json=as_json, log=lines.append, now=now, refresh=refresh)
+        except accounts_mod.AccountError as exc:
+            print(f"括り {ws}: 読めないので回していません: {exc}", file=sys.stderr)
+            worst = max(worst, 1)
+            continue
+        worst = max(worst, rc)
+        done.append(ws)
+        if not as_json:
+            log(f"括り {ws}:")
+            for line in lines:
+                log(line)
+            continue
+        try:
+            data = json.loads("\n".join(lines)) if lines else {"accounts": []}
+        except ValueError:
+            data = {"accounts": []}
+            worst = max(worst, 1)
+        for row in data.get("accounts", []):
+            rows.append({**row, "workspace": ws})
+    if as_json:
+        now = now if now is not None else jst.now_jst()
+        log(json.dumps({"now": jst.iso(now), "checked": len(rows),
+                        "attention": len([r for r in rows if needs_attention(r)]),
+                        "workspaces": done, "accounts": rows}, ensure_ascii=False, indent=2))
+    return worst
+
+
 def _report_token(account_name: str, row: dict) -> None:
     """鍵の止まりの状態を控える（メールは出さない）。控えの失敗で maintain を落とさない（次の回に控え直す）。
 

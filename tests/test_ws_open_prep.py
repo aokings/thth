@@ -166,3 +166,28 @@ def test_tilde_is_refused_even_if_home_is_inside(two_workspaces, monkeypatch):  
     with accounts.use_workspace("garden"):
         with pytest.raises(accounts.AccountError, match=accounts.SECRET_OUTSIDE):
             accounts.load_account("gamma-garden")
+
+
+# ---- 口座の名前は全部の括りを通して 1 つ（`thth account add`） --------------------------------------
+
+def test_account_add_refuses_a_name_in_another_workspace(two_workspaces):  # noqa: F811
+    root, garden = two_workspaces
+    env = {k: v for k, v in os.environ.items() if k != "THTH_WS"}
+    for ws, name in (("main", "gamma-garden"), ("garden", "alpha-main")):
+        r = run_thth(["account", "add", name, "--media", "threads", "--project", "tryit", "--by", "test", "--force"],
+                     env={**env, "THTH_WS": ws})
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "account_name_in_other_workspace" in r.stdout + r.stderr
+    assert not (root / "accounts" / "gamma-garden.json").exists()
+    assert not (garden / "accounts" / "alpha-main.json").exists()
+
+
+def test_account_add_in_garden_writes_secrets_inside(two_workspaces):  # noqa: F811
+    root, garden = two_workspaces
+    env = {k: v for k, v in os.environ.items() if k != "THTH_WS"}
+    r = run_thth(["account", "add", "delta-garden", "--media", "threads", "--project", "tryit", "--by", "test"],
+                 env={**env, "THTH_WS": "garden"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    data = json.loads((garden / "accounts" / "delta-garden.json").read_text())
+    assert data["token"] == "$THTH_ROOT/secrets/delta-garden.token"
+    assert data["env"] == "$THTH_ROOT/secrets/delta-garden.env"

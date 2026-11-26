@@ -4702,6 +4702,9 @@ def cmd_maintain(args) -> int:
     投稿の可否と独立にトークンを保つ（`thth/maintain.py` の docstring 参照）。
     1 日 1 回の timer が引数無しで呼ぶ。人の手が要るものがあれば非ゼロで終わる。
     """
+    if args.account is None and not os.environ.get(accounts_mod.WS_ENV):
+        # 括りの段 4 の準備: 引数無し（timer の形）は全部の括りを回す。括りが main だけなら今と同じ。
+        return maintain_mod.run_maintain_workspaces(check=args.check, as_json=args.json, log=print)
     return maintain_mod.run_maintain(
         args.account, check=args.check, as_json=args.json, log=print)
 

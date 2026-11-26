@@ -504,6 +504,15 @@ def cmd_add(args) -> int:
     from . import refusal
     if accounts_mod.name_is_safe(name) and os.path.lexists(ads_ledger.path_for(name)):
         return refusal.emit(args, "account_registry_ambiguous", account=name)
+    # 括りの段 4 の準備: 口座の名前は全部の括りを通して 1 つ（設計 §2.2）。ほかの括りにあれば --force でも書かない
+    # （同じ名が 2 つあると、timer の入口が account_in_two_workspaces で止まる）。
+    if accounts_mod.name_is_safe(name):
+        try:
+            home = accounts_mod.workspace_of_account(name)
+        except accounts_mod.WorkspaceError:
+            home = "?"
+        if home is not None and home != accounts_mod.current_workspace():
+            return refusal.emit(args, "account_name_in_other_workspace", account=name)
     previous = {}
     if os.path.exists(path):
         if not getattr(args, "force", False):
