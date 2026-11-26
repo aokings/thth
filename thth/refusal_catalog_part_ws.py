@@ -19,10 +19,17 @@ def _entry(why, fix, command, better):
 ENTRIES = {
     "pass_unsupported": {
         "kind": "refusal",
-        "why": "その命令か旗は、鍵で括りの中に通す表にありません（読むだけの物だけを通します）。何も打っていません。",
-        "fix": "表にある命令（board・morning・observe・schedule の一覧・where-log・handoff-report・analytics-report・unanswered）と旗で打ち直してください。",
+        "why": "その命令か旗は、鍵で括りの中に通す表にありません。何も打っていません。",
+        "fix": "表にある命令と旗で打ち直してください。読むだけの物は board・morning・observe・schedule の一覧・where-log・handoff-report・analytics-report・unanswered・approvals、書く物は approve・revoke・withdraw です（`--by` は付けません。記録の名乗りは鍵から付きます）。",
         "command": None,
-        "better": "書く命令や目印を付ける旗が要るときは、括りの窓口のレーンか管理者に頼むと、記録に誰が打ったかが残ります。",
+        "better": "表に無い命令や目印を付ける旗が要るときは、括りの窓口のレーンか管理者に頼むと、記録に誰が打ったかが残ります。",
+        "doors": ("remote",), "since": _SINCE},
+    "pass_target_invalid": {
+        "kind": "refusal",
+        "why": "その口座か原稿は、この鍵で書ける所にありません（鍵の口座でない・括りの外・口座の repo に無いパス）。何も書いていません。",
+        "fix": "`--account <口座>` に鍵の口座を名指しし、原稿は口座の repo の根からの相対パス（例 `queue/2026-12-01.md`）で渡してください。",
+        "command": "thth --lane <レーン> approve --account <口座> <repo の中の相対パス>",
+        "better": "ディレクトリ（例 `queue/`）を渡すと、承認なら下書きだけ、取り消しなら承認済みだけを VM が拾います。",
         "doors": ("remote",), "since": _SINCE},
     "lane_invalid": {
         "kind": "refusal",

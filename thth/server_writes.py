@@ -25,8 +25,8 @@ SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scop
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving',
     'credential_unavailable','write_unavailable',
-    # 括りの段 3: 読むだけの通り道（`server_passthrough.PASS` に無い命令・旗）。
-    'pass_unsupported'))
+    # 括りの段 3: 括りの中に通す道（`server_passthrough.ALL` に無い命令・旗／鍵の口座の repo に無い原稿）。
+    'pass_unsupported','pass_target_invalid'))
 from .lint import REASONS as LINT_REASONS
 # `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
 # path をそのままサーバの口から出さない（2.14.1）。

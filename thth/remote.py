@@ -420,13 +420,13 @@ def lane_account() -> str | None:
 
 
 def passthrough(argv) -> int | None:
-    """`thth --lane <レーン> <読むだけの命令> …` を、鍵で VM の括りの中に通す（括りの段 3）。
+    """`thth --lane <レーン> <読むだけの命令／表の書く命令> …` を、鍵で VM の括りの中に通す（括りの段 3）。
 
     レーンを名指ししていない・命令が通り道の表に無いときは None（今までどおり手元で打つ）。
-    通すかどうか・旗の検めは VM が決める（`server_passthrough.PASS`）。ここは頼んで、答えを出すだけ。
+    通すかどうか・旗の検めは VM が決める（`server_passthrough.ALL`）。ここは頼んで、答えを出すだけ。
     """
     from . import server_passthrough
-    if not argv or argv[0] not in server_passthrough.PASS or current_lane() is None:
+    if not argv or argv[0] not in server_passthrough.ALL or current_lane() is None:
         return None
     if load() is None:
         return _fail("not_logged_in", f"レーン {current_lane()} の鍵がありません。`thth login --lane {current_lane()}` で受け取ってください")
