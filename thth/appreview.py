@@ -239,7 +239,8 @@ SEGMENTS = (
          ("hand", "Instagram から消えたのを見せたら Return")),
     _seg("ig-brand-creators", "instagram", "instagram_branded_content_brand — view, add and remove creators on the "
          "brand's approved list.", ["instagram_branded_content_brand"],
-         ("prep", "Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする。追加の相手に 2 つ目のテスト口座を用意する"),
+         ("prep", "Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする（masaru 自身の端末でできるときだけ。"
+                  "ほかの人の端末は頼まない）。追加の相手に 2 つ目のテスト口座を用意する"),
          ("cmd", "thth brand creators {IG} list {CREATOR}"),
          ("two", "thth brand creators {IG} approve {CREATOR} --by {BY}"),
          ("cmd", "thth brand creators {IG} list {CREATOR}"),
@@ -250,8 +251,10 @@ SEGMENTS = (
          # 11/26（masaru「打ってよい」）: soh-ig で approve（POST）は再び success・直後の list は 0 件・remove（DELETE）は
          # Meta まで届いて post_missing（id が無いか見えない）で断られた。足した物が読みにも外しにも見えない。id の種類
          # （数字の IG id で正しいか）か Meta 側の挙動かは未確認（公式の頁は 404）。
-         real_first="remove（DELETE）は 11/26 に本物で打ち、Meta が post_missing で断った【未解決】。approve（POST）は 11/20・"
-                    "11/26 に success、list は承認の直後も 0 件。録画の前に id の種類を確かめる"),
+         # 決め（11/21 第21・22、11/26 に確かめ直して同じ）: list の 0 件と remove の断りは Meta 側の挙動として
+         # 録画で説明する。調べ直さない・口座の種類や設定を変えに行かない・ほかの人の端末を頼まない。
+         real_first="approve は 11/20・11/26 に success、list は承認の直後も 0 件、remove は Meta が post_missing で断る。"
+                    "これは Meta 側の挙動として録画で説明すると 11/21 に決めてある（調べ直さない・口座の設定を変えない）"),
     _seg("ig-brand-promote", "instagram", "instagram_branded_content_creator — allow or revoke a brand's use of a "
          "tagged post in partnership ads.", ["instagram_branded_content_creator"],
          ("prep", "クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく"),
@@ -312,6 +315,14 @@ SEGMENTS = (
 
 # 今回の申請の範囲から外した区間（masaru 2026-11-18）。台本・表・tsv には載せない。口は残し、申し込めるように
 # なったら `DEFERRED` から戻して足す申請を出す。
+# 受信箱・DM・コメントを読む区間は、masaru の試しのページと IG（shitami-fb・shitami-ig）だけで撮る
+# （masaru 11/26「通信の秘密ってもんがあるでしょうが」・段取り_Meta申請の受信箱とコメントは試しの口座で_2026-11-26.md）。
+# 店の受信箱（soh-fb・soh-ig など）には本物のお客さんの通信がある。家族の端末も前提にしない。
+# `tools/appreview_rec.sh` は TSV の `only` 行を読み、{FB}・{IG} がこの口座でなければその区間を撮らずに断る。
+INBOX_TEST_ACCOUNTS = {"facebook": "shitami-fb", "instagram": "shitami-ig"}
+INBOX_SEGMENTS = ("fb-comments", "fb-webhook", "fb-dm", "fb-human-agent", "fb-events",
+                  "ig-comments", "ig-dm", "ig-events")
+
 DEFERRED_SEGMENTS = (
     # ---------------------------------------------------------------- 申し込む口が無い・審査が要らない（masaru 2026-11-18「推しでOK」）
     # 原文の出所と区間ごとの理由は docs/段取り_Meta申請の録画_2026-11-18.md §5。理由の正本は `DEFERRED`。
@@ -560,6 +571,9 @@ def tsv() -> str:
         lines.append("\t".join(("items", " ".join(segment["items"]) or "-")))
         if segment["real_first"]:
             lines.append("\t".join(("real", segment["real_first"])))
+        if segment["id"] in INBOX_SEGMENTS:
+            lines.append("\t".join(("only", "FB=" + INBOX_TEST_ACCOUNTS["facebook"]
+                                     + " IG=" + INBOX_TEST_ACCOUNTS["instagram"])))
         for step in segment["steps"]:
             lines.append("\t".join(step))
         lines.append("end")

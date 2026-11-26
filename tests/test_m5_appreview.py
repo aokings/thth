@@ -261,6 +261,32 @@ def test_知らない区間のidは名前を出してrc2で断る():
         assert "区間の数" not in done.stdout and "== 区間" not in done.stdout
 
 
+def _bash_with(env, *args):
+    return subprocess.run(["bash", str(REC), *args], capture_output=True, text=True, timeout=60, cwd=str(ROOT),
+                          env={**os.environ, "REC_BY": "tester", **env})
+
+
+def test_受信箱を読む区間は試しの口座でしか撮らない():
+    """masaru 11/26「通信の秘密ってもんがあるでしょうが」: 店の受信箱（soh-fb・soh-ig）を録画で読まない。
+    段取り_Meta申請の受信箱とコメントは試しの口座で_2026-11-26.md の決めを、道具の断りにしてある。"""
+    assert set(appreview.INBOX_SEGMENTS) <= {segment["id"] for segment in appreview.SEGMENTS}
+    assert appreview.INBOX_TEST_ACCOUNTS == {"facebook": "shitami-fb", "instagram": "shitami-ig"}
+    only = [line for line in appreview.tsv().splitlines() if line.startswith("only\t")]
+    assert len(only) == len(appreview.INBOX_SEGMENTS) == 8
+    for sid in appreview.INBOX_SEGMENTS:
+        for env in ({"REC_V_FB": "soh-fb"}, {"REC_V_IG": "soh-ig"}):
+            done = _bash_with(env, "--dry", sid)
+            if sid.startswith("fb-") != ("REC_V_FB" in env):
+                continue                          # FB の区間に IG の値だけ渡しても断らない（使わない穴）
+            assert done.returncode == 2, (sid, env, done.stdout)
+            assert "== 区間" not in done.stdout and "soh-" in done.stdout and "shitami-" in done.stdout
+    done = _bash_with({"REC_V_FB": "shitami-fb", "REC_V_IG": "shitami-ig"}, "--dry", *appreview.INBOX_SEGMENTS)
+    assert done.returncode == 0, done.stdout
+    assert "区間の数: 8" in done.stdout and "soh-" not in done.stdout
+    done = _bash_with({"REC_V_FB": "soh-fb", "REC_V_IG": "soh-ig"}, "--dry", "fb-read", "ig-basic")
+    assert done.returncode == 0 and "区間の数: 2" in done.stdout    # 受信箱を読まない区間は今の口座のまま
+
+
 def test_取り下げの区間は二段で_byが付く():
     """`thth retract` は手元の道も遠くの道も二段確認で、手元の道では --by が要る。cmd のままだと一段目で止まり消えない。"""
     found = [(segment["id"], step) for segment in appreview.SEGMENTS for step in segment["steps"]
