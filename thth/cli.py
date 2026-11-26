@@ -6029,8 +6029,9 @@ def _take_lane_flag(argv):
     return argv
 
 
-# timer の単位が打つ命令。`thth@<口座>` は `bin/thth-run` が印を付ける。`thth-collect@<口座>` の単位に印を
-# 足すのは段 4（単位の bytes は配った姿に固定・tests/test_v213_systemd_worker.py）。口座の名前は先頭の旗でない引数。
+# timer の単位が打つ命令。`thth@<口座>` は `bin/thth-run` が印を付ける。`thth-collect@<口座>`・`thth-map@<project>` の
+# 単位に印を足すのは段 4（単位は配った姿のまま・tests/test_v213_systemd_worker.py）。口座の名前は先頭の旗でない引数。
+# `thth map collect <project>` は口座でなく project の名前（`accounts.workspace_of_project`）。
 TIMER_COMMANDS = ("run", "collect")
 FROM_ACCOUNT_ENV = "THTH_WS_FROM_ACCOUNT"
 
@@ -6044,13 +6045,19 @@ def _enter_account_workspace(argv) -> int | None:
     """
     if os.environ.get(FROM_ACCOUNT_ENV) != "1" or os.environ.get(accounts_mod.WS_ENV):
         return None
-    if not argv or argv[0] not in TIMER_COMMANDS:
+    if not argv:
         return None
-    name = next((a for a in argv[1:] if not a.startswith("-")), None)
+    by_project = argv[:2] == ["map", "collect"]
+    if argv[0] not in TIMER_COMMANDS and not by_project:
+        return None
+    name = next((a for a in argv[2 if by_project else 1:] if not a.startswith("-")), None)
     if name is None:
         return None
     try:
+        # `map collect` は project（口座の名前でもよい・`map_store.project_accounts`）。
         ws = accounts_mod.workspace_of_account(name)
+        if ws is None and by_project:
+            ws = accounts_mod.workspace_of_project(name)
     except accounts_mod.WorkspaceError as exc:
         print(str(exc), file=sys.stderr)
         return 2

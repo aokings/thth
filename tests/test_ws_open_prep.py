@@ -191,3 +191,54 @@ def test_account_add_in_garden_writes_secrets_inside(two_workspaces):  # noqa: F
     data = json.loads((garden / "accounts" / "delta-garden.json").read_text())
     assert data["token"] == "$THTH_ROOT/secrets/delta-garden.token"
     assert data["env"] == "$THTH_ROOT/secrets/delta-garden.env"
+
+
+# ---- `thth map collect <project>` の timer も project の括りに入る --------------------------------
+
+def test_workspace_of_project(two_workspaces):  # noqa: F811
+    assert accounts.workspace_of_project("gammaproj") == "garden"
+    assert accounts.workspace_of_project("alphaproj") == "main"
+    assert accounts.workspace_of_project("nobody") is None
+
+
+def test_project_in_two_workspaces_is_refused(two_workspaces, monkeypatch, capsys):  # noqa: F811
+    from thth import cli
+    root, garden = two_workspaces
+    make_account_json(str(garden / "accounts"), "alpha-garden", repo_dir=str(garden / "r"), project="alphaproj",
+                      env="$THTH_ROOT/secrets/a.env", token="$THTH_ROOT/secrets/a.token")
+    with pytest.raises(accounts.WorkspaceError, match="project_in_two_workspaces"):
+        accounts.workspace_of_project("alphaproj")
+    monkeypatch.delenv("THTH_WS", raising=False)
+    monkeypatch.setenv(cli.FROM_ACCOUNT_ENV, "1")
+    assert cli._enter_account_workspace(["map", "collect", "alphaproj"]) == 2
+    assert "project_in_two_workspaces" in capsys.readouterr().err
+    assert "THTH_WS" not in os.environ
+
+
+@pytest.mark.parametrize("argv,mark,want", [
+    (["map", "collect", "gammaproj"], "1", "garden"),
+    (["map", "collect", "gamma-garden"], "1", "garden"),   # 口座の名前でもよい（map と同じ）
+    (["map", "collect", "alphaproj"], "1", None),          # main は THTH_WS を書かない
+    (["map", "collect", "gammaproj"], None, None),         # 印が無ければ入らない
+    (["map", "show", "gammaproj"], "1", None),             # timer の命令でない
+])
+def test_map_collect_enters_the_project_workspace(two_workspaces, monkeypatch, argv, mark, want):  # noqa: F811
+    from thth import cli
+    monkeypatch.delenv("THTH_WS", raising=False)
+    if mark:
+        monkeypatch.setenv(cli.FROM_ACCOUNT_ENV, mark)
+    else:
+        monkeypatch.delenv(cli.FROM_ACCOUNT_ENV, raising=False)
+    assert cli._enter_account_workspace(argv) is None
+    assert os.environ.get("THTH_WS") == want
+
+
+def test_timer_map_collect_reaches_the_garden_project(two_workspaces):  # noqa: F811
+    """印つきの `thth map collect <garden の project>` は garden の台帳で project を見つける（世間の層は無効のまま＝
+    媒体は叩かない）。印が無ければ main で探して project_unknown。"""
+    env = {k: v for k, v in os.environ.items() if k not in ("THTH_WS", "THTH_MAP_WORLD")}
+    with_mark = run_thth(["map", "collect", "gammaproj"], env={**env, "THTH_WS_FROM_ACCOUNT": "1"})
+    without = run_thth(["map", "collect", "gammaproj"], env=env)
+    assert with_mark.returncode == 0, with_mark.stdout + with_mark.stderr
+    assert "world_layer_disabled" in with_mark.stdout
+    assert without.returncode == 2 and "project_unknown" in without.stderr

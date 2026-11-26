@@ -468,6 +468,34 @@ def workspace_of_account(account_name: str) -> str | None:
     return found[0] if found else None
 
 
+def workspace_of_project(project: str) -> str | None:
+    """project の名前から括りを引く（括りの段 4 の準備・`thth map collect <project>` の timer の入口）。
+
+    台帳の `project` 欄を全部の括りで見る（写しの表を作らない）。どの括りの台帳にも無ければ None。
+    2 つの括りに同じ project の口座があれば、どちらとも決めずに断る（`project_in_two_workspaces`）。
+    読めない台帳は飛ばす（その口座を map が拾わないのと同じ・`map_store.project_accounts`）。
+    """
+    found = set()
+    for ws in list_workspace_dirs():
+        folder = os.path.join(workspace_dir(ws), "accounts")
+        if not os.path.isdir(folder) or os.path.islink(folder):
+            continue
+        for entry in sorted(os.listdir(folder)):
+            if not entry.endswith(".json") or not name_is_safe(entry[:-5]):
+                continue
+            try:
+                with open(os.path.join(folder, entry), encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict) and data.get("project") == project:
+                found.add(ws)
+                break
+    if len(found) > 1:
+        raise WorkspaceError("project_in_two_workspaces")
+    return next(iter(found), None)
+
+
 def running_from_repo() -> bool:
     """`APP_DIR` が clone（か worktree）か。**`site-packages/` では False。**
 
