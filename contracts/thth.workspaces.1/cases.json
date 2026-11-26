@@ -1,0 +1,99 @@
+{
+  "about": "媒体 → 括りの対応表 thth.workspaces/1 の見本。thth・hub・h2d の試験が同じこの 1 枚を読み、同じ答えを出すことを確かめる。約束は thth の docs/約束_括りの対応表_thth.workspaces.1.md。媒体の名前は架空。",
+  "schema": "thth.contract-cases/1",
+  "cases": [
+    {
+      "name": "file_missing",
+      "about": "ファイルが無い。全部の媒体が main（今の本番と同じ）。",
+      "file": null,
+      "valid": true,
+      "workspace_of": {"alpha": "main", "beta": "main", "never-listed": "main"},
+      "same_workspace": [["alpha", "beta", true]]
+    },
+    {
+      "name": "one_workspace_unlisted_main",
+      "about": "括りが main の 1 つだけ。表に無い名前も main。",
+      "file": {
+        "schema": "thth.workspaces/1",
+        "updated_at": "2026-11-27T09:00:00+09:00",
+        "unlisted": "main",
+        "workspaces": {"main": {"owner": "masaru", "lead": "hubby", "created": "2026-11-27"}},
+        "media": {"alpha": "main", "beta": "main", "hubby": "main"}
+      },
+      "valid": true,
+      "workspace_of": {"alpha": "main", "beta": "main", "never-listed": "main"},
+      "same_workspace": [["alpha", "never-listed", true]],
+      "owner_of": {"main": "masaru"},
+      "lead_of": {"main": "hubby"}
+    },
+    {
+      "name": "two_workspaces",
+      "about": "2 つ目の括りを開いたあと。unlisted は null。表に無い名前はどの括りでもない（断る）。",
+      "file": {
+        "schema": "thth.workspaces/1",
+        "updated_at": "2026-12-20T09:00:00+09:00",
+        "unlisted": null,
+        "workspaces": {
+          "main": {"owner": "masaru", "lead": "hubby"},
+          "garden": {"owner": "masaru", "lead": "gamma/desk"}
+        },
+        "media": {"alpha": "main", "hubby": "main", "gamma": "garden", "delta": "garden"}
+      },
+      "valid": true,
+      "workspace_of": {"alpha": "main", "gamma": "garden", "delta": "garden", "never-listed": null},
+      "same_workspace": [
+        ["alpha", "hubby", true],
+        ["gamma", "delta", true],
+        ["alpha", "gamma", false],
+        ["never-listed", "never-listed", false],
+        ["alpha", "never-listed", false]
+      ],
+      "owner_of": {"main": "masaru", "garden": "masaru", "nowhere": null},
+      "lead_of": {"garden": "gamma/desk"}
+    },
+    {
+      "name": "bad_name_is_no_workspace",
+      "about": "形の違う媒体の名前（大文字・空・/ 入り）は、unlisted が main でも括りを持たない。",
+      "file": {
+        "schema": "thth.workspaces/1",
+        "unlisted": "main",
+        "workspaces": {"main": {"owner": "masaru", "lead": "hubby"}},
+        "media": {"alpha": "main"}
+      },
+      "valid": true,
+      "workspace_of": {"Alpha": null, "": null, "alpha/lane": null, "alpha": "main"}
+    },
+    {
+      "name": "broken_not_json",
+      "about": "JSON でない。読む側は断る（main に倒さない）。",
+      "file_text": "{\"schema\": \"thth.workspaces/1\", ",
+      "valid": false
+    },
+    {
+      "name": "broken_unknown_schema",
+      "file": {"schema": "thth.workspaces/2", "unlisted": "main", "workspaces": {"main": {"owner": "masaru", "lead": "hubby"}}, "media": {}},
+      "valid": false
+    },
+    {
+      "name": "broken_media_points_nowhere",
+      "file": {"schema": "thth.workspaces/1", "unlisted": "main", "workspaces": {"main": {"owner": "masaru", "lead": "hubby"}}, "media": {"alpha": "garden"}},
+      "valid": false
+    },
+    {
+      "name": "broken_two_workspaces_unlisted_main",
+      "about": "括りが 2 つなのに unlisted が main のまま（表に足し忘れた媒体が main に混ざる）。",
+      "file": {
+        "schema": "thth.workspaces/1",
+        "unlisted": "main",
+        "workspaces": {"main": {"owner": "masaru", "lead": "hubby"}, "garden": {"owner": "masaru", "lead": "gamma"}},
+        "media": {"alpha": "main", "gamma": "garden"}
+      },
+      "valid": false
+    },
+    {
+      "name": "broken_missing_unlisted",
+      "file": {"schema": "thth.workspaces/1", "workspaces": {"main": {"owner": "masaru", "lead": "hubby"}}, "media": {}},
+      "valid": false
+    }
+  ]
+}
