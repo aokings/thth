@@ -247,8 +247,11 @@ SEGMENTS = (
          # 11/18 GET（list）はページの鍵で通った・11/21 引数なしは 400（id を渡す形で正しい）・11/20 approve（POST）は
          # soh-ig で success true（段取り 録画 §6・申し送り 第21〜22）。DELETE（remove）は本物で未・list は承認の直後も 0 件
          # （Meta 側の挙動・`thth/meta_brand.py` が注を出す）なので、印は残して中身を今の未確認に合わせた（11/23）。
-         real_first="remove（DELETE）を本物で 1 回打つ【未】。GET はページの鍵で通り、approve（POST）は 11/20 に通った。"
-                    "list は承認の直後も 0 件に映りうる（Meta 側・2 回目の list の 0 件を録画で説明する）"),
+         # 11/26（masaru「打ってよい」）: soh-ig で approve（POST）は再び success・直後の list は 0 件・remove（DELETE）は
+         # Meta まで届いて post_missing（id が無いか見えない）で断られた。足した物が読みにも外しにも見えない。id の種類
+         # （数字の IG id で正しいか）か Meta 側の挙動かは未確認（公式の頁は 404）。
+         real_first="remove（DELETE）は 11/26 に本物で打ち、Meta が post_missing で断った【未解決】。approve（POST）は 11/20・"
+                    "11/26 に success、list は承認の直後も 0 件。録画の前に id の種類を確かめる"),
     _seg("ig-brand-promote", "instagram", "instagram_branded_content_creator — allow or revoke a brand's use of a "
          "tagged post in partnership ads.", ["instagram_branded_content_creator"],
          ("prep", "クリエイター側のテスト口座で、ブランドをタグ付けしたタイアップ投稿を Instagram のアプリで 1 本出しておく"),
