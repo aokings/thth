@@ -435,6 +435,16 @@ class use_workspace:
         return False
 
 
+def account_workspace(account_name: str) -> "use_workspace":
+    """口座の名前から括りを引いて、その括りに入る（括りの段 2）。
+
+    **使ってよいのは、括りをまたいで口座を回す VM の常駐（`activity`・`api_requests`）だけ。**
+    命令は括りの中で動くので、名前で別の括りへ入ってはいけない。どの括りにも台帳が無い名前は
+    `main`（招待を受ける前の口座・今の本番と同じ）。
+    """
+    return use_workspace(workspace_of_account(account_name) or MAIN_WS)
+
+
 def list_workspace_dirs() -> list[str]:
     """フォルダのある括りの名（`main` は根にいても含める）。管理者の一覧用。"""
     names = {MAIN_WS}

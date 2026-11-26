@@ -17,6 +17,13 @@ def _entry(why, fix, command, better):
 
 
 ENTRIES = {
+    "lane_invalid": {
+        "kind": "refusal",
+        "why": "レーンの名の形が違います（鍵のファイルの名前になる所です）。何も読んでいません。",
+        "fix": "レーンの名は英小文字・数字・`-` で、`<repo>` か `<repo>-<レーン>` にしてください（hub の名乗りのファイルと同じ付け方）。",
+        "command": "thth login --lane <レーン>",
+        "better": "レーンの入口の文書に `thth --lane <レーン>` の 1 行を書いておくと、毎回の名指しを取り違えません。",
+        "doors": ("cli", "remote"), "since": _SINCE},
     "workspace_name_invalid": _entry(
         "括りの名の形が違います。何も書いていません。",
         "括りの名は小文字で始まる英小文字・数字・`-`（32 字まで）にしてください。",

@@ -100,7 +100,7 @@ def load_credentials(path: Path):
         credentials = []
         seen = set()
         for item in config["credentials"]:
-            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
+            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor", "workspace"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
                 raise ValueError("invalid_credential")
             digest = item["sha256"]
             if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -118,14 +118,22 @@ def load_credentials(path: Path):
                     value = read_registry_ledger(ledger)
                     allowed[ledger.stem] = registry_project(value)
             context = ReportContext(allowed, scope=scope, writes=item.get('writes', False), actor=item.get('actor'),
-                                    credential_digest=digest, credentials_path=str(Path(path).absolute()))
-            from . import leave, leave_gate
+                                    credential_digest=digest, credentials_path=str(Path(path).absolute()),
+                                    workspace=item.get('workspace'))
+            from . import accounts, leave, leave_gate
             from dataclasses import replace
             if scope == 'admin':
                 context=replace(context,allowed_accounts={**context.allowed_accounts,**{
                     name:context.allowed_accounts.get(name) for name in leave.names()}})
             else:
-                excluded={name:project for name,project in context.allowed_accounts.items() if leave_gate.stopped(name)}
+                def _stopped(name):
+                    try:
+                        scope = accounts.account_workspace(name)  # 止めの印は口座の括りにある（括りの段 2）
+                    except accounts.AccountError:
+                        raise ValueError("invalid_registry") from None
+                    with scope:
+                        return leave_gate.stopped(name)
+                excluded={name:project for name,project in context.allowed_accounts.items() if _stopped(name)}
                 context=replace(context,allowed_accounts={name:project for name,project in context.allowed_accounts.items()
                                                         if name not in excluded},excluded_accounts=excluded)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))

@@ -76,6 +76,9 @@ def _context(person, account, key_sha256, credentials_path):
         if revoked or context.scope != "user" or context.actor != person or (
                 account not in context.allowed_accounts and account not in context.excluded_accounts):
             raise Refused("invalid_key")
+        if context.workspace is not None and context.workspace != accounts.current_workspace():
+            # 鍵の括りと口座の括りが違う: 無い鍵と同じに断る（名前を当てて回る探りに答えない・括りの段 2）。
+            raise Refused("invalid_key")
         if now >= expiry:
             raise Refused("key_expired")
         return context
@@ -174,9 +177,21 @@ def _valid(item) -> bool:
 
 
 def handle(person, item, credentials_path):
-    """1 件を行い `{request_id, account, status, result}` を返す。同じ依頼をもう一度は行わない。"""
+    """1 件を行い `{request_id, account, status, result}` を返す。同じ依頼をもう一度は行わない。
+
+    口座の台帳のある括りに入って行う（印も命令もその括りの置き場・括りの段 2）。
+    """
     if not _valid(item):
         return None
+    try:
+        scope = accounts.account_workspace(item["account"])
+    except accounts.AccountError:
+        return None
+    with scope:
+        return _handle(person, item, credentials_path)
+
+
+def _handle(person, item, credentials_path):
     request_id, account = item["request_id"], item["account"]
     name = REQUEST_ID.fullmatch(request_id).group(1) + ".json"
     try:
@@ -236,7 +251,8 @@ def undelivered(names) -> list:
     now = time.time()
     for account in sorted(set(names)):
         try:
-            with server_files.directory(_directory(account), private=True) as fd:
+            with accounts.account_workspace(account), \
+                    server_files.directory(_directory(account), private=True) as fd:
                 with server_files.lock_at(fd, ".lock"):
                     for name in sorted(os.listdir(fd)):
                         if not name.endswith(".json") or not relay.OPAQUE.fullmatch(name[:-5]):
@@ -265,7 +281,8 @@ def delivered(entries):
     for entry in entries:
         try:
             match = REQUEST_ID.fullmatch(entry["request_id"])
-            with server_files.directory(_directory(entry["account"]), private=True) as fd:
+            with accounts.account_workspace(entry["account"]), \
+                    server_files.directory(_directory(entry["account"]), private=True) as fd:
                 with server_files.lock_at(fd, ".lock"):
                     name = match.group(1) + ".json"
                     record = _read(fd, name)

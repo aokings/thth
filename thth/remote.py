@@ -47,8 +47,38 @@ class RemoteError(Exception):
         self.days_left = days_left
 
 
+LANE_ENV = "THTH_LANE"
+# レーンの鍵のファイルの名前（`<repo>` か `<repo>-<レーン>`。hub の名乗りのファイルと同じ付け方・括りの段 2）。
+LANE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}\Z")
+
+
+def lanes_dir() -> str:
+    return os.path.expanduser("~/.config/thth/lanes")
+
+
+def current_lane() -> str | None:
+    """`thth --lane <レーン> …` か環境変数 `THTH_LANE`。形が違えば `lane_invalid`。"""
+    lane = os.environ.get(LANE_ENV)
+    if not lane:
+        return None
+    if not LANE_NAME.fullmatch(lane):
+        raise RemoteError("lane_invalid", rc=2)
+    return lane
+
+
 def config_path() -> str:
-    return os.environ.get("THTH_REMOTE_CONFIG") or os.path.expanduser("~/.config/thth/remote.json")
+    """鍵のファイル。`THTH_REMOTE_CONFIG` → レーンの鍵 `~/.config/thth/lanes/<レーン>.json` → `remote.json`。
+
+    レーンを名指ししたときは、そのレーンのファイルだけを見る（無ければ `not_logged_in`。ほかのレーンや
+    `remote.json` へ黙って倒さない）。名指しが無ければ今までどおり `remote.json`（括りの設計 §4.1・§4.2）。
+    """
+    explicit = os.environ.get("THTH_REMOTE_CONFIG")
+    if explicit:
+        return explicit
+    lane = current_lane()
+    if lane:
+        return os.path.join(lanes_dir(), lane + ".json")
+    return os.path.expanduser("~/.config/thth/remote.json")
 
 
 def configured() -> bool:
@@ -96,7 +126,27 @@ def _fail(code, message=None) -> int:
                         door="remote")
 
 
+def _with_lane(value: dict) -> dict:
+    """レーンの鍵のファイルには、どのレーンの物かを控える（値は鍵の外・括りの段 2）。"""
+    lane = current_lane()
+    return {**value, "lane": lane} if lane else value
+
+
+def _take_lane(args) -> int | None:
+    """`login`・`logout` の `--lane` を、この process のレーンにする。形が違えば断る。"""
+    lane = getattr(args, "lane", None)
+    if lane is None:
+        return None
+    if not LANE_NAME.fullmatch(lane):
+        return _fail("lane_invalid")
+    os.environ[LANE_ENV] = lane
+    return None
+
+
 def cmd_login(args) -> int:
+    refused = _take_lane(args)
+    if refused is not None:
+        return refused
     if getattr(args, "key", None):
         # 値は読まずに捨てる（控えない・表示しない）。
         return _fail("key_in_argument", "鍵を引数で渡すと shell の履歴に残ります。"
@@ -124,7 +174,7 @@ def cmd_login(args) -> int:
         return _fail("invalid_key_format", "鍵の形ではありません（英数字と - _ の 16 字以上）。" + LOGIN_NEXT)
     path = config_path()
     try:
-        secrets_fs.atomic_write_json(path, {"url": url, "key": key}, mode=0o600, dir_mode=0o700)
+        secrets_fs.atomic_write_json(path, _with_lane({"url": url, "key": key}), mode=0o600, dir_mode=0o700)
     except OSError as exc:
         return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
     print(f"保存しました: {path}（{url}）")
@@ -213,7 +263,8 @@ def _browser_login(url, *, open_browser=True) -> int:
         return _fail("login_failed", "thth.me の答えが鍵の形ではありません。`thth login` をやり直してください")
     path = config_path()
     try:
-        secrets_fs.atomic_write_json(path, {"url": url, "key": key, "account": account}, mode=0o600, dir_mode=0o700)
+        secrets_fs.atomic_write_json(path, _with_lane({"url": url, "key": key, "account": account}),
+                                     mode=0o600, dir_mode=0o700)
     except OSError as exc:
         return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
     print(f"保存しました: {path}（{account}）")
@@ -222,6 +273,9 @@ def _browser_login(url, *, open_browser=True) -> int:
 
 
 def cmd_logout(args) -> int:
+    refused = _take_lane(args)
+    if refused is not None:
+        return refused
     path = config_path()
     try:
         os.unlink(path)
@@ -1864,8 +1918,11 @@ def register(sub) -> None:
     p.add_argument("--paste", action="store_true", help="貼る道: 発行済みの鍵を端末で入れる（表示しない）")
     # 受けるのは断るためだけ（`key_in_argument`）。help には出さない。
     p.add_argument("key", nargs="?", default=None, help=argparse_suppress())
+    p.add_argument("--lane", default=None,
+                   help="レーンの鍵として ~/.config/thth/lanes/<レーン>.json に保存する（`thth --lane <レーン> …` で使う）")
     p.set_defaults(func=cmd_login)
     q = sub.add_parser("logout", help="保存した thth.me の鍵を消す")
+    q.add_argument("--lane", default=None, help="そのレーンの鍵だけを消す")
     q.set_defaults(func=cmd_logout)
 
 

@@ -74,6 +74,18 @@ def owners(credentials_path) -> dict:
             continue
         for account, project in context.allowed_accounts.items():
             out.setdefault(context.actor, {})[account] = project
+    # 招待で入った口座は、どの括りにあっても持ち主（常駐は括りをまたいで回す・括りの段 2）。
+    for workspace in accounts.list_workspace_dirs():
+        try:
+            scope = accounts.use_workspace(workspace)
+        except accounts.AccountError:
+            continue
+        with scope:
+            _invite_owners(out)
+    return out
+
+
+def _invite_owners(out):
     for name in accounts.list_account_names():
         try:
             cfg = accounts.load_account(name)
@@ -90,7 +102,12 @@ def owners(credentials_path) -> dict:
             continue
         if accounts.is_invite_account(cfg) and relay.PERSON.fullmatch(name):
             out.setdefault(name, {})[name] = cfg.get("project")
-    return out
+
+
+def _workspace_field() -> dict:
+    """新しい鍵の行に括りを書く（根の外の括りだけ。main は今の行の形のまま・括りの段 2）。"""
+    workspace = accounts.current_workspace()
+    return {} if workspace == accounts.MAIN_WS else {"workspace": workspace}
 
 
 def owns(credentials_path, person, account) -> bool:
@@ -282,7 +299,7 @@ def rotate(credentials_path, account, person, sha256):
                 raise ValueError("credentials_full")
             config["credentials"].append({"sha256": sha256, "expires_at": expires, "revoked": False,
                                           "accounts": {account: project}, "scope": "user", "writes": True,
-                                          "actor": person})
+                                          "actor": person, **_workspace_field()})
         return True
 
     changed = _rewrite_credentials(credentials_path, change, "credential_rotated", account, person,
@@ -341,7 +358,20 @@ def _valid_action(action):
 
 
 def apply(person, action, credentials_path) -> dict:
-    """1 件の操作を行い `{id, outcome, reason}` を返す（例外は外へ出さない）。"""
+    """1 件の操作を行い `{id, outcome, reason}` を返す（例外は外へ出さない）。
+
+    口座の台帳のある括りに入って行う（括りの段 2）。
+    """
+    account = action.get("account") if type(action) is dict else None
+    try:
+        scope = accounts.account_workspace(account) if isinstance(account, str) else accounts.use_workspace(accounts.MAIN_WS)
+    except accounts.AccountError:
+        scope = accounts.use_workspace(accounts.MAIN_WS)
+    with scope:
+        return _apply(person, action, credentials_path)
+
+
+def _apply(person, action, credentials_path) -> dict:
     action_id = action.get("id") if type(action) is dict and isinstance(action.get("id"), str) \
         and relay.OPAQUE.fullmatch(action.get("id")) else None
     if action_id is None:
@@ -387,7 +417,8 @@ def _summaries(person, names, credentials_path):
     out = []
     for name in names:
         try:
-            out.append(summary(person, name, credentials_path))
+            with accounts.account_workspace(name):  # 要約は口座の括りの置き場から（括りの段 2）
+                out.append(summary(person, name, credentials_path))
         except Exception:
             continue
     return out

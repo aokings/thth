@@ -6012,9 +6012,24 @@ def _value_error_refusal(exc) -> int | None:
     return 2
 
 
+def _take_lane_flag(argv):
+    """先頭の `--lane <レーン>`（か `--lane=<レーン>`）を取り、環境変数 `THTH_LANE` にする（括りの段 2）。
+
+    先頭だけを見る（命令の中の引数と取り違えない）。値の形は `remote.current_lane()` が鍵を読むときに確かめる。
+    """
+    if argv and argv[0] == "--lane" and len(argv) >= 2:
+        os.environ["THTH_LANE"] = argv[1]
+        return argv[2:]
+    if argv and argv[0].startswith("--lane="):
+        os.environ["THTH_LANE"] = argv[0].split("=", 1)[1]
+        return argv[1:]
+    return argv
+
+
 def _entry(argv=None) -> int:
     from . import refusals
-    real_argv = list(sys.argv[1:] if argv is None else argv)
+    argv = _take_lane_flag(list(sys.argv[1:] if argv is None else argv))
+    real_argv = list(argv)
     _PARSED.clear()
     refusals.clear_first_stage()
     tee = _FirstLine(sys.stderr)

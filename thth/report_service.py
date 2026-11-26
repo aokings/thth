@@ -33,9 +33,14 @@ class ReportContext:
     # Diagnostic-only original scope. Not authority and not an equality binding:
     # A stopping must not invalidate an otherwise unchanged B job capability.
     excluded_accounts: Mapping[str, str | None] = field(default_factory=dict, compare=False, repr=False)
+    # 鍵が結び付く括り（括りの段 2）。None は書いていない古い鍵＝口座の台帳のある括りで動く。
+    workspace: str | None = None
 
     def __post_init__(self):
         if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
+            raise ReportServiceError("invalid_context")
+        if self.workspace is not None and (not isinstance(self.workspace, str)
+                                           or not accounts.WS_NAME.match(self.workspace)):
             raise ReportServiceError("invalid_context")
         from .relay import PERSON
         if (type(self.writes) is not bool or self.writes and (self.scope != 'user'
