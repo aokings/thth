@@ -175,7 +175,7 @@ APPLE
 
 # ---------------------------------------------------------------- 区間の台本（計画 M5 の (d)・生成物を読む） ----
 SLOT_NAMES=(); SLOT_LABELS=(); STEP_KINDS=(); STEP_TEXTS=(); ARGS=()
-SEG_BANNER=''; SEG_ITEMS=''; SEG_REAL=''; RECORDING=0
+SEG_BANNER=''; SEG_ITEMS=''; SEG_REAL=''; SEG_ONLY=''; SEG_ID=''; RECORDING=0
 [ -n "${REC_V_BY:-}" ] || REC_V_BY="$BY"
 [ -n "${REC_V_BODY:-}" ] || REC_V_BODY="$BODY"
 [ -n "${REC_V_REPLY:-}" ] || REC_V_REPLY="$REPLY"
@@ -218,6 +218,22 @@ seg_rec_off() {
   RECORDING=0
 }
 
+seg_only_check() {               # $1 = 穴の名前 $2 = 値。受信箱の区間は試しの口座でなければ断る（通信の秘密・masaru 11/26）
+  local want
+  [ -n "$SEG_ONLY" ] || return 0
+  case " $SEG_ONLY " in *" $1="*) ;; *) return 0 ;; esac
+  want="${SEG_ONLY#*$1=}"; want="${want%% *}"
+  [ "$2" = "$want" ] && return 0
+  [ "$MODE" = dry ] && [ "$2" = "<$1>" ] && return 0
+  seg_rec_off
+  printf '\nこの区間（%s）は受信箱・DM・コメントを読むので、試しの口座 %s でしか撮りません（%s=%s は断りました）。\n' \
+    "$SEG_ID" "$want" "$1" "$2"
+  printf '  店の受信箱には本物のお客さんの通信があります。家族の端末も使いません。\n'
+  printf '  決め: docs/段取り_Meta申請の受信箱とコメントは試しの口座で_2026-11-26.md\n'
+  printf '  直し方: REC_V_%s=%s を付けて打ち直してください。\n' "$1" "$want"
+  exit 2
+}
+
 seg_fill() {                     # 型を引数（ARGS）にする。値の無い穴は録画を止めて聞く
   local tok name var value
   ARGS=()
@@ -237,6 +253,7 @@ seg_fill() {                     # 型を引数（ARGS）にする。値の無�
           fi
           printf -v "$var" '%s' "$value"
         fi
+        seg_only_check "$name" "$value"
         ARGS+=("$value") ;;
       *) ARGS+=("$tok") ;;
     esac
@@ -301,6 +318,11 @@ seg_step() {                     # $1 = 手の種類  $2 = 文か型
 seg_play() {                     # 1 区間を撮る（録画の部分をつないで <保存先>/<id>.mp4）
   local i=0 s0="$SEG" part list answer
   BANNER_HEAD="THTH — Meta App Review: $1"
+  SEG_ID="$1"
+  if [ -n "$SEG_ONLY" ]; then       # 録画を始める前に、渡された口座の値を見る
+    [ -z "${REC_V_FB:-}" ] || seg_only_check FB "$REC_V_FB"
+    [ -z "${REC_V_IG:-}" ] || seg_only_check IG "$REC_V_IG"
+  fi
   clear_all
   printf '\n== 区間 %s（%s）\n%s\n' "$1" "$SEG_ITEMS" "$SEG_BANNER"
   if [ -n "$SEG_REAL" ]; then
@@ -337,10 +359,13 @@ seg_read() {                     # $1 = list か play。区間の並びを 1 行
       ''|'#'*) ;;
       slot) SLOT_NAMES+=("$f1"); SLOT_LABELS+=("$f2") ;;
       seg)
-        id="$f1"; SEG_BANNER="$f3"; SEG_ITEMS=''; SEG_REAL=''; STEP_KINDS=(); STEP_TEXTS=()
+        id="$f1"; SEG_BANNER="$f3"; SEG_ITEMS=''; SEG_REAL=''; SEG_ONLY=''; STEP_KINDS=(); STEP_TEXTS=()
         if seg_wanted "$id"; then skip=0; else skip=1; fi
         [ "$1" = list ] && printf '%s\t%s\t%s\n' "$id" "$f2" "$f3" ;;
       items) SEG_ITEMS="$f1" ;;
+      only)
+        SEG_ONLY="$f1"
+        [ "$1" = list ] && printf '\t試しの口座だけで撮る: %s\n' "$f1" ;;
       real)
         SEG_REAL="$f1"
         [ "$1" = list ] && printf '\t本物で 1 回打ってから: %s\n' "$f1" ;;

@@ -126,6 +126,7 @@ hand	ページの投稿で言及が見えたら Return
 end
 seg	fb-comments	facebook	pages_read_user_content, Business Asset User Profile Access — comments and the commenter's name.
 items	pages_read_user_content business_asset_user_profile_access
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座からページの投稿にコメントを 1 つ付けておく
 cmd	thth replies {FB} --refresh --limit 3
 end
@@ -137,6 +138,7 @@ hand	ページで返事と隠したコメントを見せたら Return
 end
 seg	fb-webhook	facebook	pages_manage_metadata — subscribe the Page to webhooks.
 items	pages_manage_metadata
+only	FB=shitami-fb IG=shitami-ig
 cmd	thth webhook subscribe {FB} --by {BY}
 hand	別のテストの口座からページにコメントを付けたら Return
 cmd	thth webhook status {FB}
@@ -151,6 +153,7 @@ two	thth live end {FB} {LIVE} --by {BY}
 end
 seg	fb-dm	facebook	pages_messaging — read the Page inbox and answer within 24 hours.
 items	pages_messaging
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座からページにメッセージを 1 通送っておく
 cmd	thth dm list {FB}
 cmd	thth dm read {FB} {FB_PSID}
@@ -159,11 +162,13 @@ hand	Messenger で返事が届いたのを見せたら Return
 end
 seg	fb-human-agent	facebook	Human Agent — a person answers after 24 hours with the human_agent tag.
 items	human_agent
+only	FB=shitami-fb IG=shitami-ig
 prep	24 時間より前に届いたメッセージを用意する
 two	thth dm send {FB} {FB_PSID} --text {REPLY} --human-agent --by {BY}
 end
 seg	fb-events	facebook	pages_events — report a purchase that came from a Messenger conversation.
 items	pages_events
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座からページにメッセージを 1 通送っておく（thth dm list に出る会話の id を使う）
 two	thth dm event {FB} --type purchase --conversation {FB_PSID} --value {VALUE} --currency JPY --by {BY}
 hand	Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return
@@ -205,6 +210,7 @@ hand	Instagram で投稿が見えたら Return
 end
 seg	ig-comments	instagram	instagram_manage_comments — read, answer and hide a comment.
 items	instagram_manage_comments
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座から Instagram の投稿にコメントを 1 つ付けておく
 cmd	thth replies {IG} --refresh --limit 3
 cmd	thth send {IG} --text {REPLY} --reply-to {IG_COMMENT}
@@ -223,6 +229,7 @@ hand	Instagram でいいねが付いたのを見せたら Return
 end
 seg	ig-dm	instagram	instagram_manage_messages — read the Instagram inbox and answer.
 items	instagram_manage_messages
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座から Instagram に DM を 1 通送っておく
 cmd	thth dm list {IG}
 two	thth dm send {IG} {IG_PSID} --text {REPLY} --by {BY}
@@ -230,6 +237,7 @@ hand	Instagram で返事が届いたのを見せたら Return
 end
 seg	ig-events	instagram	instagram_manage_events — report a purchase that came from an Instagram conversation.
 items	instagram_manage_events
+only	FB=shitami-fb IG=shitami-ig
 prep	別のテストの口座から Instagram に DM を 1 通送っておく（thth dm list に出る会話の id を使う）
 two	thth dm event {IG} --type purchase --conversation {IG_PSID} --value {VALUE} --currency JPY --by {BY}
 hand	Meta の Dashboard の API の呼び出しの欄に events の呼び出しが出たのを見せたら Return
@@ -249,8 +257,8 @@ hand	Instagram から消えたのを見せたら Return
 end
 seg	ig-brand-creators	instagram	instagram_branded_content_brand — view, add and remove creators on the brand's approved list.
 items	instagram_branded_content_brand
-real	remove（DELETE）は 11/26 に本物で打ち、Meta が post_missing で断った【未解決】。approve（POST）は 11/20・11/26 に success、list は承認の直後も 0 件。録画の前に id の種類を確かめる
-prep	Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする。追加の相手に 2 つ目のテスト口座を用意する
+real	approve は 11/20・11/26 に success、list は承認の直後も 0 件、remove は Meta が post_missing で断る。これは Meta 側の挙動として録画で説明すると 11/21 に決めてある（調べ直さない・口座の設定を変えない）
+prep	Instagram のアプリで「承認したクリエイターのみタグ付け可」をオンにする（masaru 自身の端末でできるときだけ。ほかの人の端末は頼まない）。追加の相手に 2 つ目のテスト口座を用意する
 cmd	thth brand creators {IG} list {CREATOR}
 two	thth brand creators {IG} approve {CREATOR} --by {BY}
 cmd	thth brand creators {IG} list {CREATOR}
