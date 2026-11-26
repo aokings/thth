@@ -47,7 +47,7 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
         service=service_origin(cfg.get('service') or bluesky.DEFAULT_SERVICE)
         path=Path(cfg['token'])
         if admin_log._active_fd.get() is not None:raise FlowError('auth_nested_transaction_refused')
-        Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True)
+        Path(accounts.common_root()).mkdir(parents=True,exist_ok=True)
         with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
             if accounts.load_account(account)!=cfg:raise FlowError('auth_account_changed')
             snapshot=authflow._token_snapshot(path)

@@ -49,7 +49,7 @@ def waba_dir() -> str:
     env = os.environ.get(WABA_DIR_ENV)
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    return os.path.join(accounts.thth_root(), "waba")
+    return os.path.join(accounts.ws_root(), "waba")
 
 
 def _validate_name(name) -> None:
@@ -64,7 +64,7 @@ def path_for(name: str) -> str:
 
 def state_dir_for(name: str) -> str:
     _validate_name(name)
-    return os.path.join(accounts.thth_root(), "waba_state", name)
+    return os.path.join(accounts.ws_root(), "waba_state", name)
 
 
 def ensure_state_dir(name: str) -> str:

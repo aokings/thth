@@ -11,7 +11,7 @@ FILENAME = 'admin_notifications.json'
 def notify(event, cfg):
     if event['event'] not in SELECTED or cfg.get('notify_admin_on_change') is False:
         return 'disabled'
-    path = Path(accounts.thth_root()) / 'state/_admin' / FILENAME
+    path = Path(accounts.common_root()) / 'state/_admin' / FILENAME
     state = incident._load(path, {'schema_version':1, 'events':[]})
     if not isinstance(state,dict) or state.get('schema_version')!=1 or not isinstance(state.get('events'),list):
         raise ValueError('admin_notification_outbox_unreadable')

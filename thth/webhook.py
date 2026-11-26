@@ -85,7 +85,7 @@ def _refuse(code: str, account: str):
 
 
 def home() -> Path:
-    return Path(accounts.thth_root()).resolve() / "state" / "_webhook"
+    return Path(accounts.common_root()).resolve() / "state" / "_webhook"
 
 
 def inbox_dir(account: str) -> Path:

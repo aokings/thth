@@ -765,7 +765,7 @@ def _credential_unchanged(context):
     from datetime import datetime,timezone
     if not context.credentials_path or not context.credential_digest:raise ReportServiceError('invalid_context')
     root,credentials=load_credentials(Path(context.credentials_path))
-    if Path(root).resolve()!=Path(accounts.thth_root()).resolve():raise ReportServiceError('invalid_context')
+    if Path(root).resolve()!=Path(accounts.common_root()).resolve():raise ReportServiceError('invalid_context')
     found=next((item[3] for item in credentials if item[0]==context.credential_digest and not item[2] and datetime.now(timezone.utc)<item[1]),None)
     if found!=context:raise ReportServiceError('credential_changed')
 
@@ -810,7 +810,7 @@ def execute_admin_write(context,request):
         from datetime import datetime,timezone
         if not context.credentials_path or not context.credential_digest:raise ReportServiceError('invalid_context')
         root,credentials=load_credentials(Path(context.credentials_path))
-        if Path(root).resolve()!=Path(accounts.thth_root()).resolve():raise ReportServiceError('invalid_context')
+        if Path(root).resolve()!=Path(accounts.common_root()).resolve():raise ReportServiceError('invalid_context')
         found=next((item[3] for item in credentials if item[0]==context.credential_digest and not item[2] and datetime.now(timezone.utc)<item[1]),None)
         if found!=context:raise ReportServiceError('credential_changed')
     try:

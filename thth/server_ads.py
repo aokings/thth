@@ -195,7 +195,7 @@ def _scrub(value, hidden):
 
 def _hidden():
     from .ads import guide
-    out = [guide.skill_path(), accounts.thth_root()]
+    out = [guide.skill_path(), accounts.common_root()]
     return sorted({text for text in out if isinstance(text, str) and len(text) > 1}, key=len, reverse=True)
 
 

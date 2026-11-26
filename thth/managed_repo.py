@@ -11,13 +11,13 @@ from . import accounts, server_files
 
 def locations(account):
     if not accounts.name_is_safe(account): raise ValueError('invalid_account')
-    root = Path(accounts.thth_root()).resolve()
+    root = Path(accounts.ws_root()).resolve()
     return root/'repos'/'_server'/account, root/'state'/account/'git-origin.git'
 
 
 def account_for(repo):
     if not isinstance(repo, (str, os.PathLike)): return None
-    root = Path(accounts.thth_root()).resolve()/'repos'/'_server'
+    root = Path(accounts.ws_root()).resolve()/'repos'/'_server'
     path = Path(repo).absolute()
     return path.name if path.parent == root and accounts.name_is_safe(path.name) else None
 

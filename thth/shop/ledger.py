@@ -59,7 +59,7 @@ def stores_dir() -> str:
     env = os.environ.get(STORES_DIR_ENV)
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    return os.path.join(accounts.thth_root(), "stores")
+    return os.path.join(accounts.ws_root(), "stores")
 
 
 def check_name(name) -> str:
@@ -73,7 +73,7 @@ def path_for(name: str) -> str:
 
 
 def state_dir_for(name: str) -> str:
-    return os.path.join(accounts.thth_root(), "store_state", check_name(name))
+    return os.path.join(accounts.ws_root(), "store_state", check_name(name))
 
 
 def list_names() -> list:

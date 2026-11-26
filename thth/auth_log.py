@@ -27,7 +27,7 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 def directory() -> str:
-    return os.path.join(accounts_mod.thth_root(), "state", DIRNAME)
+    return os.path.join(accounts_mod.ws_root(), "state", DIRNAME)
 
 
 def path_for(account: str, now=None) -> str:

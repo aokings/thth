@@ -49,7 +49,7 @@ from . import (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_par
                refusal_catalog_part5, refusal_catalog_part6, refusal_catalog_part7, refusal_catalog_part8,
                refusal_catalog_part9, refusal_catalog_part10, refusal_catalog_part_gbp,
                refusal_catalog_part_link, refusal_catalog_part_pos, refusal_catalog_part_review,
-               refusal_catalog_part_wp)
+               refusal_catalog_part_wp, refusal_catalog_part_ws)
 
 # 項目を書いた部（1〜3: 設計 §1 の 8 つの口・集合・JSON の欄・説明の辞書。4〜5: 広告の口 OpsRefused と
 # 認可の口 FlowError。6: Worker の口。7: Google 広告の口。8: Search Console の口。9: 店を読む口。10: 台帳の機械。
@@ -58,7 +58,8 @@ from . import (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_par
 PARTS = (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_part3, refusal_catalog_part4,
          refusal_catalog_part5, refusal_catalog_part6, refusal_catalog_part7, refusal_catalog_part8,
          refusal_catalog_part9, refusal_catalog_part10, refusal_catalog_part_gbp, refusal_catalog_part_link,
-         refusal_catalog_part_pos, refusal_catalog_part_wp, refusal_catalog_part_review)
+         refusal_catalog_part_pos, refusal_catalog_part_wp, refusal_catalog_part_review,
+         refusal_catalog_part_ws)
 
 LANG = "ja"
 INITIAL_SINCE = "5.10.0"
@@ -75,6 +76,10 @@ FOREIGN_DOORS = ("worker",)
 # `accounts._DUMMY_NEXT` の `handle`・`instance` は欄の名前（符丁の形でない）で目録に載らないので、
 # accounts.py に残す。
 FIX_VIEWS = {
+    "ws_admin.NEXT": (
+        "workspace_name_invalid", "workspace_unknown", "workspace_exists", "workspace_folder_exists",
+        "medium_name_invalid", "medium_in_other_workspace", "workspace_unavailable",
+    ),
     "remote.NEXT": (
         "not_logged_in", "invalid_key", "key_expired", "remote_config_invalid", "remote_unavailable",
         "remote_pending", "remote_unsupported", "rate_limited", "too_many_requests", "daily_limit", "retract_limit",

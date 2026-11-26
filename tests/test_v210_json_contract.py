@@ -172,6 +172,8 @@ COMMANDS += ['link check', 'link consent', 'link make', 'link show', 'link send'
 COMMANDS += ['review weekly']
 # 11/25: 意図して止めた draft の印（期限と理由・未承認の数えから外す）。
 COMMANDS += ['hold']
+# 括りの段 1: 括りの器（管理者）。
+COMMANDS += ['admin ws list', 'admin ws show', 'admin ws add', 'admin ws media add']
 
 
 def test_json_table_covers_every_parser():

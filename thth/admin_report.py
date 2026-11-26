@@ -380,6 +380,9 @@ def register(sub):
     # 審査の台本と提出の前の点検（計画 Meta 全部盛り M5 の (d)(e)）。口の中身は `thth/appreview_cli.py` に閉じる。
     from . import appreview_cli
     appreview_cli.register_admin(commands)
+    # 括り（THTH アカウント）の器（括りの段 1）。口の中身は `thth/ws_admin.py` に閉じる。
+    from . import ws_admin
+    ws_admin.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')
@@ -438,7 +441,7 @@ def timer(name, *, via='cli'):
 def _release(via='cli'):
     from . import report, __version__
     env_path = Path(appenv.default_path())
-    allowed = via == 'cli' or env_path.resolve().is_relative_to(Path(accounts.thth_root()).resolve())
+    allowed = via == 'cli' or env_path.resolve().is_relative_to(Path(accounts.common_root()).resolve())
     env = appenv.describe() if allowed else dict(exists=None, keys_present=None, mode_ok=None, reason='app_env_outside_report_root')
     return dict(version=__version__, **report.release_summary(), app_env=env)
 

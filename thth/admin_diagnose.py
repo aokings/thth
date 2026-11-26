@@ -94,7 +94,7 @@ def diagnose(context, account):
     if found:
         return found
     try:
-        root = Path(accounts.thth_root()).resolve()
+        root = Path(accounts.ws_root()).resolve()
         for path, private in _candidates(account):
             found = _loose(root, path, private)
             if found:

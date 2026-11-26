@@ -40,7 +40,7 @@ def registers_dir() -> str:
     env = os.environ.get(REGISTERS_DIR_ENV)
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    return os.path.join(accounts.thth_root(), "registers")
+    return os.path.join(accounts.ws_root(), "registers")
 
 
 def name_ok(name) -> bool:
@@ -59,7 +59,7 @@ def path_for(name: str) -> str:
 
 
 def state_dir_for(name: str) -> str:
-    return os.path.join(accounts.thth_root(), "register_state", check_name(name))
+    return os.path.join(accounts.ws_root(), "register_state", check_name(name))
 
 
 def list_names() -> list:
@@ -91,7 +91,7 @@ def _inside(path: str, directory: str) -> bool:
 def thth_owned_dirs() -> list:
     """THTH の置き場（台帳のフォルダを置いてはいけない所）: `$THTH_ROOT` の下のどこでも（口座の state・管理する repo・
     認めた記録・控え…。口座や台帳の leave が丸ごと消しうる）・控えの置き場・`~/.config/thth`（鍵の置き場）。"""
-    return [accounts.thth_root(), os.path.join(accounts.thth_root(), "register_state"), registers_dir(),
+    return [accounts.ws_root(), os.path.join(accounts.ws_root(), "register_state"), registers_dir(),
             os.path.join(os.path.expanduser("~"), ".config", "thth")]
 
 

@@ -22,7 +22,7 @@ def name_for(cfg):
 
 
 def location():
-    return Path(accounts.thth_root()).resolve()/'state'/'_leave'
+    return Path(accounts.ws_root()).resolve()/'state'/'_leave'
 
 
 def stopped(account):
@@ -103,7 +103,7 @@ def credentials(*, exclusive=False):
     if held is not None:
         if exclusive and held!='exclusive':raise RuntimeError('credential_lease_upgrade_forbidden')
         yield;return
-    Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
+    Path(accounts.ws_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
     with server_files.directory(location()/'coordination',create=True,private=True) as fd:
         for attempt in range(3):
             try:
@@ -172,7 +172,7 @@ def lease(account=None, *, exclusive=False):
     if account in _held.get():
         if exclusive:raise RuntimeError('account_lease_upgrade_forbidden')
         require_active(account);yield;return
-    Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
+    Path(accounts.ws_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
     with server_files.directory(location(),create=True,private=True) as fd:
         for attempt in range(3):
             try:

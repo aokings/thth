@@ -461,7 +461,7 @@ def approved_under_other_account(path: str, account_name) -> str | None:
     top = repo_root_of(path)
     if key is None or top is None:
         return None
-    root = os.path.join(accounts.thth_root(), "state")
+    root = os.path.join(accounts.ws_root(), "state")
     try:
         names = sorted(os.listdir(root))
     except OSError:

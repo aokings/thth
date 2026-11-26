@@ -111,7 +111,7 @@ def principals_dir() -> str:
     info = accounts.accounts_dir_info()
     if info["source"] == accounts.SOURCE_ENV:
         return os.path.join(os.path.dirname(info["path"].rstrip(os.sep)), "principals")
-    return os.path.join(accounts.thth_root(), "principals")
+    return os.path.join(accounts.ws_root(), "principals")
 
 
 def path_for(name: str) -> str:
@@ -122,7 +122,7 @@ def path_for(name: str) -> str:
 def state_dir_for(name: str) -> str:
     """主体の状態の置き場 `$THTH_ROOT/principal_state/<name>/`（**`state/` の外**・§14）。"""
     _validate_name(name)
-    return os.path.join(accounts.thth_root(), "principal_state", name)
+    return os.path.join(accounts.ws_root(), "principal_state", name)
 
 
 def lock_path_for(name: str) -> str:
@@ -534,7 +534,7 @@ def owner_state_dir(owner: str) -> str:
     """owner の状態の置き場 `$THTH_ROOT/owner_state/<owner>/`（`state/` の外・設計 4.0 S4 §4.4）。"""
     if not accounts.name_is_safe(owner):
         raise PrincipalError("owner_invalid", f"owner の名前に使えない字が入っています: {owner!r}")
-    return os.path.join(accounts.thth_root(), "owner_state", owner)
+    return os.path.join(accounts.ws_root(), "owner_state", owner)
 
 
 def owner_bookmark_lock_path(owner: str) -> str:

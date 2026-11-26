@@ -40,7 +40,7 @@ def decimal_text(value):
 def now():return jst.now_jst().astimezone(datetime.timezone.utc)
 def month(at):return at.astimezone(datetime.timezone.utc).strftime('%Y-%m')
 def timestamp(at):return at.astimezone(datetime.timezone.utc).isoformat()
-def folder():return Path(accounts.thth_root()).resolve()/'state'/'_admin'
+def folder():return Path(accounts.common_root()).resolve()/'state'/'_admin'
 
 
 def policy(monthly='0',currency='USD',rate=None,rate_source=None,*,version=0,at=None):
@@ -120,7 +120,7 @@ def _save(fd,value):
 @contextlib.contextmanager
 def locked():
     if admin_log._active_fd.get() is not None:raise BudgetError('budget_lock_order_refused')
-    Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
+    Path(accounts.common_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
     with server_files.directory(folder(),create=True,private=True) as fd:
         # Only lock acquisition may retry; never the caller body or provider I/O.
         deadline=time.monotonic()+LOCK_WAIT_SECONDS

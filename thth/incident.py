@@ -89,7 +89,7 @@ def require_private_directory(path):
 
 
 def config_path():
-    return require_private_directory(accounts.thth_root()) / CONFIG_FILE
+    return require_private_directory(accounts.common_root()) / CONFIG_FILE
 
 
 def settings(cfg):

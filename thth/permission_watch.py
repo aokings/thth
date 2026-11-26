@@ -198,7 +198,7 @@ ADS_TIERS = ("limited", "full")
 
 
 def ledger_path() -> str:
-    return os.path.join(accounts.thth_root(), "state", "_meta", "ledger.json")
+    return os.path.join(accounts.common_root(), "state", "_meta", "ledger.json")
 
 
 def read_ledger() -> dict:

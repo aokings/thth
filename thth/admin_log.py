@@ -364,7 +364,7 @@ def guarded(function):
                     raise ValueError('unsafe_mutation_path')
                 if path.exists():
                     snapshot = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
-            Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
+            Path(accounts.common_root()).mkdir(parents=True, exist_ok=True)
             with transaction():
                 mutated = True
                 return function(*args, **kwargs)

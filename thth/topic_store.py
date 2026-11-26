@@ -56,7 +56,7 @@ class BadId(StoreError):
 
 
 def root() -> str:
-    return os.path.join(accounts_mod.thth_root(), "state", "topic_advice")
+    return os.path.join(accounts_mod.ws_root(), "state", "topic_advice")
 
 
 def _kind_dir(kind: str) -> str:

@@ -56,7 +56,7 @@ class ObservationError(ValueError):
 def _dir(media) -> str:
     if not isinstance(media, str) or not MEDIA_NAME.match(media):
         raise ObservationError("unknown_media")
-    return os.path.join(accounts_mod.thth_root(), "state", "_media", media)
+    return os.path.join(accounts_mod.common_root(), "state", "_media", media)
 
 
 def path_for(media) -> str:

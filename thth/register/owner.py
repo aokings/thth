@@ -54,7 +54,7 @@ SEAL_NOTICE = ("封の秘密の鍵を消します。この鍵で封をした台�
 # ------------------------------------------------------------------ 置き場と記録
 
 def journal_dir() -> str:
-    return os.path.join(accounts.thth_root(), JOURNAL_DIR)
+    return os.path.join(accounts.ws_root(), JOURNAL_DIR)
 
 
 def _journal_name(scope: str, target) -> str:

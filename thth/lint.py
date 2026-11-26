@@ -430,7 +430,7 @@ def reply_to_root_notes(fm: dict, account_name, account_cfg) -> list:
     # 1 回の lint（ディレクトリ）の中で口座ごとに 1 度だけ数える（置き場ごとに分ける）。
     # 長く動く口（MCP・遠くの道）でも古い数を使い続けないよう 60 秒で読み直す。
     import time
-    key = (str(accounts_mod.thth_root()), account_name)
+    key = (str(accounts_mod.ws_root()), account_name)
     cached = _ROOT_REPLIES_CACHE.get(key)
     if cached is None or time.monotonic() - cached[0] > 60:
         found = {}

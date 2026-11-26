@@ -27,7 +27,7 @@ from . import ledger
 def _inside_root(path) -> Path | None:
     if not isinstance(path, str) or not path:
         return None
-    root = Path(accounts.thth_root()).resolve()
+    root = Path(accounts.ws_root()).resolve()
     value = Path(os.path.abspath(path))
     return value if value.resolve().is_relative_to(root) else None
 
@@ -91,7 +91,7 @@ def run(name, *, by) -> dict:
                         raise ValueError("worker_revoke_unconfirmed")
                     with gate.credentials(exclusive=True), admin_log.transaction():
                         deleted = dict(row["deleted"])
-                        root = Path(accounts.thth_root()).resolve()
+                        root = Path(accounts.ws_root()).resolve()
                         for category, count in (
                                 ("token", _remove_file(_inside_root(row["cfg"].get("token")))),
                                 ("ledger", _remove_file(Path(ledger.path_for(name)))),

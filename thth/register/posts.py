@@ -193,7 +193,7 @@ def _runs_rows(names) -> tuple:
     `runs_unreadable`。ほかの project の口座の物は数えない。読めない・ふつうのファイルでない・口座が文字列でない記録は
     どの口座の物か言えないので、`account: None` の `runs_unreadable` に数える（その行だけ落とし、ほかは読む）。
     同じ口座・post_id・run_id・段の行は 1 本だけ（写しの記録で二重に数えない・軽 3）。"""
-    folder = os.path.join(accounts.thth_root(), *RUNS_PATH)
+    folder = os.path.join(accounts.ws_root(), *RUNS_PATH)
     out = {name: [] for name in names}
     if not os.path.lexists(folder):
         return out, []

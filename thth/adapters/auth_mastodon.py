@@ -150,7 +150,7 @@ class MastodonAuthProfile(AuthProfile):
                 if client is None:
                     from pathlib import Path
                     from .. import accounts
-                    Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
+                    Path(accounts.common_root()).mkdir(parents=True, exist_ok=True)
                     # Reject known-bad audit destinations before remote registration.
                     # Release the global flock before the potentially slow HTTP call.
                     with admin_log.transaction():

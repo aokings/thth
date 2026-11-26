@@ -162,7 +162,7 @@ def ensure_thth_root() -> None:
     置き場が断る）。作れなければ何もしない（記録の置き場が `register_log_unavailable` で断る）。"""
     from .. import accounts
     try:
-        root = accounts.thth_root()
+        root = accounts.common_root()
     except (OSError, ValueError):
         return
     if not root or os.path.lexists(root):

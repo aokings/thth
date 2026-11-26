@@ -356,6 +356,108 @@ def thth_root() -> str:
     return os.path.join(os.path.expanduser("~"), ".thth")
 
 
+def common_root() -> str:
+    """共通の根（括りをまたぐ物の置き場）。括りの設計 §2.1 の `/srv/thth/` そのもの。
+
+    置く物: private/（管理者の資格・署名の鍵）・state/_admin・state/_webhook・state/_meta・
+    state/_media・state/_app.lock・worker の控え・app の設定・`workspaces.json`。
+    守りの検査（ある道がサーバの置き場の中か）もこの根で見る（括りの根は共通の根の中にある）。
+    """
+    return thth_root()
+
+
+def ws_root() -> str:
+    """括りの根（1 つの括りの物の置き場）。設計 §2.1 の `ws/<括り>/`。
+
+    置く物: accounts/・state/<口座>/・logs/・principals/・registers/・stores/・adaccounts/・
+    waba/・repos/・secrets/ と、括りの中の集計（topics・threads・_leave・_auth・_repos）。
+
+    どの括りか（段 1）: `use_workspace()` の中ならその括り、無ければ環境変数 `THTH_WS`、
+    どちらも無ければ `main`。`<共通の根>/ws/<括り>/` があればそこ。`main` は `ws/main/` へ移す夜
+    （段 5）までは共通の根にいるので、`ws/main/` が無ければ共通の根を返す（今の本番と同じ）。
+    それ以外の括りでフォルダが無ければ `workspace_unavailable` で断る（黙って根に倒さない）。
+
+    **accounts.py の外で `thth_root()` を呼ばない**（tests/test_ws_roots.py の柵）。
+    """
+    return workspace_dir(current_workspace())
+
+
+WS_ENV = "THTH_WS"
+MAIN_WS = "main"
+WS_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+_WS_CTX: contextvars.ContextVar = contextvars.ContextVar("thth_workspace", default=None)
+
+
+class WorkspaceError(AccountError):
+    """括りの名が違う・括りのフォルダが無い。"""
+
+
+def current_workspace() -> str:
+    """今入っている括りの名。"""
+    name = _WS_CTX.get() or os.environ.get(WS_ENV) or MAIN_WS
+    if not WS_NAME.match(name):
+        raise WorkspaceError("workspace_name_invalid")
+    return name
+
+
+def workspaces_base() -> str:
+    return os.path.join(common_root(), "ws")
+
+
+def workspace_dir(name: str) -> str:
+    """括りのフォルダ。symlink は断る（置き場の検査と同じ考え）。"""
+    if not isinstance(name, str) or not WS_NAME.match(name):
+        raise WorkspaceError("workspace_name_invalid")
+    path = os.path.join(workspaces_base(), name)
+    if os.path.islink(path) or os.path.islink(workspaces_base()):
+        raise WorkspaceError("workspace_unavailable")
+    if os.path.isdir(path):
+        return path
+    if name == MAIN_WS:
+        return common_root()
+    raise WorkspaceError("workspace_unavailable")
+
+
+class use_workspace:
+    """`with accounts.use_workspace("garden"):` の中では、括りの根がその括りになる。"""
+
+    def __init__(self, name: str):
+        workspace_dir(name)  # 入る前に確かめる
+        self.name = name
+        self._token = None
+
+    def __enter__(self):
+        self._token = _WS_CTX.set(self.name)
+        return self.name
+
+    def __exit__(self, *exc):
+        _WS_CTX.reset(self._token)
+        return False
+
+
+def list_workspace_dirs() -> list[str]:
+    """フォルダのある括りの名（`main` は根にいても含める）。管理者の一覧用。"""
+    names = {MAIN_WS}
+    base = workspaces_base()
+    if os.path.isdir(base) and not os.path.islink(base):
+        for entry in sorted(os.listdir(base)):
+            full = os.path.join(base, entry)
+            if WS_NAME.match(entry) and os.path.isdir(full) and not os.path.islink(full):
+                names.add(entry)
+    return sorted(names)
+
+
+def workspace_of_account(account_name: str) -> str | None:
+    """口座の名前から括りを引く（設計 §2.2: 名前は全体で 1 つ。写しの表を作らず台帳を探す）。"""
+    if not isinstance(account_name, str) or not name_is_safe(account_name):
+        return None
+    found = [ws for ws in list_workspace_dirs()
+             if os.path.isfile(os.path.join(workspace_dir(ws), "accounts", account_name + ".json"))]
+    if len(found) > 1:
+        raise WorkspaceError("account_in_two_workspaces")
+    return found[0] if found else None
+
+
 def running_from_repo() -> bool:
     """`APP_DIR` が clone（か worktree）か。**`site-packages/` では False。**
 
@@ -390,7 +492,7 @@ def env_accounts_dir() -> str | None:
 
 def root_accounts_dir() -> str:
     """**正**の置き場（設計 v2 §3「台帳を repo の外へ」）。無くてもこの綴り。"""
-    return os.path.join(thth_root(), "accounts")
+    return os.path.join(ws_root(), "accounts")
 
 
 def legacy_accounts_dir() -> str:
@@ -422,10 +524,14 @@ def accounts_dir_info() -> dict:
     返り値は `{"path": …, "source": …}`。`source` は上の 3 つの定数のどれか。
     どちらも無いときは (b) の綴りを `root` として返す（＝台帳 0 本）。
     """
+    outside = root_accounts_dir()
+    if ws_root() != common_root():
+        # 根の外の括り（`ws/<括り>/`）にいるときは、その括りの台帳だけ。
+        # (a) の環境変数と (c) の互換の置き場は根の括り（main）の物なので見ない（括りの段 1）。
+        return {"path": outside, "source": SOURCE_ROOT}
     env = env_accounts_dir()
     if env:
         return {"path": env, "source": SOURCE_ENV}
-    outside = root_accounts_dir()
     if os.path.isdir(outside):
         return {"path": outside, "source": SOURCE_ROOT}
     legacy = legacy_accounts_dir()
@@ -465,7 +571,7 @@ def accounts_dir() -> str:
 def _expand(value):
     if not isinstance(value, str):
         return value
-    value = value.replace("$THTH_ROOT", thth_root())
+    value = value.replace("$THTH_ROOT", ws_root())
     if value.startswith("~"):
         value = os.path.expanduser(value)
     return value
@@ -633,11 +739,11 @@ def ledger_kind(name: str) -> str | None:
 
 
 def state_dir_for(account_name: str) -> str:
-    return os.path.join(thth_root(), "state", account_name)
+    return os.path.join(ws_root(), "state", account_name)
 
 
 def logs_dir_for(account_name: str) -> str:
-    return os.path.join(thth_root(), "logs", account_name)
+    return os.path.join(ws_root(), "logs", account_name)
 
 
 # **「はじめから repo を持たない」印**（`$THTH_ROOT/repos/_none`）。送信専用の
@@ -663,7 +769,7 @@ def resolved_repo_dir(account_cfg: dict) -> str:
     if not raw:
         return ""
     if not os.path.isabs(raw):
-        raw = os.path.join(thth_root(), raw)
+        raw = os.path.join(ws_root(), raw)
     return os.path.normpath(raw)
 
 
@@ -802,7 +908,7 @@ def repo_lock_path_for(repo_dir: str) -> str:
     digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
     base = os.path.basename(real.rstrip(os.sep)) or "root"
     safe_base = _SAFE_CHARS_RE.sub("_", base)
-    return os.path.join(thth_root(), "state", "_repos", f"{safe_base}-{digest}.lock")
+    return os.path.join(ws_root(), "state", "_repos", f"{safe_base}-{digest}.lock")
 
 
 def account_lock_path_for(account_name: str) -> str:
@@ -817,7 +923,7 @@ def account_lock_path_for(account_name: str) -> str:
 
 def app_lock_path() -> str:
     """自己更新のロック（`selfupdate._pull_locked()` が握る・アカウント別ではない）。"""
-    return os.path.join(thth_root(), "state", "_app.lock")
+    return os.path.join(common_root(), "state", "_app.lock")
 
 
 def load_token(account_cfg: dict, *, refresh_x: bool = True) -> dict | None:

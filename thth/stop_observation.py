@@ -11,7 +11,7 @@ def reason(exc):
 
 
 def directories():
-    root=Path(accounts.thth_root())
+    root=Path(accounts.ws_root())
     paths={'state':root/'state','repos':root/'repos','accounts':Path(accounts.accounts_dir()),
            'state/_leave':root/'state/_leave','state/_leave/coordination':root/'state/_leave/coordination'}
     rows=[]

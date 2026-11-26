@@ -15,7 +15,7 @@ class UnsafeFile(ValueError):
 
 @contextlib.contextmanager
 def directory(path, *, create=False, private=False):
-    root = Path(accounts.thth_root()).resolve()
+    root = Path(accounts.common_root()).resolve()
     target = Path(path).absolute()
     try: parts = target.relative_to(root).parts
     except ValueError: raise UnsafeFile('outside_server_root') from None

@@ -147,7 +147,7 @@ def begin(account, cfg, profile, *, resume=False):
     from . import oauth
     if admin_log._active_fd.get() is not None:
         raise FlowError("auth_nested_transaction_refused")
-    Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
+    Path(accounts.common_root()).mkdir(parents=True, exist_ok=True)
     with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
         current = accounts.load_account(account)
         if current != cfg or profile.binding(current, current=True) != profile.binding(cfg):

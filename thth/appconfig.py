@@ -13,7 +13,7 @@ def subject(media, origin=None):
 
 def validate_location(path, cfg=None):
     resolved=Path(path).resolve()
-    forbidden=[Path(accounts.thth_root()).resolve(),Path(__file__).resolve().parents[1]]
+    forbidden=[Path(accounts.common_root()).resolve(),Path(__file__).resolve().parents[1]]
     if cfg and cfg.get('repo_dir'):forbidden.append(Path(cfg['repo_dir']).resolve())
     if any(resolved==p or p in resolved.parents for p in forbidden):
         raise FlowError('auth_client_store_must_be_outside_project')
@@ -70,7 +70,7 @@ def run(media='threads',*,app_id=None,secret_stdin=False,stdin=False,by=None,inp
             path=x_client_path({})
         path=Path(path or appenv.default_path())
         validate_location(path)
-        Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True)
+        Path(accounts.common_root()).mkdir(parents=True,exist_ok=True)
         with admin_log.transaction():expected=snapshot(path)
         if stdin:
             raw=input_func() if input_func else sys.stdin.read(65537)

@@ -49,7 +49,7 @@ def timestamp(at):
 
 
 def admin_folder():
-    return Path(accounts.thth_root()).resolve() / 'state' / '_admin'
+    return Path(accounts.common_root()).resolve() / 'state' / '_admin'
 
 
 def account_folder(account):
@@ -118,7 +118,7 @@ def _save_policy(fd, value):
 def policy_locked():
     if admin_log._active_fd.get() is not None:
         raise PostBudgetError('post_budget_lock_order_refused')
-    Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True, mode=0o700)
+    Path(accounts.common_root()).mkdir(parents=True, exist_ok=True, mode=0o700)
     with server_files.directory(admin_folder(), create=True, private=True) as fd:
         with server_files.lock_at(fd, 'budget_x_posts.lock'):
             yield fd

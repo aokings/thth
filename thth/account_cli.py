@@ -89,6 +89,8 @@ def target_accounts_dir() -> str:
     外。そうしないと「外へ出す」作業のさなかに repo の中が増える。
     """
     # **相対パスはその場で絶対にする**（監査 1・P3・`accounts.env_accounts_dir()`）。
+    if accounts_mod.ws_root() != accounts_mod.common_root():
+        return accounts_mod.root_accounts_dir()  # 根の外の括りは、その括りの台帳だけ（括りの段 1）
     env = accounts_mod.env_accounts_dir()
     return env if env else accounts_mod.root_accounts_dir()
 

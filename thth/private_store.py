@@ -281,7 +281,7 @@ def fold_paths(value):
     if value is None:
         return None
     candidates = []
-    for raw in (accounts.thth_root(), os.path.realpath(accounts.thth_root())):
+    for raw in (accounts.ws_root(), os.path.realpath(accounts.ws_root())):
         if raw and os.path.isabs(raw) and raw != os.sep:
             candidates.append((raw.rstrip(os.sep), "$THTH_ROOT"))
     home = os.path.expanduser("~")

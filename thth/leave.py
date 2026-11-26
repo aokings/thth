@@ -63,7 +63,7 @@ def _valid(row,account):
     if row['phase']=='stopped' and 'targets' not in row:return True
     if (type(row.get('targets')) is not list or len(row['targets'])>5 or type(row.get('token_shared')) is not bool
         or row.get('inventory_sha256')!=_hash(row['targets'])):return False
-    root=Path(accounts.thth_root()).resolve();expected={'state':root/'state'/account,'ledger':root/'accounts'/(account+'.json'),'managed_repo':root/'repos/_server'/account}
+    root=Path(accounts.ws_root()).resolve();expected={'state':root/'state'/account,'ledger':root/'accounts'/(account+'.json'),'managed_repo':root/'repos/_server'/account}
     seen=set()
     for target in row['targets']:
         if type(target) is not dict or target.get('category') not in categories or target['category'] in seen:return False
@@ -103,7 +103,7 @@ def public(row):
 @contextlib.contextmanager
 def _parent(path):
     path=Path(path)
-    root=Path(accounts.thth_root()).resolve()
+    root=Path(accounts.ws_root()).resolve()
     if path.is_relative_to(root):
         with server_files.directory(path.parent) as fd:yield fd
     else:
@@ -183,7 +183,7 @@ def _registry():
 
 
 def _credential_owned(path,account):
-    root=Path(accounts.thth_root()).resolve()
+    root=Path(accounts.ws_root()).resolve()
     # Configured path alone is not ownership. Account-private state and a named
     # secret leaf are the two server namespaces; host legacy leaves are exact.
     if path.parent==root/'secrets':
@@ -323,7 +323,7 @@ def _stat_leaf(value):
 
 
 def inventory(account,cfg):
-    root=Path(accounts.thth_root()).resolve();registry=_registry();targets=[];preserved=[]
+    root=Path(accounts.ws_root()).resolve();registry=_registry();targets=[];preserved=[]
     principal_token=_principal_owns_token(cfg)
     clone,origin=managed_repo.locations(account)
     state=Path(accounts.state_dir_for(account)).absolute()
@@ -957,7 +957,7 @@ def scope_preflight(p,guard):
 
 def _thth_secret_dirs():
     return [os.path.realpath(os.path.join(os.path.expanduser('~'),'.config','thth')),
-            os.path.realpath(os.path.join(accounts.thth_root(),'secrets'))]
+            os.path.realpath(os.path.join(accounts.ws_root(),'secrets'))]
 
 
 def remove_principal(name,guard,kept):

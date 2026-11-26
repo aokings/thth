@@ -761,7 +761,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
     from . import authflow
     token_path = account_cfg["token"]
     if admin_log._active_fd.get() is not None:raise authflow.FlowError("token_set_nested_transaction_refused")
-    Path(accounts_mod.thth_root()).mkdir(parents=True,exist_ok=True)
+    Path(accounts_mod.common_root()).mkdir(parents=True,exist_ok=True)
     with admin_log.transaction():
         if accounts_mod.load_account(account_name)!=account_cfg:
             raise authflow.FlowError('auth_account_changed')

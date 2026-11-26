@@ -102,7 +102,7 @@ def adaccounts_dir() -> str:
     info = accounts.accounts_dir_info()
     if info["source"] == accounts.SOURCE_ENV:
         return os.path.join(os.path.dirname(info["path"].rstrip(os.sep)), "adaccounts")
-    return os.path.join(accounts.thth_root(), "adaccounts")
+    return os.path.join(accounts.ws_root(), "adaccounts")
 
 
 def _validate_name(name) -> None:
@@ -119,7 +119,7 @@ def path_for(name: str) -> str:
 def state_dir_for(name: str) -> str:
     """状態の置き場 `$THTH_ROOT/adaccount_state/<名前>/`（**`state/` の外**）。"""
     _validate_name(name)
-    return os.path.join(accounts.thth_root(), "adaccount_state", name)
+    return os.path.join(accounts.ws_root(), "adaccount_state", name)
 
 
 def ensure_state_dir(name: str) -> str:

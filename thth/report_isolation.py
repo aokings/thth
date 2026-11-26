@@ -71,7 +71,7 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
     if (not base.is_dir() or base.is_symlink()
             or info.st_mode & 0o077 or info.st_uid != os.getuid()):
         raise IsolationError("private_root_required")
-    if not os.environ.get("THTH_ROOT") or Path(accounts.thth_root()).resolve() != resolved:
+    if not os.environ.get("THTH_ROOT") or Path(accounts.common_root()).resolve() != resolved:
         raise IsolationError("root_mismatch")
     account_dir = resolved / "accounts"
     if not account_dir.is_dir() or Path(accounts.accounts_dir_info()["path"]).resolve() != account_dir:

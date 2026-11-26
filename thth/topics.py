@@ -82,7 +82,7 @@ KINDS = {
 
 
 def path() -> str:
-    return os.path.join(accounts_mod.thth_root(), "state", "topics.json")
+    return os.path.join(accounts_mod.ws_root(), "state", "topics.json")
 
 
 class ShelfBroken(Exception):

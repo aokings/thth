@@ -20,7 +20,7 @@ def scope_generation(required_scopes):
 
 def path_for(media, origin, cfg, *, required_scopes=None):
     directory = Path(os.environ.get('THTH_APPS_DIR') or Path.home()/'.config/thth/apps').absolute()
-    forbidden = [Path(accounts.thth_root()).resolve(), Path(__file__).resolve().parents[1]]
+    forbidden = [Path(accounts.common_root()).resolve(), Path(__file__).resolve().parents[1]]
     if cfg.get('repo_dir'):
         forbidden.append(Path(cfg['repo_dir']).resolve())
     resolved = directory.resolve()

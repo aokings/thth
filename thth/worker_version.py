@@ -66,7 +66,7 @@ def describe(row: dict) -> str:
 
 
 def record_path(name: str = RECORD_NAME) -> str:
-    return os.path.join(accounts.thth_root(), "state", name)
+    return os.path.join(accounts.common_root(), "state", name)
 
 
 def current_unit(path: str = "/proc/self/cgroup") -> str | None:

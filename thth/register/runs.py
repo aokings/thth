@@ -25,7 +25,7 @@ def _version() -> str:
 
 
 def runs_dir() -> str:
-    return os.path.join(accounts.thth_root(), "register_runs")
+    return os.path.join(accounts.ws_root(), "register_runs")
 
 
 def _words(value: dict) -> list:

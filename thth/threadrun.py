@@ -34,7 +34,7 @@ class RunError(Exception):
 
 
 def runs_dir() -> str:
-    return os.path.join(accounts_mod.thth_root(), "state", "threads")
+    return os.path.join(accounts_mod.ws_root(), "state", "threads")
 
 
 def new_run_id(now=None) -> str:
