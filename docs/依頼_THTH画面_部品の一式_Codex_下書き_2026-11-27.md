@@ -1,6 +1,6 @@
 # 依頼の下書き: THTH の画面の部品の一式（Codex へ・2026-11-27）
 
-書いた人: THTH画面 第1（OliveRaven）。状態: **下書き**。出すのは、実機で 1 枚出るのを確かめ（設計 §6 の 1〜2）、Pencil に 4 枚の正本を描いたあと。出す前に第24 に見せる。
+書いた人: THTH画面 第1（OliveRaven）。状態: **下書き**。出すのは、実機で 1 枚出るのを確かめた（設計 §6 の 1〜2）あと。Pencil の 4 枚は 11/27 に描いた。出す前に第24 に見せる。
 
 ## 目的
 
@@ -11,7 +11,7 @@ THTH の MCP（stdio）の 4 枚の画面（MCP Apps）の HTML と、その中�
 - 設計: `docs/設計_THTH画面_MCPApps_2026-11-27.md`（とくに §1・§2 の 6・§3）
 - 部品の表: `mcp/ui/catalog.json`（画面・出す物・出す順・行動の引数）
 - 見本: `mcp/ui/probe.html`（手書きの橋渡し・SDK なし）と `mcp/ui/probe_host.html`（偽の host）
-- 画面の正本: `design/` の Pencil（4 枚・描いてから渡す）
+- 画面の正本: `design/thth-mcp-ui.pen`（4 枚と決まりの付箋）。写しは `design/exports/thth-mcp-ui/`（Pencil の道具が無くても見られる）
 - 仕様: MCP Apps `specification/2026-01-26/apps.mdx`（github.com/modelcontextprotocol/ext-apps）
 
 ## 作る物
