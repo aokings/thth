@@ -30,6 +30,7 @@ THTH の MCP（stdio）の 4 枚の画面（MCP Apps）の HTML と、その中�
 
 - 依存を足さない（npm の束・CDN を使わない）。Python の側も触らない（`mcp/server.py` はこちらで直す）。
 - 文は道具の結果からだけ描く。`textContent` で入れ、`innerHTML` に結果の文字を入れない。
+- 確定のカードの理由（reason）は 1 段目の結果から写して読むだけで出し、入力欄にしない（第24 11/27 #9961。写し違いは 2 段目で `confirm_mismatch`）。
 - 本文・宛先・日時は省略も折りたたみもしない。順は catalog の `order` のとおり（宛先 → 日時 → 本文）。
 - 取ってきた他人の文（返信など）は、第 1 弾では描かない。
 - 明るい・暗いの両方（`prefers-color-scheme`）。字の組みは SKILL ja-typography に沿う。
@@ -37,7 +38,7 @@ THTH の MCP（stdio）の 4 枚の画面（MCP Apps）の HTML と、その中�
 
 ## 済みの線（こちらが証拠を再現して確かめる）
 
-1. `tests/test_mcp_ui_catalog.py`・`tests/test_mcp_ui_fence.py` が緑のまま。
+1. `tests/test_mcp_ui_catalog.py`・`tests/test_mcp_ui_fence.py`・`tests/test_mcp_ui_confirm_bound.py` が緑のまま。
 2. 偽の host（`probe_host.html` を 4 枚に広げた物）で、各画面に見本の結果を渡し、
    - 本文が結果と 1 字違わない（DOM の textContent を比べる）
    - `<script>` を含む本文が文字のまま出る（実行されない）
@@ -47,5 +48,4 @@ THTH の MCP（stdio）の 4 枚の画面（MCP Apps）の HTML と、その中�
 
 ## まだ決めていないこと（出す前に埋める）
 
-- 確定のカードの引数（catalog の `open_questions`）: サーバが 1 段目の控えを持つか、reason を結果から写すか。
 - 偽の host を試験に組み込むか（ブラウザが要る。今の試験は Python の標準ライブラリだけ）。
