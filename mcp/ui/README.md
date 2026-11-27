@@ -9,6 +9,9 @@
 | `probe_server.py` | 最小の stdio のサーバ。道具 `thth_ui_probe`（見本の予定 3 件・偽のデータ）と画面 `ui://thth/probe` だけ。`THTH_UI_PROBE_LOG=<ファイル>` を付けると、受けた `initialize` の client の能力を 1 行ずつ残す |
 | `probe.html` | 画面 1 枚。橋渡しは手書きの JS（SDK なし）。`ui/initialize` → `ui/notifications/initialized` → `ui/notifications/tool-result` を受けて一覧を描く |
 | `probe_host.html` | 偽の host。`probe.html` の橋渡しだけを確かめる（本物の host の代わりにはならない） |
+| `catalog.json` | 部品の表の正本（4 枚の画面・出す物と順・行動の引数）。柵は `tests/test_mcp_ui_catalog.py` |
+
+柵: `tests/test_mcp_ui_fence.py`（画面に対応しない client には今と 1 字も変わらない）。どちらも一度わざと壊して赤を見た（11/27）。
 
 ## 確かめたこと（2026-11-27）
 

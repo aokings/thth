@@ -1,0 +1,114 @@
+{
+  "$comment": "THTH の画面の部品の表（正本）。設計 docs/設計_THTH画面_MCPApps_2026-11-27.md §1-3。版を上げるときは version を変える。柵は tests/test_mcp_ui_catalog.py",
+  "version": "0.1.0",
+  "mimeType": "text/html;profile=mcp-app",
+  "rules": [
+    "画面の文は道具の結果（THTH の CLI の --json）から描く。AI が文を渡す口を作らない",
+    "行動の引数の文字の欄は、列挙・形（pattern）・日時（format）・結果からの写し（x-thth-from-result）のどれかに限る",
+    "画面に対応しない client には何も足さない（tests/test_mcp_ui_fence.py）"
+  ],
+  "screens": [
+    {
+      "id": "queue",
+      "uri": "ui://thth/queue",
+      "title": "予定の一覧",
+      "weight": "light",
+      "tools": ["thth_queue", "thth_board", "thth_draft_list"],
+      "shows": ["口座", "状態（draft・approved・予約・型外）", "出す時刻", "次に出るもの"],
+      "actions": [
+        {
+          "id": "filter",
+          "calls": "thth_queue",
+          "visibility": ["app"],
+          "args": {
+            "type": "object",
+            "properties": {
+              "account": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$", "x-thth-from-result": true}
+            },
+            "additionalProperties": false
+          }
+        },
+        {
+          "id": "open_preview",
+          "calls": "thth_preview",
+          "visibility": ["app"],
+          "args": {
+            "type": "object",
+            "properties": {
+              "file": {"type": "string", "x-thth-from-result": true}
+            },
+            "required": ["file"],
+            "additionalProperties": false
+          }
+        }
+      ],
+      "client_side": ["並べ替え（時刻・口座・状態）", "状態で絞る"]
+    },
+    {
+      "id": "preview",
+      "uri": "ui://thth/preview",
+      "title": "下見のカード",
+      "weight": "light",
+      "tools": ["thth_preview"],
+      "shows": ["宛先の口座", "日時", "本文（全文・省略しない）", "文字数と上限"],
+      "order": ["宛先の口座", "日時", "本文"],
+      "actions": []
+    },
+    {
+      "id": "confirm",
+      "uri": "ui://thth/confirm",
+      "title": "確定のカード",
+      "weight": "heavy",
+      "note": "画面で押した＝人が押した証明ではない。確かめはサーバの digest（文で 2 段目を頼むのと重さは同じ）",
+      "tools": ["thth_retract_request", "thth_schedule_request", "thth_bookmark_request"],
+      "shows_when": "status が confirm_required か stage 1 の結果だけ",
+      "shows": ["宛先の口座", "日時", "本文（全文・省略しない）", "URL", "digest の頭 8 字"],
+      "order": ["宛先の口座", "日時", "本文", "URL", "digest"],
+      "actions": [
+        {
+          "id": "confirm",
+          "calls": "thth_ui_confirm",
+          "visibility": ["app"],
+          "description_note": "画面から押しても、人が押した証明にはならない。確かめは digest",
+          "args": {
+            "type": "object",
+            "properties": {
+              "tool": {"type": "string", "enum": ["thth_retract_request", "thth_schedule_request", "thth_bookmark_request"]},
+              "digest": {"type": "string", "pattern": "^[0-9a-f]{16,128}$", "x-thth-from-result": true}
+            },
+            "required": ["tool", "digest"],
+            "additionalProperties": false
+          }
+        }
+      ],
+      "open_questions": [
+        "削除の 2 段目は今 reason（文字）を要る。引数を digest だけにするなら、サーバが 1 段目の控え（digest → 引数）を短い間持つ。持たないなら reason を結果からの写しで渡す。決めは実装の前に第24 と",
+        "require_gate の口座では番号の欄を画面に置かない（今どおり AI が番号を付けて 2 段目を呼ぶ）"
+      ]
+    },
+    {
+      "id": "numbers",
+      "uri": "ui://thth/numbers",
+      "title": "数字の 1 枚",
+      "weight": "light",
+      "tools": ["thth_summary", "analytics_report", "thth_morning"],
+      "shows": ["公開数", "反応の和", "返していない返信の数", "フォロワーの差", "止まっているか", "期間・母数・欠測"],
+      "actions": [
+        {
+          "id": "window",
+          "calls": "analytics_report",
+          "visibility": ["app"],
+          "args": {
+            "type": "object",
+            "properties": {
+              "account": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$", "x-thth-from-result": true},
+              "window_days": {"type": "integer", "enum": [7, 28, 90]},
+              "compare_previous": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  ]
+}
