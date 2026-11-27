@@ -780,7 +780,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         return 2
     token_value = extract_token(raw)
     if not token_value:
-        _out("トークンが読み取れませんでした", log=log)
+        _out("token_unreadable: トークンが読み取れませんでした", log=log)
         return 2
     # **貼り付けられたトークンを登録する**（セキュリティ監査 2026-09-16・P1-1）。
     # 直後の `whoami()` がサーバの応答を反映した例外文を上げても、この値が
@@ -802,7 +802,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
     if "access_token" not in adapter_cls.TOKEN_KEYS:
         # **貼り付けで入らない媒体に、貼り付けを勧めない**（Bluesky の App
         # Password は `thth auth` が対話で受ける・T3 の配線 2026-09-13）。
-        _out(f"{account_cfg.get('media')} は `thth token set` では入りません"
+        _out(f"token_set_wrong_media: {account_cfg.get('media')} は `thth token set` では入りません"
              f"（この媒体の `.token` の鍵は "
              f"{'・'.join(adapter_cls.TOKEN_KEYS)}）。"
              f"`thth auth {account_name}` を使ってください。", log=log)
@@ -812,7 +812,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
             adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
             me = adapter.whoami()
         except adapters_mod.base.AdapterError as e:
-            _out(f"トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
+            _out(f"token_unusable: トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
             return 1
         user_id = me.get("user_id", "")
         username = me.get("username", "")
@@ -820,7 +820,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         # P2-1）。`user_id` だけを見ていたので、`username` が空でも次の取り違え
         # 防止（`if handle and username and ...`）を素通りして保存していた。
         if not user_id or not username:
-            _out("トークンが使えませんでした（me の応答に id か username が無い）", log=log)
+            _out("token_unusable: トークンが使えませんでした（me の応答に id か username が無い）", log=log)
             return 1
 
         # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
@@ -840,13 +840,13 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         # 入力口から値が届くと、取り違えを止める者がいない。
         handle = (account_cfg.get("handle") or "").strip()
         if not handle:
-            _out(f"保存しませんでした: 台帳 {account_name} に handle が無いので、"
+            _out(f"token_handle_missing: 保存しませんでした: 台帳 {account_name} に handle が無いので、"
                  f"このトークン（{username}）が正しい口座のものか照合できません。", log=log)
             _out(f"台帳に handle を書いてから入れ直してください"
                  f"（thth account set {account_name} handle <handle> --by <名前>）。", log=log)
             return 1
         if handle_matches(handle, username) is not True:
-            _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+            _out(f"token_account_mismatch: 保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
                  f"このトークンは {username} のものです。", log=log)
             _out("正しいアカウントで発行し直すか、台帳の handle を直してください"
                  f"（thth account set {account_name} handle {username} --by <名前>）。", log=log)
@@ -855,7 +855,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         # ので、変わらない番号でも同じ口座かを見る。台帳の user_id が空なら handle だけ。
         ledger_uid = str(account_cfg.get("user_id") or "").strip()
         if ledger_uid and ledger_uid != str(user_id):
-            _out(f"保存しませんでした: 台帳 {account_name} の user_id は {ledger_uid} ですが、"
+            _out(f"token_account_mismatch: 保存しませんでした: 台帳 {account_name} の user_id は {ledger_uid} ですが、"
                  f"このトークンは user_id {user_id}（{username}）のものです。", log=log)
             _out("正しいアカウントで発行し直すか、台帳の user_id を直してください"
                  f"（thth account set {account_name} user_id {user_id} --by <名前>）。", log=log)

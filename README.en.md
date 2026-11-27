@@ -150,6 +150,7 @@ All subcommands `thth --help` lists, one line each:
 - `location` — search for a place (`thth location search <account> <word>`, Threads)
 - `login` — authorize this device in the browser and save the thth.me key (`--stdin` to paste a key instead)
 - `logout` — remove the saved thth.me key
+- `secret` — the handler that a monban house calls for its secret input door (`secret accept <kind> <target>` reads the values on stdin only, one line per field, and answers with an exit code; `secret kinds` lists the kinds, fields and exit codes)
 - `account` — an account's status and guard (`account status`, `account set`); on a local ledger, `account add` and `account migrate`
 - `doctor` — read-only check of what a token can do
 - `observe` — one page for the start of a session: unanswered replies and mentions, yesterday's posts, the topics you watch, and next steps

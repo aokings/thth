@@ -5798,6 +5798,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth thread <account> <post_id>`（設計「自分の泉」§2.1・T1-2）。枝を
     # その場で読むだけ——**口の中身は `thth/thread_read.py` に閉じる**。
     thread_read_mod.register(sub)
+    # `thth secret accept|kinds`（monban の秘密の入力口・2026-11-27）。**口の中身は `thth/secret_accept.py` に閉じる**。
+    from . import secret_accept
+    secret_accept.register(sub)
     # `thth where (<account>|--project P) <語…>`（設計「自分の泉」§2.3・§2.6・
     # T2-2）。検索の一覧に自分の履歴を重ねるだけ——**口の中身は
     # `thth/where_cli.py` に閉じる**。
