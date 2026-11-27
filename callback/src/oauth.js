@@ -79,11 +79,14 @@ export async function clientRecord(env,client_id){
       if(Number(got.headers.get('content-length')||0)>CIMD_MAX)return null;
       const text=await boundedText(got.body,CIMD_MAX);if(text===null)return null;
       const doc=JSON.parse(text);
-      if(!doc||typeof doc!=='object'||doc.client_id!==client_id||!Array.isArray(doc.redirect_uris)||!doc.redirect_uris.length||doc.redirect_uris.length>8||
-         !doc.redirect_uris.every(acceptableRedirect))return null;   // DCR と同じ形（https か loopback の http だけ）
+      if(!doc||typeof doc!=='object'||doc.client_id!==client_id||!Array.isArray(doc.redirect_uris)||!doc.redirect_uris.length||doc.redirect_uris.length>8)return null;
+      // 戻り先は DCR と同じ形（https か loopback の http だけ）の物だけを残す（監査 (11)）。アプリ用の scheme を一緒に載せる
+      // AI（ChatGPT など）も、合う戻り先で頼めば通る。合う物が 1 つも無ければ client ごと断る。頼まれた戻り先はこの中から選ぶ。
+      const redirect_uris=doc.redirect_uris.filter(acceptableRedirect);
+      if(!redirect_uris.length)return null;
       if(doc.token_endpoint_auth_method!==undefined&&doc.token_endpoint_auth_method!=='none')return null;
       const name=typeof doc.client_name==='string'&&!/[\u0000-\u001f\u007f]/.test(doc.client_name)?doc.client_name.slice(0,128):u.hostname;
-      return {redirect_uris:doc.redirect_uris,name,kind:'cimd',host:u.hostname};
+      return {redirect_uris,name,kind:'cimd',host:u.hostname};
     }catch{return null;}
   }
   const row=await connectorStub(env).client(client_id);

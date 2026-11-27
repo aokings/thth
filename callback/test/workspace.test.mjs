@@ -148,6 +148,29 @@ test('lane login: the page shows the workspace and lane and asks for the owner; 
   const view=JSON.stringify(await control('person',owner.id));assert.ok(!view.includes(got.key));
 });
 
+test('audit (12): /activity shows a finished lane_key as long as other operations, while its outcome row stays for the connector',async()=>{
+  const owner=await person(),ws=workspace(),{code,token}=await begin({lane:'gamma-desk',workspace:ws});
+  assert.equal((await allow(code,{owner:owner.id,secret:owner.secret})).status,200);
+  const got=await(await poll(code,token)).json();sensitive.push(got.key);
+  const {actions}=await sync(owner);
+  await sync(owner,{completed:[{id:actions[0].id,outcome:'done',reason:null,workspace:ws,account:'inv-home'}],workspace_keys:[wsRow(got.key,ws)]});
+  const form=fields=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',origin:ORIGIN,'cf-connecting-ip':opaque()},body:new URLSearchParams(fields),redirect:'manual'});
+  const view=async()=>{
+    const r=await mf.dispatchFetch(ORIGIN+'/activity',form({person:owner.id,secret:owner.secret}));assert.equal(r.status,303);
+    const c=r.headers.get('set-cookie');sensitive.push(c);
+    return (await mf.dispatchFetch(ORIGIN+'/activity',{headers:{'cf-connecting-ip':opaque(),cookie:c.split(';')[0]},redirect:'manual'})).text();
+  };
+  // 済んだ直後は、ほかの操作と同じく一覧に出る。
+  assert.ok((await view()).includes(ws+' / gamma-desk'),'shown right after it is done');
+  // 2 時間たつと一覧から消える（ほかの操作の 1 時間と同じ長さ）。Connector が結ぶための結果の行は 30 日残る。
+  await control('person',owner.id,{clock:Date.now()+2*3_600_000});
+  try{
+    assert.ok(!(await view()).includes('gamma-desk'),'a finished lane_key is not listed after an hour');
+    assert.ok((await control('person',owner.id)).some(([k,a])=>k.startsWith('action:')&&a.kind==='lane_key'&&a.status==='done'),'the outcome row stays');
+    assert.deepEqual(await(await poll(code,token)).json(),{outcome:'done',reason:null,workspace:ws,account:'inv-home'});
+  }finally{await control('person',owner.id,{clock:null});}
+});
+
 test('lane login without a workspace lets the VM choose, and a VM refusal reaches the terminal as the reason',async()=>{
   const owner=await person(),{code,token}=await begin({lane:'asmon-kanto'});
   assert.ok((await(await page(code)).text()).includes('あなたの括り'));

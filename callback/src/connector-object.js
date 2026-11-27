@@ -191,7 +191,8 @@ export class Connector extends DurableObject {
   // VM がレーンの鍵を作り、括りと頼みの宛先の口座を返した（Person DO の laneOutcome から）。秘密ではない。
   // 同じ持ち主・同じ client・同じレーンで、同じ括りに結んだ前の接続は、ここで外す（VM は同じ括りの同じレーンの前の鍵を
   // 新しい鍵を作るときに取り消している）。外すのは drop() を通し、VM の取り消しも置く（段 K の監査 3: 括りを見ずに
-  // 黙って消すと、ほかの括りの接続が消え VM の鍵が残った）。ほかの括りの接続はそのまま並ぶ。
+  // 黙って消すと、ほかの括りの接続が消え VM の鍵が残った）。ほかの括りの接続はそのまま並ぶ。1 度も結ばなかった前の接続も
+  // 同じく外す（監査 (10)・下の unbound）。
   async bind(device_id,workspace,account){
     const result=this.atomic(()=>{
       if(typeof device_id!=='string'||!DEVICE_ID.test(device_id)||typeof workspace!=='string'||!WORKSPACE.test(workspace)||
@@ -203,9 +204,16 @@ export class Connector extends DurableObject {
       this.put('device:'+device_id,{...row,workspace,account});
       let dropped=0;
       if(row.workspace===null)
-        for(const [k,d] of [...this.ctx.storage.kv.list({prefix:'device:'})])
-          if(k!=='device:'+device_id&&d.owner===row.owner&&d.client_id===row.client_id&&d.lane===row.lane&&
-             d.created_at<row.created_at&&(d.workspace??d.workspace_req)===workspace){this.drop(k.slice(7),now);dropped++;}
+        for(const [k,d] of [...this.ctx.storage.kv.list({prefix:'device:'})]){
+          if(k==='device:'+device_id||d.owner!==row.owner||d.client_id!==row.client_id||d.lane!==row.lane||d.created_at>=row.created_at)continue;
+          // 1 度も結ばなかった前の接続（監査 (10)）: 括りを名指ししなかった（持ち主の 1 つの括り）か、同じ括りを名指しした物は、
+          // 許し直しで要らなくなった。VM の取り消しはこの括りに置く（名指しの無い行は、VM が結んだ括りがここと同じ）。
+          // ほかの括りを名指しした物は、まだそちらで結ぶかもしれないので残す。
+          const unbound=d.workspace===null&&(d.workspace_req===null||d.workspace_req===workspace);
+          if(!unbound&&d.workspace!==workspace)continue;
+          if(unbound&&d.workspace_req===null)this.put(k,{...d,workspace_req:workspace});
+          this.drop(k.slice(7),now);dropped++;
+        }
       return {status:200,body:{dropped}};
     });
     if(result.status===200&&result.body.dropped)await this.wake(this.now()+1000);

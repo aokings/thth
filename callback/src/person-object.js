@@ -216,7 +216,10 @@ export class Person extends AtomicObject {
     const now=this.now();
     const accounts=[...this.ctx.storage.kv.list({prefix:'activity:'})].map(([,s])=>s).filter(s=>s.expires_at>now)
       .sort((a,b)=>a.account<b.account?-1:1).map(({expires_at,...s})=>s);
-    const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a).filter(a=>a.expires_at>now)
+    // 済んだレーンの鍵の発行は、行を 30 日残す（Connector が結ぶための結果・LANE_OUTCOME_TTL）が、一覧にはほかの操作と同じ
+    // 長さ（済んでから ACTION_TTL）だけ出す（監査 (12)）。
+    const shown=a=>a.expires_at>now&&(a.kind!=='lane_key'||a.status==='pending'||(a.finished_at??a.created_at)+ACTION_TTL>now);
+    const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a).filter(shown)
       .sort((a,b)=>b.created_at-a.created_at).map(({sha256,expires_at,...a})=>a);
     return {status:200,body:{accounts,actions}};
   }

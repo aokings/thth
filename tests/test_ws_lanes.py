@@ -107,3 +107,27 @@ def test_passthrough_without_lane_key_refuses(home, monkeypatch, capsys):
     monkeypatch.setattr(remote, "call", lambda *a, **k: pytest.fail("網に出た"))
     assert cli.main(["--lane", "nobody", "board"]) == 2
     assert "not_logged_in" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["login", "--lane", "connector-claude-ai-x"],
+                                  ["login", "--stdin", "--lane", "connector-x"],
+                                  ["--lane", "connector-x", "login", "--no-browser"]])
+def test_login_refuses_connector_lane_name(home, monkeypatch, capsys, argv):
+    """`connector-` の頭はコネクタの同意の頁だけが付ける（VM の strict は `--` のあとにだけ名前を受ける）。
+    手元の login で受け取ると原稿を取る命令が通らない鍵になるので、網に出る前に前向きに断る。"""
+    monkeypatch.setattr(remote, "_login_exchange", lambda *a, **k: pytest.fail("網に出た"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("k" * 24 + "\n"))
+    assert cli.main(argv) == 2
+    err = capsys.readouterr().err
+    assert "lane_reserved" in err and "connector-" in err
+    assert not (home / ".config/thth/lanes").exists()
+    assert remote.CONNECTOR_LANE == __import__("thth.server_passthrough").server_passthrough.CONNECTOR_LANE
+
+
+def test_logout_still_removes_a_connector_lane_file(home, monkeypatch):
+    """断るのは login だけ。前に受け取ってしまった `connector-` の鍵のファイルは logout で消せる。"""
+    lanes = home / ".config/thth/lanes"
+    lanes.mkdir(parents=True)
+    (lanes / "connector-x.json").write_text("{}")
+    assert cli.main(["--lane", "connector-x", "logout"]) == 0
+    assert not (lanes / "connector-x.json").exists()

@@ -43,6 +43,8 @@ function outbound(request){
   // 監査 4: 戻り先の形の違う CIMD（http の外のホスト・javascript:・自前の scheme）。
   const odd={'/odd-http':'http://evil.example/cb','/odd-js':'javascript:alert(1)','/odd-app':'myapp://cb'}[url.pathname];
   if(odd)return Response.json({client_id:request.url,redirect_uris:[odd]});
+  // 監査 (11): アプリ用の戻り先と、合う戻り先を一緒に載せる CIMD（ChatGPT などの形）。
+  if(url.pathname==='/mixed')return Response.json({client_id:request.url,client_name:'Mixed',redirect_uris:['myapp://cb','http://evil.example/cb',CALLBACK]});
   return new Response('external_denied',{status:503});
 }
 before(async()=>{
@@ -425,6 +427,41 @@ test('audit 3: the same AI connected to two workspaces works in both; dropping o
   assert.ok((await sync(p,tables)).actions.some(x=>x.kind==='lane_revoke'&&x.sha256===b.sha256),'the old B key is revoked on the VM');
 });
 
+test('audit (10): allowing the same AI again drops an older connection that never bound, and asks the VM to revoke its key',async()=>{
+  const p=await person(),W=workspace(),account='acct-'+randomBytes(3).toString('hex');
+  const keys=[];
+  // 1 本目: 括りを名指しせずに許し、VM は鍵を作ったが、AI は 1 度も道具を呼ばない（結ばれない）。
+  const first=await connect(p);
+  const {actions}=await sync(p);const a1=actions.find(a=>a.kind==='lane_key');
+  keys.push({sha256:a1.sha256,workspace:W,expires_at:later()});
+  await sync(p,{workspace_keys:keys,completed:[{id:a1.id,outcome:'done',reason:null,workspace:W,account}]});
+  // ほかの括りを名指しして許した、まだ結ばれていない接続（残る）。
+  const other=workspace();
+  const elsewhere=await connect(p,{ws:other});
+  const mine=async()=>(await control()).filter(([k,d])=>k.startsWith('device:')&&d.owner===p.id);
+  assert.equal((await mine()).length,2);
+  // 2 本目: 同じ AI から許し直し、VM が鍵を作り、道具を呼んで結ぶ。
+  const second=await connect(p);
+  const pending=(await sync(p,{workspace_keys:keys})).actions.filter(a=>a.kind==='lane_key');
+  const a2=pending.find(a=>a.workspace===null&&a.sha256!==a1.sha256);assert.ok(a2,'the second lane_key');
+  keys.push({sha256:a2.sha256,workspace:W,expires_at:later()});
+  await sync(p,{workspace_keys:keys,completed:[{id:a2.id,outcome:'done',reason:null,workspace:W,account}]});
+  const call=callTool(second.access_token,'thth_board',{});
+  await vmAnswer(p,{workspace_keys:keys},it=>({command:'board',rc:0,stdout:'{}',stderr:'',truncated:false,workspace:it.workspace}));
+  assert.equal(content(await call).workspace,W);
+  await control({alarm:true});
+  // 1 本目は一覧から外れ（401）、VM の取り消しはその鍵を括り W に置く。ほかの括りを名指しした物は残る。
+  assert.equal((await mcp(first.access_token,'ping',{},true)).status,401);
+  const left=await mine();
+  assert.equal(left.length,2);
+  assert.ok(left.some(([,d])=>d.workspace_req===other&&d.workspace===null),'the one for another workspace stays');
+  assert.equal((await mcp(elsewhere.access_token,'ping',{},true)).status,200);
+  const page=await keep(await form(ORIGIN+'/connectors',{owner:p.id,secret:p.secret}));
+  assert.equal(page.status,200);
+  const revokes=(await sync(p,{workspace_keys:keys})).actions.filter(x=>x.kind==='lane_revoke').map(({id,...x})=>x);
+  assert.deepEqual(revokes,[{kind:'lane_revoke',workspace:W,sha256:a1.sha256}]);
+});
+
 test('audit 4: a client document whose return addresses are not https or loopback http is refused',async()=>{
   const {challenge}=pkce();
   for(const [path,redirect] of [['/odd-http','http://evil.example/cb'],['/odd-js','javascript:alert(1)'],['/odd-app','myapp://cb']]){
@@ -432,6 +469,33 @@ test('audit 4: a client document whose return addresses are not https or loopbac
     const r=await keep(await mf.dispatchFetch(authorizeUrl(baseParams(challenge,{client_id:id,redirect_uri:redirect})),{headers:{'cf-connecting-ip':ip()}}));
     assert.equal(r.status,400,path);assert.equal(r.headers.get('location'),null);
   }
+});
+
+test('audit (11): a client document with some odd return addresses keeps only the fitting ones; the page shows only those',async()=>{
+  const p=await person();
+  const id='https://claude.ai/mixed';
+  const {verifier,challenge}=pkce();
+  // 合う戻り先で頼めば、同意の頁が出る（合わない戻り先は頁に出さない）。
+  const q=baseParams(challenge,{client_id:id});
+  const shown=await keep(await mf.dispatchFetch(authorizeUrl(q),{headers:{'cf-connecting-ip':ip()}}));
+  assert.equal(shown.status,200,await shown.clone().text());
+  const html=await shown.text();
+  assert.ok(html.includes('claude.ai'));
+  assert.ok(!html.includes('myapp:')&&!html.includes('evil.example'),'odd return addresses are not on the page');
+  // 合わない戻り先で頼めば、今までどおり頁で断る（戻り先へ送らない）。
+  for(const odd of ['myapp://cb','http://evil.example/cb']){
+    const r=await keep(await mf.dispatchFetch(authorizeUrl(baseParams(challenge,{client_id:id,redirect_uri:odd})),{headers:{'cf-connecting-ip':ip()}}));
+    assert.equal(r.status,400,odd);assert.equal(r.headers.get('location'),null);
+  }
+  // 許して code を受け取り、token に換えられる。
+  const allowed=await form(ORIGIN+'/oauth/authorize',{...q,owner:p.id,secret:p.secret,workspace:''});
+  assert.equal(allowed.status,303,await allowed.clone().text());
+  const back=new URL(allowed.headers.get('location'));
+  assert.equal(back.origin+back.pathname,CALLBACK);
+  const code=back.searchParams.get('code');sensitive.push(code);
+  const got=await tokenFor({grant_type:'authorization_code',code,code_verifier:verifier,client_id:id,redirect_uri:CALLBACK,resource:ORIGIN+'/mcp'});
+  assert.equal(got.status,200,JSON.stringify(got.body));
+  sensitive.push(got.body.access_token,got.body.refresh_token,await issuedBearer(p));
 });
 
 test('the code expires after a minute, and a correct code works only once',async()=>{

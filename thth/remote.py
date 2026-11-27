@@ -50,6 +50,7 @@ class RemoteError(Exception):
 LANE_ENV = "THTH_LANE"
 # レーンの鍵のファイルの名前（`<repo>` か `<repo>-<レーン>`。hub の名乗りのファイルと同じ付け方・括りの段 2）。
 LANE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}\Z")
+CONNECTOR_LANE = "connector-"   # コネクタの同意の頁だけが付けるレーンの名の頭（server_passthrough.CONNECTOR_LANE と同じ）
 # 括りの名（`accounts.WS_NAME` と同じ形）。
 WORKSPACE_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
@@ -156,6 +157,11 @@ def cmd_login(args) -> int:
     refused = _take_lane(args)
     if refused is not None:
         return refused
+    lane = current_lane()
+    if lane is not None and lane.startswith(CONNECTOR_LANE):
+        # `connector-` はコネクタ（段 K）の同意の頁だけが付ける頭。VM はこの頭のレーンの鍵に、名前とパスを `--` のあとに
+        # だけ受ける（server_passthrough の strict）。手元の CLI は `--` を挟まないので、ここで受け取ると原稿を取る命令が通らない。
+        return _fail("lane_reserved", f"レーンの名 {lane} の頭 `{CONNECTOR_LANE}` は AI のコネクタ用です")
     if getattr(args, "key", None):
         # 値は読まずに捨てる（控えない・表示しない）。
         return _fail("key_in_argument", "鍵を引数で渡すと shell の履歴に残ります。"

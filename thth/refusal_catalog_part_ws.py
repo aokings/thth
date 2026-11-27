@@ -38,6 +38,13 @@ ENTRIES = {
         "command": "thth login --lane <レーン>",
         "better": "レーンの入口の文書に `thth --lane <レーン>` の 1 行を書いておくと、毎回の名指しを取り違えません。",
         "doors": ("cli", "remote"), "since": _SINCE},
+    "lane_reserved": {
+        "kind": "refusal",
+        "why": "`connector-` で始まるレーンの名は、AI のコネクタ（https://thth.me/connectors）の同意の頁だけが付ける名です。この名の鍵は名前とパスを `--` のあとにだけ受けるので、手元の `thth --lane` では原稿を取る命令が通りません。鍵は作っていません。",
+        "fix": "`connector-` で始まらない名で login してください（例 `<repo>-<レーン>`）。",
+        "command": "thth login --lane <repo>-<レーン>",
+        "better": "AI から使うときは、AI の側でコネクタを足して同意の頁で許すと、レーンの名と鍵が自動で付き、https://thth.me/connectors から 1 つずつ取り消せます。",
+        "doors": ("cli", "remote"), "since": _SINCE},
     # ---- レーンの鍵（括りの段 2・`thth login --lane`・`thth/activity.py` の issue_lane_key・`thth/remote.py`）
     "workspace_mismatch": {
         "kind": "refusal",
