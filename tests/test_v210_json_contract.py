@@ -172,6 +172,8 @@ COMMANDS += ['link check', 'link consent', 'link make', 'link show', 'link send'
 COMMANDS += ['review weekly']
 # 11/25: 意図して止めた draft の印（期限と理由・未承認の数えから外す）。
 COMMANDS += ['hold']
+# 11/27: monban の家の係の表を書くための種類の一覧（値は出さない）。
+COMMANDS += ['secret kinds']
 
 
 def test_json_table_covers_every_parser():
