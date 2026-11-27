@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,API_HANDOFF_MAX,API_HANDOFF_BYTES} from './person.js';
+import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,WORKSPACE,LANE,fail,fields,opaque,verifier,equal,unb64,API_HANDOFF_MAX,API_HANDOFF_BYTES} from './person.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 // 3.13.0: 承認ページの session（ApprovalSession）と承認待ちの一覧は無い。残るのは所有者（person）の
 // secret の照合・/activity・アカウントごとの束（退会・添付の後始末）。名前は段 2 で改める。
@@ -9,6 +9,9 @@ export const ACTIVITY_TTL=3_600_000, ACTION_TTL=3_600_000, ACTION_PENDING_MAX=16
 const ACTIVITY_ACCOUNTS=8, ACTIVITY_ROWS=30, ACTIVITY_HEAD=60;
 export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'];
 const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft_id'],settings:['key','value']};
+// レーンの鍵の発行（括りの段 2）。ブラウザ式の login が持ち主の secret で置くだけ（/activity の頼みには無い・
+// ACTION_KINDS に入れない）。口座でなく括りとレーンを持つ。括りが null なら VM が持ち主の括り（1 つなら）を選ぶ。
+const LANE_EXTRA=['workspace','lane','sha256'];
 export const SETTING_KEYS=['daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
 const SETTING_VALUE=/^[0-9]{1,6}(?:\.[0-9]{1,2})?$/;
 // queued: 返信の burst の順番待ち（3.25.0）。VM より先に Worker を出す（知らない kind は要約ごと断る）。
@@ -48,6 +51,26 @@ function validKey(k){
     typeof k.account==='string'&&PERSON.test(k.account)&&typeof k.expires_at==='string'&&ISO.test(k.expires_at)&&
     Number.isFinite(Date.parse(k.expires_at));
 }
+// 括りの束の鍵の行（レーンの鍵）。口座でなく括りに結び付く。
+function validWorkspaceKey(k){
+  return same(k,['sha256','workspace','expires_at'])&&typeof k.sha256==='string'&&HASH_PATTERN.test(k.sha256)&&
+    typeof k.workspace==='string'&&WORKSPACE.test(k.workspace)&&typeof k.expires_at==='string'&&ISO.test(k.expires_at)&&
+    Number.isFinite(Date.parse(k.expires_at));
+}
+function validWorkspaceResult(r){
+  if(!r||typeof r!=='object'||Array.isArray(r))return false;
+  const {workspace,...rest}=r;
+  return Object.hasOwn(r,'workspace')&&typeof workspace==='string'&&WORKSPACE.test(workspace)&&validResult(rest);
+}
+// 行った操作の結果。レーンの鍵の発行は、VM が選んだ括りと、頼みの宛先にする口座（印の置き場）を添える。
+function validCompleted(c){
+  const lane=same(c,['id','outcome','reason','workspace','account']);
+  if(!(lane||same(c,['id','outcome','reason'])))return false;
+  if(lane&&!((c.workspace===null||typeof c.workspace==='string'&&WORKSPACE.test(c.workspace))&&
+     (c.account===null||typeof c.account==='string'&&PERSON.test(c.account))))return false;
+  return typeof c.id==='string'&&STATE_PATTERN.test(c.id)&&['done','failed'].includes(c.outcome)&&
+    (c.reason===null||typeof c.reason==='string'&&/^[a-z_]{1,64}$/.test(c.reason));
+}
 function validResult(r){
   if(!same(r,['request_id','account','status','result'])||typeof r.request_id!=='string'||typeof r.account!=='string')return false;
   const id=REQUEST_ID.exec(r.request_id);
@@ -55,21 +78,33 @@ function validResult(r){
     JSON.stringify(r.result).length<=API_RESULT_MAX;
 }
 function validSync(body){
-  const extended=same(body,['accounts','completed','keys','results']);
+  // 3 つの形: 3.13.0（要約と結果だけ）・3.14.0（口座の鍵の表）・括りの段 2（括りの鍵の表も）。
+  const workspaces=same(body,['accounts','completed','keys','results','workspace_keys','workspace_results']);
+  const extended=workspaces||same(body,['accounts','completed','keys','results']);
   if(!(extended||same(body,['accounts','completed']))||!Array.isArray(body.accounts)||body.accounts.length>ACTIVITY_ACCOUNTS||
      !Array.isArray(body.completed)||body.completed.length>ACTION_PENDING_MAX)return false;
   if(!body.accounts.every(validSummary)||new Set(body.accounts.map(s=>s.account)).size!==body.accounts.length)return false;
   if(extended&&(!Array.isArray(body.keys)||body.keys.length>API_KEYS_MAX||!body.keys.every(validKey)||
      new Set(body.keys.map(k=>k.account+' '+k.sha256)).size!==body.keys.length||
      !Array.isArray(body.results)||body.results.length>API_RESULTS_MAX||!body.results.every(validResult)))return false;
-  return body.completed.every(c=>same(c,['id','outcome','reason'])&&typeof c.id==='string'&&STATE_PATTERN.test(c.id)&&
-    ['done','failed'].includes(c.outcome)&&(c.reason===null||typeof c.reason==='string'&&/^[a-z_]{1,64}$/.test(c.reason)));
+  if(workspaces&&(!Array.isArray(body.workspace_keys)||body.workspace_keys.length>API_KEYS_MAX||!body.workspace_keys.every(validWorkspaceKey)||
+     new Set(body.workspace_keys.map(k=>k.workspace+' '+k.sha256)).size!==body.workspace_keys.length||
+     !Array.isArray(body.workspace_results)||body.workspace_results.length>API_RESULTS_MAX||!body.workspace_results.every(validWorkspaceResult)))return false;
+  return body.completed.every(validCompleted);
 }
-// {アカウント: {sha256: 期限(ms)}}
-function keyTable(keys){
+// {アカウント: {sha256: 期限(ms)}}（括りの鍵の表は {括り: {sha256: 期限(ms)}}）
+function keyTable(keys,field='account'){
   const table={};
-  for(const k of keys)(table[k.account]??={})[k.sha256]=Date.parse(k.expires_at);
+  for(const k of keys)(table[k[field]]??={})[k.sha256]=Date.parse(k.expires_at);
   return table;
+}
+// 表を置き替え、表から外れた束にも 1 時間は空の表を配り直す（束に古い鍵を残さない）。配る先の {束: 表} を返す。
+function replaceTable(storage,name,table,now){
+  const stored=storage.kv.get(name),old=stored?.table??{};
+  const gone=Object.fromEntries(Object.entries(stored?.gone??{}).filter(([a,until])=>until>now&&!table[a]));
+  for(const bundle of Object.keys(old))if(!table[bundle])gone[bundle]=now+ACTIVITY_TTL;
+  storage.kv.put(name,{table,gone});
+  return {...Object.fromEntries(Object.keys(gone).map(a=>[a,{}])),...table};
 }
 export function validRequest(a){
   if(a===null||typeof a!=='object'||!ACTION_KINDS.includes(a.kind)||a.kind==='rotate'&&'sha256' in a)return false;
@@ -146,19 +181,23 @@ export class Person extends AtomicObject {
         const key='action:'+done.id,old=this.ctx.storage.kv.get(key);
         if(!old||old.status!=='pending')continue;
         const {sha256,...kept}=old;
-        this.put(key,{...kept,status:done.outcome,reason:done.reason,finished_at:now,expires_at:now+ACTION_TTL});
+        // レーンの鍵の発行は、VM が選んだ括りと頼みの宛先の口座を控える（login の CLI が引く・秘密は無い）。
+        const chosen=old.kind==='lane_key'&&'workspace' in done?{workspace:done.workspace,account:done.account}:{};
+        this.put(key,{...kept,...chosen,status:done.outcome,reason:done.reason,finished_at:now,expires_at:now+ACTION_TTL});
       }
+      // 括りの鍵の表を載せない VM（括りの段 2 より前）は、レーンの鍵の発行を知らないので渡さない（1 時間で消える）。
+      const lanes='workspace_keys' in body;
       const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a)
-        .filter(a=>a.status==='pending'&&a.expires_at>now).sort((a,b)=>a.created_at-b.created_at)
-        .map(a=>{const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
+        .filter(a=>a.status==='pending'&&a.expires_at>now&&(lanes||a.kind!=='lane_key')).sort((a,b)=>a.created_at-b.created_at)
+        .map(a=>{
+          if(a.kind==='lane_key'){const out={id:a.id,kind:a.kind};for(const k of LANE_EXTRA)out[k]=a[k]??null;return out;}
+          const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
       if(!('keys' in body))return {status:200,body:{status:'synced',actions}};
       // 鍵の表を置き替える。表から外れたアカウントも 1 時間は空の表を配り直す（アカウントの束に古い鍵を残さない）。
-      const table=keyTable(body.keys),old=this.ctx.storage.kv.get('keys')?.table??{};
-      const gone=Object.fromEntries(Object.entries(this.ctx.storage.kv.get('keys')?.gone??{}).filter(([a,until])=>until>now&&!table[a]));
-      for(const account of Object.keys(old))if(!table[account])gone[account]=now+ACTIVITY_TTL;
-      this.put('keys',{table,gone});
-      const exchange={...Object.fromEntries(Object.keys(gone).map(a=>[a,{}])),...table};
-      return {status:200,body:{status:'synced',actions},exchange};
+      const exchange=replaceTable(this.ctx.storage,'keys',keyTable(body.keys),now);
+      // 括りの鍵の表。載せない VM（3.14.0）なら空の表として扱い、括りの束を空にする（古い VM は括りの頼みを拾わない）。
+      const workspaceExchange=replaceTable(this.ctx.storage,'workspace_keys',keyTable(body.workspace_keys??[],'workspace'),now);
+      return {status:200,body:{status:'synced',actions},exchange,workspaceExchange};
     });
     if(result.status===200)await this.wake(this.now()+Math.min(ACTIVITY_TTL,ACTION_TTL));
     return result;
@@ -207,6 +246,24 @@ export class Person extends AtomicObject {
     if(result.status!==200)return result;
     await this.wake(this.now()+ACTION_TTL);
     return {status:200,body:{account:result.body.account,bearer}};
+  }
+  // レーンの鍵（括りの段 2）: `thth login --lane` のブラウザの頁で、**持ち主の名前と持ち主の secret** で置く。
+  // 口座の要約は要らない（持ち主が口座を 1 つも持たない括りもある）。括りの持ち主かは VM が対応表で決める
+  // （Worker は括りと持ち主の対応を持たない）。bearer は呼んだ Worker に 1 度だけ返し、ここには hash だけ。
+  async laneIssue(secret,workspace,lane){
+    if(!(workspace===null||typeof workspace==='string'&&WORKSPACE.test(workspace))||typeof lane!=='string'||!LANE.test(lane))return fail();
+    const bearer=opaque(),sha256=await digest(bearer);
+    const result=await this.confirmed(secret,null,now=>this.place({kind:'lane_key',workspace,lane},sha256,now));
+    if(result.status!==200)return result;
+    await this.wake(this.now()+ACTION_TTL);
+    return {status:200,body:{action:result.body.id,bearer}};
+  }
+  // レーンの鍵の発行がどうなったか（login の CLI が引く）。秘密は返さない。
+  laneOutcome(id){
+    const row=typeof id==='string'&&STATE_PATTERN.test(id)?this.ctx.storage.kv.get('action:'+id):null;
+    if(!row||row.kind!=='lane_key'||row.expires_at<=this.now())return fail(404,'not_found');
+    return {status:200,body:{outcome:row.status,reason:row.reason??null,workspace:row.status==='done'?row.workspace??null:null,
+      account:row.status==='done'?row.account??null:null}};
   }
   // `/login/<code>` の待つページ（3.14.3 穴 2）: VM がこの人のアカウントの状態を押し上げたか（secret は見ない・
   // 中身は返さない）。所有者がまだいなければ 404。
@@ -386,10 +443,12 @@ export class Account extends AtomicObject {
     return {status:202,body:{status:'pending'}};
   }
   // VM の sync（Person DO を通して）: その所有者の鍵の表を置き替え、結果を受け取り、待っている依頼を渡す。
-  async apiExchange(person,keys,results){
+  // 括りの束（`workspace` を渡す）では、渡す依頼にその括りの名を付ける（VM が鍵の括りと照らす）。
+  async apiExchange(person,keys,results,workspace=null){
     const result=this.atomic(()=>{
       if(typeof person!=='string'||!PERSON.test(person)||!keys||typeof keys!=='object'||Array.isArray(keys)||
-         !Object.entries(keys).every(([sha,at])=>HASH_PATTERN.test(sha)&&Number.isSafeInteger(at))||!Array.isArray(results))return fail();
+         !Object.entries(keys).every(([sha,at])=>HASH_PATTERN.test(sha)&&Number.isSafeInteger(at))||!Array.isArray(results)||
+         !(workspace===null||typeof workspace==='string'&&WORKSPACE.test(workspace)))return fail();
       const now=this.now();this.sweep(now);
       const table={...(this.ctx.storage.kv.get('keys')||{})};
       const before=JSON.stringify(table[person]??{});
@@ -405,6 +464,7 @@ export class Account extends AtomicObject {
       for(const row of [...this.ctx.storage.kv.list({prefix:'request:'})].map(([,r])=>r)
           .filter(r=>r.status==='pending'&&r.person===person&&r.expires_at>now&&r.body).sort((a,b)=>a.created_at-b.created_at)){
         const item={request_id:row.id+'.'+row.account,account:row.account,operation:row.operation,key_sha256:row.key_sha256,body:row.body};
+        if(workspace!==null)item.workspace=workspace;
         size+=JSON.stringify(item).length;
         if(requests.length>=API_HANDOFF_MAX||size>API_HANDOFF_BYTES)break;
         requests.push(item);

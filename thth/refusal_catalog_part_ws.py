@@ -38,11 +38,48 @@ ENTRIES = {
         "command": "thth login --lane <レーン>",
         "better": "レーンの入口の文書に `thth --lane <レーン>` の 1 行を書いておくと、毎回の名指しを取り違えません。",
         "doors": ("cli", "remote"), "since": _SINCE},
-    "workspace_name_invalid": _entry(
+    # ---- レーンの鍵（括りの段 2・`thth login --lane`・`thth/activity.py` の issue_lane_key・`thth/remote.py`）
+    "workspace_mismatch": {
+        "kind": "refusal",
+        "why": "鍵のファイルに控えた括りと、VM が答えた括りの名が違います。答えの中身は出していません。",
+        "fix": "`thth login --lane <レーン>` をやり直して、鍵と括りの控えを揃えてください（前の鍵は VM が取り消します）。",
+        "command": "thth login --lane <レーン>",
+        "better": "括りが 2 つ以上あるときは `--workspace <括り>` で名指しして login すると、取り違えが起きません。",
+        "doors": ("remote",), "since": _SINCE},
+    "workspace_not_owned": {
+        "kind": "refusal",
+        "why": "入れた持ち主は、その括りの持ち主ではありません（または、その名の括りはありません）。VM は鍵を作っていません。",
+        "fix": "括りの持ち主の名前と持ち主の secret で、`thth login --lane <レーン>` をやり直してください。括りの名は持ち主か管理者に確かめてください。",
+        "command": "thth login --lane <レーン> --workspace <括り>",
+        "better": "レーンの入口の文書に括りの名と `thth --lane <レーン>` を 1 行書いておくと、次の login で迷いません。",
+        "doors": ("remote",), "since": _SINCE},
+    "workspace_required": {
+        "kind": "refusal",
+        "why": "持ち主の括りが 2 つ以上あるので、どの括りに鍵を結び付けるか決められません。VM は鍵を作っていません。",
+        "fix": "`--workspace <括り>` を付けて login をやり直してください。",
+        "command": "thth login --lane <レーン> --workspace <括り>",
+        "better": "括りごとにレーンの名を分けておく（例 `<repo>-<レーン>`）と、鍵のファイルも取り違えません。",
+        "doors": ("remote",), "since": _SINCE},
+    "workspace_has_no_accounts": {
+        "kind": "refusal",
+        "why": "その括りにはまだ口座が 1 つもないので、レーンの鍵を結び付ける先がありません。VM は鍵を作っていません。",
+        "fix": "管理者に括りの中へ口座を足してもらってから（`thth account add`）、`thth login --lane <レーン>` をやり直してください。",
+        "command": "thth login --lane <レーン> --workspace <括り>",
+        "better": "口座を足すときに、どのレーンが使うかを入口の文書に書いておくと、login の順が決まります。",
+        "doors": ("remote",), "since": _SINCE},
+    "lane_key_unconfirmed": {
+        "kind": "refusal",
+        "why": "受け取った鍵が VM で生きたことを、まだ確かめられていません（VM の巡が遅れている・login の期限が切れた）。",
+        "fix": "少し置いて `thth --lane <レーン> board` を打ち、通らなければ `thth login --lane <レーン>` をやり直してください。",
+        "command": "thth login --lane <レーン>",
+        "better": "login は VM が動いている時間に打つと、数十秒で鍵が生きて括りの名まで確かめられます。",
+        "doors": ("remote",), "since": _SINCE},
+    "workspace_name_invalid": {**_entry(
         "括りの名の形が違います。何も書いていません。",
         "括りの名は小文字で始まる英小文字・数字・`-`（32 字まで）にしてください。",
         _LIST,
         "媒体群の呼び名に近い短い名にすると、一覧と置き場の名前が読みやすくなります。"),
+        "doors": ("cli", "remote")},  # `thth login --lane --workspace <括り>` の形の断りも同じ文
     "workspace_unknown": _entry(
         "台帳にその名の括りがありません。",
         "`thth admin ws list` で括りの名を確かめてください。",

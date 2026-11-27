@@ -50,6 +50,8 @@ class RemoteError(Exception):
 LANE_ENV = "THTH_LANE"
 # レーンの鍵のファイルの名前（`<repo>` か `<repo>-<レーン>`。hub の名乗りのファイルと同じ付け方・括りの段 2）。
 LANE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}\Z")
+# 括りの名（`accounts.WS_NAME` と同じ形）。
+WORKSPACE_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
 
 def lanes_dir() -> str:
@@ -104,7 +106,14 @@ def load():
         url = httpsafe.validated_url(data.get("url") or DEFAULT_URL, base=True)
     except httpsafe.EndpointRejected:
         raise RemoteError("remote_config_invalid", rc=2) from None
-    return {"url": url, "key": data["key"]}
+    out = {"url": url, "key": data["key"]}
+    workspace = data.get("workspace")
+    if workspace is not None:
+        # レーンの鍵（括りの段 2）: 頼みを括りの束に置くための括りの名（形が違えば鍵のファイルごと読めない）。
+        if not isinstance(workspace, str) or not WORKSPACE_NAME.fullmatch(workspace):
+            raise RemoteError("remote_config_invalid", rc=2)
+        out["workspace"] = workspace
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -156,7 +165,13 @@ def cmd_login(args) -> int:
         url = httpsafe.validated_url(args.url or DEFAULT_URL, base=True)
     except httpsafe.EndpointRejected:
         return _fail("invalid_url", "https:// で始まる URL を指定してください")
+    workspace = getattr(args, "workspace", None)
+    if workspace is not None and (current_lane() is None or not WORKSPACE_NAME.fullmatch(workspace)):
+        return _fail("workspace_name_invalid", "`--workspace <括り>` は `--lane <レーン>` と一緒に、括りの名の形で付けてください")
     if not args.stdin and not getattr(args, "paste", False):
+        if current_lane() is not None:
+            return _browser_login(url, open_browser=not getattr(args, "no_browser", False),
+                                  lane=current_lane(), workspace=workspace)
         return _browser_login(url, open_browser=not getattr(args, "no_browser", False))
     if args.stdin:
         key = sys.stdin.readline().strip()
@@ -214,14 +229,22 @@ def _sha256(text) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _browser_login(url, *, open_browser=True) -> int:
-    """ブラウザ式の `thth login`（設計 3.14.2 §2）。鍵は受け取ったらすぐ伏せる対象に入れ、画面には出さない。"""
+def _browser_login(url, *, open_browser=True, lane=None, workspace=None) -> int:
+    """ブラウザ式の `thth login`（設計 3.14.2 §2）。鍵は受け取ったらすぐ伏せる対象に入れ、画面には出さない。
+
+    `lane` があればレーンの鍵（括りの段 2）: start に括りとレーンの名（秘密でない）を足し、ブラウザでは持ち主の名前と
+    持ち主の secret で許す。鍵を受け取ったあと、VM が鍵を作ったか（作らなければ理由）を待ち、確かめの頼みを 1 回打つ。
+    """
     raw = "".join(secrets.choice(LOGIN_ALPHABET) for _ in range(8))
     code = raw[:4] + "-" + raw[4:]
     poll_token = secrets.token_urlsafe(32)  # 43 字（URL を見た人が鍵を取れないように poll は別の token で守る）
     redact.register_secret(poll_token)
-    status, value = _login_exchange("POST", url + "/api/v1/login/start", {},
-                                    {"code_hash": _sha256(code), "poll_token_hash": _sha256(poll_token)})
+    payload = {"code_hash": _sha256(code), "poll_token_hash": _sha256(poll_token)}
+    if lane is not None:
+        payload["lane"] = lane
+        if workspace is not None:
+            payload["workspace"] = workspace
+    status, value = _login_exchange("POST", url + "/api/v1/login/start", {}, payload)
     if status is None:
         return _fail("remote_unavailable", "thth.me に届きませんでした。網を確かめてもう一度"
                      "（鍵が手元にあれば `thth login --stdin` でも入れられます）")
@@ -236,7 +259,11 @@ def _browser_login(url, *, open_browser=True) -> int:
         print("（上の URL をブラウザで開いてください）", flush=True)
     else:
         print("（ブラウザが開かなければ上の URL を開いてください）", flush=True)
-    print("待っています…（口座名と口座の secret を入れて「この機械に鍵を渡す」を押す）", flush=True)
+    if lane is not None:
+        print(f"待っています…（レーン {lane}・括り {workspace or '持ち主の括り（1 つのとき）'}。"
+              "持ち主の名前と持ち主の secret を入れて「許可する」を押す）", flush=True)
+    else:
+        print("待っています…（口座名と口座の secret を入れて「この機械に鍵を渡す」を押す）", flush=True)
     deadline = _clock() + LOGIN_MAX_SECONDS
     target = url + "/api/v1/login/poll/" + code
     try:
@@ -258,6 +285,10 @@ def _browser_login(url, *, open_browser=True) -> int:
     key, account = value.get("key"), value.get("account")
     if isinstance(key, str):
         redact.register_secret(key)
+    if lane is not None:
+        if not isinstance(key, str) or not KEY.fullmatch(key):
+            return _fail("login_failed", "thth.me の答えが鍵の形ではありません。`thth login --lane` をやり直してください")
+        return _lane_login_finish(url, code, poll_token, key, lane, workspace, value.get("owner"))
     if not isinstance(key, str) or not KEY.fullmatch(key) or not isinstance(account, str) \
             or not ACCOUNT_NAME.fullmatch(account):
         return _fail("login_failed", "thth.me の答えが鍵の形ではありません。`thth login` をやり直してください")
@@ -270,6 +301,84 @@ def _browser_login(url, *, open_browser=True) -> int:
     print(f"保存しました: {path}（{account}）")
     print(f"鍵はサーバが切り替えた時点（数十秒後）から使えます。確かめるには: thth account status {account}")
     return 0
+
+
+LANE_OUTCOME_SECONDS = 120   # VM が sync で鍵を作るまで待つ最長（常駐は 10 秒ごと）
+LANE_CONFIRM_TRIES = 3
+
+
+def _lane_login_finish(url, code, poll_token, key, lane, workspace, owner) -> int:
+    """レーンの鍵を受け取ったあと: VM が鍵を作ったかを待ち、保存し、確かめの頼みを 1 回打つ（括りの段 2）。"""
+    target = url + "/api/v1/login/poll/" + code
+    deadline = _clock() + LANE_OUTCOME_SECONDS
+    print("鍵を受け取りました。サーバーが括りに結び付けるのを待っています…", flush=True)
+    while True:
+        if _clock() >= deadline:
+            return _fail("lane_key_unconfirmed", "VM がまだ鍵を作っていません。少し置いて `thth login --lane "
+                         f"{lane}` をやり直してください（前の鍵は取り消されます）")
+        _sleep(LOGIN_POLL_SECONDS)
+        status, value = _login_exchange("GET", target, {"Authorization": "Bearer " + poll_token})
+        if status is None or status in (202, 429, 503) or value is None:
+            continue
+        if status != 200:
+            return _fail("lane_key_unconfirmed", "login の期限が切れました。`thth login --lane "
+                         f"{lane}` をやり直してください")
+        outcome = value.get("outcome")
+        if outcome == "pending":
+            continue
+        if outcome == "failed":
+            reason = _code(value.get("reason"), "lane_key_unconfirmed")
+            return _fail(reason, _LANE_REASONS.get(reason, f"`thth login --lane {lane}` をやり直してください"))
+        if outcome != "done":
+            continue
+        chosen, account = value.get("workspace"), value.get("account")
+        if not isinstance(chosen, str) or not WORKSPACE_NAME.fullmatch(chosen) or not isinstance(account, str) \
+                or not ACCOUNT_NAME.fullmatch(account):
+            return _fail("lane_key_unconfirmed", "サーバーの答えに括りの名がありません。`thth login --lane "
+                         f"{lane}` をやり直してください")
+        if workspace is not None and chosen != workspace:
+            return _fail("workspace_mismatch", f"頼んだ括り {workspace} と、サーバーが結び付けた括り {chosen} が違います")
+        break
+    path = config_path()
+    record = {"url": url, "key": key, "account": account, "lane": lane, "workspace": chosen,
+              "issued_at": jst_iso_now(), "issuer": "thth.me"}
+    if isinstance(owner, str) and ACCOUNT_NAME.fullmatch(owner):
+        record["owner"] = owner
+    try:
+        secrets_fs.atomic_write_json(path, record, mode=0o600, dir_mode=0o700)
+    except OSError as exc:
+        return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
+    # 確かめの頼み: 鍵が VM で生きたことと、VM が言う括りの名を見る。
+    answer = None
+    for attempt in range(LANE_CONFIRM_TRIES):
+        try:
+            answer = call("lane_status", account)
+            break
+        except RemoteError as exc:
+            if exc.code != "invalid_key" or attempt + 1 == LANE_CONFIRM_TRIES:
+                return _fail("lane_key_unconfirmed", f"保存はしました（{path}）が、確かめの頼みが通りませんでした（{exc.code}）。"
+                             f"少し置いて `thth --lane {lane} board` を打ち、通らなければ `thth login --lane {lane}` をやり直してください")
+            _sleep(LOGIN_POLL_SECONDS)
+    if answer.get("workspace") != chosen:
+        return _fail("workspace_mismatch", f"鍵のファイルの括り {chosen} と、VM が答えた括りが違います")
+    print(f"保存しました: {path}")
+    print(f"鍵は VM で生きています: 括り {chosen}・レーン {lane}・持ち主 {answer.get('owner')}・口座 {answer.get('accounts')} 個"
+          f"（{'書いてよい' if answer.get('writes') else '読むだけ'}）")
+    print(f"使い方: thth --lane {lane} board")
+    return 0
+
+
+# VM が鍵を作らなかった理由ごとの 1 行目の補い（3 つの文は目録・`refusal_catalog_part_ws`）。
+_LANE_REASONS = {
+    "workspace_not_owned": "その括りの持ち主ではありません（または、その名の括りはありません）",
+    "workspace_required": "持ち主の括りが 2 つ以上あります。`--workspace <括り>` で選んでください",
+    "workspace_has_no_accounts": "その括りにはまだ口座がありません",
+}
+
+
+def jst_iso_now() -> str:
+    from . import jst
+    return jst.iso()
 
 
 def cmd_logout(args) -> int:
@@ -298,7 +407,7 @@ POLL_MAX_SECONDS = 90
 RETRY_AFTER_MAX = 60  # 429 の Retry-After をこれより長くは待たない（1 回だけやり直す）
 RESPONSE_MAX = 262144
 CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
-REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{43}\.[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|~[a-z][a-z0-9-]{0,31})\Z")
 
 _sleep = time.sleep
 _clock = time.monotonic
@@ -394,6 +503,9 @@ def call(operation, account, **fields):
     if cfg is None:
         raise RemoteError("not_logged_in", rc=2)
     body = {"account": account, **{k: v for k, v in fields.items() if v is not None}}
+    if cfg.get("workspace"):
+        # レーンの鍵は括りの束へ（括りの段 2）。口座が括りにあるかは VM が決める。
+        body["workspace"] = cfg["workspace"]
     status, headers, value = _exchange(cfg, "POST", "/api/v1/" + operation, body)
     if status == 429:
         wait = _retry_after(headers)
@@ -437,6 +549,10 @@ def passthrough(argv) -> int | None:
         value = call("ws_command", account, argv=list(argv))
     except RemoteError as exc:
         return _fail(exc.code)
+    expected = (load() or {}).get("workspace")
+    if expected is not None and value.get("workspace") != expected:
+        # VM の答えの括りが鍵のファイルの控えと違う: 出力を出さずに止める（取り違えた括りの中身を見せない）。
+        return _fail("workspace_mismatch", f"鍵のファイルの括り {expected} と、VM が答えた括りが違います")
     out, err = value.get("stdout"), value.get("stderr")
     if isinstance(out, str) and out:
         sys.stdout.write(out)
@@ -1959,7 +2075,10 @@ def register(sub) -> None:
     # 受けるのは断るためだけ（`key_in_argument`）。help には出さない。
     p.add_argument("key", nargs="?", default=None, help=argparse_suppress())
     p.add_argument("--lane", default=None,
-                   help="レーンの鍵として ~/.config/thth/lanes/<レーン>.json に保存する（`thth --lane <レーン> …` で使う）")
+                   help="レーンの鍵として ~/.config/thth/lanes/<レーン>.json に保存する（`thth --lane <レーン> …` で使う）。"
+                        "ブラウザでは括りの持ち主の名前と持ち主の secret で許す")
+    p.add_argument("--workspace", default=None,
+                   help="--lane と一緒に: 鍵を結び付ける括り（持ち主の括りが 1 つなら要らない）")
     p.set_defaults(func=cmd_login)
     q = sub.add_parser("logout", help="保存した thth.me の鍵を消す")
     q.add_argument("--lane", default=None, help="そのレーンの鍵だけを消す")

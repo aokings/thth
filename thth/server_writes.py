@@ -781,6 +781,10 @@ def serve(context, request, *, via):
     if operation=='ws_command':
         from . import server_passthrough
         return server_passthrough.execute(context,request)
+    # 括りの段 2: レーンの鍵が VM で生きたか（`thth login --lane` の直後の確かめ）。
+    if operation=='lane_status':
+        from . import server_passthrough
+        return server_passthrough.lane_status(context,request)
     # 段 1 の読む口（設計 §3.2・`thth/server_reads.py`）と、状態・設定（MCP と同じ関数）。
     from . import server_reads
     if operation in server_reads.OPERATIONS: return server_reads.execute(context,request)

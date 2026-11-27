@@ -217,5 +217,21 @@ def execute(context, request) -> dict:
                               cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     except subprocess.TimeoutExpired:
         raise ReportServiceError("upstream_unavailable") from None
+    # 答えに括りの名を付ける（括りの段 2）: CLI は鍵のファイルの控えと照らし、違えば `workspace_mismatch`。
     return {"command": argv[0], "rc": proc.returncode, "stdout": proc.stdout[:OUT_MAX],
-            "stderr": proc.stderr[:OUT_MAX // 6], "truncated": len(proc.stdout) > OUT_MAX}
+            "stderr": proc.stderr[:OUT_MAX // 6], "truncated": len(proc.stdout) > OUT_MAX,
+            "workspace": context.workspace}
+
+
+def lane_status(context, request) -> dict:
+    """`{"operation": "lane_status", "account": …}`: レーンの鍵が VM で生きているか（login の直後の確かめ・括りの段 2）。
+
+    答えは括り・レーン・持ち主・書いてよいか・口座の数だけ（口座の名前の並びは出さない）。
+    """
+    from .report_service import ReportServiceError
+    if getattr(context, "workspace", None) is None or getattr(context, "lane", None) is None:
+        raise ReportServiceError("unsupported_operation")
+    if type(request) is not dict or set(request) - {"operation", "account"}:
+        raise ReportServiceError("invalid_request")
+    return {"workspace": context.workspace, "lane": context.lane, "owner": context.actor,
+            "writes": bool(context.writes), "accounts": len(context.allowed_accounts)}

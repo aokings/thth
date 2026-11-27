@@ -1,6 +1,7 @@
 // 遠くの道（設計 3.14.0 §3.1）: CLI → thth.me/api/v1/<operation> → アカウントの束（Account DO）→ VM が sync で拾う。
 //
 //   POST /api/v1/<operation>        Authorization: Bearer <鍵>・JSON（48 KB まで）・{account, ...引数}
+//                                   レーンの鍵は {account, workspace, ...} で括りの束に（括りの段 2・request_id は `<id>~<括り>`）
 //   GET  /api/v1/result/<request_id> 同じ鍵
 //
 // - 鍵は sha256 だけを見る。照合の表は VM が sync で押し上げる（Person DO が持ち、アカウントの束に配る）。
@@ -10,7 +11,7 @@
 // - Worker が自分で断るときは {error: <符丁>} に、目録の why・fix・better を足す（relay.js の reply・VM の JSON には足さない）。
 // - **request の中身も結果も記録しない**（/activity と同じ作法: no-store・no-referrer・観測ログ無し）。
 //   本文はアカウントの束に最長 120 秒・結果は入ってから 10 分だけ。
-import {PERSON,boundedBody,accountStub,publicQuota} from './person.js';
+import {PERSON,WORKSPACE,boundedBody,accountStub,workspaceStub,publicQuota} from './person.js';
 import {digest,reply} from './relay.js';
 
 export const API_BODY_MAX=49_152;   // 48 KB（server_writes の本文の上限と同じ桁）
@@ -19,6 +20,8 @@ export const API_POLL_MS=500;       // アカウントの束を見る間隔
 const OPERATION=/^[a-z][a-z0-9_]{0,47}$/;
 // request_id は `<43 字の乱数>.<アカウント>`（結果を引くときにアカウントの束が分かるように）。
 export const REQUEST_ID=/^([A-Za-z0-9_-]{43})\.([a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
+// 括りの束の request_id は `<43 字の乱数>~<括り>`（`~` は口座の名前にも括りの名にも無い）。
+export const WORKSPACE_REQUEST_ID=/^([A-Za-z0-9_-]{43})~([a-z][a-z0-9-]{0,31})$/;
 const BEARER=/^Bearer ([\x21-\x7e]{16,512})$/;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -57,12 +60,12 @@ export async function apiRequest(request,env,url){
     if(!sha256)return reply(401,{error:'invalid_key'});
     if(!(await env.API_KEY_LIMIT.limit({key:sha256})).success)return reply(429,{error:'rate_limited'});
     if(result){
-      const id=REQUEST_ID.exec(result[1]);
-      if(!id)return reply(404,{error:'not_found'});
-      const stub=await accountStub(env,id[2]);
+      const id=REQUEST_ID.exec(result[1]),bundle=id?null:WORKSPACE_REQUEST_ID.exec(result[1]);
+      if(!id&&!bundle)return reply(404,{error:'not_found'});
+      const stub=id?await accountStub(env,id[2]):await workspaceStub(env,bundle[2]);
       const key=await stub.apiKey(sha256);
       if(key.status!==200)return reply(key.status,key.body);
-      return wait(stub,id[1],sha256,result[1],0);
+      return wait(stub,(id??bundle)[1],sha256,result[1],0);
     }
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     let body;
@@ -71,6 +74,16 @@ export async function apiRequest(request,env,url){
     // operation は path から。body に operation を書いて別の口に化けさせない。
     if(body===null||typeof body!=='object'||Array.isArray(body)||Object.hasOwn(body,'operation')||
        typeof body.account!=='string'||!PERSON.test(body.account))return reply(400,{error:'invalid_request'});
+    // レーンの鍵（括りの段 2）: body の `workspace` で括りの束に置く。鍵の表も括りごと。`workspace` は束を選ぶためだけの
+    // 欄なので VM には渡さない（VM は束の名から括りを受け取り、鍵の括りと照らす）。口座が括りにあるかは VM が決める。
+    if(Object.hasOwn(body,'workspace')){
+      const {workspace,...rest}=body;
+      if(typeof workspace!=='string'||!WORKSPACE.test(workspace))return reply(400,{error:'invalid_request'});
+      const stub=await workspaceStub(env,workspace);
+      const placed=await stub.apiSubmit(sha256,operation,rest);
+      if(placed.status!==200)return reply(placed.status,placed.body);
+      return wait(stub,placed.body.id,sha256,placed.body.id+'~'+workspace,holdMs(env));
+    }
     const stub=await accountStub(env,body.account);
     const placed=await stub.apiSubmit(sha256,operation,body);
     if(placed.status!==200)return reply(placed.status,placed.body);

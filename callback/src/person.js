@@ -41,6 +41,13 @@ export async function boundedBody(request,max=65_536) {
 export const relayPublicKey=env=>env.RELAY_PUBLIC_KEY??env.APPROVAL_PUBLIC_KEY;
 export async function personStub(env,person) {return env.PERSON.getByName(await digest(person));}
 export async function accountStub(env,account) {return env.ACCOUNT.getByName(await digest(account));}
+// 括りの束（括りの段 2・設計 §7.1）: レーンの鍵の頼みは口座でなく括りに置く。型は口座の束と同じ Account DO で、
+// 名前に口座の名前の形（PERSON）に無い `:` を入れて引くので、口座の束とぶつからない（wrangler の migration も要らない）。
+// 括りの名は VM の対応表で全体に 1 つ。Worker は口座と括りの対応を持たない（どの口座が括りにあるかは VM が決める）。
+export const WORKSPACE = /^[a-z][a-z0-9-]{0,31}$/;
+// レーンの名（鍵のファイルの名前 `~/.config/thth/lanes/<レーン>.json` と同じ形）。
+export const LANE = /^[a-z0-9][a-z0-9-]{0,80}$/;
+export async function workspaceStub(env,workspace) {return env.ACCOUNT.getByName(await digest('ws:'+workspace));}
 // 招待（3.10.0）の object は code の SHA-256 で引く。VM は hash しか持たないので、署名の
 // subject も同じ hash。ブラウザの道（/invite/<code>）はここで code を hash にしてから引く。
 export function inviteStub(env,hash) {return env.INVITE_OBJECT.getByName(hash);}
@@ -176,6 +183,7 @@ export async function relayRequest(request,env,url) {
 // アクティビティの sync（3.12.0 §3.4）と遠くの道の受け渡し（3.14.0 §3.1）。Person DO が鍵の表を置き替え、
 // 表に載るアカウントの束ごとに「そのオーナーの鍵の表・結果」を渡して、待っている依頼を受け取る。
 // 3.13.0 の VM（`keys` を載せない）には依頼を渡さない（応答の形も今のまま）。
+// 括りの段 2: `workspace_keys` を載せる VM には、括りの束にも同じことをする（載せない VM の括りの束は空にする）。
 async function activityRelay(env,person,body,ticket){
   const result=await (await personStub(env,person)).activitySync(body,ticket);
   if(result.status!==200||!result.exchange)return reply(result.status,result.body);
@@ -186,6 +194,14 @@ async function activityRelay(env,person,body,ticket){
       const got=await (await accountStub(env,account)).apiExchange(person,keys,results);
       if(got.status===200)requests.push(...got.body.requests);
     }catch{/* アカウントの束が今は使えない: そのアカウントの依頼は次の sync で渡す（結果も VM がもう一度送る）。 */}
+  }
+  // 括りの束（レーンの鍵）。結果は `workspace_results` から、その括りの分だけ（`workspace` の欄は外して渡す）。
+  for(const [workspace,keys] of Object.entries(result.workspaceExchange??{})){
+    const results=(body.workspace_results??[]).filter(r=>r.workspace===workspace).map(({workspace:_,...r})=>r);
+    try{
+      const got=await (await workspaceStub(env,workspace)).apiExchange(person,keys,results,workspace);
+      if(got.status===200)requests.push(...got.body.requests);
+    }catch{/* 括りの束が今は使えない: 次の sync で渡す。 */}
   }
   let size=0;
   const handed=requests.filter(item=>(size+=JSON.stringify(item).length)<=API_HANDOFF_BYTES).slice(0,API_HANDOFF_MAX);

@@ -20,6 +20,13 @@
 
 3.14.0（遠くの道・§3.1）: 同じ sync に、その人の**有効な鍵の表**（hash・口座・期限）と /api/v1 の依頼の
 結果を載せ、応答で待っている依頼を受け取る（`api_requests`）。依頼があれば次の sync を 2 秒後にする。
+
+括りの段 2（レーンの鍵）: 同じ sync に、**括りの鍵の表**（hash・括り・期限）と括りの束の結果を足す
+（`workspace_keys`・`workspace_results`）。レーンの鍵は口座ごとの表に載せない（口座の数×レーンの数で 64 行を越えるため）。
+`thth login --lane` の頁で持ち主が secret を入れると、Worker が操作 `lane_key`（hash だけ）を置き、ここで対応表の
+`owner_of(括り) == 持ち主` を確かめてから資格の行（scope user・actor＝持ち主・workspace・lane・365 日）を作る。
+同じ持ち主・括り・レーンの前の鍵は取り消す。版ずれ: 括りの形を断る Worker（3.14.0）には 3.14.0 の形、
+それも断る Worker（3.13.0）には 3.13.0 の形で話す（どちらもしばらく覚える）。
 """
 from __future__ import annotations
 
@@ -42,16 +49,22 @@ SYNC_SECONDS = 10
 BUSY_SECONDS = 2   # /api/v1 の依頼が待っているあいだの刻み（設計 3.14.0 §3.1）
 BACKOFF_SECONDS = 300
 CREDENTIAL_DAYS = 365
-KINDS = ("stop", "resume", "cancel", "settings", "revoke", "rotate")
+KINDS = ("stop", "resume", "cancel", "settings", "revoke", "rotate", "lane_key")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+LANE = re.compile(r"[a-z0-9][a-z0-9-]{0,80}\Z")
+# sync の形（版ずれ）。FULL は括りの鍵の表も載せる・KEYS は 3.14.0（口座の鍵の表まで）・PLAIN は 3.13.0。
+FULL, KEYS, PLAIN = 3, 2, 1
 ACTION_REASONS = frozenset((
     "not_owner", "invalid_action", "credential_not_single_account", "credential_conflict",
     "credentials_full", "credentials_unavailable", "action_failed",
     "invalid_setting", "schedule_unavailable", "draft_not_editable", "scope_unavailable",
     "draft_not_verified", "schedule_commit_unconfirmed", "ledger_unavailable",
+    # レーンの鍵（括りの段 2）
+    "workspace_not_owned", "workspace_required", "workspace_has_no_accounts", "workspace_unavailable",
+    "workspaces_map_invalid",
 ))
 _next_sync = {}
-_legacy = {}   # 3.14.0 の sync の形を断った Worker（3.13.0）と話している人 → 古い形で話す期限
+_legacy = {}   # 新しい sync の形を断った Worker と話している人 → (古い形で話す期限, 話す形)
 
 
 # --------------------------------------------------------------------------
@@ -71,6 +84,9 @@ def owners(credentials_path) -> dict:
         # 取り消した・期限の切れた鍵でも、1 口座だけの鍵なら持ち主のまま（/activity で発行し直せるように）。
         # 複数の口座にまたがる鍵は、生きているものだけで数える。
         if (revoked or now >= expiry) and len(context.allowed_accounts) != 1:
+            continue
+        if context.lane is not None:
+            # レーンの鍵は括りの口座を全部持つが、口座の持ち主を決める鍵ではない（/activity の要約と操作の権限を広げない）。
             continue
         for account, project in context.allowed_accounts.items():
             out.setdefault(context.actor, {})[account] = project
@@ -357,11 +373,22 @@ def _valid_action(action):
     return not extra
 
 
+def _valid_lane_action(action) -> bool:
+    """レーンの鍵の発行（口座を持たない・括りは null か括りの名・レーンの名・hash）。"""
+    return (set(action) == {"id", "kind", "workspace", "lane", "sha256"}
+            and (action["workspace"] is None or isinstance(action["workspace"], str)
+                 and accounts.WS_NAME.fullmatch(action["workspace"]) is not None)
+            and isinstance(action["lane"], str) and LANE.fullmatch(action["lane"]) is not None
+            and isinstance(action["sha256"], str) and HEX64.fullmatch(action["sha256"]) is not None)
+
+
 def apply(person, action, credentials_path) -> dict:
     """1 件の操作を行い `{id, outcome, reason}` を返す（例外は外へ出さない）。
 
-    口座の台帳のある括りに入って行う（括りの段 2）。
+    口座の台帳のある括りに入って行う（括りの段 2）。レーンの鍵の発行は口座を持たないので別の口。
     """
+    if type(action) is dict and action.get("kind") == "lane_key":
+        return _apply_lane_key(person, action, credentials_path)
     account = action.get("account") if type(action) is dict else None
     try:
         scope = accounts.account_workspace(account) if isinstance(account, str) else accounts.use_workspace(accounts.MAIN_WS)
@@ -410,6 +437,121 @@ def _apply(person, action, credentials_path) -> dict:
 
 
 # --------------------------------------------------------------------------
+# レーンの鍵（括りの段 2・`thth login --lane`）
+# --------------------------------------------------------------------------
+
+def _workspaces_map():
+    from . import workspaces_map, ws_admin
+    try:
+        return workspaces_map.load(ws_admin.map_path())
+    except workspaces_map.WorkspacesMapError:
+        raise ValueError("workspaces_map_invalid") from None
+
+
+def owned_workspaces(person) -> list:
+    """対応表で、その人が持ち主の括り（権威は VM の対応表 1 枚）。"""
+    table = _workspaces_map()
+    return sorted(ws for ws in table.workspaces if table.owner_of(ws) == person)
+
+
+def choose_workspace(person, workspace):
+    """発行する括りを決める。名指しなら持ち主か、無ければ持ち主の括りが 1 つならそれ。
+
+    ほかの人の括りと、どこにも無い括りは同じ `workspace_not_owned`（括りの名を当てて回る探りに答えない）。
+    """
+    owned = owned_workspaces(person)
+    if workspace is not None:
+        if workspace not in owned:
+            raise ValueError("workspace_not_owned")
+        return workspace
+    if not owned:
+        raise ValueError("workspace_not_owned")
+    if len(owned) > 1:
+        raise ValueError("workspace_required")
+    return owned[0]
+
+
+def _workspace_accounts(workspace) -> dict:
+    """{口座: project}（括りの中の口座と広告の口座・発行のときの姿）。"""
+    from .ads import ledger as ads_ledger
+    try:
+        scope = accounts.use_workspace(workspace)
+    except accounts.AccountError:
+        raise ValueError("workspace_unavailable") from None
+    out = {}
+    with scope:
+        for name in accounts.list_account_names():
+            try:
+                out[name] = accounts.load_account(name).get("project")
+            except (accounts.AccountError, OSError, ValueError):
+                continue
+        for name in ads_ledger.list_names():
+            try:
+                out.setdefault(name, ads_ledger.load(name).get("project"))
+            except (accounts.AccountError, OSError, ValueError):
+                continue
+    return {name: project for name, project in sorted(out.items())
+            if relay.PERSON.fullmatch(name) and (project is None or isinstance(project, str) and project.strip())}
+
+
+def issue_lane_key(credentials_path, person, workspace, lane, sha256) -> tuple:
+    """レーンの鍵の行を作る。戻り値は (括り, 頼みの宛先の口座)。断りは ValueError(符丁)。
+
+    行は scope user・actor＝持ち主・workspace・lane・書いてよい（`writes`）・365 日。口座は発行のときの括りの口座
+    全部（括りの中の通り道と、括りの中の口座への 67 の口のため）。同じ持ち主・括り・レーンの前の鍵は取り消す。
+    同じ hash の行がもうあれば何もしない（sync が落ちて同じ操作が 2 度来ても 1 本）。
+    """
+    if not isinstance(sha256, str) or not HEX64.fullmatch(sha256) or not isinstance(lane, str) \
+            or not LANE.fullmatch(lane):
+        raise ValueError("invalid_action")
+    chosen = choose_workspace(person, workspace)
+    names = _workspace_accounts(chosen)
+    if not names:
+        raise ValueError("workspace_has_no_accounts")
+    home = sorted(names)[0]
+
+    def change(config):
+        rows = config["credentials"]
+        for row in rows:
+            if isinstance(row, dict) and row.get("sha256") == sha256:
+                if (row.get("actor"), row.get("workspace"), row.get("lane"), row.get("revoked")) == \
+                        (person, chosen, lane, False):
+                    return False  # 前の sync で作った（完了を返しそこねた）
+                raise ValueError("credential_conflict")
+        before = [row for row in rows if isinstance(row, dict) and row.get("actor") == person
+                  and row.get("workspace") == chosen and row.get("lane") == lane and row.get("revoked") is False]
+        if len(rows) >= 100:
+            raise ValueError("credentials_full")
+        for row in before:
+            row["revoked"] = True
+        expires = jst.iso(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=CREDENTIAL_DAYS))
+        rows.append({"sha256": sha256, "expires_at": expires, "revoked": False, "accounts": names,
+                     "scope": "user", "writes": True, "actor": person, "workspace": chosen, "lane": lane})
+        return True
+
+    with accounts.use_workspace(chosen), accounts.account_workspace(home):
+        _rewrite_credentials(credentials_path, change, "credential_rotated", home, person,
+                             {"credential": ["present", "present"], "lane": [None, lane]})
+    return chosen, home
+
+
+def _apply_lane_key(person, action, credentials_path):
+    action_id = action.get("id") if isinstance(action.get("id"), str) and relay.OPAQUE.fullmatch(action["id"]) else None
+    if action_id is None:
+        return None
+    failed = {"id": action_id, "outcome": "failed", "reason": "invalid_action", "workspace": None, "account": None}
+    if not _valid_lane_action(action):
+        return failed
+    try:
+        workspace, home = issue_lane_key(credentials_path, person, action["workspace"], action["lane"],
+                                         action["sha256"])
+    except Exception as exc:
+        reason = str(exc) if str(exc) in ACTION_REASONS else "action_failed"
+        return {**failed, "reason": reason}
+    return {"id": action_id, "outcome": "done", "reason": None, "workspace": workspace, "account": home}
+
+
+# --------------------------------------------------------------------------
 # 常駐の 1 巡
 # --------------------------------------------------------------------------
 
@@ -424,22 +566,47 @@ def _summaries(person, names, credentials_path):
     return out
 
 
-def _push(person, names, credentials_path, completed, keys, results):
-    """1 回の sync。`keys` が None なら 3.13.0 の形（鍵の表・結果を載せない）。
+def _level(person) -> int:
+    until, level = _legacy.get(person, (0, FULL))
+    return level if time.monotonic() < until else FULL
 
-    3.14.0 の形を古い Worker（3.13.0）が 400 で断ったら、今の形で送り直し、しばらく古い形で話す
-    （deploy は Worker が先だが、逆でも /activity を止めない）。戻り値は (応答, 3.14.0 の形で届いたか)。
+
+def _shaped(level, body, tables, results):
+    """sync の本文を形に合わせる。3.14.0 以前の形では、操作の結果に括りの欄を付けない。"""
+    if level < FULL:
+        body = {**body, "completed": [{k: row[k] for k in ("id", "outcome", "reason")} for row in body["completed"]]}
+    if level == PLAIN:
+        return body
+    keys, workspace_keys = tables
+    out = {**body, "keys": keys, "results": [row for row in results if "workspace" not in row]}
+    if level == FULL:
+        out.update(workspace_keys=workspace_keys,
+                   workspace_results=[row for row in results if "workspace" in row])
+    return out
+
+
+def _push(person, names, credentials_path, completed, tables, results, level=FULL):
+    """1 回の sync。`tables` が None なら 3.13.0 の形（鍵の表・結果を載せない）。
+
+    新しい形を古い Worker が 400 で断ったら、1 つ古い形で送り直し、しばらくその形で話す
+    （deploy は Worker が先だが、逆でも /activity と口座の鍵を止めない）。戻り値は (応答, 届いた形)。
     """
     body = {"accounts": _summaries(person, names, credentials_path), "completed": completed}
-    if keys is None:
-        return relay.signed_request("activity", person, "sync", body), False
-    try:
-        return relay.signed_request("activity", person, "sync", {**body, "keys": keys, "results": results}), True
-    except relay.RelayError as exc:
-        if exc.status != 400:
-            raise
-    _legacy[person] = time.monotonic() + BACKOFF_SECONDS
-    return relay.signed_request("activity", person, "sync", body), False
+    level = PLAIN if tables is None else level
+    while True:
+        try:
+            return relay.signed_request("activity", person, "sync", _shaped(level, body, tables, results)), level
+        except relay.RelayError as exc:
+            if exc.status != 400 or level == PLAIN:
+                raise
+        level -= 1
+        _legacy[person] = (time.monotonic() + BACKOFF_SECONDS, level)
+
+
+def _tables(person, credentials_path):
+    from . import api_requests
+    return (api_requests.key_table(person, credentials_path),
+            api_requests.workspace_key_table(person, credentials_path))
 
 
 def _sync(person, names, credentials_path):
@@ -450,26 +617,46 @@ def _sync(person, names, credentials_path):
     from . import api_requests
     # Worker の口座名の形（PERSON）に合わない名前は押し上げない（1 つで sync 全体が断られないように）。
     names = sorted(name for name in names if relay.PERSON.fullmatch(name))[:ACCOUNTS_MAX]
-    keys = api_requests.key_table(person, credentials_path) if time.monotonic() >= _legacy.get(person, 0) else None
-    keyed = sorted({row["account"] for row in keys or []})
-    leftovers = api_requests.batch(api_requests.undelivered(keyed)) if keys is not None else []
-    value, extended = _push(person, names, credentials_path, [], keys, leftovers)
-    if extended:
-        api_requests.delivered(leftovers)
+    level = _level(person)
+    tables = _tables(person, credentials_path) if level > PLAIN else None
+    keyed = sorted({row["account"] for row in (tables[0] if tables else [])}
+                   | (set(api_requests.lane_accounts(person, credentials_path)) if level == FULL else set()))
+    leftovers = api_requests.batch(api_requests.undelivered(keyed)) if tables is not None else []
+    if level < FULL:
+        leftovers = [row for row in leftovers if "workspace" not in row]
+    value, level = _push(person, names, credentials_path, [], tables, leftovers, level)
+    if level > PLAIN:
+        api_requests.delivered([row for row in leftovers if level == FULL or "workspace" not in row])
     actions = value.get("actions") if isinstance(value, dict) else None
     if not isinstance(actions, list):
         raise relay.RelayError("relay_invalid")
     # 古い Worker の応答には requests が無い（何もしない）。
-    requests = value.get("requests") if extended else None
+    requests = value.get("requests") if level > PLAIN else None
     requests = requests[:api_requests.REQUESTS_MAX] if isinstance(requests, list) else []
     completed = [row for row in (apply(person, action, credentials_path) for action in actions[:ACTIONS_MAX]) if row]
     results = [row for row in (api_requests.handle(person, item, credentials_path) for item in requests) if row]
     sent = api_requests.batch(results)
     if completed or sent:
-        _, extended = _push(person, names, credentials_path, completed, keys if extended else None, sent)
-        if extended:
-            api_requests.delivered(sent)
+        # 操作で鍵が変わった（発行し直し・レーンの鍵）なら、表を引き直して同じ sync で載せる（すぐ使えるように）。
+        if completed and level > PLAIN:
+            tables = _tables(person, credentials_path)
+        _, level = _push(person, names, credentials_path, completed, tables if level > PLAIN else None, sent, level)
+        if level > PLAIN:
+            api_requests.delivered([row for row in sent if level == FULL or "workspace" not in row])
     return completed, bool(requests) or len(sent) < len(results)
+
+
+def _map_owners() -> list:
+    """対応表のある VM で、括りの持ち主の名（対応表が無い・読めないときは足さない）。"""
+    from . import workspaces_map, ws_admin
+    try:
+        table = workspaces_map.load(ws_admin.map_path())
+    except Exception:
+        return []
+    if not table.present:
+        return []
+    return sorted({owner for owner in (table.owner_of(ws) for ws in table.workspaces)
+                   if isinstance(owner, str) and relay.PERSON.fullmatch(owner)})
 
 
 def sync_person(person, names, credentials_path):
@@ -509,6 +696,9 @@ def run_once(credentials_path):
     except Exception:
         print("activity_owners_unavailable", file=sys.stderr)
         return
+    # 括りの持ち主も回す（口座を 1 つも持たなくても、`thth login --lane` のレーンの鍵の発行を拾う・括りの段 2）。
+    for person in _map_owners():
+        people.setdefault(person, {})
     busy = False
     for person in sorted(people):
         if time.monotonic() < _next_sync.get(person, 0):

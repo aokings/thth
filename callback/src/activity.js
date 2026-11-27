@@ -34,7 +34,8 @@ export const STOP_WORDS={burst:['急な連投でガードが止めました','St
 // 2026-10-10: キーの呼び名を「API キー」に揃えた（前は「LLM のキー」「アシスタントキー」が混じっていた）。
 export const ACTION_WORDS={stop:['アカウントを止める','Stop the account'],resume:['止めたのを戻す','Resume the account'],
   cancel:['予約を取り消す','Cancel the scheduled post'],settings:['設定を変える','Change a setting'],
-  revoke:['API キーを取り消す','Revoke the API key'],rotate:['API キーを発行する','Issue an API key']};
+  revoke:['API キーを取り消す','Revoke the API key'],rotate:['API キーを発行する','Issue an API key'],
+  lane_key:['レーンの鍵を発行する','Issue a lane key']};
 const STATUS_WORDS={pending:['反映待ち','Waiting for the server'],done:['済み','Done'],failed:['できませんでした','Failed']};
 export const SETTING_WORDS={daily_max_posts:['1 日の公開の上限','Daily post limit'],
   daily_max_retracts:['1 日の削除の上限','Daily delete limit'],burst_count:['急な連投: 件数','Burst: posts'],
@@ -88,7 +89,9 @@ function activityPage(person,data){
   const banner=stopped.map(s=>{const words=STOP_WORDS[s.stopped.reason]??[s.stopped.reason,s.stopped.reason];
     return `<p class="err">${t(escape(s.account)+' は止まっています。'+escape(words[0])+'（'+escape(s.stopped.at??'')+'）',escape(s.account)+' is stopped. '+escape(words[1])+'.')}</p>`;}).join('');
   const actions=data.actions.length?`<h2>${t('頼んだ操作','Requested operations')}</h2><ul>${data.actions.map(a=>{
-    return `<li>${escape(a.account)}: ${pair(ACTION_WORDS[a.kind])} — ${pair(STATUS_WORDS[a.status]??[a.status,a.status])}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
+    // レーンの鍵（括りの段 2）は口座でなく括りとレーンに結び付く。
+    const subject=a.kind==='lane_key'?(a.workspace?a.workspace+' / ':'')+a.lane:a.account;
+    return `<li>${escape(subject)}: ${pair(ACTION_WORDS[a.kind])} — ${pair(STATUS_WORDS[a.status]??[a.status,a.status])}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
   const body=data.accounts.length?data.accounts.map(section).join(''):`<p class="status">${t('サーバーからの様子がまだ届いていません。数十秒後に開き直してください。','Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
   return page(200,`<h1>${t('アクティビティ','Activity')}</h1><p class="sub">${t('オーナー','Owner')}: ${escape(person)}</p>${banner}${actions}${body}
 <p class="note">${t('操作はシークレットをもう一度入れて確かめ、サーバーが数十秒で行います。結果はこの一覧に出ます。','Each operation asks for the secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>

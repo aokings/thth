@@ -17,6 +17,11 @@ VM に外から入る口は作らない。
 Meta の口（`server_meta`）の答えの本文・相手・配信の宛先も印には書かず（`for_record`）、この sync で 1 回だけ渡す
 （送り直しの答えはその欄が null で `not_kept` に名前が入る）。
 遠くの道で行ったことは `via: api` と鍵の id（credential_digest の先頭 12 字）で口座の記録に残る。
+
+括りの段 2（レーンの鍵・資格の行に `workspace` と `lane`）: 鍵の表は口座ごとでなく**括りごと**
+（`workspace_key_table`・{sha256, workspace, expires_at}）。依頼は Worker の括りの束から `workspace` の欄つきで届く。
+レーンの鍵は括りの束からだけ、括りの束にはレーンの鍵だけが入れる（どちらも違えば「無い鍵」と同じ `invalid_key`）。
+対応表で括りの持ち主が鍵の持ち主でなくなっていれば、表にも載せず、依頼も「無い鍵」と同じに断る。
 """
 from __future__ import annotations
 
@@ -55,17 +60,49 @@ def _credentials(credentials_path):
 
 
 def key_table(person, credentials_path) -> list:
-    """その人の有効な鍵の表（hash だけ）。取り消し・期限切れ・運営者の鍵は含めない。"""
+    """その人の有効な鍵の表（hash だけ）。取り消し・期限切れ・運営者の鍵・レーンの鍵は含めない。"""
     now = datetime.datetime.now(datetime.timezone.utc)
     rows = []
     for digest, expiry, revoked, context in _credentials(credentials_path):
-        if revoked or now >= expiry or context.scope != "user" or context.actor != person:
+        if revoked or now >= expiry or context.scope != "user" or context.actor != person or context.lane is not None:
             continue
         for account in sorted(context.allowed_accounts):
             if relay.PERSON.fullmatch(account):
                 rows.append({"sha256": digest, "account": account, "expires_at": jst.iso(expiry)})
     rows.sort(key=lambda row: (row["account"], row["sha256"]))
     return rows[:KEYS_MAX]
+
+
+def _owner_ok(person, workspace) -> bool:
+    """対応表で、その括りの持ち主がその人か（読めなければ False）。"""
+    from . import activity
+    try:
+        return workspace in activity.owned_workspaces(person)
+    except ValueError:
+        return False
+
+
+def _lane_keys(person, credentials_path):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for digest, expiry, revoked, context in _credentials(credentials_path):
+        if (revoked or now >= expiry or context.scope != "user" or context.actor != person
+                or context.lane is None or not _owner_ok(person, context.workspace)):
+            continue
+        yield digest, expiry, context
+
+
+def workspace_key_table(person, credentials_path) -> list:
+    """その人のレーンの鍵の表（括りごと・hash だけ）。括りの持ち主でなくなった括りの鍵は載せない。"""
+    rows = sorted(({"sha256": digest, "workspace": context.workspace, "expires_at": jst.iso(expiry)}
+                   for digest, expiry, context in _lane_keys(person, credentials_path)),
+                  key=lambda row: (row["workspace"], row["sha256"]))
+    return rows[:KEYS_MAX]
+
+
+def lane_accounts(person, credentials_path) -> list:
+    """レーンの鍵の口座（括りの束の依頼の印の置き場・送り直しに使う）。"""
+    return sorted({account for _d, _e, context in _lane_keys(person, credentials_path)
+                   for account in context.allowed_accounts})
 
 
 def _context(person, account, key_sha256, credentials_path):
@@ -108,8 +145,11 @@ def _write(fd, name, value, *, new=False):
 
 
 def _entry(record):
-    return {"request_id": record["request_id"], "account": record["account"], "status": "done",
-            "result": record["result"]}
+    out = {"request_id": record["request_id"], "account": record["account"], "status": "done",
+           "result": record["result"]}
+    if isinstance(record.get("workspace"), str):
+        out["workspace"] = record["workspace"]  # 括りの束の依頼（結果は括りの束へ返す）
+    return out
 
 
 def _size(value) -> int:
@@ -151,9 +191,14 @@ def _run(person, item, credentials_path) -> dict:
     from .report_service import ReportServiceError
     account, operation, body = item["account"], item["operation"], item["body"]
     try:
-        if type(body) is not dict or "operation" in body or body.get("account") != account:
+        if type(body) is not dict or "operation" in body or "workspace" in body or body.get("account") != account:
             return {"error": "invalid_request"}
         context = _context(person, account, item["key_sha256"], credentials_path)
+        bundle = item.get("workspace")
+        # レーンの鍵は括りの束からだけ・括りの束にはその括りのレーンの鍵だけ（違えば無い鍵と同じ・括りの段 2）。
+        if (context.lane is None) != (bundle is None) or bundle is not None and (
+                bundle != context.workspace or not _owner_ok(person, bundle)):
+            raise Refused("invalid_key")
         result = server_writes.serve(context, {**body, "operation": operation}, via="api")
         result = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
         if type(result) is not dict:
@@ -168,7 +213,9 @@ def _run(person, item, credentials_path) -> dict:
 
 
 def _valid(item) -> bool:
-    if type(item) is not dict or set(item) != {"request_id", "account", "operation", "key_sha256", "body"}:
+    if type(item) is not dict or set(item) - {"workspace"} != {"request_id", "account", "operation", "key_sha256", "body"}:
+        return False
+    if "workspace" in item and not (isinstance(item["workspace"], str) and accounts.WS_NAME.fullmatch(item["workspace"])):
         return False
     match = REQUEST_ID.fullmatch(item["request_id"]) if isinstance(item["request_id"], str) else None
     return (match is not None and match.group(2) == item["account"] and accounts.name_is_safe(item["account"])
@@ -209,6 +256,8 @@ def _handle(person, item, credentials_path):
                 record = {"request_id": request_id, "account": account, "operation": item["operation"],
                           "credential": item["key_sha256"][:12], "received_at": time.time(),
                           "status": "running", "delivered": False, "result": None}
+                if "workspace" in item:
+                    record["workspace"] = item["workspace"]
                 _write(fd, name, record, new=True)
             # 行っている間は印の lock を持たない（公開は口座の lock を別に取る）。
             result = _run(person, item, credentials_path)
@@ -226,8 +275,11 @@ def _handle(person, item, credentials_path):
             return {**_entry(record), "result": result}
     except Exception:
         # 印が置けない（置き場が壊れている）: 行わずに断る。二重に行うよりよい。
-        return {"request_id": request_id, "account": account, "status": "done",
-                "result": {"error": "request_unavailable"}}
+        out = {"request_id": request_id, "account": account, "status": "done",
+               "result": {"error": "request_unavailable"}}
+        if "workspace" in item:
+            out["workspace"] = item["workspace"]
+        return out
 
 
 # --------------------------------------------------------------------------
