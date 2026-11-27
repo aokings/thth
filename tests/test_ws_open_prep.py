@@ -152,7 +152,7 @@ def test_timer_run_reaches_the_garden_account(two_workspaces):  # noqa: F811
 
 def test_thth_run_carries_the_mark():
     """`thth@<口座>` は `bin/thth-run` を呼ぶ。単位のファイルは配った姿のまま（c812 の基準）で、印はラッパが付ける。
-    `thth-collect@<口座>` の単位に印を足すのは段 4（単位を置き直す日）。それまで collect は main の口座だけ。"""
+    `thth-collect@`・`thth-map@` は単位のファイルに印を書く（下の試験・開く日に VM で置き直す）。"""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(here, "bin", "thth-run"), encoding="utf-8") as f:
         assert "export THTH_WS_FROM_ACCOUNT=1" in f.read()
@@ -242,3 +242,81 @@ def test_timer_map_collect_reaches_the_garden_project(two_workspaces):  # noqa: 
     assert with_mark.returncode == 0, with_mark.stdout + with_mark.stderr
     assert "world_layer_disabled" in with_mark.stdout
     assert without.returncode == 2 and "project_unknown" in without.stderr
+
+
+# ---- `thth-collect@`・`thth-map@` の単位の印（開く日に置き直す） -----------------------------------
+
+def _unit_env(unit: str) -> dict:
+    """単位の `Environment=K=V` の行を、systemd が渡すのと同じ dict にする。"""
+    out = {}
+    for line in unit.splitlines():
+        if line.startswith("Environment="):
+            k, v = line.removeprefix("Environment=").split("=", 1)
+            out[k] = v
+    return out
+
+
+def _unit_argv(unit: str, name: str) -> list:
+    cmd = next(l.removeprefix("ExecStart=") for l in unit.splitlines() if l.startswith("ExecStart="))
+    return cmd.replace("%i", name).split()[1:]
+
+
+@pytest.mark.parametrize("render", ["render_collect_service", "render_map_service"])
+def test_units_carry_the_mark(render):
+    from thth import systemd_gen
+    env = _unit_env(getattr(systemd_gen, render)())
+    assert env.get("THTH_WS_FROM_ACCOUNT") == "1"
+    assert "THTH_WS" not in env   # 括りは書かない（`%i` から引く）
+
+
+@pytest.mark.parametrize("render,name", [
+    ("render_collect_service", "gamma-garden"),
+    ("render_map_service", "gammaproj"),
+])
+def test_unit_env_enters_the_garden(two_workspaces, monkeypatch, render, name):  # noqa: F811
+    """単位の環境と ExecStart のままで、garden の口座・project なら garden に入る。"""
+    from thth import cli, systemd_gen
+    unit = getattr(systemd_gen, render)()
+    monkeypatch.delenv("THTH_WS", raising=False)
+    for k, v in _unit_env(unit).items():
+        if k != "THTH_ROOT":
+            monkeypatch.setenv(k, v)
+    assert cli._enter_account_workspace(_unit_argv(unit, name)) is None
+    assert os.environ.get("THTH_WS") == "garden"
+
+
+@pytest.fixture
+def only_main(tmp_path, monkeypatch):
+    """括りが main だけの根（今の VM と同じ形）。"""
+    root = tmp_path / "root"
+    (root / "accounts").mkdir(parents=True)
+    monkeypatch.setenv("THTH_ROOT", str(root))
+    for k in ("THTH_WS", "THTH_ACCOUNTS_DIR", "THTH_MAP_WORLD", "THTH_WS_FROM_ACCOUNT"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(accounts, "APP_DIR", str(tmp_path / "app"))
+    monkeypatch.setenv("THTH_APP_DIR", str(tmp_path / "app"))
+    (tmp_path / "repo").mkdir()
+    make_account_json(str(root / "accounts"), "solo-main", repo_dir=str(tmp_path / "repo"), project="soloproj")
+    (root / "state" / "solo-main").mkdir(parents=True)
+    return root
+
+
+@pytest.mark.parametrize("render,name", [("render_collect_service", "solo-main"), ("render_map_service", "soloproj")])
+def test_unit_mark_is_a_noop_when_only_main(only_main, render, name):
+    """括りが main だけなら、印つきの単位の打ち方は印なしと同じ rc・出力になる（今の VM と同じ動き）。"""
+    from thth import systemd_gen
+    # 印の道を実際に通る（口座・project が main の台帳で見つかる）。
+    assert accounts.workspace_of_account("solo-main") == "main"
+    assert accounts.workspace_of_project("soloproj") == "main"
+    unit = getattr(systemd_gen, render)()
+    argv = _unit_argv(unit, name)
+    env = dict(os.environ)
+    unit_env = {k: v for k, v in _unit_env(unit).items() if k not in ("THTH_ROOT", "THTH_MAP_WORLD")}
+    with_mark = run_thth(argv, env={**env, **unit_env})
+    without = run_thth(argv, env=env)
+    assert (with_mark.returncode, with_mark.stdout, with_mark.stderr) == \
+        (without.returncode, without.stdout, without.stderr)
+    # 台帳まで届いている（collect は token が無くて止まる・map は世間の層が無効で媒体を叩かない）。
+    assert "台帳が無い" not in with_mark.stderr and "project_unknown" not in with_mark.stderr, with_mark.stderr
+    both = with_mark.stdout + with_mark.stderr
+    assert "token が無いので採取しません: solo-main" in both or "world_layer_disabled" in both, both

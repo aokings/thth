@@ -141,6 +141,8 @@ def render_collect_service() -> str:
         "Type=oneshot\n"
         "User=wt\n"
         "Environment=THTH_ROOT=/srv/thth\n"
+        "# 括りの印: 口座の台帳のある括りに入る（括りが main だけなら今と同じ・thth/cli.py _enter_account_workspace）。\n"
+        "Environment=THTH_WS_FROM_ACCOUNT=1\n"
         "ExecStart=/srv/thth/app/bin/thth collect %i\n"
         "TimeoutStartSec=300\n"
     )
@@ -281,6 +283,8 @@ def render_map_service() -> str:
         "User=wt\n"
         "Environment=THTH_ROOT=/srv/thth\n"
         "Environment=THTH_MAP_WORLD=1\n"
+        "# 括りの印: project の台帳のある括りに入る（括りが main だけなら今と同じ・thth/cli.py _enter_account_workspace）。\n"
+        "Environment=THTH_WS_FROM_ACCOUNT=1\n"
         "ExecStart=/srv/thth/app/bin/thth map collect %i\n"
         "TimeoutStartSec=600\n"
     )

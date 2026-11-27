@@ -6029,8 +6029,8 @@ def _take_lane_flag(argv):
     return argv
 
 
-# timer の単位が打つ命令。`thth@<口座>` は `bin/thth-run` が印を付ける。`thth-collect@<口座>`・`thth-map@<project>` の
-# 単位に印を足すのは段 4（単位は配った姿のまま・tests/test_v213_systemd_worker.py）。口座の名前は先頭の旗でない引数。
+# timer の単位が打つ命令。`thth@<口座>` は `bin/thth-run` が印を付ける。`thth-collect@<口座>`・`thth-map@<project>` は
+# 単位のファイルに印を書く（`systemd_gen`・置き直すのは開く日・tests/test_v213_systemd_worker.py）。口座の名前は先頭の旗でない引数。
 # `thth map collect <project>` は口座でなく project の名前（`accounts.workspace_of_project`）。
 TIMER_COMMANDS = ("run", "collect")
 FROM_ACCOUNT_ENV = "THTH_WS_FROM_ACCOUNT"
