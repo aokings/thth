@@ -146,7 +146,11 @@ stdio のまま足す物:
   1. 確定の 1 段目の答えに `tool` が無く、サーバ版の取り下げの答えに `reason` が無い。今の答えをそのまま渡すと、画面は確定の釦を押せない（押せないのは正しい止まり方）。
   2. 下見の結果に宛先・日時・文字数が無い。予約とブックマークの `preview` は文字列と辞書に分かれている。画面に渡す形を 1 つに揃える。
   3. digest は実装が 12 字（`APPROVE_DIGEST_LENGTH`）。表（`catalog.json`）と確定の画面は 16 字以上で受けていたので、12 字以上に直した（11/27）。
-- Claude のデスクトップで手元の stdio の画面が実際に出るか（公式の手順を読んだだけ）。ext-apps の issue #671 に、mcp-remote 経由で資源は取れたのに画面が出ない報告がある（2026-05・Windows）。
+- ~~Claude のデスクトップで手元の stdio の画面が実際に出るか~~ → **11/27 17:07 に実機で確かめた: 通常のチャットには出ない**（masaru と）。
+  - アプリは手元のサーバにつなぎ、`initialize` で画面に対応すると名乗った（`clientInfo` は `claude-ai` と `local-agent-mode-thth-ui-probe` の 2 つ・どちらも `capabilities.extensions["io.modelcontextprotocol/ui"].mimeTypes = ["text/html;profile=mcp-app"]`・`protocolVersion` 2025-11-25）。`tools/list` と `resources/list` も来た。アプリの記録は「Connected to thth-ui-probe (1 tools)」「[localMcpBridge] announcing thth-ui-probe: 1 tool(s)」。
+  - それでも通常のチャットの Claude からは道具が見えない。thth だけでなく、同じ設定の gitlab・japan-* の手元の道具も 1 本も見えない（道具の読み込みを「既に読み込まれています」にしても同じ）。見えるのはクラウドのコネクタだけ。→ thth の作りの問題ではなく、通常のチャットが手元の MCP を受けない作り。
+  - 帰結: **画面の第 1 弾は §4 のリモート MCP（括り 第3）を待つ**のが本筋。手元の道筋で残る候補は、2 つ目の client（`local-agent-mode`・アプリの手元の作業の口）だけで、画面を描くかは未確認。
+  - 確かめの設定は外した（写しは `claude_desktop_config.json.with-thth-ui-probe-20261127`）。サーバの記録は `~/Documents/thth-ui-probe.log`。
 - host ごとに AI へ見える欄（`structuredContent`・`_meta`）。11/27 に文書を当たったが割れている: ext-apps の仕様の「Best Practices」は `structuredContent` を「画面のため（AI の文脈に入れない）」と書くが、pmcp の手引きは「AI にも見える」と書く。Claude の文書には記述が無い。→ §6 の 5 で実機。それまでは「AI に見せたくない物は入れない」のまま。
 - `protocolVersion: 2024-11-05` のままで足りるか（仕様の例は 2024-11-05 で書かれている）。
 - ChatGPT が手元の stdio を受けるか（受けない見込み・§4 で待つ）。
