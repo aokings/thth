@@ -489,6 +489,84 @@ export default {
     "always": [
      "--json"
     ],
+    "flags": {
+     "undo": "--undo"
+    },
+    "positional": "files",
+    "texts": {
+     "reason": "--reason"
+    },
+    "values": {
+     "account": "--account",
+     "until": "--until",
+     "wait": "--wait"
+    }
+   },
+   "command": "hold",
+   "confirm": "worker",
+   "description": "試しなどで止めた draft に期限（until・YYYY-MM-DD）と理由を付け、未承認の数えから外す（undo で戻す・2 段）。confirm を省くと何をするかと確認の値を返すだけ。持ち主に見せて、そうすると言われたら同じ引数に confirm を付けて呼ぶ",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "account": {
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:+,-]{1,64}$",
+      "type": "string"
+     },
+     "confirm": {
+      "description": "1 段目が返した確認の値（省くと 1 段目）",
+      "maxLength": 128,
+      "type": "string"
+     },
+     "files": {
+      "description": "原稿の、口座の repo の根からの相対パス",
+      "items": {
+       "maxLength": 300,
+       "minLength": 1,
+       "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "type": "array"
+     },
+     "reason": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "undo": {
+      "type": "boolean"
+     },
+     "until": {
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:+,-]{1,64}$",
+      "type": "string"
+     },
+     "wait": {
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:+,-]{1,64}$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "account",
+     "files"
+    ],
+    "type": "object"
+   },
+   "name": "thth_hold",
+   "writes": true
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "argv": {
+    "always": [
+     "--json"
+    ],
     "flags": {},
     "positional": "files",
     "texts": {

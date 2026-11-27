@@ -2547,7 +2547,8 @@ def cmd_hold(args) -> int:
 
     形は `thth withdraw` に合わせる: 複数本・ディレクトリ（`--undo` 無しなら draft、有りなら止めたもの）・
     `-` で標準入力・repo ごとに同期とロック 1 回・断る本はその本だけ断って他は進める。
-    遠くの道（thth.me）には出さない（`remote.UNSUPPORTED` に載せてある）。
+    口座の鍵の遠くの道（`--remote`）には出さない（`remote.UNSUPPORTED`）。レーンの鍵の通り道（`thth --lane`）は
+    `server_passthrough.WRITE_PASS` で通す（書く鍵・鍵の口座・名乗りは VM が付ける）。
     """
     files = args.file if isinstance(args.file, list) else [args.file]
     account = getattr(args, "account", None)

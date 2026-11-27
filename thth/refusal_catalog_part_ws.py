@@ -20,7 +20,7 @@ ENTRIES = {
     "pass_unsupported": {
         "kind": "refusal",
         "why": "その命令か旗は、鍵で括りの中に通す表にありません。何も打っていません。",
-        "fix": "表にある命令と旗で打ち直してください。読むだけの物は board・morning・observe・schedule の一覧・where-log・handoff-report・analytics-report・unanswered・approvals、書く物は approve・revoke・withdraw です（`--by` は付けません。記録の名乗りは鍵から付きます）。",
+        "fix": "表にある命令と旗で打ち直してください。読むだけの物は board・morning・observe・schedule の一覧・where-log・handoff-report・analytics-report・unanswered・approvals、書く物は approve・revoke・withdraw・hold・reply approve／ignore です（`reply pending` は読むだけ。`--by` は付けません。記録の名乗りは鍵から付きます）。",
         "command": None,
         "better": "表に無い命令や目印を付ける旗が要るときは、括りの窓口のレーンか管理者に頼むと、記録に誰が打ったかが残ります。",
         "doors": ("remote",), "since": _SINCE},

@@ -5,7 +5,7 @@
 // VM の通り道（段 3 の `ws_command`）に届く。権威は VM（通すか・旗の検めは `server_passthrough`）。
 //
 // - 道具は `mcp-tools.js`（Python の `thth/mcp_remote_tools.py` が通り道の表から作る・ずれたら試験が赤）と `thth_result`。
-// - 書く道具（approve・revoke・withdraw）は二段: confirm を省いた 1 段目の答えをこの接続に返したことを Connector に残し、
+// - 書く道具（approve・revoke・withdraw・hold）は二段: confirm を省いた 1 段目の答えをこの接続に返したことを Connector に残し、
 //   2 段目はその控えが無ければ VM に頼まない（人に見せる前に書かない）。読むだけの接続には書く道具を出さず、呼べば断る。
 // - HTTP の誤りは運び方のためだけ: token が無い・効かないときの 401（client が sign-in を始める）、形の違う頼み、429・503。
 //   THTH の断りは道具の結果（isError・符丁・次の一手）。鍵の反映待ちは 401 にしない（client が再ログインを始めてしまう）。
@@ -38,7 +38,7 @@ const NEXT={
   workspace_required:'持ち主の括りが 2 つ以上あります。同意の頁で括りを入れて接続をやり直してもらう',
   workspace_has_no_accounts:'その括りにはまだ口座がありません',
 };
-const COACH='THTH の道具です。あなたは持ち主のために動きます。書く道具（approve・revoke・withdraw）は 2 段: confirm を省いて呼ぶと何をするか（approve は本文の全文）と確認の値だけが返ります。'+
+const COACH='THTH の道具です。あなたは持ち主のために動きます。書く道具（approve・revoke・withdraw・hold）は 2 段: confirm を省いて呼ぶと何をするか（approve は本文の全文）と確認の値だけが返ります。'+
   'その中身を省かず持ち主に見せ、そうすると言われたときだけ、同じ引数に confirm を付けて呼んでください。断りは {error, next} です。next に従ってください。'+
   'pending が返ったら、あとで thth_result を同じ request_id で呼び、書く道具を送り直さないでください。';
 const RESULT_TOOL={name:'thth_result',title:'thth_result',description:'前に pending が返った道具の答えを request_id で取り出す（読むだけ）。まだなら少し置いてもう一度。書く道具を送り直さない',
@@ -164,7 +164,7 @@ async function call(name,args,c){
     if(!Object.hasOwn(args,'confirm')){
       first=true;
       if(tool.confirm==='worker'){
-        // revoke・withdraw の CLI に 2 段は無いので、1 段目は Worker が答える（VM には何も頼まない）。
+        // revoke・withdraw・hold の CLI に 2 段は無いので、1 段目は Worker が答える（VM には何も頼まない）。
         const value=opaque();
         const noted=await connectorStub(c.env).noteConfirm(c.device_id,hash,value);
         if(noted.status!==200)return refusal('mcp_unavailable',{next:'何もしていません。1 回だけやり直す'});

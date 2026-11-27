@@ -570,10 +570,10 @@ def passthrough(argv) -> int | None:
     """`thth --lane <レーン> <読むだけの命令／表の書く命令> …` を、鍵で VM の括りの中に通す（括りの段 3）。
 
     レーンを名指ししていない・命令が通り道の表に無いときは None（今までどおり手元で打つ）。
-    通すかどうか・旗の検めは VM が決める（`server_passthrough.ALL`）。ここは頼んで、答えを出すだけ。
+    通すかどうか・旗の検めは VM が決める（`server_passthrough.PASS_COMMANDS`）。ここは頼んで、答えを出すだけ。
     """
     from . import server_passthrough
-    if not argv or argv[0] not in server_passthrough.ALL or current_lane() is None:
+    if not argv or argv[0] not in server_passthrough.PASS_COMMANDS or current_lane() is None:
         return None
     if load() is None:
         return _fail("not_logged_in", f"レーン {current_lane()} の鍵がありません。`thth login --lane {current_lane()}` で受け取ってください")
@@ -669,10 +669,11 @@ UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh",
                          "account", "account resume", "account leave",
                          # 計画 Meta 全部盛り: 遠くの道に出していない Meta の書く口（消すと戻せない・審査の区間に無い）。
                          "reply delete",
-                         # 監査 2026-11-06 #2: Threads の承認待ちの返信（読む・承認・無視）は手元の道だけ。
-                         # 審査の区間に無く、承認は返信を公開する（遠くの道の資格と記録の形を決めていない）。
+                         # 監査 2026-11-06 #2: Threads の承認待ちの返信（読む・承認・無視）は口座の鍵の遠くの道に出さない。
+                         # 承認は返信を公開する。レーンの鍵の通り道（`thth --lane`・`server_passthrough.ACTION_PASS`）だけが、
+                         # 書く鍵・鍵の口座・VM が付ける名乗りの形で通す（括りの段 3）。
                          "reply pending", "reply approve", "reply ignore",
-                         # 11/25: 止めの印（`thth hold`）は VM の承認の台帳に書く手元の道だけ。
+                         # 11/25: 止めの印（`thth hold`）は口座の鍵の遠くの道に出さない（レーンの鍵の通り道は `WRITE_PASS`）。
                          "hold"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",

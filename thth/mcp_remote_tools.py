@@ -8,8 +8,8 @@ JSON は手で書かない: `python -m thth.mcp_remote_tools --write` で作り�
 道具の形:
 - 読む命令は `thth_<命令>`（`-` は `_`）。名前の位置（口座か project）は `name`、値を取る旗は旗の名（`--window-days` → `window_days`）、
   値を取らない旗は真偽。`--json` は Worker が必ず付ける（表に出さない）。表が足す旗（`--no-mark`）は VM が足す。
-- 書く命令（approve・revoke・withdraw）は、原稿の相対パスを `files`、口座を `account`（必須）で取る。
-  二段の確認は `confirm`: approve は VM の digest（1 段目の答えにある）を、revoke・withdraw は Worker が 1 段目で
+- 書く命令（approve・revoke・withdraw・hold）は、原稿の相対パスを `files`、口座を `account`（必須）で取る。
+  二段の確認は `confirm`: approve は VM の digest（1 段目の答えにある）を、revoke・withdraw・hold は Worker が 1 段目で
   出した確認の値を渡す。どちらも、同じ引数の 1 段目をこの接続が 10 分の内に受け取っていなければ Worker が断る
   （人に見せる前に書く道を作らない）。`--digest-only` は出さない（1 段目は confirm を省けばよい）。
 """
@@ -44,6 +44,16 @@ DESCRIPTIONS = {
                "持ち主に見せて、そうすると言われたら同じ引数に confirm を付けて呼ぶ"),
     "withdraw": ("出さないと決めた draft を閉じる（undo で戻す・2 段）。confirm を省くと何をするかと確認の値を返すだけ。"
                  "持ち主に見せて、そうすると言われたら同じ引数に confirm を付けて呼ぶ"),
+    "hold": ("試しなどで止めた draft に期限（until・YYYY-MM-DD）と理由を付け、未承認の数えから外す（undo で戻す・2 段）。"
+             "confirm を省くと何をするかと確認の値を返すだけ。持ち主に見せて、そうすると言われたら同じ引数に confirm を付けて呼ぶ"),
+}
+
+# 通り道にあるが MCP の道具にしない命令と、その理由（`server_passthrough.ACTION_PASS`）。CLI の `thth --lane` では通る。
+NOT_TOOLS = {
+    "reply": ("pending は承認待ち（まだ公開されていない）の他人の返信の本文を読む。公開の返信（unanswered）と違い、"
+              "外の AI へ渡すかは masaru の決め（取得物を別の AI に渡す件）なので出さない。approve・ignore は二段の作り"
+              "（1 段目で中身を持ち主に見せる）に合わない: Worker の 1 段目が見せられるのは返信の id だけで、本文は pending を"
+              "出さない限り会話に無く、持ち主が何を公開するかを見て決められない"),
 }
 
 

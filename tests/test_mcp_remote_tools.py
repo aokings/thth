@@ -58,3 +58,19 @@ def test_check_mode_turns_red_when_the_table_drifts(monkeypatch, tmp_path):
     assert mrt.main(["--check"]) == 1
     stale.write_text(mrt.render(), encoding="utf-8")
     assert mrt.main(["--check"]) == 0
+
+
+def test_every_pass_command_is_a_tool_or_says_why_not():
+    """通り道に足した命令は、道具にするか、出さない理由を `NOT_TOOLS` に書くか、どちらか（黙って漏らさない）。"""
+    tools = {tool["command"] for tool in _table()["tools"]}
+    assert tools | set(mrt.NOT_TOOLS) == set(sp.PASS_COMMANDS)
+    assert not tools & set(mrt.NOT_TOOLS)
+    assert all(len(why) > 40 for why in mrt.NOT_TOOLS.values())
+    assert "thth_reply" not in {tool["name"] for tool in _table()["tools"]}
+
+
+def test_hold_is_a_worker_confirmed_write_tool():
+    hold = next(tool for tool in _table()["tools"] if tool["command"] == "hold")
+    assert hold["writes"] is True and hold["confirm"] == "worker"
+    assert {"until", "reason", "undo", "account", "files"} <= set(hold["inputSchema"]["properties"])
+    assert hold["annotations"]["destructiveHint"] is True

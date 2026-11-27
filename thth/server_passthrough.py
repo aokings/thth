@@ -10,13 +10,16 @@ Worker が括りの単位で頼みを束ねる所（括りの束）は Meta の�
 通してよい命令と旗は `PASS` の表だけ。目印を付ける・書く・手元の道を取る旗は表に無いので断る。
 値は英数字と `. : + - _ ,` だけ（`/` が無い＝道を取らせない）。
 
-書く命令（`WRITE_PASS`: approve・revoke・withdraw）は設計 §5.2 のとおり 1 つずつ表に載せる。読む表と違うのは 4 つ:
+書く命令（`WRITE_PASS`: approve・revoke・withdraw・hold）は設計 §5.2 のとおり 1 つずつ表に載せる。読む表と違うのは 4 つ:
 - 書いてよい鍵（資格の行の `writes`）だけ。無ければ `writes_not_allowed`。
 - `--account` を必ず取り、その口座が鍵の `accounts` にあること。
 - 原稿は口座の repo の中の相対パスだけ。VM がその repo の中で探して絶対パスに替えてから打つ
   （ほかの口座・ほかの括り・repo の外は `pass_target_invalid`）。
 - 記録の名乗り（`--by`）は頼みから取らない。鍵の持ち主・レーン・鍵の id（指紋の先頭 12 桁）を VM が付ける。
-審査の道に当たる `hold`・`reply pending／approve／ignore` は Meta の審査のあと（008acdae）。
+`reply` は小さな命令ごとに表を持つ（`ACTION_PASS`・`pending`・`approve`・`ignore` だけ。`hide`・`unhide`・`delete` は無い）。
+口座は名前の位置で取り、鍵の `accounts` にある口座だけ（`pending` も同じ・承認待ちの返信は口座の媒体を読む）。
+`approve`・`ignore` は書く物なので `writes` が要り、名乗りは VM が付ける。返信の id は数字だけ。
+3 つとも CLI は 1 段（`--confirm` は `delete` だけ）で、二段の確認は表に無い（そのまま通す）。
 """
 from __future__ import annotations
 
@@ -74,8 +77,27 @@ WRITE_PASS: dict[str, Spec] = {
                    flags=frozenset({"--json"}), positionals=(1, 20)),
     "withdraw": Spec(values=frozenset({"--account", "--wait"}), texts=frozenset({"--reason"}),
                      flags=frozenset({"--json", "--undo"}), positionals=(1, 20)),
+    # 試しなどで止めた draft に期限と理由（1 段・`--undo` で戻す）。`-`（標準入力）は相対パスの形で断る。
+    "hold": Spec(values=frozenset({"--account", "--until", "--wait"}), texts=frozenset({"--reason"}),
+                 flags=frozenset({"--json", "--undo"}), positionals=(1, 20)),
 }
 ALL = {**PASS, **WRITE_PASS}
+
+# 小さな命令を持つ命令（`thth reply <小さな命令> <口座> <id>`）。名前の位置は (口座, id) の 2 つ。
+ACTION_PASS: dict[str, dict[str, Spec]] = {
+    "reply": {
+        "pending": Spec(values=frozenset({"--status"}), flags=frozenset({"--json"}), positionals=(2, 2),
+                        choices={"--status": {"pending", "ignored", "all"}}),
+        "approve": Spec(values=frozenset({"--wait"}), texts=frozenset({"--reason"}), flags=frozenset({"--json"}),
+                        positionals=(2, 2)),
+        "ignore": Spec(values=frozenset({"--wait"}), texts=frozenset({"--reason"}), flags=frozenset({"--json"}),
+                       positionals=(2, 2)),
+    },
+}
+ACTION_WRITES = {"reply": frozenset({"approve", "ignore"})}
+# 通り道に入る命令の名前のすべて（Mac の `remote.passthrough` が見る）。
+PASS_COMMANDS = frozenset(ALL) | frozenset(ACTION_PASS)
+ID = re.compile(r"[0-9]{1,32}\Z")
 TEXT_MAX = 200
 PATH_MAX = 300
 
@@ -85,14 +107,35 @@ class PassRefused(ValueError):
 
 
 def _parse(argv):
-    """頼まれた argv を表で確かめ、(命令, 旗の並び, 名前かパスの並び) を返す。"""
+    """頼まれた argv を表で確かめ、(命令, 旗の並び, 名前かパスの並び, 書くか) を返す。
+
+    `reply` のような小さな命令を持つ命令は、名前の並びの頭に小さな命令が入る（`["approve", 口座, id]`）。
+    """
     if type(argv) is not list or not argv or len(argv) > ARGV_MAX or any(type(a) is not str for a in argv):
         raise PassRefused("invalid_request")
     command, rest = argv[0], argv[1:]
+    if command in ACTION_PASS:
+        if command_scope.scope_of(command) != command_scope.WS:
+            raise PassRefused("pass_unsupported")
+        # 小さな命令は命令のすぐあと（`thth reply approve …` の形）。表に無い小さな命令（hide・delete …）は断る。
+        if not rest or rest[0] not in ACTION_PASS[command]:
+            raise PassRefused("pass_unsupported")
+        action = rest[0]
+        opts, names = _parse_rest(ACTION_PASS[command][action], rest[1:], paths=False)
+        account, reply_id = names
+        if not ID.fullmatch(reply_id):
+            raise PassRefused("invalid_request")
+        return command, opts, [action, account, reply_id], action in ACTION_WRITES[command]
     spec = ALL.get(command)
     if spec is None or command_scope.scope_of(command) != command_scope.WS:
         raise PassRefused("pass_unsupported")
     writes = command in WRITE_PASS
+    opts, names = _parse_rest(spec, rest, paths=writes)
+    return command, opts, names, writes
+
+
+def _parse_rest(spec: Spec, rest: list, *, paths: bool):
+    """旗と名前（`paths` なら原稿の相対パス）を表で確かめ、(旗の並び＋表が足す旗, 名前の並び) を返す。"""
     out = []
     names = []
     i = 0
@@ -125,7 +168,7 @@ def _parse(argv):
                 out += [flag, value]
                 continue
             raise PassRefused("pass_unsupported")
-        if writes:
+        if paths:
             if not relative_path_ok(token):
                 raise PassRefused("invalid_request")
         elif token.startswith("-") or not NAME.fullmatch(token):
@@ -135,7 +178,7 @@ def _parse(argv):
     low, high = spec.positionals
     if not low <= len(names) <= high:
         raise PassRefused("invalid_request")
-    return command, out + list(spec.forced), names
+    return out + list(spec.forced), names
 
 
 def relative_path_ok(path: str) -> bool:
@@ -150,7 +193,7 @@ def relative_path_ok(path: str) -> bool:
 
 def build_argv(argv) -> list[str]:
     """頼まれた argv を表で確かめ、打つ argv を返す。表に無い物は `pass_unsupported`。"""
-    command, opts, names = _parse(argv)
+    command, opts, names, _writes = _parse(argv)
     return [command, *opts, *names]
 
 
@@ -161,20 +204,26 @@ def _option(opts, flag):
     return None
 
 
-def resolve_targets(context, opts, names) -> list[str]:
-    """書く命令の原稿を、鍵の口座の repo の中で探して絶対パスにする（括りの中だけ）。"""
+def _check_account(context, account: str) -> dict:
+    """口座が鍵の `accounts` にあり、鍵の括りの台帳で読めるか。違えば `pass_target_invalid`。"""
     from . import accounts
     from .report_service import ReportServiceError
-    account = _option(opts, "--account")
-    if account is None:
-        raise ReportServiceError("invalid_request")
     if account not in context.allowed_accounts:
         raise ReportServiceError("pass_target_invalid")
     try:
         with accounts.use_workspace(context.workspace):
-            cfg = accounts.load_account(account)
+            return accounts.load_account(account)
     except Exception:
         raise ReportServiceError("pass_target_invalid") from None
+
+
+def resolve_targets(context, opts, names) -> list[str]:
+    """書く命令の原稿を、鍵の口座の repo の中で探して絶対パスにする（括りの中だけ）。"""
+    from .report_service import ReportServiceError
+    account = _option(opts, "--account")
+    if account is None:
+        raise ReportServiceError("invalid_request")
+    cfg = _check_account(context, account)
     repo = cfg.get("repo_dir")
     if not isinstance(repo, str) or not os.path.isdir(repo):
         raise ReportServiceError("pass_target_invalid")
@@ -197,14 +246,18 @@ def execute(context, request) -> dict:
     if type(request) is not dict or set(request) - {"operation", "account", "argv"}:
         raise ReportServiceError("invalid_request")
     try:
-        command, opts, names = _parse(request.get("argv"))
+        command, opts, names, writes = _parse(request.get("argv"))
     except PassRefused as exc:
         raise ReportServiceError(str(exc)) from None
     actor = f"lane:{context.lane}"
-    if command in WRITE_PASS:
+    if command in ACTION_PASS:
+        # 口座は名前の位置。読むだけ（pending）でも、鍵の口座で括りの台帳にある口座だけ。
+        _check_account(context, names[1])
+    if writes:
         if not context.writes or not context.actor or not context.credential_digest:
             raise ReportServiceError("writes_not_allowed")
-        names = resolve_targets(context, opts, names)
+        if command not in ACTION_PASS:
+            names = resolve_targets(context, opts, names)
         # 記録の名乗りは頼みから取らない: 鍵の持ち主・レーン・鍵の id（設計 §5.2「記録に鍵の id とレーンの名」）。
         actor = f"{context.actor}（lane:{context.lane}・key:{context.credential_digest[:12]}）"
     argv = [command, *opts, *names]
