@@ -729,8 +729,11 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
     """WordPress の主体の鍵（アプリケーションパスワード）を受け取る（5.16.0）。
 
     **引数では受けない。** 端末なら隠した入力（`getpass`）、`--stdin` なら標準入力の 1 行目だけを読む。値は
-    画面・ログ・admin_log に出さない。書いたあと `users/me` を 1 回読み、鍵の利用者が主体の `wp_user` と同じか・
-    役割を確かめる（管理者の鍵なら断らずに勧める）。
+    画面・ログ・admin_log に出さない。**書く前に**各サイトの `users/me` を受け取った鍵で 1 回ずつ読み、鍵の利用者が
+    主体の `wp_user` と同じだと全部のサイトで確かめられたときだけ書く（monban の秘密の入力口・2026-11-27。前は
+    書いてから読んでいたので、違う利用者の鍵でも今の鍵を置き換えていた）。確かめられなければ今の鍵はそのまま。
+    利用者は合ったが記事の URL のホストが入口と違う（`wordpress_home_host_mismatch`）ときは、鍵は置いて rc 1
+    （入口を直せば打ち直さずに済む・5.18.2 のまま）。役割も見る（管理者の鍵なら断らずに勧める）。
     """
     from . import jst, redact
     from .adapters import wordpress
@@ -779,8 +782,18 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
             "何も書いていません。WordPress の「プロフィール」→「アプリケーションパスワード」で作った値を入れてください")
         return 2
     redact.register_secret(value)
+    redact.register_secret(value.replace(" ", ""))
     data = {"schema": wordpress.TOKEN_SCHEMA, "wp_user": p["wp_user"], "application_password": value,
             "obtained_at": jst.iso()}
+    rows = _wordpress_whoami_all(name, p, adapter_factory=adapter_factory, token=data)
+    unconfirmed = [who for _blog, who in rows if not wordpress_identity_confirmed(who)]
+    if unconfirmed:
+        _say_wordpress(name, p, rows, out=out, written=False)
+        code = ("wp_user_mismatch" if any(w.get("error") == "wp_user_mismatch" for w in unconfirmed)
+                else unconfirmed[0].get("error") or "wordpress_unreadable")
+        err(f"{code}: 鍵の利用者が {p['wp_user']} だと確かめられなかったので、鍵を書いていません"
+            f"（{'今の鍵はそのまま' if token_present else '鍵は無いまま'}）")
+        return 1
     try:
         with principals.token_lock(name):
             path = principals.write_token_locked(name, data)
@@ -789,15 +802,24 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
         return 2
     admin_log.append("principal_auth", name, subject, by=by, diff={"token": [token_present, True]})
     out(f"鍵を書きました: {path}（0600・値は表示しません）")
-    return 0 if probe_wordpress(name, principals.load_principal(name), out=out, adapter_factory=adapter_factory) else 1
+    return 0 if _say_wordpress(name, p, rows, out=out) else 1
 
 
-def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> bool:
-    """各サイトの `users/me` を 1 回読む（鍵の確かめ）。読めなければ符丁と直し方を 1 行ずつ。"""
-    from . import refusal
+def wordpress_identity_confirmed(who) -> bool:
+    """`users/me` の答えで、鍵の利用者が主体の `wp_user` と同じだと分かったか（ホストの食い違いは利用者は合っている）。"""
+    return bool(who.get("ok")) or who.get("error") == "wordpress_home_host_mismatch"
+
+
+def _wordpress_whoami_all(name, principal_cfg, *, adapter_factory=None, token=None) -> list:
+    """各サイトの `users/me` を 1 回ずつ読む。`token` を渡せば、ファイルでなくその鍵で読む（書く前の確かめ）。"""
     from .adapters import wordpress
-    make = adapter_factory or wordpress.factory
-    ok = True
+    if adapter_factory is not None:
+        make = adapter_factory
+    elif token is not None:
+        make = lambda cfg, pcfg: wordpress.WordPressAdapter(cfg, pcfg, token=wordpress.check_token(token, pcfg.get("wp_user")))  # noqa: E731
+    else:
+        make = wordpress.factory
+    rows = []
     for blog in principal_cfg.get("blogs") or []:
         cfg = {"blog_id": blog["blog_id"], "token": principal_cfg["token"], "media": "wordpress",
                "principal": name}
@@ -805,6 +827,20 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
             who = make(cfg, principal_cfg).whoami()
         except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ）
             who = {"ok": False, "error": getattr(exc, "code", "wordpress_token_invalid"), "strong": None}
+        rows.append((blog, who))
+    return rows
+
+
+def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> bool:
+    """各サイトの `users/me` を 1 回読む（鍵の確かめ）。読めなければ符丁と直し方を 1 行ずつ。"""
+    rows = _wordpress_whoami_all(name, principal_cfg, adapter_factory=adapter_factory)
+    return _say_wordpress(name, principal_cfg, rows, out=out)
+
+
+def _say_wordpress(name, principal_cfg, rows, *, out=print, written=True) -> bool:
+    from . import refusal
+    ok = True
+    for blog, who in rows:
         if who["ok"]:
             out(f"{blog['blog_id']}: 読めました（鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}）")
             if who["strong"]:
@@ -814,7 +850,7 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
             ok = False
             out(f"{blog['blog_id']}: 鍵は通りました（鍵の利用者 {who['user']}）が、記事の URL のホストが "
                 f"{who['home_host']} で、入口の {principals.site_host(principal_cfg, blog['blog_id'])} と違います"
-                f"（wordpress_home_host_mismatch・鍵は置いたまま）")
+                f"（wordpress_home_host_mismatch・{'鍵は置いたまま' if written else '鍵はまだ書いていません'}）")
             for line in refusal.tail("wordpress_home_host_mismatch"):
                 out(f"  {line}")
         else:
