@@ -458,6 +458,7 @@ export default {
       "items": {
        "maxLength": 300,
        "minLength": 1,
+       "pattern": "^(?![-/])(?!.*\\\\)(?!.*//)(?!(?:.*/)?\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f]{1,300}$",
        "type": "string"
       },
       "maxItems": 20,
@@ -523,6 +524,7 @@ export default {
       "items": {
        "maxLength": 300,
        "minLength": 1,
+       "pattern": "^(?![-/])(?!.*\\\\)(?!.*//)(?!(?:.*/)?\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f]{1,300}$",
        "type": "string"
       },
       "maxItems": 20,
@@ -598,6 +600,7 @@ export default {
       "items": {
        "maxLength": 300,
        "minLength": 1,
+       "pattern": "^(?![-/])(?!.*\\\\)(?!.*//)(?!(?:.*/)?\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f]{1,300}$",
        "type": "string"
       },
       "maxItems": 20,
@@ -667,6 +670,7 @@ export default {
       "items": {
        "maxLength": 300,
        "minLength": 1,
+       "pattern": "^(?![-/])(?!.*\\\\)(?!.*//)(?!(?:.*/)?\\.\\.?(?:/|$))[^\\u0000-\\u001f\\u007f]{1,300}$",
        "type": "string"
       },
       "maxItems": 20,

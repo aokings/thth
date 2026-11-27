@@ -33,7 +33,7 @@ def test_read_only_action_makes_a_key_that_cannot_write(world):
     assert context.writes is False and context.lane == "connector-claude-ai"
     with pytest.raises(ReportServiceError, match="writes_not_allowed"):
         server_passthrough.execute(context, {"operation": "ws_command", "account": "gamma-garden",
-                                             "argv": ["withdraw", "--account", "gamma-garden", "queue/a.md"]})
+                                             "argv": ["withdraw", "--account", "gamma-garden", "--", "queue/a.md"]})
 
 
 def test_without_the_field_the_key_writes_as_in_stage_2(world):
@@ -151,3 +151,53 @@ def test_logout_lane_without_workspace_does_not_ask(home, monkeypatch):
     path.write_text(json.dumps({"url": "https://thth.me", "key": "k" * 43, "lane": "gamma-desk"}))
     assert cli.main(["--lane", "gamma-desk", "logout"]) == 0
     assert not path.exists()
+
+
+# ---- 段 K の監査 1: 原稿の欄に旗を入れて approve の 2 段目を飛ぶ道を、VM の側だけでも閉じる ----------------
+
+DIGEST = "e" * 64
+
+
+@pytest.mark.parametrize("argv", [
+    # Worker が組み違えて、位置の引数を `--` の前に置いた（原稿の欄の `--confirm=…` が旗に読まれる形）。
+    ["approve", "--account=gamma-garden", "--json", "--confirm=" + DIGEST, "queue/a.md"],
+    ["approve", "--account=gamma-garden", "--json", "queue/a.md", "--confirm=" + DIGEST],
+    ["withdraw", "--account=gamma-garden", "--json", "queue/a.md"],
+    # `--` のあとは旗と読まない: 原稿の形でなければ断る。
+    ["approve", "--account=gamma-garden", "--json", "--", "--confirm=" + DIGEST, "queue/a.md"],
+    ["approve", "--account=gamma-garden", "--json", "--", "queue/a.md", "--confirm=" + DIGEST],
+    ["board", "--json", "garden"],
+])
+def test_connector_lane_takes_positionals_only_after_the_separator(argv):
+    from thth import server_passthrough as sp
+    with pytest.raises(sp.PassRefused, match="invalid_request"):
+        sp._parse(argv, strict=True)
+
+
+def test_connector_lane_parses_what_the_worker_builds():
+    from thth import server_passthrough as sp
+    command, opts, names, writes = sp._parse(["approve", "--account=gamma-garden", "--confirm=" + DIGEST, "--json", "--",
+                                              "queue/a.md"], strict=True)
+    assert (command, names, writes) == ("approve", ["queue/a.md"], True)
+    assert "--confirm" in opts and DIGEST in opts
+    assert sp._parse(["board", "--json"], strict=True)[0] == "board"
+
+
+def test_mac_lanes_keep_the_free_order():
+    """Mac の `thth --lane <レーン> withdraw queue/a.md --account …` は今までどおり（コネクタのレーンだけ縛る）。"""
+    from thth import server_passthrough as sp
+    _c, opts, names, _w = sp._parse(["withdraw", "queue/a.md", "--account", "gamma-garden"])
+    assert names == ["queue/a.md"] and opts[:2] == ["--account", "gamma-garden"]
+
+
+def test_execute_closes_the_skip_for_connector_keys(world):
+    from thth import activity, lane_keys, server_passthrough
+    from thth.report_service import ReportServiceError
+    root, path = world
+    activity.apply(OWNER, _action(), path)
+    (context,) = [c for d, _e, _r, c in lane_keys.contexts(path) if d == _key(70)]
+    assert context.lane.startswith(server_passthrough.CONNECTOR_LANE) and context.writes is True
+    for argv in (["approve", "--account=gamma-garden", "--json", "--confirm=" + DIGEST, "queue/a.md"],
+                 ["approve", "--account=gamma-garden", "--json", "--", "--confirm=" + DIGEST]):
+        with pytest.raises(ReportServiceError, match="invalid_request"):
+            server_passthrough.execute(context, {"operation": "ws_command", "account": "gamma-garden", "argv": argv})

@@ -33,7 +33,8 @@ from . import command_scope
 
 VALUE = re.compile(r"[A-Za-z0-9_.:+,-]{1,64}\Z")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
-ARGV_MAX = 24
+CONNECTOR_LANE = "connector-"   # 同意の頁が出すレーンの名の頭（callback/src/oauth.js の connectorLane）
+ARGV_MAX = 32   # 書く命令の原稿 20 本＋旗 7 つ＋`--`（段 K）
 OUT_MAX = 60000
 TIMEOUT = 120
 
@@ -106,8 +107,12 @@ class PassRefused(ValueError):
     pass
 
 
-def _parse(argv):
+def _parse(argv, *, strict: bool = False):
     """頼まれた argv を表で確かめ、(命令, 旗の並び, 名前かパスの並び, 書くか) を返す。
+
+    `--` のあとは旗と読まない（名前かパスとして確かめる）。`strict`（コネクタのレーンの鍵・段 K）は、名前かパスを
+    `--` のあとにしか置かせない: Worker が道具の位置の引数を旗と取り違えさせて通すこと（例えば原稿の欄に
+    `--confirm=…` を入れて approve の 2 段目を飛ぶ）を、VM の側だけでも閉じる。
 
     `reply` のような小さな命令を持つ命令は、名前の並びの頭に小さな命令が入る（`["approve", 口座, id]`）。
     """
@@ -121,7 +126,7 @@ def _parse(argv):
         if not rest or rest[0] not in ACTION_PASS[command]:
             raise PassRefused("pass_unsupported")
         action = rest[0]
-        opts, names = _parse_rest(ACTION_PASS[command][action], rest[1:], paths=False)
+        opts, names = _parse_rest(ACTION_PASS[command][action], rest[1:], paths=False, strict=strict)
         account, reply_id = names
         if not ID.fullmatch(reply_id):
             raise PassRefused("invalid_request")
@@ -130,18 +135,23 @@ def _parse(argv):
     if spec is None or command_scope.scope_of(command) != command_scope.WS:
         raise PassRefused("pass_unsupported")
     writes = command in WRITE_PASS
-    opts, names = _parse_rest(spec, rest, paths=writes)
+    opts, names = _parse_rest(spec, rest, paths=writes, strict=strict)
     return command, opts, names, writes
 
 
-def _parse_rest(spec: Spec, rest: list, *, paths: bool):
+def _parse_rest(spec: Spec, rest: list, *, paths: bool, strict: bool = False):
     """旗と名前（`paths` なら原稿の相対パス）を表で確かめ、(旗の並び＋表が足す旗, 名前の並び) を返す。"""
     out = []
     names = []
     i = 0
+    ended = False
     while i < len(rest):
         token = rest[i]
-        if token.startswith("--"):
+        if token == "--" and not ended:
+            ended = True
+            i += 1
+            continue
+        if token.startswith("--") and not ended:
             flag, eq, inline = token.partition("=")
             if flag in spec.flags and not eq:
                 out.append(flag)
@@ -168,6 +178,8 @@ def _parse_rest(spec: Spec, rest: list, *, paths: bool):
                 out += [flag, value]
                 continue
             raise PassRefused("pass_unsupported")
+        if strict and not ended:
+            raise PassRefused("invalid_request")
         if paths:
             if not relative_path_ok(token):
                 raise PassRefused("invalid_request")
@@ -246,7 +258,8 @@ def execute(context, request) -> dict:
     if type(request) is not dict or set(request) - {"operation", "account", "argv"}:
         raise ReportServiceError("invalid_request")
     try:
-        command, opts, names, writes = _parse(request.get("argv"))
+        # コネクタ（段 K）のレーンの鍵は、名前かパスを `--` のあとにだけ受ける（Worker の組み方の取り違えを VM で止める）。
+        command, opts, names, writes = _parse(request.get("argv"), strict=context.lane.startswith(CONNECTOR_LANE))
     except PassRefused as exc:
         raise ReportServiceError(str(exc)) from None
     actor = f"lane:{context.lane}"

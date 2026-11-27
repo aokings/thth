@@ -64,7 +64,8 @@ export function buildArgv(tool,args,{withConfirm}={}){
     if(schema.type==='boolean'){if(typeof value!=='boolean')return null;continue;}
     if(schema.type==='array'){
       if(!Array.isArray(value)||value.length<(schema.minItems??0)||value.length>(schema.maxItems??Infinity)||
-         !value.every(v=>typeof v==='string'&&v.length>=1&&v.length<=(schema.items.maxLength??300)))return null;
+         !value.every(v=>typeof v==='string'&&v.length>=1&&v.length<=(schema.items.maxLength??300)&&
+           (!schema.items.pattern||new RegExp(schema.items.pattern).test(v))))return null;
       continue;
     }
     if(typeof value!=='string'||value.length>(schema.maxLength??200)||(schema.minLength&&value.length<schema.minLength))return null;
@@ -79,8 +80,9 @@ export function buildArgv(tool,args,{withConfirm}={}){
   for(const [name,flag] of Object.entries(map.texts))if(Object.hasOwn(args,name))out.push(flag+'='+args[name]);
   for(const [name,flag] of Object.entries(map.flags))if(args[name]===true)out.push(flag);
   out.push(...map.always);
-  if(map.positional==='name'&&Object.hasOwn(args,'name'))out.push(args.name);
-  if(map.positional==='files')out.push(...args.files);
+  // 位置の引数は `--` のあと（VM はコネクタの鍵の位置の引数を `--` のあとにだけ受け、そこからは旗と読まない）。
+  if(map.positional==='name'&&Object.hasOwn(args,'name'))out.push('--',args.name);
+  if(map.positional==='files')out.push('--',...args.files);
   return out;
 }
 // 1 段目と 2 段目を結ぶ hash（接続・道具・confirm を除いた引数）。
@@ -117,6 +119,8 @@ export async function mcpRequest(request,env,url){
     if(message.method==='ping')return json(200,rpc(id,{}));
     if(message.method==='tools/list'){
       // 読むだけの接続には書く道具を出さない（呼ばれても下で断る）。鍵の反映前も同じ一覧（表は Worker にある）。
+      // まだ括りに結んでいなければ、ここでも結んでみる（道具を呼ばない間も結べる・結べなくても一覧は出す）。
+      if(!c.workspace||!c.account){try{await bound(c);}catch{/* 次の呼び出しでもう一度 */}}
       return json(200,rpc(id,{tools:[...TOOLS.filter(tool=>c.writes||!tool.writes).map(describe),RESULT_TOOL]}));
     }
     if(message.method!=='tools/call')return json(200,rpcError(id,-32601,'method not found'));

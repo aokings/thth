@@ -17,7 +17,7 @@
 // - 頁の作法は login と同じ（script なし・CSP・no-store・no-referrer・同一 origin の POST）。form-action だけ戻り先の origin を足す。
 import {PERSON,WORKSPACE,boundedBody,personStub,fromSameOrigin,page,t,escape,publicQuota} from './person.js';
 import {digest,reply} from './relay.js';
-import {SECRET,SCOPES,ACCESS_TTL,splitToken} from './connector-object.js';
+import {SECRET,SCOPES,ACCESS_TTL,splitToken,acceptableRedirect} from './connector-object.js';
 
 const TITLE='THTH AI のコネクタを許す';
 const CIMD_MAX=16_384,CIMD_TIMEOUT_MS=8_000,STATE_MAX=512;
@@ -79,7 +79,8 @@ export async function clientRecord(env,client_id){
       if(Number(got.headers.get('content-length')||0)>CIMD_MAX)return null;
       const text=await boundedText(got.body,CIMD_MAX);if(text===null)return null;
       const doc=JSON.parse(text);
-      if(!doc||typeof doc!=='object'||doc.client_id!==client_id||!Array.isArray(doc.redirect_uris)||!doc.redirect_uris.every(x=>typeof x==='string'))return null;
+      if(!doc||typeof doc!=='object'||doc.client_id!==client_id||!Array.isArray(doc.redirect_uris)||!doc.redirect_uris.length||doc.redirect_uris.length>8||
+         !doc.redirect_uris.every(acceptableRedirect))return null;   // DCR と同じ形（https か loopback の http だけ）
       if(doc.token_endpoint_auth_method!==undefined&&doc.token_endpoint_auth_method!=='none')return null;
       const name=typeof doc.client_name==='string'&&!/[\u0000-\u001f\u007f]/.test(doc.client_name)?doc.client_name.slice(0,128):u.hostname;
       return {redirect_uris:doc.redirect_uris,name,kind:'cimd',host:u.hostname};
@@ -88,11 +89,14 @@ export async function clientRecord(env,client_id){
   const row=await connectorStub(env).client(client_id);
   return row.status===200?{...row.body,name:row.body.name??'AI client',kind:'dcr'}:null;
 }
-// コネクタのレーンの名（鍵の記録の名乗り「<持ち主>（lane:connector-…・key:…）」になる）。CIMD はホスト名、DCR は client の id の hash。
+// コネクタのレーンの名（鍵の記録の名乗り「<持ち主>（lane:connector-…・key:…）」になる）。CIMD はホスト名と client の id の
+// hash の頭 6 桁（1 つのホストに CIMD の文書が 2 つあっても別のレーン・VM は同じ括りの同じレーンの前の鍵を取り消すため）、
+// DCR は client の id の hash。頭の `connector-` は VM の通り道が位置の引数を `--` のあとにだけ受ける印（server_passthrough）。
 export async function connectorLane(client,client_id){
-  const base=client.kind==='cimd'?client.host.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)
-    :'dcr-'+(await digest(client_id)).slice(0,12);
-  return 'connector-'+(base||'client');
+  const hashed=await digest(client_id);
+  const base=client.kind==='cimd'?client.host.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)+'-'+hashed.slice(0,6)
+    :'dcr-'+hashed.slice(0,12);
+  return 'connector-'+base.replace(/^-+/,'');
 }
 function parseAuthorize(params){
   const g=k=>params.get(k);

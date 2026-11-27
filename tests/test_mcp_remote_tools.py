@@ -74,3 +74,19 @@ def test_hold_is_a_worker_confirmed_write_tool():
     assert hold["writes"] is True and hold["confirm"] == "worker"
     assert {"until", "reason", "undo", "account", "files"} <= set(hold["inputSchema"]["properties"])
     assert hold["annotations"]["destructiveHint"] is True
+
+
+def test_file_pattern_is_never_wider_than_the_vm_check():
+    """原稿の欄の型（schema と Worker の buildArgv）が通す物は、VM の relative_path_ok も通す（段 K の監査 1）。"""
+    import re
+    pattern = re.compile(mrt.PATH_PATTERN)
+    good = ["queue/a.md", "a", "drafts/2026/x.md", ".hidden/x", "a..b/c", "a/"]
+    bad = ["--confirm=" + "e" * 64, "-a", "/etc/passwd", "../x", "a/../b", "..", ".", "./a", "a/.", "a\\b", "a//b",
+           "a\x00b", "a\nb", "a\x7f", "", "x" * 301]
+    for path in good:
+        assert pattern.fullmatch(path) and sp.relative_path_ok(path), path
+    for path in bad:
+        assert not pattern.fullmatch(path), path
+    for tool in _table()["tools"]:
+        if tool["writes"]:
+            assert tool["inputSchema"]["properties"]["files"]["items"]["pattern"] == mrt.PATH_PATTERN, tool["name"]

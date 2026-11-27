@@ -6,6 +6,9 @@ import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 
 // ---- アクティビティ（設計 3.12.0 §3.4）の形。VM から来る要約も、ページから来る操作も、閉じた形だけ受ける。
 export const ACTIVITY_TTL=3_600_000, ACTION_TTL=3_600_000, ACTION_PENDING_MAX=16;
+// 済んだレーンの鍵の発行の結果（括り・口座・秘密は無い）は、コネクタの refresh と同じ 30 日残す。コネクタは最初の道具の
+// 呼び出しでこれを引いて括りに結ぶので、1 時間で消すと、つないで 1 時間呼ばなかったコネクタが二度と結べない（段 K の監査 2）。
+export const LANE_OUTCOME_TTL=30*86_400_000;
 const ACTIVITY_ACCOUNTS=8, ACTIVITY_ROWS=30, ACTIVITY_HEAD=60;
 export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'];
 const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft_id'],settings:['key','value']};
@@ -186,7 +189,8 @@ export class Person extends AtomicObject {
         const {sha256,...kept}=old;
         // レーンの鍵の発行は、VM が選んだ括りと頼みの宛先の口座を控える（login の CLI が引く・秘密は無い）。
         const chosen=old.kind==='lane_key'&&'workspace' in done?{workspace:done.workspace,account:done.account}:{};
-        this.put(key,{...kept,...chosen,status:done.outcome,reason:done.reason,finished_at:now,expires_at:now+ACTION_TTL});
+        this.put(key,{...kept,...chosen,status:done.outcome,reason:done.reason,finished_at:now,
+          expires_at:now+(old.kind==='lane_key'&&done.outcome==='done'?LANE_OUTCOME_TTL:ACTION_TTL)});
       }
       // 括りの鍵の表を載せない VM（括りの段 2 より前）は、レーンの鍵の発行と取り消しを知らないので渡さない（1 時間で消える）。
       const lanes='workspace_keys' in body;

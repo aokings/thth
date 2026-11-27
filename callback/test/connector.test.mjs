@@ -30,6 +30,7 @@ let mf,directory,key;
 const ORIGIN='https://k.test';
 const HOLD=1500;
 const CLAUDE='https://claude.ai/oauth/mcp-oauth-client-metadata',CALLBACK='https://claude.ai/api/mcp/auth_callback';
+const LANE_CLAUDE='connector-claude-ai-'+createHash('sha256').update(CLAUDE).digest('hex').slice(0,6);
 const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/openssl';
 const repo=fileURLToPath(new URL('../..',import.meta.url));
 function run(args,input){const r=spawnSync(openssl,args,{input,env:{PATH:'/usr/bin:/bin',OPENSSL_CONF:'/dev/null'}});assert.equal(r.status,0,'OpenSSL failed');return r.stdout;}
@@ -39,6 +40,9 @@ function outbound(request){
   if(request.url===CLAUDE)return Response.json({client_id:CLAUDE,client_name:'Claude',redirect_uris:[CALLBACK],token_endpoint_auth_method:'none'});
   if(url.pathname==='/liar')return Response.json({client_id:'https://claude.ai/other',redirect_uris:[CALLBACK]});
   if(url.pathname==='/moved')return new Response(null,{status:302,headers:{location:CLAUDE}});
+  // 監査 4: 戻り先の形の違う CIMD（http の外のホスト・javascript:・自前の scheme）。
+  const odd={'/odd-http':'http://evil.example/cb','/odd-js':'javascript:alert(1)','/odd-app':'myapp://cb'}[url.pathname];
+  if(odd)return Response.json({client_id:request.url,redirect_uris:[odd]});
   return new Response('external_denied',{status:503});
 }
 before(async()=>{
@@ -197,7 +201,7 @@ test('the owner allows; the key binds after the VM sync; a read tool goes throug
   const early=await callTool(tokens.access_token,'thth_board',{});
   assert.equal(early.isError,true);assert.equal(content(early).error,'key_pending');
   const {action,tables}=await vmIssue(p,ws,account);
-  assert.equal(action.lane,'connector-claude-ai');assert.equal(action.workspace,null);assert.equal('writes' in action,false,'a writing key keeps the stage-2 shape');
+  assert.equal(action.lane,LANE_CLAUDE);assert.equal(action.workspace,null);assert.equal('writes' in action,false,'a writing key keeps the stage-2 shape');
   const pending=callTool(tokens.access_token,'thth_board',{});
   const item=await vmAnswer(p,tables,it=>({command:'board',rc:0,stdout:JSON.stringify({accounts:2}),stderr:'',truncated:false,workspace:ws}));
   assert.equal(item.operation,'ws_command');assert.equal(item.workspace,ws);
@@ -265,18 +269,18 @@ test('fence 3: write tools need the first step on this connection; the second st
   assert.equal(content(await callTool(tokens.access_token,'thth_withdraw',{...args,confirm:opaque()})).error,'confirm_mismatch');
   const second=callTool(tokens.access_token,'thth_withdraw',{...args,confirm:first.confirm});
   const item=await vmAnswer(p,tables,{command:'withdraw',rc:0,stdout:'{"withdrawn":1}',stderr:'',truncated:false,workspace:ws});
-  assert.deepEqual(item.body.argv,['withdraw','--account='+account,'--reason=not today','--json','queue/a.md']);
+  assert.deepEqual(item.body.argv,['withdraw','--account='+account,'--reason=not today','--json','--','queue/a.md']);
   assert.equal(content(await second).output.withdrawn,1);
   // 控えは 1 度だけ。
   assert.equal(content(await callTool(tokens.access_token,'thth_withdraw',{...args,confirm:first.confirm})).error,'confirm_required');
   // approve: 1 段目は VM が本文と digest を返す（--confirm なし）。2 段目は digest を VM に渡す。
   const a1=callTool(tokens.access_token,'thth_approve',{account,files:['queue/a.md']});
   const i1=await vmAnswer(p,tables,{command:'approve',rc:0,stdout:'{"digest":"'+'e'.repeat(64)+'","body":"本文"}',stderr:'',truncated:false,workspace:ws});
-  assert.deepEqual(i1.body.argv,['approve','--account='+account,'--json','queue/a.md']);
+  assert.deepEqual(i1.body.argv,['approve','--account='+account,'--json','--','queue/a.md']);
   assert.equal(content(await a1).output.digest,'e'.repeat(64));
   const a2=callTool(tokens.access_token,'thth_approve',{account,files:['queue/a.md'],confirm:'e'.repeat(64)});
   const i2=await vmAnswer(p,tables,{command:'approve',rc:0,stdout:'{"approved":true}',stderr:'',truncated:false,workspace:ws});
-  assert.deepEqual(i2.body.argv,['approve','--account='+account,'--confirm='+'e'.repeat(64),'--json','queue/a.md']);
+  assert.deepEqual(i2.body.argv,['approve','--account='+account,'--confirm='+'e'.repeat(64),'--json','--','queue/a.md']);
   assert.equal(content(await a2).output.approved,true);
 });
 
@@ -291,7 +295,7 @@ test('revocation: the owner page and RFC 7009 drop the connector (401 at the nex
   assert.equal((await keep(await form(ORIGIN+'/connectors',{owner:p.id,secret:opaque()}))).status,403);
   const listed=await keep(await form(ORIGIN+'/connectors',{owner:p.id,secret:p.secret}));
   assert.equal(listed.status,200);const page=await listed.text();
-  assert.match(page,/connector-claude-ai/);assert.match(page,new RegExp(ws));
+  assert.ok(page.includes(LANE_CLAUDE));assert.match(page,new RegExp(ws));
   const device=/name="device" value="([^"]+)"/.exec(page)[1];
   const other=await person();
   assert.equal((await form(ORIGIN+'/connectors',{owner:other.id,secret:other.secret,device})).status,404,'another owner cannot revoke it');
@@ -347,6 +351,131 @@ test('fence 5: every tool\'s argv built by the Worker is accepted as is by the V
   assert.equal(r.status,0,r.stderr);assert.equal(r.stdout.trim(),'ok');
   // 表に無い欄・形の違う値は Worker でも組まない。
   assert.deepEqual(await argvOf([['thth_board',{by:'x'},false],['thth_morning',{name:'../x'},false],['thth_morning',{},false]]),[null,null,null]);
+});
+
+test('audit 1: a file that looks like a flag (the approve skip) is invalid_request and never reaches the VM',async()=>{
+  const p=await person(),ws=workspace(),account='acct-'+randomBytes(3).toString('hex');
+  const tokens=await connect(p);const {tables}=await vmIssue(p,ws,account);
+  for(const [name,files] of [['thth_approve',['queue/a.md','--confirm='+'e'.repeat(64)]],['thth_approve',['--confirm='+'e'.repeat(64)]],
+    ['thth_withdraw',['../secrets/x']],['thth_withdraw',['/etc/passwd']],['thth_hold',['-']],['thth_revoke',['a//b']]]){
+    const r=await callTool(tokens.access_token,name,{account,files});
+    assert.equal(content(r).error,'invalid_request',name+' '+files.join(' '));
+  }
+  assert.equal((await sync(p,tables)).requests.length,0,'nothing reached the VM');
+});
+
+test('audit 2: a connector that waits more than an hour before its first tool still binds',async()=>{
+  const p=await person(),ws=workspace(),account='acct-'+randomBytes(3).toString('hex');
+  const tokens=await connect(p);const {tables}=await vmIssue(p,ws,account);
+  const later2h=Date.now()+2*3_600_000;
+  // Person DO と Connector の時計だけ 2 時間進める（署名つきの sync は本物の時計なので、この間は VM を呼ばない）。
+  await mf.dispatchFetch(ORIGIN+'/__person/person/'+p.id,{method:'POST',body:JSON.stringify({clock:later2h})});
+  await control({clock:later2h});
+  let first;
+  try{
+    const next=await tokenFor({grant_type:'refresh_token',refresh_token:tokens.refresh_token});
+    assert.equal(next.status,200);sensitive.push(next.body.access_token,next.body.refresh_token);
+    tokens.access_token=next.body.access_token;
+    // 最初の道具: 結べて頼みが VM へ出る（VM が答えないので pending で返る）。
+    first=content(await callTool(tokens.access_token,'thth_board',{}));
+    assert.equal(first.status,'pending',JSON.stringify(first));
+  }finally{
+    await mf.dispatchFetch(ORIGIN+'/__person/person/'+p.id,{method:'POST',body:JSON.stringify({clock:null})});
+    await control({clock:null});
+  }
+  const item=await vmAnswer(p,tables,{command:'board',rc:0,stdout:'{}',stderr:'',truncated:false,workspace:ws});
+  assert.equal(item.workspace,ws);
+  assert.equal(content(await callTool(tokens.access_token,'thth_result',{request_id:first.request_id})).workspace,ws);
+});
+
+test('audit 3: the same AI connected to two workspaces works in both; dropping one asks the VM to revoke only that key',async()=>{
+  const p=await person(),A=workspace(),B=workspace(),acctA='acct-'+randomBytes(3).toString('hex'),acctB='acct-'+randomBytes(3).toString('hex');
+  const keys=[];
+  const issue=async(ws,account)=>{
+    const tokens=await connect(p,{ws});
+    const {actions}=await sync(p,{workspace_keys:keys});
+    const action=actions.find(a=>a.kind==='lane_key');assert.equal(action.workspace,ws);
+    keys.push({sha256:action.sha256,workspace:ws,expires_at:later()});
+    await sync(p,{workspace_keys:keys,completed:[{id:action.id,outcome:'done',reason:null,workspace:ws,account}]});
+    return {tokens,sha256:action.sha256};
+  };
+  const a=await issue(A,acctA),b=await issue(B,acctB);
+  const tables={workspace_keys:keys};
+  const board=async(t,ws)=>{
+    const pending=callTool(t,'thth_board',{});
+    const item=await vmAnswer(p,tables,it=>({command:'board',rc:0,stdout:'{}',stderr:'',truncated:false,workspace:it.workspace}));
+    assert.equal(item.workspace,ws);return pending;
+  };
+  assert.equal(content(await board(a.tokens.access_token,A)).workspace,A);
+  assert.equal(content(await board(b.tokens.access_token,B)).workspace,B);
+  // 2 本とも一覧にあり、A だけ取り消す。
+  const devices=(await control()).filter(([k,d])=>k.startsWith('device:')&&d.owner===p.id);
+  assert.equal(devices.length,2);
+  const deviceA=devices.find(([,d])=>d.workspace===A)[0].slice(7);
+  assert.equal((await form(ORIGIN+'/connectors',{owner:p.id,secret:p.secret,device:deviceA})).status,200);
+  const revokes=(await sync(p,tables)).actions.filter(x=>x.kind==='lane_revoke').map(({id,...x})=>x);
+  assert.deepEqual(revokes,[{kind:'lane_revoke',workspace:A,sha256:a.sha256}]);
+  assert.equal((await mcp(a.tokens.access_token,'ping',{},true)).status,401);
+  assert.equal(content(await board(b.tokens.access_token,B)).workspace,B,'B still works');
+  // 同じ括り B につなぎ直すと、前の B は結んだときに外れ、VM の取り消しも置かれる（黙って消さない）。
+  const b2=await issue(B,acctB);
+  assert.equal(content(await board(b2.tokens.access_token,B)).workspace,B);
+  await control({alarm:true});
+  assert.equal((await mcp(b.tokens.access_token,'ping',{},true)).status,401);
+  assert.ok((await sync(p,tables)).actions.some(x=>x.kind==='lane_revoke'&&x.sha256===b.sha256),'the old B key is revoked on the VM');
+});
+
+test('audit 4: a client document whose return addresses are not https or loopback http is refused',async()=>{
+  const {challenge}=pkce();
+  for(const [path,redirect] of [['/odd-http','http://evil.example/cb'],['/odd-js','javascript:alert(1)'],['/odd-app','myapp://cb']]){
+    const id='https://claude.ai'+path;
+    const r=await keep(await mf.dispatchFetch(authorizeUrl(baseParams(challenge,{client_id:id,redirect_uri:redirect})),{headers:{'cf-connecting-ip':ip()}}));
+    assert.equal(r.status,400,path);assert.equal(r.headers.get('location'),null);
+  }
+});
+
+test('the code expires after a minute, and a correct code works only once',async()=>{
+  const p=await person();
+  const late=await consent(p);
+  await control({clock:Date.now()+61_000});
+  try{assert.equal((await tokenFor({grant_type:'authorization_code',code:late.code,code_verifier:late.verifier,client_id:CLAUDE,redirect_uri:CALLBACK})).body.error,'invalid_grant');}
+  finally{await control({clock:null});}
+  const once=await consent(p);
+  const body={grant_type:'authorization_code',code:once.code,code_verifier:once.verifier,client_id:CLAUDE,redirect_uri:CALLBACK};
+  const first=await tokenFor(body);assert.equal(first.status,200);sensitive.push(first.body.access_token,first.body.refresh_token);
+  assert.equal((await tokenFor(body)).body.error,'invalid_grant');
+});
+
+test('the token endpoint refuses a resource other than this MCP',async()=>{
+  const p=await person();const {code,verifier}=await consent(p);
+  const got=await tokenFor({grant_type:'authorization_code',code,code_verifier:verifier,client_id:CLAUDE,redirect_uri:CALLBACK,resource:'https://k.test/other'});
+  assert.equal(got.status,400);assert.equal(got.body.error,'invalid_target');
+});
+
+test('a confirm value from one connection does not open the second step on another',async()=>{
+  const p1=await person(),p2=await person(),ws1=workspace(),ws2=workspace(),account='acct-'+randomBytes(3).toString('hex');
+  const t1=await connect(p1);const {tables:tables1}=await vmIssue(p1,ws1,account);
+  const t2=await connect(p2);const {tables:tables2}=await vmIssue(p2,ws2,account);
+  const args={account,files:['queue/a.md']};
+  const first=content(await callTool(t1.access_token,'thth_withdraw',args));assert.equal(first.status,'confirm_required');
+  assert.equal(content(await callTool(t2.access_token,'thth_withdraw',{...args,confirm:first.confirm})).error,'confirm_required');
+  assert.equal((await sync(p2,tables2)).requests.length,0);assert.equal((await sync(p1,tables1)).requests.length,0);
+});
+
+test('the connectors page lists only the owner\'s own connectors',async()=>{
+  const p1=await person(),p2=await person();
+  await connect(p1);await connect(p2);
+  const ids=async p=>[...(await (await form(ORIGIN+'/connectors',{owner:p.id,secret:p.secret})).text()).matchAll(/name="device" value="([^"]+)"/g)].map(m=>m[1]);
+  const mine=(await control()).filter(([k,d])=>k.startsWith('device:')&&d.owner===p1.id).map(([k])=>k.slice(7));
+  assert.deepEqual(await ids(p1),mine);
+  assert.equal((await ids(p2)).some(id=>mine.includes(id)),false);
+});
+
+test('the refresh token expires after 30 days',async()=>{
+  const p=await person();const tokens=await connect(p);
+  await control({clock:Date.now()+30*86_400_000+1000});
+  try{assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:tokens.refresh_token})).body.error,'invalid_grant');}
+  finally{await control({clock:null});}
 });
 
 test('fence 6: nothing secret is stored in the clear in the connector object',async()=>{

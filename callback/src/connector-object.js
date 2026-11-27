@@ -152,10 +152,6 @@ export class Connector extends DurableObject {
     const result=this.atomic(()=>{
       const now=this.now(),row=this.ctx.storage.kv.get('device:'+device_id);
       if(!row||(expectRHash!==null&&row.r_hash!==expectRHash))return fail(400,'invalid_grant');
-      // 同じ持ち主・同じレーンの古い接続は外す（VM はそのレーンの前の鍵をもう取り消している・1 レーン 1 行）。
-      if(row.status==='pending')
-        for(const [k,d] of this.ctx.storage.kv.list({prefix:'device:'}))
-          if(k!=='device:'+device_id&&d.owner===row.owner&&d.lane===row.lane&&d.created_at<row.created_at)this.ctx.storage.kv.delete(k);
       const a_expires_at=now+ACCESS_TTL,r_expires_at=now+REFRESH_TTL;
       this.put('device:'+device_id,{...row,status:'active',expires_at:r_expires_at,a_hash,r_hash,wrap_a,wrap_r,a_expires_at,r_expires_at,rotated_at:now});
       return {status:200,body:{access_token:device_id+'.'+sa,refresh_token:device_id+'.'+sr,expires_in:ACCESS_TTL/1000,
@@ -193,15 +189,28 @@ export class Connector extends DurableObject {
     return this.revoke(parsed.id);
   }
   // VM がレーンの鍵を作り、括りと頼みの宛先の口座を返した（Person DO の laneOutcome から）。秘密ではない。
-  bind(device_id,workspace,account){return this.atomic(()=>{
-    if(typeof device_id!=='string'||!DEVICE_ID.test(device_id)||typeof workspace!=='string'||!WORKSPACE.test(workspace)||
-       typeof account!=='string'||!PERSON.test(account))return fail();
-    const row=this.ctx.storage.kv.get('device:'+device_id);
-    if(!row||row.status!=='active')return fail(404,'not_found');
-    if(row.workspace!==null&&row.workspace!==workspace)return fail(409,'workspace_mismatch');
-    this.put('device:'+device_id,{...row,workspace,account});
-    return {status:200,body:{}};
-  });}
+  // 同じ持ち主・同じ client・同じレーンで、同じ括りに結んだ前の接続は、ここで外す（VM は同じ括りの同じレーンの前の鍵を
+  // 新しい鍵を作るときに取り消している）。外すのは drop() を通し、VM の取り消しも置く（段 K の監査 3: 括りを見ずに
+  // 黙って消すと、ほかの括りの接続が消え VM の鍵が残った）。ほかの括りの接続はそのまま並ぶ。
+  async bind(device_id,workspace,account){
+    const result=this.atomic(()=>{
+      if(typeof device_id!=='string'||!DEVICE_ID.test(device_id)||typeof workspace!=='string'||!WORKSPACE.test(workspace)||
+         typeof account!=='string'||!PERSON.test(account))return fail();
+      const row=this.ctx.storage.kv.get('device:'+device_id);
+      if(!row||row.status!=='active')return fail(404,'not_found');
+      if(row.workspace!==null&&row.workspace!==workspace)return fail(409,'workspace_mismatch');
+      const now=this.now();
+      this.put('device:'+device_id,{...row,workspace,account});
+      let dropped=0;
+      if(row.workspace===null)
+        for(const [k,d] of [...this.ctx.storage.kv.list({prefix:'device:'})])
+          if(k!=='device:'+device_id&&d.owner===row.owner&&d.client_id===row.client_id&&d.lane===row.lane&&
+             d.created_at<row.created_at&&(d.workspace??d.workspace_req)===workspace){this.drop(k.slice(7),now);dropped++;}
+      return {status:200,body:{dropped}};
+    });
+    if(result.status===200&&result.body.dropped)await this.wake(this.now()+1000);
+    return result;
+  }
   // 書く道具の二段の確認（設計 精読 GenerativeUI §1: 人が押した証明はどの仕様にも無い → 1 段目を見せたことをサーバに残す）。
   // `hash` は接続・道具・引数（confirm を除く）の SHA-256。`value` は Worker が出した確認の値（approve は VM の digest なので null）。
   noteConfirm(device_id,hash,value){return this.atomic(()=>{

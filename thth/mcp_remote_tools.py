@@ -57,6 +57,11 @@ NOT_TOOLS = {
 }
 
 
+# 原稿の相対パスの形（`server_passthrough.relative_path_ok` より広くない: `-` と `/` 始まり・`\\`・`//`・`.` と `..` の段・
+# 制御文字を断る）。Worker の buildArgv も同じ型で断り、VM は `--` のあとにだけ位置の引数を受ける（段 K の監査 1）。
+PATH_PATTERN = r"^(?![-/])(?!.*\\)(?!.*//)(?!(?:.*/)?\.\.?(?:/|$))[^\u0000-\u001f\u007f]{1,%d}$" % sp.PATH_MAX
+
+
 def prop(flag: str) -> str:
     return flag.lstrip("-").replace("-", "_")
 
@@ -93,7 +98,7 @@ def _tool(command: str, spec: sp.Spec, writes: bool) -> dict:
     if writes:
         positional = "files"
         properties["files"] = {"type": "array", "minItems": low, "maxItems": high,
-                               "items": {"type": "string", "minLength": 1, "maxLength": sp.PATH_MAX},
+                               "items": {"type": "string", "minLength": 1, "maxLength": sp.PATH_MAX, "pattern": PATH_PATTERN},
                                "description": "原稿の、口座の repo の根からの相対パス"}
         required += ["files", "account"]
         if "confirm" not in properties:
