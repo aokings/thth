@@ -18,7 +18,8 @@
                animation: hop 1s infinite ease-in-out; }
   .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
   @keyframes hop { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
-  tbody tr { opacity: 0; animation: rise .35s ease-out forwards; }
+  /* 中身は初めから見える。動きは出だしだけ上書きする（backwards）。動きが止められても中身は消えない */
+  tbody tr { animation: rise .35s ease-out backwards; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .sparkle { width: 16px; height: 16px; vertical-align: -3px; margin-left: 4px; }
   /* 消える時: 縮みながら薄れて消え、痕の 1 行を残す（消えた物を見落とさない） */
@@ -29,7 +30,7 @@
   .trace { color: #888; font-size: 13px; margin: 6px 0 0; animation: rise .35s ease-out; }
   .trace .gone { text-decoration: line-through; }
   @media (prefers-reduced-motion: reduce) {
-    .face .eye, .dots span, tbody tr, .trace { animation: none; opacity: 1; }
+    .face .eye, .dots span, tbody tr, .trace { animation: none; }
     .sparkle { display: none; }
   }
   @media (prefers-color-scheme: dark) { body { color: #eee; } th, td { border-color: #444; } .note { color: #aaa; } }
@@ -50,7 +51,8 @@
   <thead><tr><th>番号</th><th>口座</th><th>状態</th><th>出す時刻</th></tr></thead>
   <tbody></tbody>
 </table>
-<p class="trace" id="trace" hidden></p>
+<p class="trace" id="trace" role="status" aria-live="polite" hidden></p>
+<p><button id="less" hidden>1 件減らして呼び直す（画面から道具を呼ぶ）</button></p>
 <script>
 // 橋渡しは手書き（SDK を使わない・設計 §2 の 6 (a)）。使う口は ui/initialize と結果の受け取りだけ。
 (function () {
@@ -111,8 +113,17 @@
     var img = document.createElement("img");
     img.className = "sparkle"; img.alt = ""; img.src = SPARKLE;
     document.getElementById("state").appendChild(img);
+    shown = data.items.length;
+    var less = document.getElementById("less");
+    less.hidden = false; less.disabled = shown === 0;
     resized();
   }
+  var shown = 0;
+  document.getElementById("less").addEventListener("click", function () {
+    var btn = this; btn.disabled = true;
+    request("tools/call", { name: "thth_ui_probe", arguments: { count: Math.max(0, shown - 1) } })
+      .then(render, function (e) { setState("呼び直せない: " + JSON.stringify(e)); btn.disabled = false; });
+  });
   window.addEventListener("message", function (ev) {
     var m = ev.data;
     if (!m || m.jsonrpc !== "2.0") return;

@@ -11,7 +11,7 @@
 | `probe_host.html` | 偽の host。`probe.html` の橋渡しだけを確かめる（本物の host の代わりにはならない） |
 | `catalog.json` | 部品の表の正本（4 枚の画面・出す物と順・行動の引数）。柵は `tests/test_mcp_ui_catalog.py` |
 
-柵: `tests/test_mcp_ui_fence.py`（画面に対応しない client には今と 1 字も変わらない）。どちらも一度わざと壊して赤を見た（11/27）。
+柵: `tests/test_mcp_ui_fence.py`（画面に対応しない client には今と 1 字も変わらない）・`tests/test_mcp_ui_html.py`（動きを減らす設定・初めは透明にしない・痕は読み上げにも・innerHTML を使わない・外の URL を読まない）・`tests/test_mcp_ui_confirm_bound.py`。どちらも一度わざと壊して赤を見た（11/27）。
 
 ## 確かめたこと（2026-11-27）
 
@@ -31,4 +31,4 @@ Claude のデスクトップの `claude_desktop_config.json` の `mcpServers` �
 }
 ```
 
-会話で「thth_ui_probe を呼んで」と頼み、(1) 記録に `io.modelcontextprotocol/ui` が出るか、(2) 会話の中に表が出るか、(3) 演出（顔のまばたき・行のふわっと・きらめきの GIF）が出るか、を見る。済んだら 1 本を外す。
+会話で「thth_ui_probe を呼んで」と頼み、(1) 記録に `io.modelcontextprotocol/ui` が出るか、(2) 会話の中に表が出るか、(3) 演出（顔のまばたき・行のふわっと・きらめきの GIF）が出るか、(4) 画面の中の「1 件減らして呼び直す」を押すと、画面から道具が呼ばれ（記録に tools/call が増える）、行が縮んで消えて痕の 1 行が出るか、を見る。済んだら 1 本を外す。

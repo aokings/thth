@@ -143,7 +143,7 @@ stdio のまま足す物:
 ## 未確認
 
 - Claude のデスクトップで手元の stdio の画面が実際に出るか（公式の手順を読んだだけ）。ext-apps の issue #671 に、mcp-remote 経由で資源は取れたのに画面が出ない報告がある（2026-05・Windows）。
-- host ごとに AI へ見える欄（`structuredContent`・`_meta`）。
+- host ごとに AI へ見える欄（`structuredContent`・`_meta`）。11/27 に文書を当たったが割れている: ext-apps の仕様の「Best Practices」は `structuredContent` を「画面のため（AI の文脈に入れない）」と書くが、pmcp の手引きは「AI にも見える」と書く。Claude の文書には記述が無い。→ §6 の 5 で実機。それまでは「AI に見せたくない物は入れない」のまま。
 - `protocolVersion: 2024-11-05` のままで足りるか（仕様の例は 2024-11-05 で書かれている）。
 - ChatGPT が手元の stdio を受けるか（受けない見込み・§4 で待つ）。
 

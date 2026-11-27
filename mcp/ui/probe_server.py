@@ -33,7 +33,10 @@ SAMPLE = {
 TOOL = {
     "name": "thth_ui_probe",
     "description": "THTH の画面の確かめ用。見本の予定 3 件（偽のデータ）を返し、対応する client では画面に一覧を出す。",
-    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    "inputSchema": {"type": "object", "properties": {
+        "count": {"type": "integer", "minimum": 0, "maximum": 3,
+                  "description": "返す見本の件数（既定 3）。減らして呼び直すと、画面で消える時の動きが見える"}},
+        "additionalProperties": False},
     "_meta": {"ui": {"resourceUri": UI_URI}},
 }
 
@@ -71,8 +74,13 @@ def handle(req: dict):
         name = (req.get("params") or {}).get("name")
         if name != TOOL["name"]:
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool: {name}"}}
-        result = {"content": [{"type": "text", "text": json.dumps(SAMPLE, ensure_ascii=False)}],
-                  "structuredContent": SAMPLE}
+        args = (req.get("params") or {}).get("arguments") or {}
+        count = args.get("count", 3)
+        if type(count) is not int or not 0 <= count <= 3:
+            return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "count は 0〜3 の整数"}}
+        data = dict(SAMPLE, items=SAMPLE["items"][:count])
+        result = {"content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
+                  "structuredContent": data}
     elif method == "resources/list":
         result = {"resources": [{"uri": UI_URI, "name": "THTH の予定（確かめ）", "mimeType": UI_MIME}]}
     elif method == "resources/read":

@@ -34,6 +34,11 @@ window.addEventListener("message", function (ev) {
   if (m.method === "ui/initialize") {
     w.postMessage({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2026-01-26", hostInfo: { name: "fake", version: "0" }, hostCapabilities: {}, hostContext: {} } }, "*");
   }
+  if (m.method === "tools/call") {
+    var n = m.params.arguments.count;
+    w.postMessage({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "見本" }],
+      structuredContent: { note: "見本（偽のデータ）", items: ITEMS.slice(0, n) } } }, "*");
+  }
   if (m.method === "ui/notifications/initialized") {
     w.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: {} } }, "*");
     w.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: {
