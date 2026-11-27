@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>確定 | THTH</title><style>
+
+:root{color-scheme:light dark;--bg:#fffdf8;--ink:#26221c;--sub:#6b645a;--faint:#9a9286;--line:#ece6da;--card:#fff;--warm:#f0a040;--blue:#2c5a8c}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 system-ui,-apple-system,"Hiragino Sans",sans-serif;line-break:strict}
+main{max-width:640px;margin:auto;padding:20px;border:1px solid var(--line);border-radius:12px}
+h1{font-size:21px;line-height:1.4;margin:0}
+header{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+header small,.muted{color:var(--sub)}
+small,.hint{font-size:13px}
+.mono,time{font-family:ui-monospace,SFMono-Regular,monospace;font-variant-numeric:tabular-nums}
+button,select{font:inherit;color:inherit;cursor:pointer}
+button{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:7px 13px}
+button:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+button:disabled{cursor:not-allowed;opacity:.55}
+.selected,.primary{background:var(--ink);color:var(--bg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.field{display:grid;grid-template-columns:72px minmax(0,1fr);gap:12px;padding:10px 15px;border-bottom:1px solid var(--line)}
+.field:last-child{border:0}
+.label{color:var(--sub)}
+.value{overflow-wrap:anywhere;white-space:pre-wrap}
+.bodytext{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+.bodycard{padding:15px;margin-top:13px}
+.bodycard .label{margin-bottom:8px}
+.hint{color:var(--faint)}
+.controls{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 13px}
+.row{display:grid;grid-template-columns:90px minmax(0,1fr) auto;gap:10px;align-items:center;padding:13px 15px;border-bottom:1px solid var(--line);animation:rise .35s ease-out backwards}
+.row:last-child{border:0}
+.row .time{font-size:20px;font-weight:700;overflow-wrap:anywhere}
+.row>div{min-width:0;overflow-wrap:anywhere}
+.row .id{color:var(--faint);font-size:13px}
+.badge{background:#fff0da;color:#855300;border-radius:20px;padding:2px 10px;font-size:13px}
+.badge.scheduled{background:#e7eff8;color:#2c5a8c}
+.row.leaving{animation:leave .3s ease-in forwards}
+.trace{color:var(--faint);font-size:13px}
+.gone{text-decoration:line-through}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.metric{border:1px solid var(--line);background:var(--card);border-radius:11px;padding:14px;overflow-wrap:anywhere}
+.metric strong{display:block;font-size:26px}
+.status{margin-top:12px;padding:12px;border-radius:8px;background:#e4f2e7;color:#27633c}
+.action{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+.done.quiet{animation:none}
+.stamp{display:flex;align-items:center;gap:16px}
+.seal{border:2px solid #c6442e;border-radius:50%;color:#c6442e;width:58px;height:58px;display:grid;place-items:center;font-weight:bold;font-size:22px}
+.collapsing{animation:collapse .3s ease-in forwards}
+@keyframes collapse{from{transform:scaleY(1)}
+to{transform:scaleY(.05)}
+}
+.done{animation:rise .3s ease-out backwards}
+@keyframes rise{from{opacity:0;transform:translateY(5px)}
+to{opacity:1;transform:none}
+}
+@keyframes leave{from{opacity:1;transform:none}
+to{opacity:0;transform:scaleY(.1)}
+}
+@media(max-width:480px){main{padding:14px}
+.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.row{grid-template-columns:75px minmax(0,1fr) auto}
+.field{grid-template-columns:60px minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
+}
+@media(prefers-color-scheme:dark){:root{--bg:#211f1b;--ink:#f5f0e7;--sub:#c6beb2;--faint:#b8afa2;--line:#514a40;--card:#2c2924;--blue:#a5c6ef}
+.badge{background:#59452b;color:#ffe2a6}
+.badge.scheduled{background:#30445b;color:#d9eaff}
+.status{background:#283f30;color:#cae9d2}
+}
+
+</style></head>
+<body>
+<main><div id="before"><header><h1>確定</h1><small>内容を確かめる</small></header><div id="message" class="hint" role="status">結果を待っています。</div><div id="fields" class="card" hidden></div><div class="action"><button id="confirm" class="primary" disabled>この中身で確定</button><span class="hint">画面で押しても、人が押した証明にはなりません。確かめはサーバの digest です。</span></div></div><div id="done" class="stamp done" role="status" aria-live="polite" hidden><span class="seal" aria-hidden="true">済</span><div><strong id="done-title"></strong><div id="done-detail" class="muted mono"></div></div></div></main>
+<script>
+
+
+function el(tag,cls,text){var n=document.createElement(tag);
+  if(cls)n.className=cls;
+  if(text!==undefined && text!==null)n.textContent=String(text);
+  return n;
+}
+
+function clear(n){while(n.firstChild)n.removeChild(n.firstChild);
+}
+
+function present(v){return v!==undefined && v!==null;
+}
+
+function field(root,label,value,cls){if(!present(value))return;
+  var row=el('div','field'),l=el('div','label',label),v=el('div','value'+(cls?' '+cls:''),value);
+  row.append(l,v);
+  root.appendChild(row);
+}
+
+// 未提供の欄は補わず、structuredContent のみを表示する。
+function data(result){return result && result.structuredContent && typeof result.structuredContent==='object'?result.structuredContent:{};
+}
+
+var current=null, busy=false, revision=0, completedRevision=null;
+var validTool=['thth_retract_request','thth_schedule_request','thth_bookmark_request'];
+
+// A second-stage notification can arrive before or after its RPC reply.
+function successful(result, args) {
+  var d=data(result);
+  if (!args || result.isError || d.error || d.ambiguous===true || d.ok===false || d.stage===1 || d.account!==args.account) return false;
+  if (args.tool==='thth_retract_request')
+    // server_writes returns status; retract_cli returns ok/retracted without status.
+    return d.post_id===args.target && d.retracted!==false &&
+      (d.status==='retracted' || (!present(d.status) && d.ok===true && d.retracted===true));
+  if (args.tool==='thth_schedule_request')
+    return d.status==='approved' && d.draft_id===args.target;
+  if (args.tool==='thth_bookmark_request') {
+    var sameTarget=d.delivery===args.target || d.post_id===args.target;
+    return sameTarget && (d.status==='bookmark_deleted' ||
+      ((d.status==='bookmarked' || d.status==='bookmark_edited') && d.result==='confirmed'));
+  }
+  return false;
+}
+function showReceipt(result, args, requestRevision) {
+  if (requestRevision!==revision || !successful(result,args)) return false;
+  if (completedRevision===revision) return true;
+  completedRevision=revision;
+  busy=false;
+  var d=data(result), before=document.getElementById('before');
+  var retract=args.tool==='thth_retract_request';
+  document.getElementById('done').classList.toggle('quiet',retract);
+  document.getElementById('done-title').textContent=retract?'取り下げた':'確定した';
+  document.getElementById('done-detail').textContent=[d.account,d.post_id??d.draft_id??d.delivery,d.retracted_at??d.publish_at].filter(present).join(' · ');
+  function finish() {
+    if (requestRevision!==revision) return;
+    before.hidden=true;
+    document.getElementById('done').hidden=false;
+    ththBridge.resize();
+  }
+  if (retract || window.matchMedia('(prefers-reduced-motion: reduce)').matches) finish();
+  else {
+    before.classList.add('collapsing');
+    setTimeout(function(){before.classList.remove('collapsing');finish();},300);
+  }
+  return true;
+}
+window.ththRender=function(result){
+  if (current && (busy || completedRevision===revision) && showReceipt(result,current,revision)) return;
+  revision++;
+  completedRevision=null;
+  document.getElementById('before').classList.remove('collapsing');
+  busy=false;
+  var d=data(result),f=document.getElementById('fields');
+  current=null;
+  clear(f);
+  document.getElementById('done').hidden=true;
+  document.getElementById('before').hidden=false;
+  field(f,'宛先',d.account);
+  field(f,'日時',d.posted_at??d.publish_at??d.scheduled_at,'mono');
+  var body=d.text??d.body;
+  field(f,'本文',typeof body==='string'?body:null);
+  field(f,'URL',d.permalink??d.url,'mono');
+  field(f,'理由',d.reason);
+  field(f,'digest',typeof d.digest==='string'?d.digest.slice(0,8):null,'mono');
+  f.hidden=!f.childNodes.length;
+  var target=d.target??d.post_id??d.draft_id;
+  var eligible=!result.isError&&!d.error&&(d.status==='confirm_required'||d.stage===1)&&validTool.includes(d.tool)&&typeof d.account==='string'&&/^[A-Za-z0-9._-]{1,64}$/.test(d.account)&&typeof target==='string'&&/^[A-Za-z0-9_:.-]{1,128}$/.test(target)&&typeof d.digest==='string'&&/^[0-9a-f]{12,128}$/.test(d.digest)&&(d.tool!=='thth_retract_request'||typeof d.reason==='string')&&(!present(d.reason)||(typeof d.reason==='string'&&d.reason.length<=500));
+  if(eligible){current={tool:d.tool,account:d.account,target:target,digest:d.digest};
+    if(present(d.reason))current.reason=d.reason;
+  }
+  document.getElementById('confirm').disabled=!current||busy;
+  document.getElementById('message').textContent=current?'':(Object.keys(d).length?'確定に必要な結果が揃っていません。':'結果を待っています。');
+  ththBridge.resize();
+};
+
+document.getElementById('confirm').addEventListener('click',function(){if(!current||busy)return;
+  busy=true;
+  this.disabled=true;
+  var args=current, requestRevision=revision;
+  ththBridge.call('thth_ui_confirm',args).then(function(r){if(requestRevision!==revision)return;
+    if (showReceipt(r,args,requestRevision)) return;
+    if (completedRevision===requestRevision) return;
+    var d=data(r);
+    busy=false;
+    document.getElementById('message').textContent='確定できませんでした。'+(typeof d.error==='string'?' '+d.error:typeof d.reason==='string'?' '+d.reason:typeof d.status==='string'?' '+d.status:'');
+    document.getElementById('confirm').disabled=false;
+  },function(){if(requestRevision!==revision||completedRevision===requestRevision)return;
+    busy=false;
+    document.getElementById('message').textContent='確定の呼び出しに失敗しました。';
+    document.getElementById('confirm').disabled=false;
+  });
+});
+
+/* thth-bridge:begin */
+(function () {
+  var nextId = 1, pending = Object.create(null);
+
+  function send(message) { window.parent.postMessage(Object.assign({jsonrpc:"2.0"}, message), "*");
+  }
+
+  function request(method, params) { return new Promise(function(resolve,reject) { var id=nextId++;
+      pending[id]={resolve:resolve,reject:reject};
+      send({id:id,method:method,params:params});
+    });
+  }
+
+  function resize() { send({method:"ui/notifications/size-changed",params:{width:document.body.scrollWidth,height:Math.ceil(document.body.getBoundingClientRect().height)}
+    });
+  }
+
+  window.ththBridge = {call:function(name,args){return request("tools/call",{name:name,arguments:args});
+    },resize:resize};
+
+  window.addEventListener("message",function(event) {
+    if(event.source !== window.parent) return;
+
+    var m=event.data;
+    if(!m || m.jsonrpc!=="2.0") return;
+
+    if(m.id != null && pending[m.id] && !m.method) {var p=pending[m.id];
+      delete pending[m.id];
+      if(m.error) p.reject(m.error);
+      else p.resolve(m.result);
+      return;
+    }
+
+    if(m.method==="ui/notifications/tool-input" && window.ththInput) window.ththInput(m.params || {});
+
+    if(m.method==="ui/notifications/tool-result" && window.ththRender) window.ththRender(m.params || {});
+
+  });
+
+  request("ui/initialize",{appInfo:{name:"thth-ui",version:"0.1.0"},appCapabilities:{},protocolVersion:"2026-01-26"}).then(function(){send({method:"ui/notifications/initialized"});
+    resize();
+  },function(){document.getElementById("message").textContent="host とつながりませんでした。";
+  });
+
+  if(window.ResizeObserver) new ResizeObserver(resize).observe(document.documentElement);
+
+})();
+
+/* thth-bridge:end */
+</script>
+</body>
+</html>

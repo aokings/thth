@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>数字 | THTH</title><style>
+
+:root{color-scheme:light dark;--bg:#fffdf8;--ink:#26221c;--sub:#6b645a;--faint:#9a9286;--line:#ece6da;--card:#fff;--warm:#f0a040;--blue:#2c5a8c}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 system-ui,-apple-system,"Hiragino Sans",sans-serif;line-break:strict}
+main{max-width:640px;margin:auto;padding:20px;border:1px solid var(--line);border-radius:12px}
+h1{font-size:21px;line-height:1.4;margin:0}
+header{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+header small,.muted{color:var(--sub)}
+small,.hint{font-size:13px}
+.mono,time{font-family:ui-monospace,SFMono-Regular,monospace;font-variant-numeric:tabular-nums}
+button,select{font:inherit;color:inherit;cursor:pointer}
+button{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:7px 13px}
+button:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+button:disabled{cursor:not-allowed;opacity:.55}
+.selected,.primary{background:var(--ink);color:var(--bg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.field{display:grid;grid-template-columns:72px minmax(0,1fr);gap:12px;padding:10px 15px;border-bottom:1px solid var(--line)}
+.field:last-child{border:0}
+.label{color:var(--sub)}
+.value{overflow-wrap:anywhere;white-space:pre-wrap}
+.bodytext{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+.bodycard{padding:15px;margin-top:13px}
+.bodycard .label{margin-bottom:8px}
+.hint{color:var(--faint)}
+.controls{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 13px}
+.row{display:grid;grid-template-columns:90px minmax(0,1fr) auto;gap:10px;align-items:center;padding:13px 15px;border-bottom:1px solid var(--line);animation:rise .35s ease-out backwards}
+.row:last-child{border:0}
+.row .time{font-size:20px;font-weight:700;overflow-wrap:anywhere}
+.row>div{min-width:0;overflow-wrap:anywhere}
+.row .id{color:var(--faint);font-size:13px}
+.badge{background:#fff0da;color:#855300;border-radius:20px;padding:2px 10px;font-size:13px}
+.badge.scheduled{background:#e7eff8;color:#2c5a8c}
+.row.leaving{animation:leave .3s ease-in forwards}
+.trace{color:var(--faint);font-size:13px}
+.gone{text-decoration:line-through}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.metric{border:1px solid var(--line);background:var(--card);border-radius:11px;padding:14px;overflow-wrap:anywhere}
+.metric strong{display:block;font-size:26px}
+.status{margin-top:12px;padding:12px;border-radius:8px;background:#e4f2e7;color:#27633c}
+.action{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+.stamp{display:flex;align-items:center;gap:16px}
+.seal{border:2px solid #c6442e;border-radius:50%;color:#c6442e;width:58px;height:58px;display:grid;place-items:center;font-weight:bold;font-size:22px}
+.done{animation:rise .3s ease-out backwards}
+@keyframes rise{from{opacity:0;transform:translateY(5px)}
+to{opacity:1;transform:none}
+}
+@keyframes leave{from{opacity:1;transform:none}
+to{opacity:0;transform:scaleY(.1)}
+}
+@media(max-width:480px){main{padding:14px}
+.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.row{grid-template-columns:75px minmax(0,1fr) auto}
+.field{grid-template-columns:60px minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}
+}
+@media(prefers-color-scheme:dark){:root{--bg:#211f1b;--ink:#f5f0e7;--sub:#c6beb2;--faint:#b8afa2;--line:#514a40;--card:#2c2924;--blue:#a5c6ef}
+.badge{background:#59452b;color:#ffe2a6}
+.badge.scheduled{background:#30445b;color:#d9eaff}
+.status{background:#283f30;color:#cae9d2}
+}
+
+</style></head>
+<body>
+<main><header><h1 id="title">数字</h1><div id="windows" class="controls"></div></header><div id="message" class="hint" role="status">結果を待っています。</div><div id="metrics" class="metrics"></div><div id="status" class="status" hidden></div><p id="period" class="hint"></p><div id="missing" class="hint"></div></main>
+<script>
+
+
+function el(tag,cls,text){var n=document.createElement(tag);
+  if(cls)n.className=cls;
+  if(text!==undefined && text!==null)n.textContent=String(text);
+  return n;
+}
+
+function clear(n){while(n.firstChild)n.removeChild(n.firstChild);
+}
+
+function present(v){return v!==undefined && v!==null;
+}
+
+function field(root,label,value,cls){if(!present(value))return;
+  var row=el('div','field'),l=el('div','label',label),v=el('div','value'+(cls?' '+cls:''),value);
+  row.append(l,v);
+  root.appendChild(row);
+}
+
+// 未提供の欄は補わず、structuredContent のみを表示する。
+function data(result){return result && result.structuredContent && typeof result.structuredContent==='object'?result.structuredContent:{};
+}
+
+var account=null,days=null,chosen=null,requestRevision=0;
+// Read only the unanswered count cell; never traverse items, mentions or world text.
+function observeNumbers(d){
+  var section=(d.sections_by_name||{}).unanswered||(Array.isArray(d.sections)?d.sections.find(function(s){return s&&s.section==='unanswered';}):null)||{};
+  var source=(section.value||{}).by_account||{},nodes={};
+  Object.keys(source).forEach(function(name){
+    var entry=source[name]||{},cell=(entry.value||{}).replies||{},value=cell.value||{};
+    nodes[name]={unanswered_replies:{n:typeof value.n==='number'?value.n:null,denominator:typeof value.denominator==='number'?value.denominator:null,window_days:typeof (value.window||{}).days==='number'?value.window.days:null,cannot_say:[entry.cannot_say,cell.cannot_say].concat(Array.isArray(value.cannot_say)?value.cannot_say:[]).filter(function(v){return typeof v==='string';})}};
+  });
+  return {report_type:'observe',by_account:nodes,cannot_say:[section.cannot_say].concat(Array.isArray(d.cannot_say)?d.cannot_say:[]).filter(function(v){return typeof v==='string';}),limitations:['朝の報告は未返信の数だけを表示しています。']};
+}
+window.ththRender=function(result){requestRevision++;
+  var d=data(result);
+  if(result.isError||d.error){
+    document.getElementById('message').textContent='数字を読み込めませんでした。'+(typeof d.error==='string'?' '+d.error:'');
+    return;
+  }
+  if(d.report_type==='observe'||d.sections_by_name||Array.isArray(d.sections)){
+    d=observeNumbers(d);
+  }
+  if(!d.by_account&&!d.account&&d.report_type!=='period_comparison'){
+    document.getElementById('message').textContent='表示できる結果が不足しています。';
+    return;
+  }
+  var filters=d.filters||{},nodes=d.by_account||{},names=Object.keys(nodes);
+  account=filters.account??d.account??(names.includes(chosen)?chosen:(names.length?names[0]:null));
+  var n=(account&&nodes[account])||d;
+  var comparison=d.report_type==='period_comparison';
+  days=comparison?((d.periods||{}).current||{}).window_days:d.period?d.period.window_days:d.report_type==='summary'?7:null;
+  document.getElementById('title').textContent=account?account+' の数字':'数字';
+  var windows=document.getElementById('windows');
+  clear(windows);
+  if(names.length>1)names.forEach(function(name){var b=el('button',name===account?'selected':'',name);
+    b.setAttribute('aria-pressed',String(name===account));
+    b.addEventListener('click',function(){chosen=name;
+      window.ththRender(result);
+    });
+    windows.appendChild(b);
+  });
+  [7,28,90].forEach(function(day){var b=el('button',days===day?'selected':'',day+' 日');
+    b.disabled=typeof account!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(account);
+    b.setAttribute('aria-pressed',String(days===day));
+    b.addEventListener('click',function(){b.disabled=true;
+      var callRevision=++requestRevision;
+      var args={account:account,window_days:day};
+      if(comparison)args.compare_previous=true;
+      ththBridge.call('analytics_report',args).then(function(r){if(callRevision===requestRevision)window.ththRender(r);},function(){if(callRevision!==requestRevision)return;b.disabled=false;
+        document.getElementById('message').textContent='数字を読み直せませんでした。';
+      });
+    });
+    windows.appendChild(b);
+  });
+  var metrics=document.getElementById('metrics');
+  clear(metrics);
+  var posts=n.posts||{}, pub=(n.published||{})['7d']||{}, react=(n.reactions||{})['7d']||{}, replies=n.unanswered_replies||{}, followers=n.followers||{};
+  [[present(posts.n)?'実測台帳の投稿':'公開',posts.n??pub.published],['反応の和',react.reactions_total],['返していない返信',replies.n],['フォロワー差',followers.delta]].forEach(function(pair){if(!present(pair[1]))return;
+    var card=el('div','metric');
+    card.append(el('div','muted',pair[0]),el('strong','mono',pair[1]));
+    if(pair[0]==='反応の和'&&present(react.posts)&&present(react.measured))card.appendChild(el('div','hint','実測 '+react.measured+' / 母数 '+react.posts+' 件'));
+    if(pair[0]==='返していない返信'&&present(replies.window_days))card.appendChild(el('div','hint','直近 '+replies.window_days+' 日'));
+    if(pair[0]==='返していない返信'&&present(replies.denominator))card.appendChild(el('div','hint','母数 '+replies.denominator+' 件'));
+    if(pair[0]==='フォロワー差'&&present(followers.date))card.appendChild(el('div','hint',[followers.previous_date,followers.date].filter(present).join(' → ')+' の日次差'+(present(followers.latest)?' · 最新 '+followers.latest+' 人':'')));
+    metrics.appendChild(card);
+  });
+  if(comparison)['current','previous'].forEach(function(key){
+    var population=posts[key]||{},period=(d.periods||{})[key]||{};
+    if(typeof population.n_total!=='number')return;
+    var card=el('div','metric');
+    card.append(el('div','muted',(key==='current'?'現在':'前')+'の実測台帳の投稿'),el('strong','mono',population.n_total));
+    card.appendChild(el('div','hint','母数 '+population.n_total+' 件'));
+    if(present(period.start)&&present(period.end))card.appendChild(el('div','hint',period.start+' 〜 '+period.end+'（終わりを含まない）'));
+    [['n_eligible','測定対象'],['n_missing','欠測'],['n_immature','未成熟'],['n_incomplete','不完全']].forEach(function(pair){if(typeof population[pair[0]]==='number')card.appendChild(el('div','hint',pair[1]+' '+population[pair[0]]+' 件'));});
+    metrics.appendChild(card);
+  });
+  var s=document.getElementById('status');
+  s.hidden=typeof (n.stopped||{}).any!=='boolean';
+  if(!s.hidden)s.textContent=n.stopped.any?'止まっています':'止まっていません';
+  var p=d.period||{};
+  document.getElementById('period').textContent=[present(p.start)&&present(p.end)?'期間 '+p.start+' 〜 '+p.end:(present(pub.published)||present(react.reactions_total)?'期間 直近 7 日':null),present(posts.n)?'母数 '+posts.n+' 件':present(react.posts)?'反応の母数 '+react.posts+' 件':null,present(react.measured)?'反応の測定 '+react.measured+' 件':null,typeof react.posts==='number'&&typeof react.measured==='number'?'反応の欠測 '+Math.max(0,react.posts-react.measured)+' 件':null].filter(Boolean).join(' · ');
+  var missing=document.getElementById('missing');
+  clear(missing);
+  Object.keys(react.sums||{}).forEach(function(k){var metric=react.sums[k];
+    if(metric&&present(metric.n))missing.appendChild(el('div','',k+' の和 '+(present(metric.sum)?metric.sum:'不明')+' · 測定 '+metric.n+' 件'+(typeof react.posts==='number'?' · 欠測 '+Math.max(0,react.posts-metric.n)+' 件':'')));
+  });
+  Array.from(new Set([].concat(Array.isArray(d.cannot_say)?d.cannot_say:[],Array.isArray(n.cannot_say)?n.cannot_say:[],Array.isArray(d.limitations)?d.limitations:[],Array.isArray(replies.cannot_say)?replies.cannot_say:[]).filter(function(v){return typeof v==='string';}))).forEach(function(v){missing.appendChild(el('div','',v));
+  });
+  document.getElementById('message').textContent=Object.keys(d).length?'':'表示できる数字がありません。';
+  ththBridge.resize();
+};
+
+/* thth-bridge:begin */
+(function () {
+  var nextId = 1, pending = Object.create(null);
+
+  function send(message) { window.parent.postMessage(Object.assign({jsonrpc:"2.0"}, message), "*");
+  }
+
+  function request(method, params) { return new Promise(function(resolve,reject) { var id=nextId++;
+      pending[id]={resolve:resolve,reject:reject};
+      send({id:id,method:method,params:params});
+    });
+  }
+
+  function resize() { send({method:"ui/notifications/size-changed",params:{width:document.body.scrollWidth,height:Math.ceil(document.body.getBoundingClientRect().height)}
+    });
+  }
+
+  window.ththBridge = {call:function(name,args){return request("tools/call",{name:name,arguments:args});
+    },resize:resize};
+
+  window.addEventListener("message",function(event) {
+    if(event.source !== window.parent) return;
+
+    var m=event.data;
+    if(!m || m.jsonrpc!=="2.0") return;
+
+    if(m.id != null && pending[m.id] && !m.method) {var p=pending[m.id];
+      delete pending[m.id];
+      if(m.error) p.reject(m.error);
+      else p.resolve(m.result);
+      return;
+    }
+
+    if(m.method==="ui/notifications/tool-input" && window.ththInput) window.ththInput(m.params || {});
+
+    if(m.method==="ui/notifications/tool-result" && window.ththRender) window.ththRender(m.params || {});
+
+  });
+
+  request("ui/initialize",{appInfo:{name:"thth-ui",version:"0.1.0"},appCapabilities:{},protocolVersion:"2026-01-26"}).then(function(){send({method:"ui/notifications/initialized"});
+    resize();
+  },function(){document.getElementById("message").textContent="host とつながりませんでした。";
+  });
+
+  if(window.ResizeObserver) new ResizeObserver(resize).observe(document.documentElement);
+
+})();
+
+/* thth-bridge:end */
+</script>
+</body>
+</html>

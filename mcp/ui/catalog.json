@@ -140,7 +140,7 @@
               },
               "digest": {
                 "type": "string",
-                "pattern": "^[0-9a-f]{16,128}$",
+                "pattern": "^[0-9a-f]{12,128}$",
                 "x-thth-from-result": true
               },
               "account": {
