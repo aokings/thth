@@ -56,6 +56,24 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
   (doctor, show, insights, estimate, catalog, leads, network, shop, and boost,
   pause and stop; boost always creates paused ads and nothing raises a
   budget). `thth reply delete` is not on this route.
+- Workspaces (THTH accounts) and lane keys: a workspace holds one owner's
+  accounts on the operator's server. `thth login --lane <lane> [--workspace
+  <ws>]` gives a key bound to one workspace (not one account; the server
+  decides the workspace from the key), saved at
+  `~/.config/thth/lanes/<lane>.json`; use it with `thth --lane <lane> …` and
+  revoke it with `thth logout --lane`. The owner allows it in the browser with
+  the owner name and secret; never ask for that secret in a chat.
+- Remote MCP (AI connectors): `https://thth.me/mcp` (Streamable HTTP, POST
+  only; OAuth with PKCE S256 on thth.me; the consent page asks the owner, not
+  you). One connector = one lane key bound to one workspace; the owner can
+  allow read only, and then write tools are not listed. Write tools (approve,
+  revoke, withdraw, hold) are two-step: call without `confirm`, show the
+  person what came back in full, and call again with `confirm` only when they
+  say so. `key_pending` right after connecting means try again in a few tens
+  of seconds; `pending` means call `thth_result` with the same `request_id`
+  later, never resend a write. No tool takes a secret. The owner reviews and
+  revokes connectors at https://thth.me/connectors. Privacy:
+  https://thth.me/privacy/#connectors
 - Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by gotoq` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`

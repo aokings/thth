@@ -1240,3 +1240,107 @@ def test_privacyのビジネスプロフィールの節は提携を匂わせな�
                 page.split("<h2>Google ビジネス プロフィール</h2>", 1)[1].split("<h2>", 1)[0]]
     words = ("partner", "certified", "endorsed", "official", "approved by Google", "提携", "公認", "認定", "公式")
     assert [w for s in sections for w in words if w.lower() in s.lower()] == []
+
+
+# ------------------------------------------------------------------ 括り・レーンの鍵・AI のコネクタ（段 K）
+# privacy の「AI connectors」と「括り」の節が言う数（期限・保持）を、Worker と VM の定数から作った文と突き合わせる。
+# 節の中に無ければ赤（ほかの節に同じ数があっても通さない）。取り消しの口（/oauth/revoke・/connectors）も節の中に要る。
+
+def js_product(file: str, name: str) -> int:
+    """`NAME=30*86_400_000` の形（数と `*` だけ）の定数。"""
+    text = (SRC / file).read_text(encoding="utf-8")
+    found = re.search(rf"\b{name}\s*=\s*([\d_]+(?:\s*\*\s*[\d_]+)*)\s*[,;]", text)
+    assert found, f"{file} に {name} が無い"
+    value = 1
+    for part in found.group(1).split("*"):
+        value *= int(part.strip().replace("_", ""))
+    return value
+
+
+def _days(ms: int) -> int:
+    assert ms % 86_400_000 == 0, ms
+    return ms // 86_400_000
+
+
+def _section(page: str, heading: str) -> str:
+    assert heading in page, f"privacy に見出し {heading} が無い"
+    return page.split(heading, 1)[1].split("<h2", 1)[0]
+
+
+CONNECTOR_EN = '<h2 id="connectors">AI connectors (remote MCP)</h2>'
+CONNECTOR_JA = '<h2 id="connectors-ja">AI のコネクタ（リモート MCP）</h2>'
+WORKSPACE_EN = '<h2 id="workspaces">Workspaces (THTH accounts) and lane keys</h2>'
+WORKSPACE_JA = '<h2 id="workspaces-ja">括り（THTH アカウント）とレーンの鍵</h2>'
+
+
+def connector_facts():
+    from thth import activity
+    code = seconds(js_product("connector-object.js", "CODE_TTL"))
+    access_h = js_product("connector-object.js", "ACCESS_TTL") // 3_600_000
+    assert js_product("connector-object.js", "ACCESS_TTL") % 3_600_000 == 0
+    refresh = _days(js_product("connector-object.js", "REFRESH_TTL"))
+    client = _days(js_product("connector-object.js", "CLIENT_TTL"))
+    confirm = minutes(js_product("connector-object.js", "CONFIRM_TTL"))
+    revoke = _days(js_product("connector-object.js", "REVOKE_TTL"))
+    outcome = _days(js_product("person-object.js", "LANE_OUTCOME_TTL"))
+    lane_days = activity.CREDENTIAL_DAYS
+    login_min = minutes(js_product("login-object.js", "LOGIN_TTL"))
+    one = lambda n, unit: f"one {unit}" if n == 1 else f"{n} {unit}s"  # noqa: E731
+    return [
+        # (何の数か, 見出し, その節の中にあるべき文)
+        ("code（CODE_TTL）", CONNECTOR_EN, f"The authorization code is valid for {code} seconds and once"),
+        ("code・日本語", CONNECTOR_JA, f"認可コードは {code} 秒の内に 1 回だけ使えます"),
+        ("access（ACCESS_TTL）", CONNECTOR_EN, f"An access token is valid for {one(access_h, 'hour')}"),
+        ("access・日本語", CONNECTOR_JA, f"access token は {access_h} 時間"),
+        ("refresh（REFRESH_TTL）", CONNECTOR_EN, f"a refresh token for {refresh} days; each refresh replaces both"),
+        ("refresh・日本語", CONNECTOR_JA, f"refresh token は {refresh} 日で"),
+        ("refresh の切れで止まる", CONNECTOR_EN, f"or {refresh} days pass without a refresh"),
+        ("refresh の切れで止まる・日本語", CONNECTOR_JA, f"refresh の無いまま {refresh} 日たったとき"),
+        ("DCR の登録（CLIENT_TTL）", CONNECTOR_EN, f"which thth.me keeps for {client} days"),
+        ("DCR の登録・日本語", CONNECTOR_JA, f"thth.me が {client} 日置きます"),
+        ("書く道具の 1 段目（CONFIRM_TTL）", CONNECTOR_EN, f"within {confirm} minutes"),
+        ("書く道具の 1 段目・日本語", CONNECTOR_JA, f"{confirm} 分の内に返したときだけ"),
+        ("取り消しの置き直し（REVOKE_TTL）", CONNECTOR_EN, f"for at most {one(revoke, 'day')}"),
+        ("取り消しの置き直し・日本語", CONNECTOR_JA, f"最長 {revoke} 日持ちます"),
+        ("発行の結果（LANE_OUTCOME_TTL）", CONNECTOR_EN, f"stays on thth.me for {outcome} days"),
+        ("発行の結果・日本語", CONNECTOR_JA, f"thth.me に {outcome} 日残ります"),
+        ("取り消しの口 RFC 7009", CONNECTOR_EN, "<code>/oauth/revoke</code>"),
+        ("取り消しの口 RFC 7009・日本語", CONNECTOR_JA, "<code>/oauth/revoke</code>"),
+        ("持ち主の取り消しの頁", CONNECTOR_EN, "<code>https://thth.me/connectors</code>"),
+        ("持ち主の取り消しの頁・日本語", CONNECTOR_JA, "<code>https://thth.me/connectors</code>"),
+        ("monban の入力口の形", CONNECTOR_EN,
+         "the secret is entered on a page on monban.me and does not pass through the conversation"),
+        ("monban の入力口の形・日本語", CONNECTOR_JA,
+         "秘密は monban.me の頁で入力し、会話と THTH の記録を通りません。値は持ち主の家"),
+        ("レーンの鍵の期限（activity.CREDENTIAL_DAYS）", WORKSPACE_EN, f"({lane_days} days)"),
+        ("レーンの鍵の期限・日本語", WORKSPACE_JA, f"（{lane_days} 日）"),
+        ("レーンの鍵の受け渡し（LOGIN_TTL）", WORKSPACE_EN, f"for at most {login_min} minutes"),
+        ("レーンの鍵の受け渡し・日本語", WORKSPACE_JA, f"最長 {login_min} 分だけ"),
+        ("レーンの鍵の置き場（lane_keys.NAME）", WORKSPACE_EN, "<code>private/lane-keys.json</code>"),
+        ("レーンの鍵の置き場・日本語", WORKSPACE_JA, "<code>private/lane-keys.json</code>"),
+        ("レーンの鍵の取り消し", WORKSPACE_EN, "<code>thth logout --lane</code>"),
+        ("レーンの鍵の取り消し・日本語", WORKSPACE_JA, "<code>thth logout --lane</code>"),
+    ]
+
+
+@pytest.mark.parametrize("what,heading,phrase", connector_facts(), ids=[f[0] for f in connector_facts()])
+def test_privacyのコネクタと括りの節はコードと同じ(what, heading, phrase):
+    page = PRIVACY.read_text(encoding="utf-8")
+    section = _section(page, heading)
+    assert phrase in section, (f"privacy の {heading} の節に「{phrase}」が無い（{what}）。"
+                               "コードと privacy（tools/build_site.py）のどちらかを直す")
+
+
+def test_レーンの鍵のファイル名はコードと同じ():
+    from thth import lane_keys
+    assert lane_keys.NAME == "lane-keys.json"
+
+
+def test_privacyの秘密の入力はmonbanを今使えるように書かない():
+    """monban の入口は本番でまだ閉じている（11/27）。「使える」「今」と言い切る文に変えたら赤。出す日に開いていれば外してよい。"""
+    page = PRIVACY.read_text(encoding="utf-8")
+    flat = " ".join(page.split())
+    assert "When THTH asks for a secret through monban" in flat
+    assert "THTH が monban を通して秘密を求めるときは" in flat
+    for claim in ("monban is available", "you can enter secrets on monban", "monban で入力できます", "monban が使えます"):
+        assert claim not in flat, claim

@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-11-20"  # 5.27.0（Google ビジネス プロフィールの節・店の変化の連動の節。11-19 の予定を出す日に直した）。出す日がずれたら直す。前: 2026-11-17（5.26.0 監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = None  # 括り・レーンの鍵・AI のコネクタ・monban の節（枝 worktree-ws-stage-d・出すのは Meta の審査のあとの Worker の deploy の日）。出す日に、その日付を入れ、TERMS_EFFECTIVE も同じ日にする（None のままだと release_gate が release_privacy_date_unset で止める）。前: 2026-11-20 # 5.27.0（Google ビジネス プロフィールの節・店の変化の連動の節。11-19 の予定を出す日に直した）。出す日がずれたら直す。前: 2026-11-17（5.26.0 監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
@@ -320,6 +320,26 @@ LINKAGE_BUNDLES = "linkage_bundles.json"
 LINKAGE_MEDIA_DIR = "register-media"
 LINKAGE_KEPT = "linkage_consent.json"
 REGISTER_ERASE_MIN = 4   # erase.MIN_NEEDLE と結ぶ（消す求めの最後の確かめで、これより短い値は字で探さない）
+
+
+# 括りのレーンの鍵と AI のコネクタ（段 K）の数。正本はコード。ずれたら tests/test_privacy_matches_code.py の
+# connector_facts() が赤（Worker: callback/src/connector-object.js・person-object.js、VM: thth/activity.py）。
+LANE_KEY_DAYS = 365              # thth/activity.py CREDENTIAL_DAYS（レーンの鍵の期限）
+LANE_OUTCOME_DAYS = 30           # person-object.js LANE_OUTCOME_TTL（済んだ発行の結果）
+CONNECTOR_CODE_SECONDS = 60      # connector-object.js CODE_TTL
+CONNECTOR_ACCESS_HOURS = 1       # connector-object.js ACCESS_TTL
+CONNECTOR_REFRESH_DAYS = 30      # connector-object.js REFRESH_TTL
+CONNECTOR_CLIENT_DAYS = 30       # connector-object.js CLIENT_TTL（/oauth/register の登録）
+CONNECTOR_CONFIRM_MINUTES = 10   # connector-object.js CONFIRM_TTL（書く道具の 1 段目の控え）
+CONNECTOR_REVOKE_DAYS = 1        # connector-object.js REVOKE_TTL（VM への取り消しの置き直し）
+
+
+def _n_en(n: int, unit: str) -> str:
+    return f"one {unit}" if n == 1 else f"{n} {unit}s"
+
+
+CONNECTOR_ACCESS_EN = _n_en(CONNECTOR_ACCESS_HOURS, "hour")
+CONNECTOR_REVOKE_HOURS_EN = _n_en(CONNECTOR_REVOKE_DAYS, "day")
 
 
 def _register_managed_en() -> str:
@@ -930,6 +950,77 @@ def build_privacy() -> str:
         "(for example a Meta ad account before the operator sets limits) cannot post, send or create, but can still "
         "read that account's direct messages and lead form answers.</p>")
 
+    # 括り（THTH アカウント）・レーンの鍵・AI のコネクタ（段 K）・monban の入力口（設計 括り §7.2・共通の層 §6.1）。
+    # 数は tests/test_privacy_matches_code.py の connector_facts() がコードの定数と照らす。
+    add('<h2 id="workspaces">Workspaces (THTH accounts) and lane keys</h2>')
+    add("<p>On the operator's server, an owner's data is kept in a workspace (a THTH account). Each workspace has "
+        "one owner and its own folder (<code>ws/&lt;workspace&gt;/</code>) for that owner's accounts, server state, "
+        "logs, principals, registers, shops, ad account and WhatsApp ledgers, repositories and secrets; the folder "
+        "names on this page (such as <code>adaccounts/</code> and <code>waba/</code>) are inside it. The first "
+        "workspace, <code>main</code>, keeps the server's existing location until it is moved. What all workspaces "
+        "share (the operator's credentials, the notifications from Meta and <code>state/_meta/</code>) stays outside "
+        "the workspaces. Which projects belong to which workspace, and who owns each workspace, are written in one "
+        "file on the operator's server (<code>workspaces.json</code>: names and dates only). A command runs inside "
+        "one workspace; for a request made with a lane key, the operator's server decides the workspace from the "
+        "key, not from what the caller sends.</p>")
+    add(f"<p><strong>Lane keys.</strong> A lane key is bound to one workspace instead of one account: a session of "
+        "the owner (a lane) uses it for every account in that workspace, including accounts added later. The owner "
+        "starts it with <code>thth login --lane &lt;lane&gt; [--workspace &lt;workspace&gt;]</code>; the page on "
+        "thth.me shows the workspace and the lane, and the owner allows it with the owner name and the owner secret. "
+        "The operator's server checks in <code>workspaces.json</code> that this person owns the workspace before it "
+        "creates the key; otherwise no key is made. thth.me holds the new key for the command to collect, for at "
+        "most 10 minutes, and the command saves it on the owner's computer "
+        "(<code>~/.config/thth/lanes/&lt;lane&gt;.json</code>). The operator's server keeps the key's SHA-256 hash, "
+        "the owner, the workspace, the lane, whether it may write, and its expiry "
+        f"({LANE_KEY_DAYS} days) in that workspace's own file (<code>private/lane-keys.json</code>), separate from "
+        "the account keys; thth.me keeps the hash and the expiry. Neither stores the key in clear. A new key for the "
+        "same owner, workspace and lane revokes the previous one. <code>thth logout --lane</code> asks thth.me, with "
+        "the key itself, to revoke it, and the operator's server stops it at its next sync. Requests made with a "
+        "lane key take the command path above, with the same limits and periods.</p>")
+
+    add('<h2 id="connectors">AI connectors (remote MCP)</h2>')
+    add(f"<p>An owner can add THTH as a connector in an AI service that supports remote MCP (for example "
+        "claude.ai). The connector calls <code>https://thth.me/mcp</code>, and thth.me itself is the OAuth "
+        "authorization server (authorization code with PKCE S256 only; no client secret). The AI service "
+        "identifies itself with a public client metadata document at the URL it uses as its client ID, which "
+        "thth.me fetches when the connection starts, or with a registration at <code>/oauth/register</code>, which "
+        f"thth.me keeps for {CONNECTOR_CLIENT_DAYS} days (the return addresses and the client name). The consent "
+        "page on thth.me shows the AI's name, the address it returns to, the lane and the scope (read only, or read "
+        "and write); the owner allows it with the owner name, the owner secret and, when the owner has more than "
+        "one workspace, the workspace, and can narrow it to read only. Allowing creates one lane key for that "
+        "connector, bound to one workspace, in the same way as <code>thth login --lane</code>. A read-only "
+        "connector's key cannot write, and its write tools are not listed. The key is shown neither on the page "
+        "nor to the AI service. The read tools read the workspace's board, schedule, approvals, reports, "
+        "unanswered replies and where posts went; the write tools approve a draft, unapprove it, withdraw it or "
+        "hold it.</p>")
+    add(f"<p>thth.me holds the connector's lane key in one Cloudflare Durable Object. What is stored is the key "
+        "encrypted with AES-GCM under a key derived (HKDF-SHA-256) from the secret part of the connector's tokens, "
+        "which exists only in the tokens given to the AI service, and SHA-256 hashes of those secrets; the storage "
+        "holds neither the lane key nor the token secrets in clear. For each connector it also keeps the owner, the "
+        "AI's name and client ID, the lane, the workspace and the account its requests go to, the scope, when it "
+        "was allowed, when a write step was last taken, and its expiry. The authorization code is valid for "
+        f"{CONNECTOR_CODE_SECONDS} seconds and once. An access token is valid for {CONNECTOR_ACCESS_EN} and a refresh "
+        f"token for {CONNECTOR_REFRESH_DAYS} days; each refresh replaces both. The result of issuing the key (the "
+        f"workspace and the account, not the key) stays on thth.me for {LANE_OUTCOME_DAYS} days so that the "
+        "connector can be bound to its workspace. A write tool takes two steps: the first returns what would be "
+        "done without doing it, and the second is accepted only if the same first step was returned on the same "
+        f"connector within {CONNECTOR_CONFIRM_MINUTES} minutes. A tool call takes the command path above, with "
+        "the same limits and periods, and an answer that belongs to a different workspace from the connector's "
+        "is not shown. What a tool returns goes to the AI service the owner connected (see AI (LLM) sessions).</p>")
+    add(f"<p>A connector stops in three ways: the AI service revokes its token at <code>/oauth/revoke</code> (for "
+        "example when the owner removes the connector there); the owner revokes it on "
+        "<code>https://thth.me/connectors</code>, which lists the owner's connectors (the AI's name, lane, "
+        "workspace, scope and dates; no keys or tokens) after the owner name and the owner secret are entered, and "
+        f"keeps no sign-in; or {CONNECTOR_REFRESH_DAYS} days pass without a refresh. thth.me then deletes the "
+        "connector's entry (the encrypted key and the token hashes), refuses its next call, and places a revocation "
+        "of its lane key for the operator's server, which stops the key at its next sync. Until the revocation is "
+        f"placed, thth.me keeps only the key's hash, the owner and the workspace, for at most "
+        f"{CONNECTOR_REVOKE_HOURS_EN}.</p>")
+    add("<p><strong>Entering secrets.</strong> The connector's tools have no field for secrets such as platform "
+        "tokens or passwords. When THTH asks for a secret through monban, the secret is entered on a page on "
+        "monban.me and does not pass through the conversation or THTH's records; the value is decrypted at the "
+        "owner's house (the server that receives it through monban).</p>")
+
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
         "authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, "
@@ -993,17 +1084,21 @@ def build_privacy() -> str:
         "Marketing API tier and the approved permissions). When a read-only permission has not been used for 25 days, "
         "THTH may make one minimal read call (for example the account's own ID) so that Meta does not suspend a "
         "permission that was not used for 28 days.</li>")
+    add("  <li>The workspace file (<code>workspaces.json</code>) and each workspace's lane key file "
+        "(<code>private/lane-keys.json</code>: hashes, owner, lane, write permission and expiry), described under "
+        '<a href="#workspaces">Workspaces</a>.</li>')
     add("</ul>")
     add("<p>It does not keep the text or authors of keyword search results, looked-up public profiles, direct "
         "messages, leads, streaming destinations, call-to-action buttons, other Pages' and accounts' public counts, "
-        "the account secret, or the assistant key in clear.</p>")
+        "the account secret, or the assistant key or lane keys in clear.</p>")
 
     add("<h2>Where data goes</h2>")
     add("<ul>")
     add("  <li>The platform API of each connected account, and the owner's own WordPress site.</li>")
     add("  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, the owner's "
-        "activity page, attachment transfer, data deletion requests, and the notifications Meta sends for "
-        "connected Facebook Pages and Instagram accounts.</li>")
+        "activity page, attachment transfer, data deletion requests, the notifications Meta sends for "
+        "connected Facebook Pages and Instagram accounts, the lane key sign-in, and AI connectors (the OAuth "
+        "authorization server and <code>/mcp</code>).</li>")
     add("  <li>Operational notices by email through the operator's mail server, when configured: account "
         "name, draft file name, state, time and a reason. No post text.</li>")
     add("  <li>A liveness monitor, when configured: account name, run state, draft file name and a reason. "
@@ -1020,7 +1115,7 @@ def build_privacy() -> str:
     add("<h2>AI (LLM) sessions</h2>")
     add("<p>THTH passes data to an AI model provider only when the owner chose that provider and asks for it; THTH "
         "does not choose a provider or send anything to one on its own. Users work with THTH through their own "
-        "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
+        "LLM session (for example over MCP, or through an AI connector at <code>https://thth.me/mcp</code>). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. The user chooses that provider, and what is passed "
         "is passed at the user's own instruction; THTH sends nothing to any provider on its own. Depending on the tool, this includes the "
         "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, per-search-term figures kept on request, and the text (in full, or a short preview of up to 60 "
@@ -1055,6 +1150,8 @@ def build_privacy() -> str:
         "above; the status URL shows unverified, verified or completed. Requests are kept on thth.me for 30 "
         "days. The <code>/deauthorize</code> callback and the receipt of a request do not establish that data "
         "has been deleted. You can also contact the operator to stop access or delete data.</p>")
+    add('<p>Lane keys and AI connectors are stopped as described under <a href="#workspaces">Workspaces</a> and '
+        '<a href="#connectors">AI connectors</a>.</p>')
 
     add("<h2>Retention</h2>")
     add("<ul>")
@@ -1085,6 +1182,16 @@ def build_privacy() -> str:
         "no text, sent nowhere): 14 days, removed the next time the record is written, and deleted when the account exits.</li>")
     add("  <li>Plaza posts and replies: until the account exits (open posts may be kept without the account "
         "name, as described under Plaza).</li>")
+    add(f"  <li>AI connector authorization codes on thth.me: {CONNECTOR_CODE_SECONDS} seconds, usable once.</li>")
+    add(f"  <li>AI connector access tokens: {CONNECTOR_ACCESS_EN}. Refresh tokens and the encrypted lane key held "
+        f"on thth.me: until {CONNECTOR_REFRESH_DAYS} days pass without a refresh, or until revoked.</li>")
+    add(f"  <li>AI client registrations at <code>/oauth/register</code>: {CONNECTOR_CLIENT_DAYS} days.</li>")
+    add(f"  <li>The first step of a connector's write tool: {CONNECTOR_CONFIRM_MINUTES} minutes.</li>")
+    add(f"  <li>The result of issuing a lane key on thth.me (the workspace and the account, not the key): "
+        f"{LANE_OUTCOME_DAYS} days.</li>")
+    add(f"  <li>Lane keys on the operator's server (hash, owner, workspace, lane, write permission and expiry): "
+        f"{LANE_KEY_DAYS} days or until revoked; a revoked entry stays, marked revoked, until a new key is issued "
+        "for the same lane.</li>")
     add("  <li>Reports and the change log: no set period.</li>")
     add("</ul>")
     add("<p>Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history for 30 days: "
@@ -1109,7 +1216,8 @@ def build_privacy() -> str:
         "API call counts, the permission records and ledger, re-authorization and the Data Use Checkup. Revision: adds the "
         "read-only Google Ads and Search Console commands and the Google API Services User Data Policy. Revision: adds "
         "Google Business Profile. Revision: adds linked updates from a store's register (with the owner's advance "
-        "consent) and Instagram stories.</p>")
+        "consent) and Instagram stories. Revision: adds workspaces (THTH accounts), lane keys, AI connectors "
+        "(remote MCP) and secret entry through monban.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -1558,6 +1666,62 @@ def build_privacy() -> str:
         "商品の中身・広告の対象の条件を依頼の記録やログに書きません。この経路で読むだけのアカウント（たとえば運営者が上限を入れる前の"
         "Meta の広告アカウント）は、投稿・送信・作成はできませんが、そのアカウントのダイレクトメッセージとリードの回答は読めます。</p>")
 
+    add('<h2 id="workspaces-ja">括り（THTH アカウント）とレーンの鍵</h2>')
+    add("<p>運営者のサーバーでは、持ち主のデータを括り（THTH アカウント）ごとに置きます。括りには持ち主が 1 人いて、"
+        "括りごとのフォルダ（<code>ws/&lt;括り&gt;/</code>）に、その持ち主のアカウント・サーバーの state・ログ・主体・"
+        "台帳・店・広告と WhatsApp の台帳・リポジトリ・秘密を置きます。このページに出てくるフォルダの名前"
+        "（<code>adaccounts/</code>・<code>waba/</code> など）は、その中にあります。最初の括り <code>main</code> は、"
+        "移すまで今のサーバーの置き場のままです。括りをまたいで使う物（運営者の認証情報・Meta からの通知・"
+        "<code>state/_meta/</code>）は括りの外に置きます。どのプロジェクトがどの括りに入るかと各括りの持ち主は、"
+        "運営者のサーバーの 1 つのファイル（<code>workspaces.json</code>: 名前と日付だけ）に書きます。命令は 1 つの括りの"
+        "中で動きます。レーンの鍵で来た依頼では、どの括りかを、呼んだ側が送る値でなく、鍵から運営者のサーバーが決めます。</p>")
+    add(f"<p><strong>レーンの鍵。</strong>レーンの鍵は、1 つのアカウントでなく 1 つの括りに結び付く鍵です。持ち主の"
+        "セッション（レーン）は、その括りの全部のアカウント（あとで足したアカウントも）にこの鍵を使います。持ち主は "
+        "<code>thth login --lane &lt;レーン&gt; [--workspace &lt;括り&gt;]</code> で始め、thth.me の頁が括りとレーンを"
+        "見せ、持ち主の名前と持ち主のシークレットで許します。運営者のサーバーは、鍵を作る前に <code>workspaces.json</code> で"
+        "その人が括りの持ち主かを確かめ、違えば鍵を作りません。新しい鍵は、コマンドが受け取るまで最長 10 分だけ thth.me が"
+        "一時的に保管し、コマンドが持ち主のコンピューター（<code>~/.config/thth/lanes/&lt;レーン&gt;.json</code>）に置きます。"
+        "運営者のサーバーは、鍵の SHA-256 のハッシュ・持ち主・括り・レーン・書いてよいか・期限"
+        f"（{LANE_KEY_DAYS} 日）を、その括りのファイル（<code>private/lane-keys.json</code>）に、アカウントの鍵とは別に"
+        "置きます。thth.me が持つのはハッシュと期限です。どちらも鍵の平文を保存しません。同じ持ち主・括り・レーンで新しい"
+        "鍵を作ると、前の鍵は使えなくなります。<code>thth logout --lane</code> は、鍵そのものを使って thth.me に取り消しを"
+        "頼み、運営者のサーバーが次の同期で止めます。レーンの鍵の依頼は、上のコマンドの経路を、同じ上限と期間で通ります。</p>")
+
+    add('<h2 id="connectors-ja">AI のコネクタ（リモート MCP）</h2>')
+    add(f"<p>持ち主は、リモート MCP に対応した AI のサービス（例: claude.ai）に THTH をコネクタとして足せます。"
+        "コネクタは <code>https://thth.me/mcp</code> を呼び、OAuth の認可サーバーは thth.me 自身です（認可コードと "
+        "PKCE S256 だけ・client secret は持ちません）。AI のサービスは、client ID として使う URL に置いた公開の client "
+        "の説明の文書（接続を始めるときに thth.me が取りに行きます）か、<code>/oauth/register</code> での登録"
+        f"（thth.me が {CONNECTOR_CLIENT_DAYS} 日置きます。戻り先と client の名前）で名乗ります。thth.me の同意の頁は、"
+        "AI の名前・戻り先・レーン・範囲（読むだけか、読む・書く）を見せ、持ち主は持ち主の名前・持ち主のシークレットと、"
+        "括りが 2 つ以上あるときは括りを入れて許します。読むだけに絞ることもできます。許すと、そのコネクタ専用のレーンの鍵が、"
+        "<code>thth login --lane</code> と同じ形で 1 本でき、1 つの括りに結び付きます。読むだけのコネクタの鍵は書けず、"
+        "書く道具は一覧に出ません。鍵は頁にも AI のサービスにも出ません。読む道具は、括りの一枚・予約・承認の台帳・"
+        "報告・まだ返していない返信・どこに出たかの記録を読み、書く道具は、原稿の承認・承認の取り消し・閉じる・"
+        "期限と理由を付けて止める、を行います。</p>")
+    add(f"<p>thth.me は、コネクタのレーンの鍵を 1 つの Cloudflare Durable Object に預かります。保存するのは、"
+        "コネクタの token の秘密の部分（AI のサービスに渡した token の中にだけあります）から HKDF-SHA-256 で導いた鍵で "
+        "AES-GCM に包んだ鍵と、その秘密の SHA-256 のハッシュです。保存にレーンの鍵と token の秘密の平文はありません。"
+        "コネクタごとに、ほかに持ち主・AI の名前と client ID・レーン・括りと依頼の宛先のアカウント・範囲・許した日時・"
+        f"最後に書く段を打った日時・期限を置きます。認可コードは {CONNECTOR_CODE_SECONDS} 秒の内に 1 回だけ使えます。"
+        f"access token は {CONNECTOR_ACCESS_HOURS} 時間、refresh token は {CONNECTOR_REFRESH_DAYS} 日で、refresh の"
+        "たびに両方を新しくします。鍵の発行の結果（括りとアカウント。鍵は含みません）は、コネクタを括りに結び付けるため "
+        f"thth.me に {LANE_OUTCOME_DAYS} 日残ります。書く道具は 2 段です。1 段目は何をするかを返すだけで何もせず、"
+        f"2 段目は、同じコネクタで同じ 1 段目を {CONNECTOR_CONFIRM_MINUTES} 分の内に返したときだけ受け付けます。"
+        "道具の呼び出しは、上のコマンドの経路を、同じ上限と期間で通ります。コネクタの括りと違う括りの答えは見せません。"
+        "道具が返したものは、持ち主がつないだ AI のサービスに渡ります（「AI（LLM）のセッション」）。</p>")
+    add(f"<p>コネクタは次の 3 つで止まります。AI のサービスが <code>/oauth/revoke</code> で token を取り消したとき"
+        "（例: 持ち主が AI の側でコネクタを外したとき）。持ち主が <code>https://thth.me/connectors</code> で取り消したとき"
+        "（持ち主の名前と持ち主のシークレットを入れると、その持ち主のコネクタの一覧が出ます。AI の名前・レーン・括り・"
+        "範囲・日時だけで、鍵や token は出ません。サインインの状態は持ちません）。refresh の無いまま "
+        f"{CONNECTOR_REFRESH_DAYS} 日たったとき。thth.me はそのコネクタの行（包んだ鍵と token のハッシュ）を消し、"
+        "次の呼び出しを断り、運営者のサーバーにレーンの鍵の取り消しを置きます。運営者のサーバーは次の同期で鍵を止めます。"
+        "取り消しを置けるまで、thth.me は鍵のハッシュ・持ち主・括りだけを、最長 "
+        f"{CONNECTOR_REVOKE_DAYS} 日持ちます。</p>")
+    add("<p><strong>秘密の入力。</strong>コネクタの道具には、SNS の token やパスワードのような秘密を入れる欄がありません。"
+        "THTH が monban を通して秘密を求めるときは、秘密は monban.me の頁で入力し、会話と THTH の記録を通りません。"
+        "値は持ち主の家（monban を通して受け取るサーバー）で復号します。</p>")
+
     add("<h2>認可コードの一時保管（Cloudflare）</h2>")
     add("<p>認可コードの一時保管には Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"
         "最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバーへ一度だけ渡します。"
@@ -1612,15 +1776,19 @@ def build_privacy() -> str:
         "（<code>state/_meta/ledger.json</code>: Data Use Checkup の期日・Marketing API の段・承認済みの権限）。"
         "読むだけの権限が 25 日使われていないときは、Meta が 28 日使わなかった権限を止めないよう、THTH が最小の読み"
         "（例: 自分の口座の ID）を 1 回打つことがあります。</li>")
+    add("  <li>括りのファイル（<code>workspaces.json</code>）と、括りごとのレーンの鍵のファイル"
+        "（<code>private/lane-keys.json</code>: ハッシュ・持ち主・レーン・書いてよいか・期限）。"
+        '<a href="#workspaces-ja">括り</a>に書いたとおりです。</li>')
     add("</ul>")
     add("<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、ダイレクトメッセージ、リード、配信の宛先、"
-        "行動ボタン、他のページや口座の公開の数、アカウントのシークレット、API キーの平文は保存しません。</p>")
+        "行動ボタン、他のページや口座の公開の数、アカウントのシークレット、API キーとレーンの鍵の平文は保存しません。</p>")
 
     add("<h2>データの行き先</h2>")
     add("<ul>")
     add("  <li>接続したアカウントのSNSの API と、持ち主自身の WordPress のサイト。</li>")
     add("  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可コードの一時保管、オーナーのアクティビティ、添付の"
-        "受け渡し、データ削除の依頼、接続した Facebook ページと Instagram について Meta が送る通知。</li>")
+        "受け渡し、データ削除の依頼、接続した Facebook ページと Instagram について Meta が送る通知、レーンの鍵の"
+        "サインイン、AI のコネクタ（OAuth の認可サーバーと <code>/mcp</code>）。</li>")
     add("  <li>運用通知のメール（設定したときだけ）。運営者のメールサーバーから、アカウント名・原稿のファイル名・"
         "状態・時刻・理由を送ります。本文は含みません。</li>")
     add("  <li>死活監視（設定したときだけ）。アカウント名・実行の状態・原稿のファイル名・理由を送ります。本文は"
@@ -1635,7 +1803,7 @@ def build_privacy() -> str:
 
     add("<h2>AI（LLM）のセッション</h2>")
     add("<p>THTH が AI モデルの提供者へデータを渡すのは、持ち主が選んだ提供者に、持ち主が求めたときだけです。THTH が"
-        "自分で提供者を選んだり、自分から送ったりすることはありません。利用者は自分の LLM のセッション（例: MCP）から "
+        "自分で提供者を選んだり、自分から送ったりすることはありません。利用者は自分の LLM のセッション（例: MCP や、<code>https://thth.me/mcp</code> の AI のコネクタ）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
         "LLM 提供者に渡ります。提供者を選ぶのは利用者で、渡るのは利用者の指示によるものです。THTH が自分から提供者へ"
         "送ることはありません。道具によって、本人の下書き・投稿の履歴・インサイト・報告、そのセッションが読めるプラザの書き込みと返信、トピックマップの語と日々の集計、求めに応じて残した検索の語ごとの数と、公開の返信・言及・検索結果の"
@@ -1664,6 +1832,8 @@ def build_privacy() -> str:
         "その後、運営者がサーバーで署名を検証して Threads のアカウントと照合し、上の退会を実行します。状況の URL は"
         "未照合・照合済み・完了を示します。依頼は thth.me に 30 日保持します。<code>/deauthorize</code> の応答と依頼の"
         "受付だけでは、データを削除したことを示しません。停止や削除は運営者へ連絡して求めることもできます。</p>")
+    add('<p>レーンの鍵と AI のコネクタの止め方は、<a href="#workspaces-ja">括り</a>と'
+        '<a href="#connectors-ja">AI のコネクタ</a>に書いたとおりです。</p>')
 
     add("<h2>保持</h2>")
     add("<ul>")
@@ -1686,6 +1856,14 @@ def build_privacy() -> str:
     add("  <li>運営者のサーバーの認証情報・設定・下書き・投稿の履歴・インサイト・返信・言及・添付・ログ: 退会まで。</li>")
     add("  <li>口座ごとの命令の控え（時刻・口座・命令の名前・結果・断りの符丁・旗の名前だけ。本文は持たず、外へ送りません）: 14日（古い行は次に書くときに消します）。退会でも削除。</li>")
     add("  <li>プラザの書き込みと返信: 退会まで（open の書き込みは「プラザ」のとおりアカウント名を落として残すことがあります）。</li>")
+    add(f"  <li>thth.me の AI のコネクタの認可コード: {CONNECTOR_CODE_SECONDS} 秒・1 回だけ。</li>")
+    add(f"  <li>AI のコネクタの access token: {CONNECTOR_ACCESS_HOURS} 時間。refresh token と thth.me が預かる包んだ"
+        f"レーンの鍵: refresh の無いまま {CONNECTOR_REFRESH_DAYS} 日たつまでか、取り消すまで。</li>")
+    add(f"  <li><code>/oauth/register</code> での AI の client の登録: {CONNECTOR_CLIENT_DAYS} 日。</li>")
+    add(f"  <li>コネクタの書く道具の 1 段目: {CONNECTOR_CONFIRM_MINUTES} 分。</li>")
+    add(f"  <li>thth.me のレーンの鍵の発行の結果（括りとアカウント。鍵は含みません）: {LANE_OUTCOME_DAYS} 日。</li>")
+    add(f"  <li>運営者のサーバーのレーンの鍵（ハッシュ・持ち主・括り・レーン・書いてよいか・期限）: {LANE_KEY_DAYS} 日"
+        "か、取り消すまで。取り消した行は、同じレーンの新しい鍵を作るまで、取り消しの印を付けて残ります。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
     add("</ul>")
     add("<p>Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を持つため、論理削除をバックアップからの"
@@ -1706,7 +1884,8 @@ def build_privacy() -> str:
         "（ハッシュタグ・Pages Search・埋め込み・予定）、カタログとリード、Marketing API の呼び出しの数、権限の記録と台帳、"
         "再認可と Data Use Checkup を足しました。改訂: 読むだけの Google 広告と Search Console の命令と、Google API サービスの"
         "ユーザーデータに関するポリシーを足しました。改訂: Google ビジネス プロフィールを足しました。"
-        "改訂: 店の変化の連動（持ち主の前もっての同意による自動の更新）と Instagram のストーリーを足しました。</p>")
+        "改訂: 店の変化の連動（持ち主の前もっての同意による自動の更新）と Instagram のストーリーを足しました。"
+        "改訂: 括り（THTH アカウント）・レーンの鍵・AI のコネクタ（リモート MCP）・monban を通した秘密の入力を足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
@@ -1714,7 +1893,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = "2026-11-12"  # 5.14.4 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-08（5.13.0）・2026-09-26（3.13.0）・初版 2026-09-25
+TERMS_EFFECTIVE = None  # 括り・レーンの鍵・AI のコネクタの項（枝 worktree-ws-stage-d）。出す日に PRIVACY_EFFECTIVE と同じ日付を入れる。前: 2026-11-12 # 5.14.4 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-08（5.13.0）・2026-09-26（3.13.0）・初版 2026-09-25
 
 
 def contact_html(lang: str) -> str:
@@ -1778,6 +1957,10 @@ def build_terms() -> str:
     add("  <li>Keep your account secret, your assistant key and your platform credentials to yourself. Do not "
         "paste them into chats, drafts or issues. If you think a key has leaked, issue a new one on "
         "https://thth.me/activity; the previous key stops working.</li>")
+    add("  <li>Allow a lane key (<code>thth login --lane</code>) or an AI connector only when you started it "
+        "yourself, from your own terminal or your own AI service, and keep your owner secret to yourself. You can "
+        "see and revoke your connectors at https://thth.me/connectors and revoke a lane key with "
+        "<code>thth logout --lane</code>.</li>")
     add("</ul>")
 
     add("<h2>What the operator does and does not do</h2>")
@@ -1802,6 +1985,10 @@ def build_terms() -> str:
         "plaza. The operator stops an account when you ask, and may stop it when these terms or a platform's "
         "terms are not followed, when a platform requires it, or when the service ends. Stopping may happen "
         "without advance notice.</li>")
+    add("  <li>A lane key or an AI connector you allow works only in the one workspace (THTH account) it is bound "
+        "to and within the scope you chose (read only, or read and write). A connector's write tools take two "
+        "steps, and the second is accepted only after the first was returned on the same connector. The lane key "
+        "behind a connector is not given to the AI service.</li>")
     add('  <li>How data is used, kept and deleted is described in the <a href="/privacy/">Privacy Policy</a>.</li>')
     add("</ul>")
 
@@ -1822,7 +2009,8 @@ def build_terms() -> str:
     add(contact_html("en"))
     add("<h2>Changes</h2>")
     add("<p>This page is generated from the THTH source repository; its history is public there. Revision: adds "
-        "Facebook Pages, Instagram, Meta ad accounts and direct messages.</p>")
+        "Facebook Pages, Instagram, Meta ad accounts and direct messages. Revision: adds lane keys and AI connectors "
+        "(remote MCP).</p>")
     add("<h2>Software license</h2>")
     add("<p>The THTH software is open source under the MIT License. That license covers the software; these "
         "terms cover the operator's service.</p>")
@@ -1849,6 +2037,9 @@ def build_terms() -> str:
     add("  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを公開する。</li>")
     add("  <li>アカウントのシークレット・API キー・SNSの認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。"
         "キーが漏れたと思ったら https://thth.me/activity で発行し直す（前のキーは使えなくなる）。</li>")
+    add("  <li>レーンの鍵（<code>thth login --lane</code>）と AI のコネクタは、自分のターミナルか自分の AI のサービスから"
+        "自分で始めたときだけ許し、持ち主のシークレットは自分だけで持つ。コネクタは https://thth.me/connectors で見て"
+        "取り消せ、レーンの鍵は <code>thth logout --lane</code> で取り消せる。</li>")
     add("</ul>")
 
     add("<h2>運営者がすること・しないこと</h2>")
@@ -1871,6 +2062,9 @@ def build_terms() -> str:
     add("  <li>運営者は、いつでもアカウントの利用を止められ、プラザの書き込みを非表示にできます。利用者が求めたときは"
         "止めます。この規約やSNSの規約が守られないとき、SNSが求めたとき、サービスを終えるときにも止めることが"
         "あります。止めるときに前もって知らせないことがあります。</li>")
+    add("  <li>利用者が許したレーンの鍵と AI のコネクタは、結び付いた 1 つの括り（THTH アカウント）の中で、利用者が選んだ"
+        "範囲（読むだけか、読む・書く）でだけ動きます。コネクタの書く道具は 2 段で、2 段目は同じコネクタで 1 段目を返した"
+        "あとだけ受け付けます。コネクタの裏のレーンの鍵は AI のサービスに渡しません。</li>")
     add('  <li>データの使い方・保存・削除は、<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>')
     add("</ul>")
 
@@ -1891,7 +2085,8 @@ def build_terms() -> str:
     add(contact_html("ja"))
     add("<h2>変更</h2>")
     add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。改訂: "
-        "Facebook ページ・Instagram・Meta の広告アカウント・ダイレクトメッセージを足しました。</p>")
+        "Facebook ページ・Instagram・Meta の広告アカウント・ダイレクトメッセージを足しました。改訂: レーンの鍵と AI の"
+        "コネクタ（リモート MCP）を足しました。</p>")
     add("<h2>ソフトウェアのライセンス</h2>")
     add("<p>THTH のソフトウェアは MIT License のオープンソースです。このライセンスはソフトウェアについてのもので、"
         "運営者のサービスについてはこの規約が定めます。</p>")
