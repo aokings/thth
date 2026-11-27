@@ -46,6 +46,28 @@ async function wait(stub,id,sha256,request_id,hold){
   }
 }
 
+// 括りの束へ 1 つ頼む（レーンの鍵）。/api/v1 と、リモート MCP の口（段 K・mcp.js）の両方がここを通る。
+// 鍵ごとの回数制限（60 回／分）はここで数える（IP の回数は呼んだ口が 1 度だけ数える）。答えは {status, body}。
+export async function workspaceCall(env,sha256,workspace,operation,rest,hold=holdMs(env)){
+  if(!(await env.API_KEY_LIMIT.limit({key:sha256})).success)return {status:429,body:{error:'rate_limited'}};
+  const stub=await workspaceStub(env,workspace);
+  const placed=await stub.apiSubmit(sha256,operation,rest);
+  if(placed.status!==200)return placed;
+  const answered=await wait(stub,placed.body.id,sha256,placed.body.id+'~'+workspace,hold);
+  return {status:answered.status,body:await answered.json()};
+}
+// 括りの束の結果を引く（`<id>~<括り>`）。束の鍵の表に無い鍵は 401。
+export async function workspaceResult(env,sha256,requestId){
+  const bundle=WORKSPACE_REQUEST_ID.exec(requestId);
+  if(!bundle)return {status:404,body:{error:'not_found'}};
+  if(!(await env.API_KEY_LIMIT.limit({key:sha256})).success)return {status:429,body:{error:'rate_limited'}};
+  const stub=await workspaceStub(env,bundle[2]);
+  const key=await stub.apiKey(sha256);
+  if(key.status!==200)return key;
+  const answered=await wait(stub,bundle[1],sha256,requestId,0);
+  return {status:answered.status,body:await answered.json()};
+}
+
 export async function apiRequest(request,env,url){
   try{
     if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});

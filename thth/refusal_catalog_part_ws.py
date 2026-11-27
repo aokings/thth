@@ -45,6 +45,24 @@ ENTRIES = {
         "fix": "`thth login --lane <レーン>` をやり直して、鍵と括りの控えを揃えてください（前の鍵は VM が取り消します）。",
         "command": "thth login --lane <レーン>",
         "better": "括りが 2 つ以上あるときは `--workspace <括り>` で名指しして login すると、取り違えが起きません。",
+        "fix_by_door": {
+            "worker": {"why": "コネクタが結ばれた括りと、VM が答えた括りの名が違います。答えの中身は出していません。",
+                       "text": "https://thth.me/connectors でこのコネクタを取り消し、同意の頁で括りを名指しして許し直してください", "command": None},
+        },
+        "doors": ("remote", "worker"), "since": _SINCE},
+    "lane_revoke_unconfirmed": {
+        "kind": "refusal",
+        "why": "手元の鍵のファイルは消しましたが、サーバーでレーンの鍵を止める頼みが届いたかを確かめられていません（網が切れた・Worker が古い・鍵がもう表に無い）。",
+        "fix": "`thth login --lane <レーン>` をやり直してください。同じレーンの前の鍵はそのとき VM が取り消します。要らないレーンなら、そのあと `thth logout --lane <レーン>` をもう一度打ちます。",
+        "command": "thth login --lane <レーン>",
+        "better": "レーンをやめるときは網のつながる所で logout を打つと、サーバーの鍵も数十秒で止まり、管理者の一覧に生きた鍵が残りません。",
+        "doors": ("remote",), "since": _SINCE},
+    "lane_key_not_found": {
+        "kind": "refusal",
+        "why": "取り消すように頼まれたレーンの鍵が、その持ち主の括りの表にありません（もう消えたか、ほかの持ち主の鍵です）。何も変えていません。",
+        "fix": "コネクタなら https://thth.me/connectors の一覧を、レーンなら `thth --lane <レーン> board` が通るかを確かめてください。通るなら `thth login --lane <レーン>` をやり直すと前の鍵が止まります。",
+        "command": "thth login --lane <レーン>",
+        "better": "取り消しは持ち主の頁（/connectors）か `thth logout --lane` の 1 か所から打つと、どの鍵を止めたかが記録に揃います。",
         "doors": ("remote",), "since": _SINCE},
     "workspace_not_owned": {
         "kind": "refusal",

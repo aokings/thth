@@ -381,11 +381,41 @@ def jst_iso_now() -> str:
     return jst.iso()
 
 
+def _revoke_lane_on_server() -> str | None:
+    """レーンの鍵を VM で取り消すよう頼む（段 K: コネクタの取り消しと同じ口・`/api/v1/login/revoke`）。
+
+    鍵そのものを Bearer にする（持っていることが証し）。戻り値は届いたら "accepted"・届かなければ理由の符丁。
+    括りの控えの無いファイル（`login --stdin` で入れた鍵・壊れたファイル）は頼む先が決まらないので頼まない（None）。
+    """
+    from . import httpsafe
+    try:
+        cfg = load()
+    except RemoteError:
+        return None
+    workspace = (cfg or {}).get("workspace")
+    if cfg is None or not isinstance(workspace, str) or not WORKSPACE_NAME.fullmatch(workspace):
+        return None
+    try:
+        url = httpsafe.validated_url(cfg.get("url") or DEFAULT_URL, base=True)
+    except httpsafe.EndpointRejected:
+        return "invalid_url"
+    status, value = _login_exchange("POST", url + "/api/v1/login/revoke", {"Authorization": "Bearer " + cfg["key"]},
+                                    {"workspace": workspace})
+    if status == 202:
+        return "accepted"
+    if status is None:
+        return "remote_unavailable"
+    return _code((value or {}).get("error"), "lane_revoke_unconfirmed")
+
+
 def cmd_logout(args) -> int:
     refused = _take_lane(args)
     if refused is not None:
         return refused
     path = config_path()
+    # レーンの鍵は、手元のファイルを消す前に VM の鍵の取り消しを頼む（段 K）。届かなくてもファイルは消し、理由を言う
+    # （次の `thth login --lane` が同じレーンの前の鍵を取り消すので、そこから直せる）。
+    asked = _revoke_lane_on_server() if current_lane() is not None and os.path.isfile(path) else None
     try:
         os.unlink(path)
     except FileNotFoundError:
@@ -394,6 +424,11 @@ def cmd_logout(args) -> int:
     except OSError as exc:
         return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
     print(f"消しました: {path}")
+    if asked == "accepted":
+        print("サーバーのレーンの鍵の取り消しを頼みました（数十秒で止まります）")
+    elif asked is not None:
+        return _fail("lane_revoke_unconfirmed", f"サーバーでの取り消しを頼めませんでした（{asked}）。"
+                     f"`thth login --lane {current_lane()}` をやり直すと、同じレーンの前の鍵は取り消されます")
     return 0
 
 

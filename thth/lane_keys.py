@@ -163,3 +163,22 @@ def revoke(workspace, person, lane) -> bool:
             row["revoked"] = True
         return bool(live)
     return change(workspace, fn)
+
+
+def revoke_digest(workspace, person, sha256):
+    """その持ち主のその hash の鍵を取り消す（リモート MCP のコネクタの取り消し・`thth logout --lane`・段 K）。
+
+    戻り値は取り消した行の (レーン, 新しく取り消したか)。行が無ければ None。もう取り消してあれば (レーン, False)
+    （sync が落ちて同じ頼みが 2 度来ても同じ結果）。ほかの持ち主の行は見つからないのと同じ。
+    """
+    found = {}
+
+    def fn(rows):
+        for row in rows:
+            if row["sha256"] == sha256 and row["actor"] == person:
+                found["lane"], found["changed"] = row["lane"], not row["revoked"]
+                row["revoked"] = True
+                return found["changed"]
+        return False
+    change(workspace, fn)
+    return (found["lane"], found["changed"]) if found else None

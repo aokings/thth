@@ -12,6 +12,11 @@ import {apiRequest} from './api.js';
 export {Login} from './login-object.js';
 import {loginRequest,loginApiRequest} from './login.js';
 export {WebhookInbox} from './webhook-object.js';
+// 段 K: リモート MCP（/mcp）と自前の認可サーバ（/.well-known/*・/oauth/*）・持ち主のコネクタの頁（/connectors）。
+export {Connector} from './connector-object.js';
+import {oauthRequest,wellKnownRequest} from './oauth.js';
+import {mcpRequest} from './mcp.js';
+import {connectorsRequest} from './connectors.js';
 import {webhookRequest} from './webhook.js';
 // 2026-10-10: 画面の言葉の切り替え（person.js の frame）。ブラウザの第一言語が日本語でなければ、
 // 最初から English を選んでおく。人が見る画面（招待・ログイン・アクティビティ・認可の戻り）だけ。
@@ -28,7 +33,7 @@ async function language(request,response){
     .on('html',{element(e){e.setAttribute('lang','en');}})
     .transform(response);
 }
-const PAGES=/^\/(?:invite\/|login\/|activity$|callback(?:\/|$))/;
+const PAGES=/^\/(?:invite\/|login\/|activity$|callback(?:\/|$)|oauth\/authorize$|connectors$)/;
 export default {fetch(request,env){
   const url=new URL(request.url);
   const routed=route(request,env,url);
@@ -53,5 +58,10 @@ function route(request,env,url){
   if(url.pathname.startsWith('/api/v1/login/'))return loginApiRequest(request,env,url);
   // 遠くの道（設計 3.14.0 §3.1）: 鍵で自分のアカウントを動かす。VM へは sync で渡す。
   if(url.pathname==='/api'||url.pathname.startsWith('/api/'))return apiRequest(request,env,url);
+  // 段 K: リモート MCP の口と認可サーバ。`/oauth/client-metadata.json` は今のまま index.js の 404。
+  if(url.pathname==='/mcp')return mcpRequest(request,env,url);
+  if(url.pathname.startsWith('/.well-known/'))return wellKnownRequest(request,env,url);
+  if(url.pathname.startsWith('/oauth/')&&url.pathname!=='/oauth/client-metadata.json')return oauthRequest(request,env,url);
+  if(url.pathname==='/connectors')return connectorsRequest(request,env,url);
   return base.fetch(request,env);
 }

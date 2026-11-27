@@ -821,7 +821,11 @@ ENTRIES = {
         "why": "表示した digest と今の中身が違います（表示のあとに変わりました）",
         "fix": "もう一度 thth inflight <口座> resolve から（表示した digest と中身が違います）",
         "better": "1 段目と 2 段目の間は台帳や原稿を触らずに続けると、一度で通ります",
-        "doors": ("cli", "mcp", "remote"),
+        "fix_by_door": {
+            "worker": {"why": "リモート MCP の書く道具の 2 段目に付けた confirm が、1 段目で返した値と違います。何もしていません。",
+                       "text": "同じ引数で confirm を付けずに呼び、1 段目で返る新しい値を付けて呼び直してください", "command": None},
+        },
+        "doors": ("cli", "mcp", "remote", "worker"),
     },
     "conflict_busy": {
         "kind": "refusal",
@@ -988,7 +992,11 @@ ENTRIES = {
         "why": "THTH の記録に無い自分の投稿は、一回の呼び出しでは消しません（これは確認の一段目で、まだ何も消していません）",
         "fix": "返した本文・日時・URL を持ち主に見せ、消すと言われたら同じ digest を confirm に付けて頼み直してください。thth.me の道で digest が出ないときは、thth を新しくしてから（pip install -U thth）打ち直してください",
         "better": "持ち主が消すと言った投稿だけを頼むと、消してはいけない投稿を消す取り違えが起きません",
-        "doors": ("cli", "mcp", "remote"),
+        "fix_by_door": {
+            "worker": {"why": "リモート MCP の書く道具は 2 段で動きます。この接続で 1 段目を受け取っていないか、10 分を過ぎたか、引数が 1 段目と違います。何もしていません。",
+                       "text": "同じ引数で confirm を付けずに呼んで 1 段目を受け取り、中身を持ち主に見せてから、返った値を confirm に付けて呼んでください", "command": None},
+        },
+        "doors": ("cli", "mcp", "remote", "worker"),
         "since": "5.29.0",
     },
     "deletion_sync_incomplete": {

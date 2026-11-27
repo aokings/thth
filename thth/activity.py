@@ -49,7 +49,7 @@ SYNC_SECONDS = 10
 BUSY_SECONDS = 2   # /api/v1 の依頼が待っているあいだの刻み（設計 3.14.0 §3.1）
 BACKOFF_SECONDS = 300
 CREDENTIAL_DAYS = 365
-KINDS = ("stop", "resume", "cancel", "settings", "revoke", "rotate", "lane_key")
+KINDS = ("stop", "resume", "cancel", "settings", "revoke", "rotate", "lane_key", "lane_revoke")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 LANE = re.compile(r"[a-z0-9][a-z0-9-]{0,80}\Z")
 # sync の形（版ずれ）。FULL は括りの鍵の表も載せる・KEYS は 3.14.0（口座の鍵の表まで）・PLAIN は 3.13.0。
@@ -62,6 +62,8 @@ ACTION_REASONS = frozenset((
     # レーンの鍵（括りの段 2）
     "workspace_not_owned", "workspace_required", "workspace_has_no_accounts", "workspace_unavailable",
     "workspaces_map_invalid",
+    # レーンの鍵の取り消し（段 K・コネクタの取り消しと `thth logout --lane`）
+    "lane_key_not_found",
 ))
 _next_sync = {}
 _legacy = {}   # 新しい sync の形を断った Worker と話している人 → (古い形で話す期限, 話す形)
@@ -368,8 +370,17 @@ def _valid_action(action):
 
 
 def _valid_lane_action(action) -> bool:
-    """レーンの鍵の発行（口座を持たない・括りは null か括りの名・レーンの名・hash）。"""
-    return (set(action) == {"id", "kind", "workspace", "lane", "sha256"}
+    """レーンの鍵の発行（口座を持たない・括りは null か括りの名・レーンの名・hash）。
+
+    段 K（リモート MCP のコネクタ）: 「読むだけ」で許したときだけ `writes: false` が付く（書いてよい鍵は欄を
+    付けない＝段 2 の形のまま。欄を知らない古い VM は形の違う頼みとして断り、書ける鍵を作らない）。
+    """
+    keys = set(action)
+    if "writes" in keys:
+        if action["writes"] is not False:
+            return False
+        keys -= {"writes"}
+    return (keys == {"id", "kind", "workspace", "lane", "sha256"}
             and (action["workspace"] is None or isinstance(action["workspace"], str)
                  and accounts.WS_NAME.fullmatch(action["workspace"]) is not None)
             and isinstance(action["lane"], str) and LANE.fullmatch(action["lane"]) is not None
@@ -383,6 +394,8 @@ def apply(person, action, credentials_path) -> dict:
     """
     if type(action) is dict and action.get("kind") == "lane_key":
         return _apply_lane_key(person, action, credentials_path)
+    if type(action) is dict and action.get("kind") == "lane_revoke":
+        return _apply_lane_revoke(person, action)
     account = action.get("account") if type(action) is dict else None
     try:
         scope = accounts.account_workspace(account) if isinstance(account, str) else accounts.use_workspace(accounts.MAIN_WS)
@@ -465,18 +478,19 @@ def choose_workspace(person, workspace):
     return owned[0]
 
 
-def issue_lane_key(credentials_path, person, workspace, lane, sha256) -> tuple:
+def issue_lane_key(credentials_path, person, workspace, lane, sha256, writes=True) -> tuple:
     """レーンの鍵の行を作る。戻り値は (括り, 頼みの宛先の口座)。断りは ValueError(符丁)。
 
     置き場は括りの表（`thth/lane_keys.py`・`ws/<括り>/private/lane-keys.json`）で、**資格のファイルは触らない**
     （設計 §8 R1: main の版がそのまま読める形のままにする）。行は actor＝持ち主・workspace・lane・書いてよい・365 日。
     口座は行に持たず、照合のたびに括りの口座を引く（あとで足した口座も同じ鍵で動く）。同じ持ち主・括り・レーンの
     前の鍵は取り消す。同じ hash の行がもうあれば何もしない（sync が落ちて同じ操作が 2 度来ても 1 本）。
+    `writes=False` は読むだけの鍵（段 K: コネクタを「読むだけ」で許したとき）。書く命令は `writes_not_allowed`。
     """
     from . import lane_keys
     from .report_http import load_credentials
     if not isinstance(sha256, str) or not HEX64.fullmatch(sha256) or not isinstance(lane, str) \
-            or not LANE.fullmatch(lane):
+            or not LANE.fullmatch(lane) or type(writes) is not bool:
         raise ValueError("invalid_action")
     chosen = choose_workspace(person, workspace)
     try:
@@ -494,7 +508,7 @@ def issue_lane_key(credentials_path, person, workspace, lane, sha256) -> tuple:
     def fn(rows):
         for row in rows:
             if row["sha256"] == sha256:
-                if (row["actor"], row["lane"], row["revoked"]) == (person, lane, False):
+                if (row["actor"], row["lane"], row["revoked"], row["writes"]) == (person, lane, False, writes):
                     return False  # 前の sync で作った（完了を返しそこねた）
                 raise ValueError("credential_conflict")
         # 前に取り消した同じレーンの行は落とし、生きている行は取り消す（表がレーンの数より大きくならない）。
@@ -504,7 +518,7 @@ def issue_lane_key(credentials_path, person, workspace, lane, sha256) -> tuple:
                 row["revoked"] = True
         expires = jst.iso(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=CREDENTIAL_DAYS))
         rows.append({"sha256": sha256, "expires_at": expires, "revoked": False, "actor": person,
-                     "workspace": chosen, "lane": lane, "writes": True})
+                     "workspace": chosen, "lane": lane, "writes": writes})
         return True
 
     try:
@@ -530,11 +544,67 @@ def _apply_lane_key(person, action, credentials_path):
         return failed
     try:
         workspace, home = issue_lane_key(credentials_path, person, action["workspace"], action["lane"],
-                                         action["sha256"])
+                                         action["sha256"], writes=action.get("writes", True))
     except Exception as exc:
         reason = str(exc) if str(exc) in ACTION_REASONS else "action_failed"
         return {**failed, "reason": reason}
     return {"id": action_id, "outcome": "done", "reason": None, "workspace": workspace, "account": home}
+
+
+def _valid_lane_revoke(action) -> bool:
+    return (set(action) == {"id", "kind", "workspace", "sha256"}
+            and (action["workspace"] is None or isinstance(action["workspace"], str)
+                 and accounts.WS_NAME.fullmatch(action["workspace"]) is not None)
+            and isinstance(action["sha256"], str) and HEX64.fullmatch(action["sha256"]) is not None)
+
+
+def revoke_lane_key(person, workspace, sha256) -> str:
+    """その持ち主のレーンの鍵を hash で取り消す（段 K）。戻り値は取り消した括り。断りは ValueError(符丁)。
+
+    頼むのは Worker だけ: コネクタの取り消し（持ち主の頁・RFC 7009 の口・預かりの期限切れ）と `thth logout --lane`
+    （鍵を持っていることが証し）。行の `actor` が頼んだ持ち主と違えば、無い鍵と同じ `lane_key_not_found`。
+    括りが null なら全部の括りの表を探す。もう取り消してあれば何もしない（2 度来ても同じ）。
+    """
+    from . import lane_keys
+    if not isinstance(sha256, str) or not HEX64.fullmatch(sha256):
+        raise ValueError("invalid_action")
+    candidates = [workspace] if workspace is not None else accounts.list_workspace_dirs()
+    for ws in candidates:
+        try:
+            got = lane_keys.revoke_digest(ws, person, sha256)
+        except (lane_keys.LaneKeysError, accounts.AccountError, OSError):
+            if workspace is not None:
+                raise ValueError("credentials_unavailable") from None
+            continue
+        if got is None:
+            continue
+        lane, changed = got
+        if changed:
+            try:
+                names = lane_keys.workspace_accounts(ws)
+                if names:
+                    home = sorted(names)[0]
+                    with accounts.use_workspace(ws):
+                        admin_log.append("credential_revoked", home, _ledger(home), by=person, via="http",
+                                         diff={"credential": ["present", "revoked"], "lane": [lane, lane]})
+            except Exception:
+                print("activity_lane_revoke_unlogged: " + ws, file=sys.stderr)
+        return ws
+    raise ValueError("lane_key_not_found")
+
+
+def _apply_lane_revoke(person, action):
+    action_id = action.get("id") if isinstance(action.get("id"), str) and relay.OPAQUE.fullmatch(action["id"]) else None
+    if action_id is None:
+        return None
+    if not _valid_lane_revoke(action):
+        return {"id": action_id, "outcome": "failed", "reason": "invalid_action"}
+    try:
+        revoke_lane_key(person, action["workspace"], action["sha256"])
+    except Exception as exc:
+        reason = str(exc) if str(exc) in ACTION_REASONS else "action_failed"
+        return {"id": action_id, "outcome": "failed", "reason": reason}
+    return {"id": action_id, "outcome": "done", "reason": None}
 
 
 # --------------------------------------------------------------------------

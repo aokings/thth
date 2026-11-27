@@ -17,7 +17,7 @@
 //   CLI:  poll → 200 {key, owner, lane, workspace}（1 度だけ）。そのあとの poll は 200 {outcome, reason, workspace, account}
 //         （VM が sync で鍵を作ったか・作らなかった理由。outcome は pending／done／failed）
 //   括りの持ち主か・括りが 1 つに決まるかは VM が対応表で決める（Worker は括りと持ち主の対応を持たない）。
-import {PERSON,WORKSPACE,LANE,boundedBody,personStub,fromSameOrigin,page,t,steps,escape,publicQuota} from './person.js';
+import {PERSON,WORKSPACE,LANE,boundedBody,personStub,workspaceStub,fromSameOrigin,page,t,steps,escape,publicQuota} from './person.js';
 import {HASH_PATTERN,digest,reply} from './relay.js';
 
 // 大文字と数字から紛らわしい字（0 O 1 I L）を除いた 31 字。表示は XXXX-XXXX。
@@ -49,6 +49,25 @@ export async function loginApiRequest(request,env,url){
       const started=await loginStub(env,body.code_hash).start(body.poll_token_hash,body.lane??null,body.workspace??null);
       if(started.status!==200)return reply(started.status,started.body);
       return reply(202,{url:url.origin+'/login/',expires_at:new Date(started.body.expires_at).toISOString()});
+    }
+    // `thth logout --lane`（段 K）: レーンの鍵そのものを Bearer にして、自分の取り消しを頼む（持っていることが証し）。
+    // 括りの束の鍵の表から押し上げた持ち主を引き、Person DO に取り消しを置く。VM が次の sync で括りの表の行を止める。
+    if(url.pathname==='/api/v1/login/revoke'){
+      if(request.method!=='POST')return reply(405,{error:'method_not_allowed'});
+      if(!await publicQuota(request,env))return reply(429,{error:'rate_limited'});
+      const bearer=/^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization')||'');
+      if(!bearer)return reply(401,{error:'invalid_key'});
+      const sha256=await digest(bearer[1]);
+      if(!(await env.API_KEY_LIMIT.limit({key:sha256})).success)return reply(429,{error:'rate_limited'});
+      if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
+      let body;try{body=JSON.parse(await boundedBody(request,256));}catch{return reply(400,{error:'invalid_request'});}
+      if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).join(',')!=='workspace'||
+         typeof body.workspace!=='string'||!WORKSPACE.test(body.workspace))return reply(400,{error:'invalid_request'});
+      const owner=await (await workspaceStub(env,body.workspace)).keyOwner(sha256);
+      if(owner.status!==200)return reply(401,{error:'invalid_key'});
+      const placed=await (await personStub(env,owner.body.person)).laneRevoke(body.workspace,sha256);
+      if(placed.status!==200)return reply(placed.status===409?409:503,{error:placed.status===409?'too_many_actions':'login_unavailable'});
+      return reply(202,{status:'accepted'});
     }
     const poll=/^\/api\/v1\/login\/poll\/([^/]+)$/.exec(url.pathname);
     if(!poll)return reply(404,{error:'not_found'});

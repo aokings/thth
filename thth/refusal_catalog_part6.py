@@ -21,6 +21,11 @@ def _entry(why, fix, better, kind="refusal"):
     return {"kind": kind, "why": why, "fix": fix, "better": better, "doors": _W, "since": _SINCE}
 
 
+def _entry_k(why, fix, better):
+    """段 K（リモート MCP・自前の認可サーバ）の符丁。版は括りの段と同じ（版上げのとき直す）。"""
+    return {**_entry(why, fix, better), "since": "5.31.0"}
+
+
 ENTRIES = {
     # ------------------------------------------------------------------
     # 遠くの道（/api/v1）・ブラウザ式の login・アクティビティ
@@ -187,4 +192,52 @@ ENTRIES = {
         "Webhook の通知の控えが上限に達していて、新しい通知を置けません。",
         "VM で `thth webhook pull` を打って控えを読み進めてから、もう一度送ってください。",
         "VM の `thth worker` を止めずに回しておくと（30 秒ごとに取り込む）、控えが上限まで溜まりません。"),
+    # ------------------------------------------------------------------
+    # リモート MCP（/mcp）・自前の認可サーバ（/oauth/*）・コネクタの頁（/connectors）。段 K・設計 共通の層 §6.1
+    # 読み手は AI の側（claude.ai などの OAuth client）と、同意の頁・コネクタの頁を開く持ち主。
+    # ------------------------------------------------------------------
+    "access_denied": _entry_k(
+        "持ち主が同意の頁で「許さない」を選びました。鍵は作っていません。",
+        "つなぐなら、AI の側からコネクタの追加をもう一度始め、同意の頁で許してください。",
+        "同意の頁で「読むだけ」を選んで許すと、書く道具を使わずに試せます。"),
+    "invalid_grant": _entry_k(
+        "認可の code か refresh token が、使い済み・期限切れ・取り消し済み、または PKCE の verifier と合いません。",
+        "AI の側でコネクタをつなぎ直してください（同意の頁からやり直すと新しい code が出ます）。",
+        "refresh token は 1 回ごとに新しい物に替わるので、受け取った新しい物だけを使うと続けてつながります。"),
+    "invalid_token": _entry_k(
+        "Authorization: Bearer の access token が、期限切れか取り消し済みか、形が違います。",
+        "refresh token で新しい access token を取るか、AI の側でコネクタをつなぎ直してください。",
+        "access token は 1 時間で切れるので、切れる前に refresh で替えると呼び出しが止まりません。"),
+    "invalid_client_metadata": _entry_k(
+        "登録しようとした client の情報（redirect_uris など）が、受け付ける形と違います。",
+        "redirect_uris を https の URL（手元の試しなら http://localhost）で 1〜8 個にして、登録し直してください。",
+        "client の身元を https の URL の文書（CIMD）で示すと、登録の手間なしにつながります。"),
+    "unknown_client": _entry_k(
+        "その client_id は登録が無いか、登録の期限が切れています。",
+        "AI の側からコネクタの追加をやり直してください（登録からやり直します）。",
+        "client の身元を https の URL の文書（CIMD）で示すと、登録の期限を気にせずつながります。"),
+    "temporarily_unavailable": _entry_k(
+        "thth.me の認可の受け口が、いま鍵か code を作れませんでした。何も許していません。",
+        "少し置いてから、AI の側でコネクタの追加をもう一度始めてください。" + _REPORT,
+        "同意の頁は開いたまま長く置かずに進めると、途中の期限切れが起きません。"),
+    "oauth_unavailable": _entry_k(
+        "thth.me の認可の受け口が、いま答えを返せません。",
+        "少し置いてから、同じ要求をもう一度送ってください。" + _REPORT,
+        "AI の側は 1 回の失敗で登録をやり直さず、少し置いて同じ要求を送ると早くつながります。"),
+    "too_many_codes": _entry_k(
+        "使われずに残っている認可の code が上限に達しています。",
+        "1 分ほど置いてから（code は 60 秒で消えます）、同意の頁からやり直してください。",
+        "同意の頁で許したら、AI の側の戻り先をそのまま開いて code を使い切ると、上限に届きません。"),
+    "too_many_connectors": _entry_k(
+        "thth.me が預かれるコネクタの数が上限に達しています。",
+        "https://thth.me/connectors で要らないコネクタを取り消してから、もう一度許してください。",
+        "使わなくなったコネクタは /connectors で取り消しておくと、VM の鍵も一緒に止まります。"),
+    "connectors_unavailable": _entry_k(
+        "コネクタの一覧を、いま読めませんでした（何も取り消していません）。",
+        "少し置いてから、https://thth.me/connectors をもう一度開いてください。" + _REPORT,
+        "すぐ止めたいときは AI の側でコネクタを外すと、その token も取り消しになります。"),
+    "mcp_unavailable": _entry_k(
+        "thth.me のリモート MCP が、いま頼みを受け付けられません。",
+        "少し置いてから、同じ道具をもう一度呼んでください。" + _REPORT,
+        "書く道具の前に読む道具（thth_board など）で通るかを確かめると、止まっている間に書きかけを残しません。"),
 }

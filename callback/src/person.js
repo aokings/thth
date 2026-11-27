@@ -130,10 +130,12 @@ export function frame(body,title,head=''){
     '<main>'+body+'</main><footer><a href="/privacy/">'+t('プライバシー','Privacy')+'</a><a href="/terms/">'+t('利用規約','Terms')+'</a></footer></body></html>';
 }
 // `head` は <head> に足す固定の行だけ（例: 待つページの <meta http-equiv="refresh">）。利用者の値を入れない。
-export function page(status,body,title='THTH',head='') {
+// `formAction` は CSP の form-action（既定 'self'）。OAuth の同意の頁だけ、許したあとの 303 の戻り先の origin を足す
+// （Chrome は送ったあとのリダイレクトにも form-action を当てる・monban 10/5 の失敗）。値は登録済みの戻り先から作る。
+export function page(status,body,title='THTH',head='',formAction="'self'") {
   return new Response(frame(body,title,head),{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
-    'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    'content-security-policy':`default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`,
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
 }
 export async function publicQuota(request,env){

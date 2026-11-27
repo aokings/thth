@@ -2,6 +2,11 @@
 // 符丁 → {why: なぜ, fix: 通すには, better: もっと良く（無ければ null）}。relay.js の reply が断りの答えに足す。
 // 穴（<口座> などの型）は埋めない。文を直すときは目録の部を直して python3 tools/render_refusals.py を打つ。
 export const REFUSALS=Object.freeze({
+ "access_denied": {
+  "why": "持ち主が同意の頁で「許さない」を選びました。鍵は作っていません。",
+  "fix": "つなぐなら、AI の側からコネクタの追加をもう一度始め、同意の頁で許してください。",
+  "better": "同意の頁で「読むだけ」を選んで許すと、書く道具を使わずに試せます。"
+ },
  "account_revoked": {
   "why": "この添付の口座は、thth.me で取り消されています。",
   "fix": "使える口座で thth_media_upload_url から新しく始めてください（口座を戻すときは、招待か `thth login` で登録し直してから）。",
@@ -47,6 +52,21 @@ export const REFUSALS=Object.freeze({
   "fix": "前に出した login の画面で許可を終えるか、10 分の期限が切れてから `thth login` をやり直してください。",
   "better": "`thth login` は 1 つの端末で 1 回ずつ打つと、待っている login が重なりません。"
  },
+ "confirm_mismatch": {
+  "why": "リモート MCP の書く道具の 2 段目に付けた confirm が、1 段目で返した値と違います。何もしていません。",
+  "fix": "同じ引数で confirm を付けずに呼び、1 段目で返る新しい値を付けて呼び直してください",
+  "better": "1 段目と 2 段目の間は台帳や原稿を触らずに続けると、一度で通ります"
+ },
+ "confirm_required": {
+  "why": "リモート MCP の書く道具は 2 段で動きます。この接続で 1 段目を受け取っていないか、10 分を過ぎたか、引数が 1 段目と違います。何もしていません。",
+  "fix": "同じ引数で confirm を付けずに呼んで 1 段目を受け取り、中身を持ち主に見せてから、返った値を confirm に付けて呼んでください",
+  "better": "持ち主が消すと言った投稿だけを頼むと、消してはいけない投稿を消す取り違えが起きません"
+ },
+ "connectors_unavailable": {
+  "why": "コネクタの一覧を、いま読めませんでした（何も取り消していません）。",
+  "fix": "少し置いてから、https://thth.me/connectors をもう一度開いてください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
+  "better": "すぐ止めたいときは AI の側でコネクタを外すと、その token も取り消しになります。"
+ },
  "deletion_capacity": {
   "why": "データ削除の依頼の控えが上限（1000 件）に達していて、新しい依頼を置けません。",
   "fix": "VM で `thth admin deletion sync` を打って控えを読み進めてから、もう一度送ってください。",
@@ -56,6 +76,16 @@ export const REFUSALS=Object.freeze({
   "why": "thth.me のデータ削除の受け口が、いま答えを返せません。",
   "fix": "少し置いてから、もう一度送ってください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
   "better": "依頼のときに返った確かめの URL（data-deletion-status）を控えておくと、届いたかどうかを後から見られます。"
+ },
+ "invalid_client_metadata": {
+  "why": "登録しようとした client の情報（redirect_uris など）が、受け付ける形と違います。",
+  "fix": "redirect_uris を https の URL（手元の試しなら http://localhost）で 1〜8 個にして、登録し直してください。",
+  "better": "client の身元を https の URL の文書（CIMD）で示すと、登録の手間なしにつながります。"
+ },
+ "invalid_grant": {
+  "why": "認可の code か refresh token が、使い済み・期限切れ・取り消し済み、または PKCE の verifier と合いません。",
+  "fix": "AI の側でコネクタをつなぎ直してください（同意の頁からやり直すと新しい code が出ます）。",
+  "better": "refresh token は 1 回ごとに新しい物に替わるので、受け取った新しい物だけを使うと続けてつながります。"
  },
  "invalid_key": {
   "why": "Authorization: Bearer の鍵が無いか、thth.me に登録されていません（取り消されたか、違う鍵です）。",
@@ -76,6 +106,11 @@ export const REFUSALS=Object.freeze({
   "why": "要求の形が受け付ける形と違います（path・query・Content-Type・本文の鍵のどれか）。",
   "fix": "URL を出した命令の出力どおりの path と Content-Type で、決まった鍵だけを送り直してください",
   "better": "HTTP を直接組まず thth の CLI か MCP の道具から呼ぶと、形は道具が整えます"
+ },
+ "invalid_token": {
+  "why": "Authorization: Bearer の access token が、期限切れか取り消し済みか、形が違います。",
+  "fix": "refresh token で新しい access token を取るか、AI の側でコネクタをつなぎ直してください。",
+  "better": "access token は 1 時間で切れるので、切れる前に refresh で替えると呼び出しが止まりません。"
  },
  "invite_exists": {
   "why": "その招待は thth.me に既に作られています（VM の relay の 2 度目の作成）。",
@@ -101,6 +136,11 @@ export const REFUSALS=Object.freeze({
   "why": "thth.me が、いまブラウザ式の login を受け付けられません。",
   "fix": "少し置いて `thth login` をやり直すか、鍵が手元にあれば `thth login --stdin` で入れてください",
   "better": null
+ },
+ "mcp_unavailable": {
+  "why": "thth.me のリモート MCP が、いま頼みを受け付けられません。",
+  "fix": "少し置いてから、同じ道具をもう一度呼んでください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
+  "better": "書く道具の前に読む道具（thth_board など）で通るかを確かめると、止まっている間に書きかけを残しません。"
  },
  "media_already_acknowledged": {
   "why": "この添付の公開は、既に媒体に出したと受け取り済みです。",
@@ -182,6 +222,11 @@ export const REFUSALS=Object.freeze({
   "fix": "VM で `thth admin invite list` を見て、使えない招待なら取り消して新しく作ってください。",
   "better": "やり直しは許可の途中で止まった招待にだけ使うと、済んだ招待を壊しません。"
  },
+ "oauth_unavailable": {
+  "why": "thth.me の認可の受け口が、いま答えを返せません。",
+  "fix": "少し置いてから、同じ要求をもう一度送ってください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
+  "better": "AI の側は 1 回の失敗で登録をやり直さず、少し置いて同じ要求を送ると早くつながります。"
+ },
  "person_exists": {
   "why": "そのアカウント名は、別の招待で既に使われています。",
   "fix": "別のアカウント名で招待をやり直してください。",
@@ -227,6 +272,11 @@ export const REFUSALS=Object.freeze({
   "fix": "少し置いてから、同じ操作をもう一度してください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
   "better": "同じ操作を続けて何度も押さず 1 回ずつ待つと、記録の置き場が早く戻ります。"
  },
+ "temporarily_unavailable": {
+  "why": "thth.me の認可の受け口が、いま鍵か code を作れませんでした。何も許していません。",
+  "fix": "少し置いてから、AI の側でコネクタの追加をもう一度始めてください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
+  "better": "同意の頁は開いたまま長く置かずに進めると、途中の期限切れが起きません。"
+ },
  "too_large": {
   "why": "送った本文が、その受け口の上限（遠くの道は 48 KB）を超えています。",
   "fix": "本文を上限より小さくして送り直してください（長い原稿は分けて、1 回に 1 つずつ）。",
@@ -237,10 +287,25 @@ export const REFUSALS=Object.freeze({
   "fix": "VM が前の操作を拾うまで少し待ってから、もう一度押してください。",
   "better": "同じ取り消しは 1 回だけ押して画面の表示が変わるのを待つと、操作が重なりません。"
  },
+ "too_many_codes": {
+  "why": "使われずに残っている認可の code が上限に達しています。",
+  "fix": "1 分ほど置いてから（code は 60 秒で消えます）、同意の頁からやり直してください。",
+  "better": "同意の頁で許したら、AI の側の戻り先をそのまま開いて code を使い切ると、上限に届きません。"
+ },
+ "too_many_connectors": {
+  "why": "thth.me が預かれるコネクタの数が上限に達しています。",
+  "fix": "https://thth.me/connectors で要らないコネクタを取り消してから、もう一度許してください。",
+  "better": "使わなくなったコネクタは /connectors で取り消しておくと、VM の鍵も一緒に止まります。"
+ },
  "too_many_requests": {
   "why": "同じ鍵の前の依頼がまだ終わっておらず、待っている依頼が上限に達しました。",
   "fix": "前の依頼の結果を /api/v1/result/<request_id> で受け取ってから、送り直してください",
   "better": "続けて打つ命令は前の結果を待ってから順に打つと、待ちが一番短く済みます。"
+ },
+ "unknown_client": {
+  "why": "その client_id は登録が無いか、登録の期限が切れています。",
+  "fix": "AI の側からコネクタの追加をやり直してください（登録からやり直します）。",
+  "better": "client の身元を https の URL の文書（CIMD）で示すと、登録の期限を気にせずつながります。"
  },
  "webhook_capacity": {
   "why": "Webhook の通知の控えが上限に達していて、新しい通知を置けません。",
@@ -251,5 +316,10 @@ export const REFUSALS=Object.freeze({
   "why": "thth.me の Webhook の受け口が、いま答えを返せません。",
   "fix": "少し置いてから、もう一度送ってください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
   "better": "取り込めなかった時間は VM の `thth webhook status` で見ると、取りこぼしが分かります。"
+ },
+ "workspace_mismatch": {
+  "why": "コネクタが結ばれた括りと、VM が答えた括りの名が違います。答えの中身は出していません。",
+  "fix": "https://thth.me/connectors でこのコネクタを取り消し、同意の頁で括りを名指しして許し直してください",
+  "better": "括りが 2 つ以上あるときは `--workspace <括り>` で名指しして login すると、取り違えが起きません。"
  }
 });

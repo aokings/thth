@@ -12,6 +12,9 @@ const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft
 // レーンの鍵の発行（括りの段 2）。ブラウザ式の login が持ち主の secret で置くだけ（/activity の頼みには無い・
 // ACTION_KINDS に入れない）。口座でなく括りとレーンを持つ。括りが null なら VM が持ち主の括り（1 つなら）を選ぶ。
 const LANE_EXTRA=['workspace','lane','sha256'];
+// レーンの鍵の取り消し（段 K）。コネクタの取り消しと `thth logout --lane` が hash で頼む（secret は要らない:
+// 頼むのは Worker の中の道だけで、コネクタの預かりか、鍵そのものを持っていることが証し）。VM は行の持ち主も確かめる。
+const LANE_REVOKE_EXTRA=['workspace','sha256'];
 export const SETTING_KEYS=['daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
 const SETTING_VALUE=/^[0-9]{1,6}(?:\.[0-9]{1,2})?$/;
 // queued: 返信の burst の順番待ち（3.25.0）。VM より先に Worker を出す（知らない kind は要約ごと断る）。
@@ -185,12 +188,14 @@ export class Person extends AtomicObject {
         const chosen=old.kind==='lane_key'&&'workspace' in done?{workspace:done.workspace,account:done.account}:{};
         this.put(key,{...kept,...chosen,status:done.outcome,reason:done.reason,finished_at:now,expires_at:now+ACTION_TTL});
       }
-      // 括りの鍵の表を載せない VM（括りの段 2 より前）は、レーンの鍵の発行を知らないので渡さない（1 時間で消える）。
+      // 括りの鍵の表を載せない VM（括りの段 2 より前）は、レーンの鍵の発行と取り消しを知らないので渡さない（1 時間で消える）。
       const lanes='workspace_keys' in body;
       const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a)
-        .filter(a=>a.status==='pending'&&a.expires_at>now&&(lanes||a.kind!=='lane_key')).sort((a,b)=>a.created_at-b.created_at)
+        .filter(a=>a.status==='pending'&&a.expires_at>now&&(lanes||a.kind!=='lane_key'&&a.kind!=='lane_revoke')).sort((a,b)=>a.created_at-b.created_at)
         .map(a=>{
-          if(a.kind==='lane_key'){const out={id:a.id,kind:a.kind};for(const k of LANE_EXTRA)out[k]=a[k]??null;return out;}
+          // 読むだけのレーンの鍵（段 K）だけ `writes: false` を付ける（書いてよい鍵は段 2 の形のまま）。
+          if(a.kind==='lane_key'){const out={id:a.id,kind:a.kind};for(const k of LANE_EXTRA)out[k]=a[k]??null;if(a.writes===false)out.writes=false;return out;}
+          if(a.kind==='lane_revoke'){const out={id:a.id,kind:a.kind};for(const k of LANE_REVOKE_EXTRA)out[k]=a[k]??null;return out;}
           const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
       if(!('keys' in body))return {status:200,body:{status:'synced',actions}};
       // 鍵の表を置き替える。表から外れたアカウントも 1 時間は空の表を配り直す（アカウントの束に古い鍵を残さない）。
@@ -250,14 +255,33 @@ export class Person extends AtomicObject {
   // レーンの鍵（括りの段 2）: `thth login --lane` のブラウザの頁で、**持ち主の名前と持ち主の secret** で置く。
   // 口座の要約は要らない（持ち主が口座を 1 つも持たない括りもある）。括りの持ち主かは VM が対応表で決める
   // （Worker は括りと持ち主の対応を持たない）。bearer は呼んだ Worker に 1 度だけ返し、ここには hash だけ。
-  async laneIssue(secret,workspace,lane){
-    if(!(workspace===null||typeof workspace==='string'&&WORKSPACE.test(workspace))||typeof lane!=='string'||!LANE.test(lane))return fail();
+  // `writes=false` は読むだけの鍵（段 K: コネクタの同意の頁で「読むだけ」を選んだとき）。
+  async laneIssue(secret,workspace,lane,writes=true){
+    if(!(workspace===null||typeof workspace==='string'&&WORKSPACE.test(workspace))||typeof lane!=='string'||!LANE.test(lane)||typeof writes!=='boolean')return fail();
     const bearer=opaque(),sha256=await digest(bearer);
-    const result=await this.confirmed(secret,null,now=>this.place({kind:'lane_key',workspace,lane},sha256,now));
+    const result=await this.confirmed(secret,null,now=>this.place({kind:'lane_key',workspace,lane,...(writes?{}:{writes:false})},sha256,now));
     if(result.status!==200)return result;
     await this.wake(this.now()+ACTION_TTL);
     return {status:200,body:{action:result.body.id,bearer}};
   }
+  // レーンの鍵の取り消しを置く（段 K）。VM が次の sync で拾い、括りの表の行を revoked にする。
+  async laneRevoke(workspace,sha256){
+    if(!(workspace===null||typeof workspace==='string'&&WORKSPACE.test(workspace))||typeof sha256!=='string'||!HASH_PATTERN.test(sha256))return fail();
+    const result=this.atomic(()=>{
+      const row=this.ctx.storage.kv.get('person');
+      if(!row?.active)return fail(404,'not_found');
+      const now=this.now();this.prune(now);
+      // 同じ鍵の取り消しがもう待っていれば重ねない。
+      for(const [,a] of this.ctx.storage.kv.list({prefix:'action:'}))
+        if(a.kind==='lane_revoke'&&a.sha256===sha256&&a.status==='pending')return {status:200,body:{id:a.id}};
+      const placed=this.place({kind:'lane_revoke',workspace},sha256,now);
+      return placed.status===200?{status:200,body:{id:placed.body.id}}:placed;
+    });
+    if(result.status===200)await this.wake(this.now()+ACTION_TTL);
+    return result;
+  }
+  // 持ち主の secret を確かめるだけ（段 K: コネクタの一覧と取り消しの頁）。失敗の数え方は /activity と同じ。
+  async ownerCheck(secret){return this.confirmed(secret,null,()=>({status:200,body:{}}));}
   // レーンの鍵の発行がどうなったか（login の CLI が引く）。秘密は返さない。
   laneOutcome(id){
     const row=typeof id==='string'&&STATE_PATTERN.test(id)?this.ctx.storage.kv.get('action:'+id):null;
@@ -419,6 +443,8 @@ export class Account extends AtomicObject {
     return {status:200,body:key};
   }
   apiKey(sha256){const found=this.checkKey(sha256);return found.status===200?{status:200,body:{}}:found;}
+  // 鍵を押し上げた持ち主（段 K: `thth logout --lane` が鍵で自分の取り消しを頼むとき）。期限切れでも持ち主は返す。
+  keyOwner(sha256){const key=this.keyFor(sha256);return key?{status:200,body:{person:key.person}}:fail(401,'invalid_key');}
   async apiSubmit(sha256,operation,body){
     const result=this.atomic(()=>{
       const key=this.checkKey(sha256);if(key.status!==200)return key;
