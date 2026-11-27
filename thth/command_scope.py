@@ -33,7 +33,7 @@ TOP: dict[str, str] = {
     "wa": WS, "notifications": WS, "quota": WS, "principal": WS, "project": WS, "owner": WS,
     "study": WS, "threads": WS, "forms": WS,
     # §5.3 管理者だけ
-    "admin": ADMIN, "auth": ADMIN, "refresh": ADMIN, "token": ADMIN, "app": ADMIN,
+    "admin": ADMIN, "auth": ADMIN, "refresh": ADMIN, "token": ADMIN, "secret": ADMIN, "app": ADMIN,
     "run": ADMIN, "throw": ADMIN, "pull": ADMIN, "systemd": ADMIN, "maintain": ADMIN, "worker": ADMIN,
     "serve-reports": ADMIN, "approval-worker": ADMIN,
     # §5.5 括りなし
