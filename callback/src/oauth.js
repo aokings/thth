@@ -74,7 +74,16 @@ export async function clientRecord(env,client_id){
        u.hostname.startsWith('[')||/^(\d+\.){3}\d+$/.test(u.hostname))return null;
     // 監査 (8): 確かめて通った文書は 10 分控える（同意の頁を開くたび・許すたびに外へ取りに行かない）。
     const stub=connectorStub(env),key=await digest(client_id);
-    try{const kept=await stub.cimdGet(key);if(kept.status===200)return {...kept.body,kind:'cimd'};}catch{/* 控えが読めなければ取りに行く */}
+    try{const kept=await stub.cimdGet(key);if(kept.status===200)return kept.body.failed?null:{...kept.body,kind:'cimd'};}catch{/* 控えが読めなければ取りに行く */}
+    const found=await fetchCimd(client_id,u);
+    try{if(found)await stub.cimdPut(key,found);else await stub.cimdFailed(key);}catch{/* 控えられなくても今回は通す */}
+    return found?{...found,kind:'cimd'}:null;
+  }
+  const row=await connectorStub(env).client(client_id);
+  return row.status===200?{...row.body,name:row.body.name??'AI client',kind:'dcr'}:null;
+}
+// CIMD の文書を取りに行き、形を確かめる（通らなければ null）。
+async function fetchCimd(client_id,u){
     try{
       // workerd は redirect: 'error' を受けない（monban 10/5 の失敗）。'manual' で 3xx を受け、下で断る。
       const got=await fetch(client_id,{headers:{accept:'application/json'},redirect:'manual',signal:AbortSignal.timeout(CIMD_TIMEOUT_MS)});
@@ -89,12 +98,8 @@ export async function clientRecord(env,client_id){
       if(!redirect_uris.length)return null;
       if(doc.token_endpoint_auth_method!==undefined&&doc.token_endpoint_auth_method!=='none')return null;
       const name=typeof doc.client_name==='string'&&!/[\u0000-\u001f\u007f]/.test(doc.client_name)?doc.client_name.slice(0,128):u.hostname;
-      try{await stub.cimdPut(key,{redirect_uris,name,host:u.hostname});}catch{/* 控えられなくても今回は通す */}
-      return {redirect_uris,name,kind:'cimd',host:u.hostname};
+      return {redirect_uris,name,host:u.hostname};
     }catch{return null;}
-  }
-  const row=await connectorStub(env).client(client_id);
-  return row.status===200?{...row.body,name:row.body.name??'AI client',kind:'dcr'}:null;
 }
 // コネクタのレーンの名（鍵の記録の名乗り「<持ち主>（lane:connector-…・key:…）」になる）。CIMD はホスト名と client の id の
 // hash の頭 6 桁（1 つのホストに CIMD の文書が 2 つあっても別のレーン・VM は同じ括りの同じレーンの前の鍵を取り消すため）、
@@ -167,12 +172,22 @@ export async function oauthRequest(request,env,url){
   }catch{return reply(503,{error:'oauth_unavailable'});}
 }
 
+// 登録を数える所: IPv4 はそのまま、IPv6 は /64（1 台が番地を好きに替えられる幅）に丸める。値は Connector の中で塩と混ぜて hash にし、
+// そのまま保存しない。
+export function peerAddress(ip){
+  if(typeof ip!=='string'||!ip||ip.length>64)return 'unknown-peer';
+  if(!ip.includes(':'))return ip;
+  const [head,tail]=ip.toLowerCase().split('::');
+  const left=head?head.split(':'):[],right=tail!==undefined&&tail?tail.split(':'):[];
+  const groups=tail===undefined?left:[...left,...Array(Math.max(0,8-left.length-right.length)).fill('0'),...right];
+  return groups.slice(0,4).map(g=>g.replace(/^0+(?=.)/,'')).join(':')+'::/64';
+}
 async function register(request,env){
   if(request.method!=='POST')return reply(405,{error:'method_not_allowed'});
   if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return oauthError(400,'invalid_client_metadata');
   let m;try{m=JSON.parse(await boundedBody(request,8192));}catch{return oauthError(400,'invalid_client_metadata');}
   if(m?.token_endpoint_auth_method!==undefined&&m.token_endpoint_auth_method!=='none')return oauthError(400,'invalid_client_metadata','public clients only');
-  const made=await connectorStub(env).registerClient(m,await digest(request.headers.get('cf-connecting-ip')||'unknown-peer'));
+  const made=await connectorStub(env).registerClient(m,peerAddress(request.headers.get('cf-connecting-ip')));
   if(made.status!==200)return oauthError(made.status===429?429:400,made.body.error);
   return json(201,{client_id:made.body.client_id,client_id_issued_at:Math.floor(Date.now()/1000),redirect_uris:m.redirect_uris,
     token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']});
@@ -209,7 +224,7 @@ async function authorize(request,env,url){
     code_challenge:a.code_challenge,scope,writes,owner,lane,workspace:ws,action:issued.body.action,key:issued.body.bearer});
   if(made.status!==200){
     // 鍵は発行を置いてしまった: VM が作ったあとで止まるよう、取り消しも置く。
-    try{await (await personStub(env,owner)).laneRevoke(ws,await digest(issued.body.bearer));}catch{/* 1 時間で頼みごと消える */}
+    try{await (await personStub(env,owner)).laneRevoke(ws,await digest(issued.body.bearer));}catch{/* 置けなければ、鍵は VM で発行の頼みが 1 時間で切れて作られない */}
     return redirectBack(a.redirect_uri,{error:'temporarily_unavailable',state:a.state});
   }
   return redirectBack(a.redirect_uri,{code:made.body.code,state:a.state});

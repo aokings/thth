@@ -40,7 +40,7 @@ function outbound(request){
   const url=new URL(request.url);
   cimdFetches++;
   if(request.url===CLAUDE)return Response.json({client_id:CLAUDE,client_name:'Claude',redirect_uris:[CALLBACK],token_endpoint_auth_method:'none'});
-  if(url.pathname==='/liar')return Response.json({client_id:'https://claude.ai/other',redirect_uris:[CALLBACK]});
+  if(url.pathname.startsWith('/liar'))return Response.json({client_id:'https://claude.ai/other',redirect_uris:[CALLBACK]});
   if(url.pathname==='/moved')return new Response(null,{status:302,headers:{location:CLAUDE}});
   // 監査 4: 戻り先の形の違う CIMD（http の外のホスト・javascript:・自前の scheme）。
   const odd={'/odd-http':'http://evil.example/cb','/odd-js':'javascript:alert(1)','/odd-app':'myapp://cb'}[url.pathname];
@@ -549,7 +549,7 @@ test('the refresh token expires after 30 days',async()=>{
 const register=(peer,uris=[CALLBACK])=>mf.dispatchFetch(ORIGIN+'/oauth/register',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':peer},body:JSON.stringify({client_name:'dcr',redirect_uris:uris})});
 const clientIds=async()=>(await control()).filter(([k])=>k.startsWith('client:')).map(([k])=>k.slice(7));
 
-test('audit (5): one place registers at most 8 clients a day; a full table pushes out only clients never used',async()=>{
+test('audit (5): one place registers at most 8 clients a day (IPv6 by /64); a full table never pushes out a young or a used client first',async()=>{
   // 使った登録（同意の頁で許した）を一番古い行にしておく（満ちたとき、古い順に押し出す形なら最初に消える）。
   const p=await person();
   const used=(await (await register(opaque())).json()).client_id;
@@ -560,16 +560,37 @@ test('audit (5): one place registers at most 8 clients a day; a full table pushe
   const ninth=await register(peer);
   assert.equal(ninth.status,429);assert.equal((await ninth.json()).error,'too_many_clients');
   assert.equal((await register(opaque())).status,201,'another place still registers');
-  const before=await clientIds();
-  for(let n=before.length;n<256+4;n++)assert.equal((await register(opaque())).status,201);
+  // IPv6 は /64 で数える（番地を替えても同じ所）。
+  for(let n=0;n<8;n++)assert.equal((await register('2001:db8:7:9:'+n.toString(16)+'::'+(n+1))).status,201);
+  assert.equal((await register('2001:0db8:0007:0009:ffff:1:2:3')).status,429,'the same /64');
+  assert.equal((await register('2001:db8:7:a::1')).status,201,'another /64');
+  // 生の IP は保存しない（印は塩と混ぜた hash）。
+  const marks=(await control()).filter(([k,c])=>k.startsWith('client:')&&c.peer).map(([,c])=>c.peer);
+  assert.ok(marks.length>=17&&marks.every(m=>/^[0-9a-f]{64}$/.test(m)));
+  assert.equal(JSON.stringify(await control()).includes('2001:db8:7:'),false);
+  // 同意の途中の登録（10 分の内）は、満ちても押し出さない: 満ちたら断る。
+  const young=(await (await register(opaque())).json()).client_id;
+  for(let n=(await clientIds()).length;n<256;n++)assert.equal((await register(opaque())).status,201);
+  const full=await register(opaque());
+  assert.equal(full.status,429,'every row is young: refuse rather than push one out');
+  assert.ok((await clientIds()).includes(young));
+  // 10 分たてば、使われていない古い登録から押し出す。使った登録は残る。
+  const later=Date.now()+600_000+1000;
+  await control({clock:later});
+  try{for(let n=0;n<4;n++)assert.equal((await register(opaque())).status,201);}
+  finally{await control({clock:null});}
   const after=await clientIds();
   assert.equal(after.length,256);
-  assert.ok(after.includes(used),'a used client is never pushed out');
-  // 登録した IP の hash は 1 日で外す。
-  await control({clock:Date.now()+86_400_000+1000});
+  assert.ok(after.includes(used),'a used client is pushed out last');
+  // 登録した所の印は 1 日で外す（時計を進めたあとに登録した行だけが印を持つ）。
+  const day=Date.now()+86_400_000+1000;
+  await control({clock:day});
   try{await register(opaque());}finally{await control({clock:null});}
-  const peers=(await control()).filter(([k,c])=>k.startsWith('client:')&&c.peer&&c.created_at<Date.now()-1000).length;
-  assert.equal(peers,0,'the hashed address is dropped after a day');
+  const rows=(await control()).filter(([k])=>k.startsWith('client:'));
+  const aged=([,c])=>c.created_at+86_400_000<=day;
+  assert.ok(rows.filter(aged).length>200,'rows a day old exist');
+  assert.equal(rows.filter(r=>r[1].peer&&aged(r)).length,0,'the mark is dropped after a day');
+  assert.ok(rows.some(([,c])=>c.peer),'younger rows keep their mark');
 });
 
 test('audit (6): the connector limit counts per owner, not for everyone',async()=>{
@@ -610,6 +631,14 @@ test('audit (7): a reused code or an old refresh token stops the connection; a r
   assert.equal((await mcp(r1.body.access_token,'ping',{},true)).status,401,'an old refresh token stops the connection');
   assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:r1.body.refresh_token})).body.error,'invalid_grant');
   assert.ok((await sync(q)).actions.some(a=>a.kind==='lane_revoke'));
+  // 2 回以上前の refresh でも止める（盗んだ側が続けて回しても、持ち主の古い token が漏れの印になる）。
+  const w=await person();const tw=await connect(w);
+  let last=tw.refresh_token;
+  for(let n=0;n<3;n++){const r=await tokenFor({grant_type:'refresh_token',refresh_token:last});assert.equal(r.status,200);sensitive.push(r.body.access_token,r.body.refresh_token);last=r.body.refresh_token;var live=r.body.access_token;}
+  await control({clock:Date.now()+31_000});
+  try{assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:tw.refresh_token})).body.error,'invalid_grant');}
+  finally{await control({clock:null});}
+  assert.equal((await mcp(live,'ping',{},true)).status,401,'a refresh token three rotations old stops the connection');
 });
 
 test('audit (8): the client document is fetched once in ten minutes; Origin is checked and browsers get CORS',async()=>{
@@ -621,6 +650,11 @@ test('audit (8): the client document is fetched once in ten minutes; Origin is c
   try{assert.equal((await mf.dispatchFetch(authorizeUrl(q),{headers:{'cf-connecting-ip':ip()}})).status,200);}
   finally{await control({clock:null});}
   assert.equal(cimdFetches-before,2,'fetched again after ten minutes');
+  // 通らなかった文書も 1 分控える（任意の URL を頼みごとに叩かせない）。
+  const liar=baseParams(challenge,{client_id:'https://claude.ai/liar-'+randomBytes(4).toString('hex')});
+  const b2=cimdFetches;
+  for(let n=0;n<3;n++)assert.equal((await mf.dispatchFetch(authorizeUrl(liar),{headers:{'cf-connecting-ip':ip()}})).status,400);
+  assert.equal(cimdFetches-b2,1,'a refused document is kept for a minute too');
   const p=await person();const t=await connect(p);
   const call=origin=>mf.dispatchFetch(ORIGIN+'/mcp',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip(),authorization:'Bearer '+t.access_token,origin},
     body:JSON.stringify({jsonrpc:'2.0',id:1,method:'ping'})});

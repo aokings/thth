@@ -1280,6 +1280,7 @@ def connector_facts():
     assert js_product("connector-object.js", "ACCESS_TTL") % 3_600_000 == 0
     refresh = _days(js_product("connector-object.js", "REFRESH_TTL"))
     client = _days(js_product("connector-object.js", "CLIENT_TTL"))
+    peer = _days(js_product("connector-object.js", "PEER_WINDOW"))
     confirm = minutes(js_product("connector-object.js", "CONFIRM_TTL"))
     revoke = _days(js_product("connector-object.js", "REVOKE_TTL"))
     outcome = _days(js_product("person-object.js", "LANE_OUTCOME_TTL"))
@@ -1298,6 +1299,8 @@ def connector_facts():
         ("refresh の切れで止まる・日本語", CONNECTOR_JA, f"refresh の無いまま {refresh} 日たったとき"),
         ("DCR の登録（CLIENT_TTL）", CONNECTOR_EN, f"which thth.me keeps for {client} days"),
         ("DCR の登録・日本語", CONNECTOR_JA, f"thth.me が {client} 日置きます"),
+        ("DCR の登録元の印（PEER_WINDOW）", CONNECTOR_EN, f"for at most {one(peer, 'day')}, a hash of the registering IP address"),
+        ("DCR の登録元の印・日本語", CONNECTOR_JA, f"登録の行には最長 {peer} 日、登録した IP アドレス"),
         ("書く道具の 1 段目（CONFIRM_TTL）", CONNECTOR_EN, f"within {confirm} minutes"),
         ("書く道具の 1 段目・日本語", CONNECTOR_JA, f"{confirm} 分の内に返したときだけ"),
         ("取り消しの置き直し（REVOKE_TTL）", CONNECTOR_EN, f"for at most {one(revoke, 'day')}"),

@@ -329,6 +329,7 @@ LANE_OUTCOME_DAYS = 30           # person-object.js LANE_OUTCOME_TTL（済んだ
 CONNECTOR_CODE_SECONDS = 60      # connector-object.js CODE_TTL
 CONNECTOR_ACCESS_HOURS = 1       # connector-object.js ACCESS_TTL
 CONNECTOR_REFRESH_DAYS = 30      # connector-object.js REFRESH_TTL
+CONNECTOR_PEER_DAYS = 1          # connector-object.js PEER_WINDOW（登録した所の印と、その塩）
 CONNECTOR_CLIENT_DAYS = 30       # connector-object.js CLIENT_TTL（/oauth/register の登録）
 CONNECTOR_CONFIRM_MINUTES = 10   # connector-object.js CONFIRM_TTL（書く道具の 1 段目の控え）
 CONNECTOR_REVOKE_DAYS = 30       # connector-object.js REVOKE_TTL（VM への取り消しの置き直し）
@@ -984,7 +985,10 @@ def build_privacy() -> str:
         "authorization server (authorization code with PKCE S256 only; no client secret). The AI service "
         "identifies itself with a public client metadata document at the URL it uses as its client ID, which "
         "thth.me fetches when the connection starts, or with a registration at <code>/oauth/register</code>, which "
-        f"thth.me keeps for {CONNECTOR_CLIENT_DAYS} days (the return addresses and the client name). The consent "
+        f"thth.me keeps for {CONNECTOR_CLIENT_DAYS} days (the return addresses and the client name). To limit how "
+        "many registrations one network makes, each registration also carries, for at most "
+        f"{_n_en(CONNECTOR_PEER_DAYS, 'day')}, a hash of the registering IP address (for IPv6, its /64 network) mixed "
+        "with a random value that thth.me replaces daily; the address itself is not stored. The consent "
         "page on thth.me shows the AI's name, the address it returns to, the lane and the scope (read only, or read "
         "and write); the owner allows it with the owner name, the owner secret and, when the owner has more than "
         "one workspace, the workspace, and can narrow it to read only. Allowing creates one lane key for that "
@@ -1692,7 +1696,9 @@ def build_privacy() -> str:
         "コネクタは <code>https://thth.me/mcp</code> を呼び、OAuth の認可サーバーは thth.me 自身です（認可コードと "
         "PKCE S256 だけ・client secret は持ちません）。AI のサービスは、client ID として使う URL に置いた公開の client "
         "の説明の文書（接続を始めるときに thth.me が取りに行きます）か、<code>/oauth/register</code> での登録"
-        f"（thth.me が {CONNECTOR_CLIENT_DAYS} 日置きます。戻り先と client の名前）で名乗ります。thth.me の同意の頁は、"
+        f"（thth.me が {CONNECTOR_CLIENT_DAYS} 日置きます。戻り先と client の名前）で名乗ります。1 つの所からの登録の数を"
+        f"数えるため、登録の行には最長 {CONNECTOR_PEER_DAYS} 日、登録した IP アドレス（IPv6 は /64 の幅）を thth.me が毎日"
+        "替える乱数と混ぜたハッシュを付けます。アドレスそのものは置きません。thth.me の同意の頁は、"
         "AI の名前・戻り先・レーン・範囲（読むだけか、読む・書く）を見せ、持ち主は持ち主の名前・持ち主のシークレットと、"
         "括りが 2 つ以上あるときは括りを入れて許します。読むだけに絞ることもできます。許すと、そのコネクタ専用のレーンの鍵が、"
         "<code>thth login --lane</code> と同じ形で 1 本でき、1 つの括りに結び付きます。読むだけのコネクタの鍵は書けず、"

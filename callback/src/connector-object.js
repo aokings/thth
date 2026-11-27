@@ -6,8 +6,10 @@
 // ここが丸ごと漏れても、token が無ければ鍵は開かない。実行中のメモリを取られる脅威は保証の外（monban と同じ）。
 //
 // 1 つの object（名前 `connectors`）に全部の持ち主の行を置く。行:
-//   client:<id>    DCR の予備 {redirect_uris, name, created_at, expires_at, used_at?, peer?}（peer は登録した IP の hash・1 日で外す）
-//   cimd:<hash>    CIMD の文書の控え（10 分）{redirect_uris, name, host, expires_at}
+//   client:<id>    DCR の予備 {redirect_uris, name, created_at, expires_at, used_at?, peer?}（used_at は最後に同意で使った時。
+//                  peer は登録した所の印: IP（IPv6 は /64）を日替わりの塩と混ぜた hash・1 日で外す）
+//   peer-salt      peer の塩 {value, expires_at}（1 日で替える。替われば前の印は誰の物とも結べない）
+//   cimd:<hash>    CIMD の文書の控え（通った物は 10 分・通らなかった物は {failed:true} を 1 分）{redirect_uris, name, host, expires_at}
 //   spent:<hash>   使い切った認可 code の跡（10 分）{device_id, expires_at}。使い直されたら接続ごと止める（監査 (7)）
 //   code:<hash>    認可 code 1 つ {device_id, client_id, redirect_uri, code_challenge, wrap_c, expires_at}
 //   device:<id>    {owner, client_id, client_name, scope, writes, lane, workspace_req, action, workspace, account, key_sha256,
@@ -29,12 +31,15 @@ export const CONFIRM_TTL=600_000;                      // 書く道具の 1 段�
 // 接続は持ち主ごとに数える（監査 (6)）。全体の上限は object の大きさの柵。
 export const DEVICES_PER_OWNER=16,DEVICES_MAX=4096,CLIENTS_MAX=256,CODES_MAX=64,CONFIRMS_MAX=16,REVOKES_MAX=1024,CIMD_MAX_ROWS=256;
 // DCR は 1 つの IP から 1 日に 8 本まで（監査 (5)）。満ちたら使われたことの無い古い登録だけを押し出し、全部使われていれば断る。
-export const CLIENTS_PER_PEER=8,PEER_WINDOW=86_400_000;
+// 登録して 10 分の内の行は押し出さない（同意の途中の client を守る・監査の打ち直し 1）。
+export const CLIENTS_PER_PEER=8,PEER_WINDOW=86_400_000,CLIENT_YOUNG=600_000;
 export const SCOPES=['read','write','offline_access'];
 export const REVOKE_TTL=30*86_400_000;                 // 取り消しの置き直しは 30 日まで（監査 (9)・Person DO の lane_revoke と同じ）
 export const CIMD_CACHE_TTL=600_000;                   // CIMD の文書の控えは 10 分（監査 (8)）
+export const CIMD_FAIL_TTL=60_000;                     // 通らなかった CIMD も 1 分控える（任意の URL を毎回叩かせない）
 export const SPENT_TTL=600_000;                        // 使い切った code の跡
 export const REUSE_GRACE=30_000;                       // 回した直後の古い refresh は、同時の頼みとみて断るだけ（監査 (7)）
+export const PREV_REFRESH_MAX=8;                       // 回した前の refresh の hash を直近 8 本持つ
 const encoder=new TextEncoder();
 const INFO=encoder.encode('thth-connector-v1');
 
@@ -58,7 +63,7 @@ export async function unwrap(secret,text){
 }
 const kstr=K=>b64(K);
 // 取り消しの置き直しの間隔: 1 分から倍々に、1 時間まで。
-const retryDelay=tries=>Math.min(60_000*2**Math.min(tries,6),3_600_000);
+const retryDelay=tries=>Math.min(60_000*2**Math.min(Math.max(tries-1,0),6),3_600_000);
 const scopeOk=scope=>Array.isArray(scope)&&scope.length>0&&scope.length<=3&&scope.every(s=>SCOPES.includes(s))&&new Set(scope).size===scope.length;
 const sameHash=(a,b)=>typeof a==='string'&&typeof b==='string'&&equal(encoder.encode(a),encoder.encode(b));
 // 戻り先の形: https で本当のホスト名か、loopback の http（RFC 8252）。
@@ -89,20 +94,31 @@ export class Connector extends DurableObject {
   async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
 
   // DCR（client の身元の文書が無い client の予備）。
-  async registerClient(m,peer=null){
+  // `address` は頼んだ所の IP（Worker が IPv6 を /64 に丸めた物）。保存しない: 日替わりの塩と混ぜた hash だけを行に置く。
+  async peerMark(address){
+    if(typeof address!=='string'||!address||address.length>64)return null;
+    const now=this.now();
+    let salt=this.ctx.storage.kv.get('peer-salt');
+    if(!salt||salt.expires_at<=now){salt={value:opaque(),expires_at:now+PEER_WINDOW};this.put('peer-salt',salt);}
+    return digest(salt.value+'|'+address);
+  }
+  async registerClient(m,address=null){
     if(!m||typeof m!=='object'||!Array.isArray(m.redirect_uris)||!m.redirect_uris.length||m.redirect_uris.length>8||
        !m.redirect_uris.every(acceptableRedirect))return fail(400,'invalid_client_metadata');
     const name=typeof m.client_name==='string'&&m.client_name.length<=128&&!/[\u0000-\u001f\u007f]/.test(m.client_name)?m.client_name:null;
-    if(!(peer===null||typeof peer==='string'&&HASH_PATTERN.test(peer)))return fail();
+    const peer=address===null?null:await this.peerMark(address);
     const result=this.atomic(()=>{
       const now=this.now();this.prune(now);
       const clients=[...this.ctx.storage.kv.list({prefix:'client:'})].sort(([,a],[,b])=>a.created_at-b.created_at);
       // 監査 (5): 名乗らない登録を重ねて、ほかの人の登録を押し出せないようにする。
       if(peer!==null&&clients.filter(([,c])=>c.peer===peer).length>=CLIENTS_PER_PEER)return fail(429,'too_many_clients');
       if(clients.length>=CLIENTS_MAX){
-        const unused=clients.filter(([,c])=>!c.used_at);
-        if(!unused.length)return fail(429,'too_many_clients');
-        this.ctx.storage.kv.delete(unused[0][0]);
+        // 押し出す順: 使われたことの無い古い登録 → 最後に使った時の古い登録（生きている接続は client の行が無くても refresh できる）。
+        // 登録して 10 分の内の行は、同意の途中かもしれないので押し出さない。押し出せる行が無ければ断る。
+        const old=clients.filter(([,c])=>c.created_at+CLIENT_YOUNG<=now);
+        const victim=old.filter(([,c])=>!c.used_at)[0]??old.sort(([,a],[,b])=>a.used_at-b.used_at)[0];
+        if(!victim)return fail(429,'too_many_clients');
+        this.ctx.storage.kv.delete(victim[0]);
       }
       const id='c_'+opaque().slice(0,32),expires_at=now+CLIENT_TTL;
       this.put('client:'+id,{redirect_uris:m.redirect_uris,name,created_at:now,expires_at,...(peer===null?{}:{peer})});
@@ -118,14 +134,22 @@ export class Connector extends DurableObject {
   // CIMD の文書の控え（監査 (8): 同意の頁を開くたびに外へ取りに行かない）。控えるのは形を確かめて通った物だけ。
   cimdGet(hash){
     const row=typeof hash==='string'&&HASH_PATTERN.test(hash)?this.ctx.storage.kv.get('cimd:'+hash):null;
-    return row&&row.expires_at>this.now()?{status:200,body:{redirect_uris:row.redirect_uris,name:row.name,host:row.host}}:fail(404,'not_found');
+    if(!row||row.expires_at<=this.now())return fail(404,'not_found');
+    return row.failed?{status:200,body:{failed:true}}:{status:200,body:{redirect_uris:row.redirect_uris,name:row.name,host:row.host}};
+  }
+  cimdFailed(hash){return this.atomic(()=>{
+    if(typeof hash!=='string'||!HASH_PATTERN.test(hash))return fail();
+    this.trimCimd();this.put('cimd:'+hash,{failed:true,expires_at:this.now()+CIMD_FAIL_TTL});return {status:200,body:{}};
+  });}
+  trimCimd(){
+    const rows=[...this.ctx.storage.kv.list({prefix:'cimd:'})].sort(([,a],[,b])=>a.expires_at-b.expires_at);
+    for(const [k] of rows.slice(0,Math.max(0,rows.length-CIMD_MAX_ROWS+1)))this.ctx.storage.kv.delete(k);
   }
   cimdPut(hash,{redirect_uris,name,host}){return this.atomic(()=>{
     if(typeof hash!=='string'||!HASH_PATTERN.test(hash)||!Array.isArray(redirect_uris)||!redirect_uris.length||redirect_uris.length>8||
-       !redirect_uris.every(acceptableRedirect)||typeof name!=='string'||name.length>128||typeof host!=='string'||host.length>253)return fail();
+       !redirect_uris.every(acceptableRedirect)||typeof name!=='string'||name.length>253||typeof host!=='string'||host.length>253)return fail();
     const now=this.now();
-    const rows=[...this.ctx.storage.kv.list({prefix:'cimd:'})].sort(([,a],[,b])=>a.expires_at-b.expires_at);
-    for(const [k] of rows.slice(0,Math.max(0,rows.length-CIMD_MAX_ROWS+1)))this.ctx.storage.kv.delete(k);
+    this.trimCimd();
     this.put('cimd:'+hash,{redirect_uris,name,host,expires_at:now+CIMD_CACHE_TTL});
     return {status:200,body:{}};
   });}
@@ -151,7 +175,7 @@ export class Connector extends DurableObject {
       this.put('code:'+code_hash,{device_id,client_id,redirect_uri,code_challenge,wrap_c,expires_at});
       // 使われた DCR の登録は、満ちたときに押し出さない（監査 (5)）。
       const c=/^c_[A-Za-z0-9_-]{32}$/.test(client_id)?this.ctx.storage.kv.get('client:'+client_id):null;
-      if(c&&!c.used_at)this.put('client:'+client_id,{...c,used_at:now});
+      if(c)this.put('client:'+client_id,{...c,used_at:now});
       return {status:200,body:{code,device_id,expires_at}};
     });
     if(result.status===200)await this.wake(result.body.expires_at);
@@ -196,7 +220,7 @@ export class Connector extends DurableObject {
       if(!row||(expectRHash!==null&&row.r_hash!==expectRHash))return fail(400,'invalid_grant');
       const a_expires_at=now+ACCESS_TTL,r_expires_at=now+REFRESH_TTL;
       this.put('device:'+device_id,{...row,status:'active',expires_at:r_expires_at,a_hash,r_hash,wrap_a,wrap_r,a_expires_at,r_expires_at,rotated_at:now,
-        prev_r_hash:row.r_hash??null});
+        prev_r_hashes:[...(row.r_hash?[row.r_hash]:[]),...(row.prev_r_hashes??[])].slice(0,PREV_REFRESH_MAX)});
       return {status:200,body:{access_token:device_id+'.'+sa,refresh_token:device_id+'.'+sr,expires_in:ACCESS_TTL/1000,
         token_type:'Bearer',scope:row.scope.join(' ')}};
     });
@@ -206,7 +230,7 @@ export class Connector extends DurableObject {
   async refresh(token){
     const parsed=splitToken(token);if(!parsed)return fail(400,'invalid_grant');
     const row=this.ctx.storage.kv.get('device:'+parsed.id),hashed=await digest(parsed.secret);
-    if(row&&row.status==='active'&&sameHash(row.prev_r_hash,hashed)){
+    if(row&&row.status==='active'&&(row.prev_r_hashes??[]).some(h=>sameHash(h,hashed))){
       // 監査 (7): 回したあとの古い refresh。回した直後なら同時に来た頼みとみて断るだけ。それより後なら漏れた印として接続を止める
       // （預かりを消し、VM の鍵の取り消しを置く）。
       if(this.now()-row.rotated_at<=REUSE_GRACE)return fail(400,'invalid_grant');
@@ -338,13 +362,14 @@ export class Connector extends DurableObject {
     return false;
   }
   prune(now){
+    // 一覧は先に配列へ取り出してから回す（回しながら別の kv.list() を開くと前の一覧が壊れて例外になる・drop() が数える）。
     for(const prefix of ['client:','code:','revoke:','cimd:','spent:'])
-      for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);
-    // 登録した IP の hash は数える間（1 日）だけ持つ。
-    for(const [key,row] of this.ctx.storage.kv.list({prefix:'client:'}))
+      for(const [key,row] of [...this.ctx.storage.kv.list({prefix})])if(row.expires_at<=now)this.ctx.storage.kv.delete(key);
+    // 登録した所の印は数える間（1 日）だけ持つ。
+    for(const [key,row] of [...this.ctx.storage.kv.list({prefix:'client:'})])
       if(row.peer&&row.created_at+PEER_WINDOW<=now){const {peer:_,...rest}=row;this.put(key,rest);}
     // 期限の切れた接続（code を交換しなかった・refresh が 30 日切れた）は、VM の鍵も取り消す。
-    for(const [key,row] of this.ctx.storage.kv.list({prefix:'device:'}))if(row.expires_at<=now)this.drop(key.slice(7),now);
+    for(const [key,row] of [...this.ctx.storage.kv.list({prefix:'device:'})])if(row.expires_at<=now)this.drop(key.slice(7),now);
   }
   async alarm(){
     const now=this.now();
