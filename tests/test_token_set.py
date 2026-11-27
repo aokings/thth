@@ -21,6 +21,9 @@ from thth import oauth as oauth_mod
 
 def _account_with_token_path(isolated_account_factory, tmp_path, **overrides):
     token_path = str(tmp_path / "account.token")
+    # 偽の me は user_id=999999 を返す。台帳の既定（123）のままだと user_id の照合で
+    # 断られるので、ここでは台帳に user_id を持たせない（照合は専用の試験で見る）。
+    overrides.setdefault("user_id", "")
     account = isolated_account_factory(token=token_path, **overrides)
     account["token_path"] = token_path
     return account
@@ -378,3 +381,47 @@ def test_T3_期限を持たないtokenをmaintainがokと言う(tmp_path, isolat
     assert row["state"] == maintain_mod.OK
     assert row["no_expiry"] is True
     assert row["remaining_days"] is None
+
+
+def test_20261127_台帳のhandleが空なら照合できないので保存しない(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """monban の秘密の入力口（2026-11-27）: 人が見ていない口から値が届くので、
+    handle の無い台帳に「判らない」のまま通さない。"""
+    account = _account_with_token_path(isolated_account_factory, tmp_path, handle="")
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines = []
+        rc = oauth_mod.run_token_set(
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lines.append, by="test-operator")
+    assert rc == 1
+    assert not os.path.exists(account["token_path"]), "handle が空なのに .token を書いた"
+    out = "\n".join(lines)
+    assert "handle が無い" in out and "PASTED-TOKEN" not in out
+
+
+def test_20261127_台帳にuser_idがあれば照合し違えば保存しない(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """handle が合っても、台帳の user_id と違う番号のトークンは保存しない（--force でも）。"""
+    account = _account_with_token_path(isolated_account_factory, tmp_path,
+                                        handle="nigamilab", user_id="123")
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines = []
+        rc = oauth_mod.run_token_set(
+            account["name"], force=True, input_func=lambda: "PASTED-TOKEN",
+            log=lines.append, by="test-operator")
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    out = "\n".join(lines)
+    assert "123" in out and "999999" in out and "PASTED-TOKEN" not in out
+
+
+def test_20261127_台帳のuser_idが合えば通る(tmp_path, monkeypatch, isolated_account_factory):
+    account = _account_with_token_path(isolated_account_factory, tmp_path,
+                                        handle="nigamilab", user_id="999999")
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        rc = oauth_mod.run_token_set(
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lambda *_: None, by="test-operator")
+    assert rc == 0
+    assert os.path.exists(account["token_path"])

@@ -833,12 +833,32 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         #
         # 通してしまうと、そのアカウントの queue の本文が別のアカウントから出る。
         # 取り消せない公開行為なので、疑わしければ保存しない（--force でも覆さない）。
+        #
+        # **台帳の handle が空なら照合できないので保存しない**（monban の秘密の入力口・
+        # 2026-11-27）。以前は `handle_matches` の「判らない」（None）を素通りさせて
+        # いたので、handle の無い台帳にはどの口座のトークンでも入った。人が見ていない
+        # 入力口から値が届くと、取り違えを止める者がいない。
         handle = (account_cfg.get("handle") or "").strip()
-        if handle_matches(handle, username) is False:
+        if not handle:
+            _out(f"保存しませんでした: 台帳 {account_name} に handle が無いので、"
+                 f"このトークン（{username}）が正しい口座のものか照合できません。", log=log)
+            _out(f"台帳に handle を書いてから入れ直してください"
+                 f"（thth account set {account_name} handle <handle> --by <名前>）。", log=log)
+            return 1
+        if handle_matches(handle, username) is not True:
             _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
                  f"このトークンは {username} のものです。", log=log)
             _out("正しいアカウントで発行し直すか、台帳の handle を直してください"
                  f"（thth account set {account_name} handle {username} --by <名前>）。", log=log)
+            return 1
+        # **台帳に user_id があれば、それも照合する**（同じ日）。handle は付け替えられる
+        # ので、変わらない番号でも同じ口座かを見る。台帳の user_id が空なら handle だけ。
+        ledger_uid = str(account_cfg.get("user_id") or "").strip()
+        if ledger_uid and ledger_uid != str(user_id):
+            _out(f"保存しませんでした: 台帳 {account_name} の user_id は {ledger_uid} ですが、"
+                 f"このトークンは user_id {user_id}（{username}）のものです。", log=log)
+            _out("正しいアカウントで発行し直すか、台帳の user_id を直してください"
+                 f"（thth account set {account_name} user_id {user_id} --by <名前>）。", log=log)
             return 1
 
         token_data = {
