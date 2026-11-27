@@ -87,6 +87,8 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # （`reaction_cli`・Threads の DELETE に届く）も。adapter の `delete_post` は大きなファイルの中なので入れず、呼ぶ側で縛る
     # （Facebook の `_write` と同じ理由）。11/23 の e96d8d7 は `retract_cli.py` だけなら素通りしていた。
     "retract": ("thth/retract_cli.py", "thth/edit_cli.py", "thth/reaction_cli.py"),
+    # monban の秘密の入力口から値を受ける口（11/27）: 人が見ていない入口から鍵が届き、今の入口に渡して置く。
+    "secret_accept": ("thth/secret_accept.py",),
 }
 
 # 互換の柵（設計 §6 の ④）。目録の retired・MCP の古い読みの形・server.json・privacy とコードの一致。

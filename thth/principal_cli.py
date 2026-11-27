@@ -720,6 +720,187 @@ def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, cons
     return 0 if probe_blogs(name, principals.load_principal(name), out=out) else 1
 
 
+PENDING_SECONDS = 1800   # 認可の頁を開いてから確認の文字列を入れるまでの猶予（request token は 1 回きり）
+
+
+def _pending_path(name) -> str:
+    return os.path.join(principals.state_dir_for(name), "auth_pending.json")
+
+
+def _drop_pending(name) -> None:
+    try:
+        os.unlink(_pending_path(name))
+    except FileNotFoundError:
+        pass
+
+
+def _read_stdin_lines(read_stdin, count) -> list | None:
+    """標準入力から `count` 行。行ごとに前後の空白を落とす。足りない・空なら None。"""
+    lines = []
+    for _ in range(count):
+        value = (read_stdin() or "").strip()
+        if not value:
+            return None
+        lines.append(value)
+    return lines
+
+
+def run_auth_hatena_stdin(name, *, by, force=False, consumer=False, begin=False, read_stdin=None, http=None,
+                          out=print, err=None, now=None) -> int:
+    """はてなの主体の鍵を、端末の対話でなく 2 つの段に分けて受ける（monban の秘密の入力口・2026-11-27）。
+
+    - `--begin`: 置いてある consumer で request token を頼み、認可の URL を出す。request token は主体の状態の
+      置き場に 0600 で預ける（`auth_pending.json`・30 分）。秘密は読まない。
+    - `--consumer --stdin`: consumer key と secret を標準入力の 2 行で受け、**その consumer で request token が
+      取れたときだけ** consumer を書く（端末の対話は書いてから確かめる。こちらは確かめてから書く）。そのまま
+      `--begin` と同じく認可の URL を出す。
+    - `--stdin`: 確認の文字列（oauth_verifier）を標準入力の 1 行で受け、預けた request token で access token に
+      替える。はてな ID が主体の `hatena_id` と違えば書かない（`hatena_id_mismatch`）。預けは成否によらず捨てる。
+
+    値は画面・ログに出さない。`read_stdin() -> str` と `http` は差し込める（試験用）。
+    """
+    import time
+    import urllib.parse
+    from . import jst, redact
+    from .adapters import hatenablog
+    from .lock import LockBusy
+    err = err or (lambda line: print(line, file=sys.stderr))
+    http = http or _http
+    read_stdin = read_stdin or (lambda: sys.stdin.readline())
+    now = now or time.time
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        err(str(exc))
+        return 2
+    try:
+        p = principals.load_principal(name)
+    except principals.PrincipalError as e:
+        err(f"{e.code}: {e}")
+        return 2
+    if p.get("auth", "oauth") != "oauth":
+        err("auth_unsupported: この主体の auth は oauth ではありません（wsse は作っていません）")
+        return 2
+    token_path, consumer_path = p["token"], p.get("consumer")
+    if not isinstance(consumer_path, str) or not consumer_path:
+        err("consumer_missing: 主体の台帳に consumer のパスがありません")
+        return 2
+    subject = {"media": principals.MEDIA}
+    lock = principals.token_lock(name)
+    try:
+        lock.__enter__()
+    except LockBusy:
+        err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
+        return 2
+    try:
+        if begin or consumer:
+            if consumer:
+                got = _read_stdin_lines(read_stdin, 2)
+                if got is None or not all(_secret_ok(v) for v in got):
+                    err("consumer_invalid: consumer key／secret が空か、空白・制御文字が入っています。何も書いていません")
+                    return 2
+                consumer_data = {"schema": hatenablog.CONSUMER_SCHEMA, "consumer_key": got[0],
+                                 "consumer_secret": got[1]}
+            else:
+                if not os.path.exists(consumer_path):
+                    err(f"consumer_missing: consumer がまだありません。先に入れてください"
+                        f"（thth principal auth {name} --consumer --by <名前>）")
+                    return 2
+                try:
+                    consumer_data = hatenablog.read_consumer(consumer_path)
+                except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ言う）
+                    err(f"{getattr(exc, 'code', 'consumer_invalid')}: consumer のファイルが読めません。"
+                        "--consumer で入れ直してください")
+                    return 2
+            for value in (consumer_data["consumer_key"], consumer_data["consumer_secret"]):
+                redact.register_secret(value)
+            status, _h, raw = _signed_post(http, INITIATE_URL, consumer=consumer_data, principal_cfg=p,
+                                           extra_oauth={"oauth_callback": "oob"},
+                                           form={"scope": ",".join(SCOPES)})
+            temp = _form(raw) if status == 200 else {}
+            if (temp.get("oauth_callback_confirmed") != "true" or not _secret_ok(temp.get("oauth_token"))
+                    or not _secret_ok(temp.get("oauth_token_secret"))):
+                err(f"initiate_failed: request token をもらえませんでした（{_status_text(status)}）。"
+                    + ("consumer は書いていません。" if consumer else "")
+                    + "consumer key／secret と、時計のずれを確かめてください")
+                return 1
+            redact.register_secret(temp["oauth_token_secret"])
+            if consumer:
+                had = os.path.exists(consumer_path)
+                secrets_fs.atomic_write_json(consumer_path, consumer_data)
+                admin_log.append("principal_auth", name, subject, by=by, diff={"consumer": [had, True]})
+                out(f"consumer を書きました: {consumer_path}（request token が取れたので）")
+            principals.ensure_state_dir(name)
+            secrets_fs.atomic_write_json(_pending_path(name), {
+                "oauth_token": temp["oauth_token"], "oauth_token_secret": temp["oauth_token_secret"],
+                "created_at": now()})
+            out(f"次の URL をブラウザで開き、はてな ID {p['hatena_id']} でログインして許可してください:")
+            out(f"{AUTHORIZE_URL}?oauth_token={urllib.parse.quote(temp['oauth_token'], safe='')}")
+            out(f"画面に出た確認の文字列は thth principal auth {name} --stdin --by <名前> の標準入力で渡します"
+                f"（{PENDING_SECONDS // 60} 分のうちに）")
+            return 0
+
+        # 確認の文字列の段
+        token_present = os.path.exists(token_path)
+        if token_present and not force:
+            err(f"token_present: token が既にあります。入れ替えるなら --force（thth principal auth {name} --stdin "
+                "--force --by <名前>）")
+            return 2
+        try:
+            pending = _read_json(_pending_path(name))
+        except (OSError, ValueError):
+            pending = None
+        if (not isinstance(pending, dict) or not _secret_ok(pending.get("oauth_token"))
+                or not _secret_ok(pending.get("oauth_token_secret"))
+                or not isinstance(pending.get("created_at"), (int, float))
+                or not 0 <= now() - pending["created_at"] <= PENDING_SECONDS):
+            _drop_pending(name)
+            err(f"verifier_pending_missing: 認可の頁の段がありません（または {PENDING_SECONDS // 60} 分を過ぎました）。"
+                f"先に thth principal auth {name} --begin --by <名前> で URL を取り直してください。token は書いていません")
+            return 2
+        redact.register_secret(pending["oauth_token_secret"])
+        got = _read_stdin_lines(read_stdin, 1)
+        verifier = got[0] if got else ""
+        if not _secret_ok(verifier):
+            err("verifier_invalid: 確認の文字列が空か、空白・制御文字が入っています。token は書いていません")
+            return 2
+        redact.register_secret(verifier)
+        try:
+            consumer_data = hatenablog.read_consumer(consumer_path)
+        except Exception as exc:  # noqa: BLE001
+            err(f"{getattr(exc, 'code', 'consumer_invalid')}: consumer のファイルが読めません。"
+                "--consumer で入れ直してください")
+            return 2
+        for value in (consumer_data["consumer_key"], consumer_data["consumer_secret"]):
+            redact.register_secret(value)
+        _drop_pending(name)   # request token は 1 回きり。成否によらず捨てる
+        status, _h, raw = _signed_post(http, TOKEN_URL, consumer=consumer_data, principal_cfg=p,
+                                       token=pending["oauth_token"], token_secret=pending["oauth_token_secret"],
+                                       extra_oauth={"oauth_verifier": verifier})
+        got = _form(raw) if status == 200 else {}
+        if not _secret_ok(got.get("oauth_token")) or not _secret_ok(got.get("oauth_token_secret")):
+            err(f"token_failed: access token をもらえませんでした（{_status_text(status)}）。"
+                f"--begin からやり直してください")
+            return 1
+        redact.register_secret(got["oauth_token"])
+        redact.register_secret(got["oauth_token_secret"])
+        if got.get("url_name") != p["hatena_id"]:
+            err(f"hatena_id_mismatch: 許可したはてな ID が主体の hatena_id（{p['hatena_id']}）と違います。"
+                "token は書いていません。正しい ID でログインし直してください")
+            return 1
+        data = {"schema": hatenablog.TOKEN_SCHEMA, "hatena_id": p["hatena_id"],
+                "oauth_token": got["oauth_token"], "oauth_token_secret": got["oauth_token_secret"],
+                "scopes": list(SCOPES), "obtained_at": jst.iso()}
+        path = principals.write_token_locked(name, data)
+        admin_log.append("principal_auth", name, subject, by=by,
+                         diff={"token": [token_present, True], "scopes": [None, list(SCOPES)],
+                               "url_name_matches": [None, True]})
+        out(f"token を書きました: {path}")
+    finally:
+        lock.__exit__(None, None, None)
+    return 0 if probe_blogs(name, principals.load_principal(name), out=out) else 1
+
+
 WP_ADMIN_ADVICE = ("管理者の鍵です。出せますが、強すぎます。WordPress に「編集者」の利用者を作り、その利用者の"
                    "アプリケーションパスワードに替えると、鍵が漏れたときの害が記事だけに収まります"
                    "（thth principal auth {name} --force --by <名前> で入れ替え）")
@@ -730,8 +911,11 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
     """WordPress の主体の鍵（アプリケーションパスワード）を受け取る（5.16.0）。
 
     **引数では受けない。** 端末なら隠した入力（`getpass`）、`--stdin` なら標準入力の 1 行目だけを読む。値は
-    画面・ログ・admin_log に出さない。書いたあと `users/me` を 1 回読み、鍵の利用者が主体の `wp_user` と同じか・
-    役割を確かめる（管理者の鍵なら断らずに勧める）。
+    画面・ログ・admin_log に出さない。**書く前に**各サイトの `users/me` を受け取った鍵で 1 回ずつ読み、鍵の利用者が
+    主体の `wp_user` と同じだと全部のサイトで確かめられたときだけ書く（monban の秘密の入力口・2026-11-27。前は
+    書いてから読んでいたので、違う利用者の鍵でも今の鍵を置き換えていた）。確かめられなければ今の鍵はそのまま。
+    利用者は合ったが記事の URL のホストが入口と違う（`wordpress_home_host_mismatch`）ときは、鍵は置いて rc 1
+    （入口を直せば打ち直さずに済む・5.18.2 のまま）。役割も見る（管理者の鍵なら断らずに勧める）。
     """
     from . import jst, redact
     from .adapters import wordpress
@@ -780,8 +964,18 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
             "何も書いていません。WordPress の「プロフィール」→「アプリケーションパスワード」で作った値を入れてください")
         return 2
     redact.register_secret(value)
+    redact.register_secret(value.replace(" ", ""))
     data = {"schema": wordpress.TOKEN_SCHEMA, "wp_user": p["wp_user"], "application_password": value,
             "obtained_at": jst.iso()}
+    rows = _wordpress_whoami_all(name, p, adapter_factory=adapter_factory, token=data)
+    unconfirmed = [who for _blog, who in rows if not wordpress_identity_confirmed(who)]
+    if unconfirmed:
+        _say_wordpress(name, p, rows, out=out, written=False)
+        code = ("wp_user_mismatch" if any(w.get("error") == "wp_user_mismatch" for w in unconfirmed)
+                else unconfirmed[0].get("error") or "wordpress_unreadable")
+        err(f"{code}: 鍵の利用者が {p['wp_user']} だと確かめられなかったので、鍵を書いていません"
+            f"（{'今の鍵はそのまま' if token_present else '鍵は無いまま'}）")
+        return 1
     try:
         with principals.token_lock(name):
             path = principals.write_token_locked(name, data)
@@ -790,15 +984,24 @@ def run_auth_wordpress(name, *, by, force=False, forget=False, use_stdin=False, 
         return 2
     admin_log.append("principal_auth", name, subject, by=by, diff={"token": [token_present, True]})
     out(f"鍵を書きました: {path}（0600・値は表示しません）")
-    return 0 if probe_wordpress(name, principals.load_principal(name), out=out, adapter_factory=adapter_factory) else 1
+    return 0 if _say_wordpress(name, p, rows, out=out) else 1
 
 
-def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> bool:
-    """各サイトの `users/me` を 1 回読む（鍵の確かめ）。読めなければ符丁と直し方を 1 行ずつ。"""
-    from . import refusal
+def wordpress_identity_confirmed(who) -> bool:
+    """`users/me` の答えで、鍵の利用者が主体の `wp_user` と同じだと分かったか（ホストの食い違いは利用者は合っている）。"""
+    return bool(who.get("ok")) or who.get("error") == "wordpress_home_host_mismatch"
+
+
+def _wordpress_whoami_all(name, principal_cfg, *, adapter_factory=None, token=None) -> list:
+    """各サイトの `users/me` を 1 回ずつ読む。`token` を渡せば、ファイルでなくその鍵で読む（書く前の確かめ）。"""
     from .adapters import wordpress
-    make = adapter_factory or wordpress.factory
-    ok = True
+    if adapter_factory is not None:
+        make = adapter_factory
+    elif token is not None:
+        make = lambda cfg, pcfg: wordpress.WordPressAdapter(cfg, pcfg, token=wordpress.check_token(token, pcfg.get("wp_user")))  # noqa: E731
+    else:
+        make = wordpress.factory
+    rows = []
     for blog in principal_cfg.get("blogs") or []:
         cfg = {"blog_id": blog["blog_id"], "token": principal_cfg["token"], "media": "wordpress",
                "principal": name}
@@ -806,6 +1009,20 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
             who = make(cfg, principal_cfg).whoami()
         except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ）
             who = {"ok": False, "error": getattr(exc, "code", "wordpress_token_invalid"), "strong": None}
+        rows.append((blog, who))
+    return rows
+
+
+def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> bool:
+    """各サイトの `users/me` を 1 回読む（鍵の確かめ）。読めなければ符丁と直し方を 1 行ずつ。"""
+    rows = _wordpress_whoami_all(name, principal_cfg, adapter_factory=adapter_factory)
+    return _say_wordpress(name, principal_cfg, rows, out=out)
+
+
+def _say_wordpress(name, principal_cfg, rows, *, out=print, written=True) -> bool:
+    from . import refusal
+    ok = True
+    for blog, who in rows:
         if who["ok"]:
             out(f"{blog['blog_id']}: 読めました（鍵の利用者 {who['user']}・役割 {'・'.join(who['roles']) or '不明'}）")
             if who["strong"]:
@@ -815,7 +1032,7 @@ def probe_wordpress(name, principal_cfg, *, out=print, adapter_factory=None) -> 
             ok = False
             out(f"{blog['blog_id']}: 鍵は通りました（鍵の利用者 {who['user']}）が、記事の URL のホストが "
                 f"{who['home_host']} で、入口の {principals.site_host(principal_cfg, blog['blog_id'])} と違います"
-                f"（wordpress_home_host_mismatch・鍵は置いたまま）")
+                f"（wordpress_home_host_mismatch・{'鍵は置いたまま' if written else '鍵はまだ書いていません'}）")
             for line in refusal.tail("wordpress_home_host_mismatch"):
                 out(f"  {line}")
         else:
@@ -845,9 +1062,16 @@ def cmd_auth(args) -> int:
             return 2
         return run_auth_wordpress(args.name, by=args.by, force=args.force, forget=args.forget,
                                   use_stdin=getattr(args, "stdin", False))
-    if getattr(args, "stdin", False):
-        print("principal_invalid: --stdin は WordPress の主体だけです（はてなは端末の対話で受けます）", file=sys.stderr)
-        return 2
+    if getattr(args, "begin", False) or getattr(args, "stdin", False):
+        if args.forget or args.forget_consumer:
+            print("principal_invalid: --begin・--stdin と --forget・--forget-consumer は一緒に使えません", file=sys.stderr)
+            return 2
+        if getattr(args, "begin", False) and (getattr(args, "stdin", False) or args.consumer):
+            print("principal_invalid: --begin は秘密を読みません（--stdin・--consumer と一緒に使えません）",
+                  file=sys.stderr)
+            return 2
+        return run_auth_hatena_stdin(args.name, by=args.by, force=args.force, consumer=args.consumer,
+                                     begin=getattr(args, "begin", False))
     return run_auth(args.name, by=args.by, force=args.force, forget=args.forget,
                     forget_consumer=args.forget_consumer, consumer=args.consumer)
 
@@ -900,5 +1124,8 @@ def register(sub) -> None:
                       help="token と consumer を消す")
     p_auth.add_argument("--consumer", action="store_true", help="consumer key／secret を入れ直す（token は触らない）")
     p_auth.add_argument("--stdin", action="store_true",
-                        help="WordPress の主体だけ: アプリケーションパスワードを標準入力の 1 行目から読む（引数では受けない）")
+                        help="標準入力から読む（引数では受けない）。WordPress: アプリケーションパスワードの 1 行。"
+                             "はてな: 確認の文字列の 1 行（先に --begin）、--consumer と一緒なら consumer key と secret の 2 行")
+    p_auth.add_argument("--begin", action="store_true",
+                        help="はてなだけ: 置いてある consumer で認可の URL を出す（秘密は読まない・確認の文字列は --stdin で）")
     p_auth.set_defaults(func=cmd_auth)

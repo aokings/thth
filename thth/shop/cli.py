@@ -295,7 +295,7 @@ def cmd_token_set(args) -> int:
         before = ledger.load_token(cfg)
     except StoreRefused:
         before = None
-    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     ledger.write_token(cfg, {"access_token": value, "expires_on": day.isoformat(), "obtained_at": ledger.now_iso(),
                              "shop_id": shop["shop_id"]})
@@ -343,7 +343,7 @@ def _token_set_stores(args, cfg, by, prompt=PROMPT_STORES) -> int:
         before = ledger.load_token(cfg)
     except StoreRefused:
         before = None
-    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     expires_on = day.isoformat() if day else None
     ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
@@ -389,7 +389,7 @@ def _token_set_smaregi(args, cfg, by) -> int:
         before = ledger.load_token(cfg)
     except StoreRefused:
         before = None
-    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+    if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
                              "expires_on": None, "no_expiry": True})
@@ -445,7 +445,7 @@ def _token_set_shopify(args, cfg, by) -> int:
             before = ledger.load_token(cfg)
         except StoreRefused:
             before = None
-        if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"] and not args.force:
+        if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
             raise StoreRefused("store_shop_mismatch")
         access.clear(args.store)
         ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
@@ -1001,7 +1001,10 @@ def register(verbs) -> None:
                             "カスタムアプリの固定の鍵の 1 行")
     p_set.add_argument("--by", required=True)
     p_set.add_argument("--stdin", action="store_true", help="標準入力から黙って 1 行読む（パイプ用）")
-    p_set.add_argument("--force", action="store_true", help="前の鍵と別の店でも置き換える")
+    # **別の店の照合は --force でも覆さない**（monban の秘密の入力口の前提・2026-11-27）。旗は前の版の打ち方を
+    # argparse の断りで落とさないために残す（効き目は無い）。別の店に替えるなら remove して add し直す。
+    p_set.add_argument("--force", action="store_true",
+                       help="（効き目なし・前の版との互換）別の店の鍵には替えない。替えるなら remove して add し直す")
     p_set.set_defaults(func=_run(cmd_token_set))
 
     for verb, help_text, func in (("whoami", "鍵の確かめ・店の名前と URL・鍵の期限", cmd_whoami),

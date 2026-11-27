@@ -137,7 +137,7 @@ def test_token_setもusernameが無ければrc1で既存tokenは不変(tmp_path,
 
 def test_token_setはidとusernameが有れば従来どおり保存する(tmp_path, isolated_account_factory):
     token_path = tmp_path / "account.token"
-    account = isolated_account_factory(token=str(token_path))
+    account = isolated_account_factory(token=str(token_path), user_id="1")
 
     orig_whoami = threads_mod.ThreadsAdapter.whoami
     threads_mod.ThreadsAdapter.whoami = lambda self: {"user_id": "1", "username": "nigamilab"}

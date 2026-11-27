@@ -290,6 +290,11 @@ def test_token_setは過ぎた期限と別の店を断る(capsys, env):
     env["shop_id"] = "another"
     rc_, _, err = run(capsys, "shop", "token", "set", STORE, "--expires", "2027-01-31", "--by", "m")
     assert rc_ == 2 and "store_shop_mismatch" in err
+    # --force でも覆さない（2026-11-27・monban の秘密の入力口の前提）。今の鍵はそのまま。
+    before = open(ledger.load(STORE)["token"], "rb").read()
+    rc_, _, err = run(capsys, "shop", "token", "set", STORE, "--expires", "2027-01-31", "--by", "m", "--force")
+    assert rc_ == 2 and "store_shop_mismatch" in err
+    assert open(ledger.load(STORE)["token"], "rb").read() == before
 
 
 def test_鍵の期限が近いと知らせ過ぎていれば打たない(capsys, env):

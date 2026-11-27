@@ -120,7 +120,7 @@ def test_debug_tokenの応答にscopesが無ければNone(monkeypatch):
 
 
 def test_token_setはnullとunknownを書く(tmp_path, monkeypatch, isolated_account_factory):
-    acc = _account(isolated_account_factory, tmp_path)
+    acc = _account(isolated_account_factory, tmp_path, user_id="999999")
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(acc["name"], input_func=lambda: "PASTED-TOKEN\n",

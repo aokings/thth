@@ -56,25 +56,25 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
                 log('既に token があります。入れ替えるなら --force を付けてください');return 1
         # Neither terminal/stdin waiting nor createSession holds the admin lock.
         if identifier_input is not None and oauth.handle_matches(identifier,identifier_input(),media='bluesky') is not True:
-            log('保存しませんでした: 入力handleが台帳と一致しません');return 1
+            log('bluesky_account_mismatch: 保存しませんでした: 入力handleが台帳と一致しません');return 1
         raw=password_input()
         if not isinstance(raw,str):raise FlowError('bluesky_app_password_invalid')
         password=secret(raw.strip())
         if not password or not bluesky.APP_PASSWORD_RE.fullmatch(password):
-            log('App Password の形（xxxx-xxxx-xxxx-xxxx）ではありません');return 1
+            log('bluesky_app_password_invalid: App Password の形（xxxx-xxxx-xxxx-xxxx）ではありません');return 1
         with leave_gate.lease(account),leave_gate.credentials():
             try:
                 token=bluesky.create_session(service,identifier,password)
             except (OSError,ValueError,RuntimeError):
                 # Provider/network exceptions may contain response bodies or headers.
-                log('Bluesky createSession が失敗しました。App Password と接続先を確認してください');return 1
+                log('bluesky_session_failed: Bluesky createSession が失敗しました。App Password と接続先を確認してください');return 1
             if (not isinstance(token,dict) or not isinstance(token.get('accessJwt'),str) or not token['accessJwt']
                     or not isinstance(token.get('did'),str) or not token['did']
                     or not isinstance(token.get('handle'),str) or not token['handle']
                     or any(ord(c)<32 or ord(c)==127 for c in token['did']+token['handle'])
                     or oauth.handle_matches(identifier,token['handle'],media='bluesky') is not True
                     or cfg.get('user_id') and token['did']!=cfg['user_id']):
-                log('保存しませんでした: 本人の id/handle が欠けているか台帳と一致しません');return 1
+                log('bluesky_account_mismatch: 保存しませんでした: 本人の id/handle が欠けているか台帳と一致しません');return 1
             # Persist only the App Password; temporary JWTs from createSession stay RAM-only.
             result=dict(identifier=identifier,app_password=password,did=token['did'],handle=token['handle'],
                         user_id=token['did'],username=token['handle'],no_expiry=True,obtained_at=jst.iso(),

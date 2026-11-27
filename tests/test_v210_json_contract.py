@@ -174,6 +174,8 @@ COMMANDS += ['review weekly']
 COMMANDS += ['hold']
 # 括りの段 1: 括りの器（管理者）。
 COMMANDS += ['admin ws list', 'admin ws show', 'admin ws add', 'admin ws media add']
+# 11/27: monban の家の係の表を書くための種類の一覧（値は出さない）。
+COMMANDS += ['secret kinds']
 
 
 def test_json_table_covers_every_parser():

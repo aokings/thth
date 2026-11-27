@@ -194,19 +194,21 @@ def test_柵_写しを進めない間は日をまたいでも同じ違いの下�
 
 # ------------------------------------------------------------------ 4: 別の店の鍵に替えたら基準を取り直す
 
-def test_柵_別の店の鍵に替えたら写しを捨てて基準を取り直す(capsys, env, isolated_account_factory):
-    account = isolated_account_factory()
+def test_柵_別の店の鍵にはforceでも替えず写しも鍵もそのまま(capsys, env, isolated_account_factory):
+    """2026-11-27（monban の秘密の入力口の前提）: 前は --force で別の店の鍵に置き換えて写しを捨てた。人が見て
+    いない入力口から別の店の鍵が届いても、今の鍵と写しを守る。別の店に替えるなら remove して add し直す。"""
+    isolated_account_factory()
     setup_store(capsys, env)
     assert run(capsys, "shop", "diff", STORE)[0] == 0
+    cfg = ledger.load(STORE)
+    before = pathlib.Path(cfg["token"]).read_bytes()
+    snapshot = ledger.read_snapshot(STORE)
     env["shop_id"] = "another-shop"
     env["items"] = [item(i) for i in range(70, 75)]
     rc_, out, err = run(capsys, "shop", "token", "set", STORE, "--expires", "2027-01-31", "--by", "m", "--force")
-    assert rc_ == 0, err
-    assert "写しを捨てました" in out
-    rc_, value, _ = jrun(capsys, "shop", "diff", STORE)
-    assert rc_ == 0 and value["baseline"] is True and value["changes"] == []
-    snapshot = ledger.read_snapshot(STORE)
-    assert snapshot["shop_id"] == "another-shop"
+    assert rc_ == 2 and "store_shop_mismatch" in err, (out, err)
+    assert pathlib.Path(cfg["token"]).read_bytes() == before, "--force で別の店の鍵に置き換えた"
+    assert ledger.read_snapshot(STORE) == snapshot
 
 
 def test_写しの店が鍵の店と違えばdraftは作らずdiffは取り直す(capsys, env, isolated_account_factory):
