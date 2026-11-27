@@ -31,4 +31,4 @@ Claude のデスクトップの `claude_desktop_config.json` の `mcpServers` �
 }
 ```
 
-会話で「thth_ui_probe を呼んで」と頼み、(1) 記録に `io.modelcontextprotocol/ui` が出るか、(2) 会話の中に表が出るか、を見る。済んだら 1 本を外す。
+会話で「thth_ui_probe を呼んで」と頼み、(1) 記録に `io.modelcontextprotocol/ui` が出るか、(2) 会話の中に表が出るか、(3) 演出（顔のまばたき・行のふわっと・きらめきの GIF）が出るか、を見る。済んだら 1 本を外す。

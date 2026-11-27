@@ -9,12 +9,36 @@
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; }
   .note { color: #666; font-size: 13px; }
+  /* 演出（設計 §1-4）: 動きの芯は CSS と SVG。GIF は小さい飾りだけ（data: で埋める・既定の CSP で読める） */
+  .head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .face { width: 28px; height: 28px; flex: none; }
+  .face .eye { transform-origin: center 13px; animation: blink 4s infinite; }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+  .dots span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: #f0a040;
+               animation: hop 1s infinite ease-in-out; }
+  .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+  tbody tr { opacity: 0; animation: rise .35s ease-out forwards; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .sparkle { width: 16px; height: 16px; vertical-align: -3px; margin-left: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    .face .eye, .dots span, tbody tr { animation: none; opacity: 1; }
+    .sparkle { display: none; }
+  }
   @media (prefers-color-scheme: dark) { body { color: #eee; } th, td { border-color: #444; } .note { color: #aaa; } }
 </style>
 </head>
 <body>
-<h1>THTH の予定（確かめ）</h1>
-<p class="note" id="state">画面は読み込まれた。host からの結果を待っている。</p>
+<div class="head">
+<svg class="face" viewBox="0 0 28 28" aria-hidden="true">
+  <circle cx="14" cy="15" r="12" fill="#ffd27a"/>
+  <g class="eye"><ellipse cx="10" cy="13" rx="1.6" ry="2.2" fill="#3a2a1a"/><ellipse cx="18" cy="13" rx="1.6" ry="2.2" fill="#3a2a1a"/></g>
+  <path d="M10.5 18.5 Q14 21 17.5 18.5" stroke="#3a2a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+  <circle cx="7.5" cy="17" r="1.6" fill="#ff9f8a" opacity=".7"/><circle cx="20.5" cy="17" r="1.6" fill="#ff9f8a" opacity=".7"/>
+</svg>
+<h1 style="margin:0">THTH の予定（確かめ）</h1>
+</div>
+<p class="note"><span id="state">画面は読み込まれた。host からの結果を待っている。</span> <span class="dots" id="dots"><span></span><span></span><span></span></span></p>
 <table id="list" hidden>
   <thead><tr><th>番号</th><th>口座</th><th>状態</th><th>出す時刻</th></tr></thead>
   <tbody></tbody>
@@ -22,6 +46,7 @@
 <script>
 // 橋渡しは手書き（SDK を使わない・設計 §2 の 6 (a)）。使う口は ui/initialize と結果の受け取りだけ。
 (function () {
+  var SPARKLE = "data:image/gif;base64,R0lGODlhIAAgAIEAAAAAAP+qPAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQJCQAAACwAAAAAIAAgAAAIYQABCBxIsKDBgwgTKlzIsKHDhxAjSpwoMQDFhRYvJsyo0WCAjx09ggxJ8CNHkgBMohRociTJlicnwpzpkiHNmzMf4mzZEeZKnz9rvhQaUuXKlESLHh0YE2XTpVCjSp3qMCAAIfkECQkAAAAsBAAEABgAGACBAAAA/6o8AAAAAAAACFYAAQgcSFBggIIIExY8qLDhQocQAQSYGLHhRIYVEV7MmHAjx4UUPw68GFIkSYwfT2Y8ydLjyJYwYYKM6TKiSpESSeLMWTNlSZw9faI0+RPoToJDjToMCAAh+QQJEgAAACwDAAMAGgAaAIEAAAD/qjwAAAAAAAAIXwABCBxIcGCAgggTJjyosOFChxANBmAYseFEihUXTsxocSNHjRg/Sgwp8qJHkQJNkuSo8qPKlyYLwpxJ8+TImjYjtkSZMiZPADt/Xvw5kmjPlS5zohxqFGjTlE+dQgwIACH5BAkJAAAALAMAAwAbABsAgQAAAP+qPAAAAAAAAAhgAAEIHEhwYICCCBMqPKiw4UKHEAkGmBgx4kSGFRtezOhwI8eFFD8m9ChS4kWMJQGcRFlypciVME8ijEmzJkmDNmV+dJlSIM+eP4GG7OlzKNGbQlmmRLrU6FGiBZUCrRgQACH5BAkSAAAALAMAAwAaABoAgQAAAP+qPAAAAAAAAAhfAAEIHEhwYICCCBMmPKiw4UKHEA0GYBix4USKFRdOzGhxI0eNGD9KDCnyokeRAk2S5Kjyo8qXJgvCnEnz5MiaNiO2RJkyJk8AO39e/DmSaM+VLnOiHGoUaNOUT51CDAgAIfkECQkAAAAsBAAEABgAGACBAAAA/6o8AAAAAAAACFYAAQgcSFBggIIIExY8qLDhQocQAQSYGLHhRIYVEV7MmHAjx4UUPw68GFIkSYwfT2Y8ydLjyJYwYYKM6TKiSpESSeLMWTNlSZw9faI0+RPoToJDjToMCAA7";
   var nextId = 1, pending = {};
   function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*"); }
   function request(method, params) {
@@ -42,8 +67,13 @@
       });
       tbody.appendChild(tr);
     });
+    Array.prototype.forEach.call(tbody.children, function (tr, i) { tr.style.animationDelay = (i * 0.08) + "s"; });
     document.getElementById("list").hidden = false;
+    document.getElementById("dots").hidden = true;
     setState((data.note || "") + "・" + data.items.length + " 件");
+    var img = document.createElement("img");
+    img.className = "sparkle"; img.alt = ""; img.src = SPARKLE;
+    document.getElementById("state").appendChild(img);
     send({ method: "ui/notifications/size-changed",
            params: { width: document.body.scrollWidth, height: document.body.scrollHeight + 24 } });
   }

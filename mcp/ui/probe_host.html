@@ -3,7 +3,16 @@
 <head><meta charset="utf-8"><title>host の代わり（確かめ用）</title></head>
 <body>
 <p id="log">host の代わり: 待っている</p>
-<iframe id="v" src="probe.html" style="width:100%;height:300px;border:1px solid #999"></iframe>
+<iframe id="v" sandbox="allow-scripts" style="width:100%;height:300px;border:1px solid #999"></iframe>
+<script>
+// 仕様の既定の CSP（ui.csp を言わないとき host が掛ける物・apps.mdx「Restrictive Default」）を掛けて読む。
+var CSP = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+          "img-src 'self' data:; media-src 'self' data:; connect-src 'none';";
+fetch("probe.html").then(function (r) { return r.text(); }).then(function (html) {
+  document.getElementById("v").srcdoc = html.replace("<head>",
+    '<head><meta http-equiv="Content-Security-Policy" content="' + CSP + '">');
+});
+</script>
 <script>
 // probe.html の橋渡しだけを確かめる偽の host。本物の host（Claude のデスクトップ）の代わりにはならない。
 var seen = [];
