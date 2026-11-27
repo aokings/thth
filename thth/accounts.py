@@ -377,6 +377,12 @@ def ws_root() -> str:
     （段 5）までは共通の根にいるので、`ws/main/` が無ければ共通の根を返す（今の本番と同じ）。
     それ以外の括りでフォルダが無ければ `workspace_unavailable` で断る（黙って根に倒さない）。
 
+    **main の 2 つの形を見分けるのは `workspace_dir()` の 1 か所だけ**（段 5・`tools/ws_move_main.py`）:
+    `ws/main/` があれば移したあと、無ければ移す前。移す台本は中身を `ws/.main-staging/` に集めてから
+    最後に 1 回の rename で `ws/main` にするので、半分だけ移った `ws/main/` は見えない。移す・戻すの
+    途中は印 `ws/.main-move/MOVING` があり、その間は main を `workspace_moving` で断る（R11: 名指しの
+    無い打ち方が、半分空の根を黙って main として読まない）。
+
     **accounts.py の外で `thth_root()` を呼ばない**（tests/test_ws_roots.py の柵）。
     """
     return workspace_dir(current_workspace())
@@ -384,6 +390,12 @@ def ws_root() -> str:
 
 WS_ENV = "THTH_WS"
 MAIN_WS = "main"
+# 段 5（main を `ws/main/` へ移す夜）の印。`tools/ws_move_main.py` と同じ綴り（tests/test_ws_main_move.py が照らす）。
+MAIN_MOVE_DIR = ".main-move"
+MAIN_MOVING_MARK = "MOVING"
+# R11: 名指しの無い打ち方（`THTH_WS` も鍵も無い）を main と読むのは、この版まで（段 6 で「VM の上では名指しが要る」に替える）。
+# 版を上げてこの値に届くと tests/test_ws_main_move.py が赤になり、替え忘れを止める。
+MAIN_DEFAULT_UNTIL = "6.1.0"
 WS_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 _WS_CTX: contextvars.ContextVar = contextvars.ContextVar("thth_workspace", default=None)
 
@@ -411,6 +423,8 @@ def workspace_dir(name: str) -> str:
     path = os.path.join(workspaces_base(), name)
     if os.path.islink(path) or os.path.islink(workspaces_base()):
         raise WorkspaceError("workspace_unavailable")
+    if name == MAIN_WS and os.path.lexists(os.path.join(workspaces_base(), MAIN_MOVE_DIR, MAIN_MOVING_MARK)):
+        raise WorkspaceError("workspace_moving")
     if os.path.isdir(path):
         return path
     if name == MAIN_WS:

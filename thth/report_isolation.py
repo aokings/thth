@@ -73,7 +73,12 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
         raise IsolationError("private_root_required")
     if not os.environ.get("THTH_ROOT") or Path(accounts.common_root()).resolve() != resolved:
         raise IsolationError("root_mismatch")
-    account_dir = resolved / "accounts"
+    # 括りの物（台帳・止め・報告の箱・広告の台帳）は括りの根に、管理者の物（state/_admin）は共通の根にある。
+    # main を `ws/main/` へ移したあと（段 5）も、括りの根は共通の根の中でなければならない。
+    ws = Path(accounts.ws_root()).resolve()
+    if not ws.is_relative_to(resolved):
+        raise IsolationError("root_mismatch")
+    account_dir = ws / "accounts"
     if not account_dir.is_dir() or Path(accounts.accounts_dir_info()["path"]).resolve() != account_dir:
         raise IsolationError("account_registry_mismatch")
 
@@ -126,13 +131,14 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
                         continue
 
     scan(account_dir)  # Account definitions must be safe before load_account opens them.
-    scan(resolved / "state" / "_leave")
+    scan(ws / "state" / "_leave")
     scan(resolved / "state" / "_admin")  # Shared administrator state is report-readable too.
     # 報告の口（設計 3.1.2）の置き場も共有の読み場。symlink・特殊ファイルを同じ門で断る。
-    scan(resolved / "state" / "_reports")
+    # 置き場は `report_inbox` が引く括りの根の下（private_store → state_dir_for）。
+    scan(ws / "state" / "_reports")
     # 広告の口座の台帳（設計 広告の資格と遠くの道 案 B）。行の名前が `adaccounts/` にあれば、その台帳も
     # 同じ門で見る。置き場は行に広告の名前が無くても歩く（symlink・特殊ファイルを今より多く断る側）。
-    ad_dir = resolved / "adaccounts"
+    ad_dir = ws / "adaccounts"
     if ad_dir.exists() or ad_dir.is_symlink():
         scan(ad_dir)
 
