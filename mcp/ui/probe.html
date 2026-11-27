@@ -21,8 +21,15 @@
   tbody tr { opacity: 0; animation: rise .35s ease-out forwards; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .sparkle { width: 16px; height: 16px; vertical-align: -3px; margin-left: 4px; }
+  /* 消える時: 縮みながら薄れて消え、痕の 1 行を残す（消えた物を見落とさない） */
+  tbody tr.leaving { animation: leave .3s ease-in forwards; }
+  tbody tr.leaving td { animation: squash .3s ease-in forwards; }
+  @keyframes leave { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(14px); } }
+  @keyframes squash { to { padding-top: 0; padding-bottom: 0; line-height: 0; border-color: transparent; } }
+  .trace { color: #888; font-size: 13px; margin: 6px 0 0; animation: rise .35s ease-out; }
+  .trace .gone { text-decoration: line-through; }
   @media (prefers-reduced-motion: reduce) {
-    .face .eye, .dots span, tbody tr { animation: none; opacity: 1; }
+    .face .eye, .dots span, tbody tr, .trace { animation: none; opacity: 1; }
     .sparkle { display: none; }
   }
   @media (prefers-color-scheme: dark) { body { color: #eee; } th, td { border-color: #444; } .note { color: #aaa; } }
@@ -43,6 +50,7 @@
   <thead><tr><th>番号</th><th>口座</th><th>状態</th><th>出す時刻</th></tr></thead>
   <tbody></tbody>
 </table>
+<p class="trace" id="trace" hidden></p>
 <script>
 // 橋渡しは手書き（SDK を使わない・設計 §2 の 6 (a)）。使う口は ui/initialize と結果の受け取りだけ。
 (function () {
@@ -55,27 +63,55 @@
     return new Promise(function (resolve, reject) { pending[id] = { resolve: resolve, reject: reject }; });
   }
   function setState(t) { document.getElementById("state").textContent = t; }
+  var REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function row(it) {
+    var tr = document.createElement("tr");
+    tr.dataset.id = it.id;
+    [it.id, it.account, it.status, it.publish_at || "（未定）"].forEach(function (v) {
+      var td = document.createElement("td"); td.textContent = String(v); tr.appendChild(td);
+    });
+    return tr;
+  }
+  function resized() {
+    send({ method: "ui/notifications/size-changed",
+           params: { width: document.body.scrollWidth, height: document.body.scrollHeight + 24 } });
+  }
   function render(result) {
     var data = result && result.structuredContent;
     if (!data || !Array.isArray(data.items)) { setState("結果に一覧が無い。"); return; }
     var tbody = document.querySelector("#list tbody");
-    tbody.textContent = "";
-    data.items.forEach(function (it) {
-      var tr = document.createElement("tr");
-      [it.id, it.account, it.status, it.publish_at || "（未定）"].forEach(function (v) {
-        var td = document.createElement("td"); td.textContent = String(v); tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
+    var keep = {}; data.items.forEach(function (it) { keep[it.id] = true; });
+    var have = {}; var gone = [];
+    Array.prototype.forEach.call(tbody.querySelectorAll("tr:not(.leaving)"), function (tr) {
+      if (keep[tr.dataset.id]) { have[tr.dataset.id] = tr; return; }
+      gone.push(tr.dataset.id);
+      if (REDUCED) { tr.remove(); return; }
+      tr.classList.add("leaving");
+      tr.addEventListener("animationend", function (e) { if (e.target === tr) { tr.remove(); resized(); } });
     });
-    Array.prototype.forEach.call(tbody.children, function (tr, i) { tr.style.animationDelay = (i * 0.08) + "s"; });
+    var fresh = 0;
+    data.items.forEach(function (it) {
+      if (have[it.id]) return;
+      var tr = row(it); tr.style.animationDelay = (fresh++ * 0.08) + "s"; tbody.appendChild(tr);
+    });
+    var trace = document.getElementById("trace");
+    if (gone.length) {
+      trace.textContent = gone.length + " 件 消えた（";
+      gone.forEach(function (id, k) {
+        var sp = document.createElement("span"); sp.className = "gone"; sp.textContent = id;
+        trace.appendChild(sp); if (k < gone.length - 1) trace.appendChild(document.createTextNode("・"));
+      });
+      trace.appendChild(document.createTextNode("）"));
+      trace.hidden = false;
+      trace.style.animation = "none"; void trace.offsetWidth; trace.style.animation = "";
+    }
     document.getElementById("list").hidden = false;
     document.getElementById("dots").hidden = true;
     setState((data.note || "") + "・" + data.items.length + " 件");
     var img = document.createElement("img");
     img.className = "sparkle"; img.alt = ""; img.src = SPARKLE;
     document.getElementById("state").appendChild(img);
-    send({ method: "ui/notifications/size-changed",
-           params: { width: document.body.scrollWidth, height: document.body.scrollHeight + 24 } });
+    resized();
   }
   window.addEventListener("message", function (ev) {
     var m = ev.data;

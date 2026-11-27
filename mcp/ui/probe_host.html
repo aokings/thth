@@ -3,6 +3,7 @@
 <head><meta charset="utf-8"><title>host の代わり（確かめ用）</title></head>
 <body>
 <p id="log">host の代わり: 待っている</p>
+<button id="drop">1 件減らす（次の結果を送る）</button>
 <iframe id="v" sandbox="allow-scripts" style="width:100%;height:300px;border:1px solid #999"></iframe>
 <script>
 // 仕様の既定の CSP（ui.csp を言わないとき host が掛ける物・apps.mdx「Restrictive Default」）を掛けて読む。
@@ -16,6 +17,15 @@ fetch("probe.html").then(function (r) { return r.text(); }).then(function (html)
 <script>
 // probe.html の橋渡しだけを確かめる偽の host。本物の host（Claude のデスクトップ）の代わりにはならない。
 var seen = [];
+var ITEMS = [
+  { id: "d-001", account: "sample-threads", status: "approved", publish_at: "2026-12-01T09:00:00+09:00" },
+  { id: "d-002", account: "sample-bluesky", status: "draft", publish_at: "2026-12-01T12:30:00+09:00" },
+  { id: "d-003", account: "sample-threads", status: "draft", publish_at: null }];
+document.getElementById("drop").addEventListener("click", function () {
+  ITEMS.splice(1, 1);
+  document.getElementById("v").contentWindow.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result",
+    params: { content: [{ type: "text", text: "見本" }], structuredContent: { note: "見本（偽のデータ）", items: ITEMS.slice() } } }, "*");
+});
 function log(t) { seen.push(t); document.getElementById("log").textContent = "host の代わり: " + seen.join(" → "); }
 window.addEventListener("message", function (ev) {
   var m = ev.data, w = document.getElementById("v").contentWindow;
@@ -28,9 +38,7 @@ window.addEventListener("message", function (ev) {
     w.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: {} } }, "*");
     w.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: {
       content: [{ type: "text", text: "見本" }],
-      structuredContent: { note: "見本（偽のデータ）", items: [
-        { id: "d-001", account: "sample-threads", status: "approved", publish_at: "2026-12-01T09:00:00+09:00" },
-        { id: "d-003", account: "sample-threads", status: "draft", publish_at: null }] } } }, "*");
+      structuredContent: { note: "見本（偽のデータ）", items: ITEMS.slice() } } }, "*");
   }
 });
 </script>
