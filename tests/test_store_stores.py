@@ -255,17 +255,20 @@ def test_違うクレデンシャルは保存しない(capsys, env, status):
     assert "スタンダードプラン" in rc.CATALOG["store_token_rejected"]["why"]
 
 
-def test_別の店のクレデンシャルは前向きに断りforceで置き換えて写しを捨てる(capsys, env):
+def test_別の店のクレデンシャルは前向きに断りforceでも置き換えない(capsys, env):
+    """2026-11-27（monban の秘密の入力口の前提）: 前は --force で置き換えて写しを捨てた。今は覆さない。"""
     setup_store(capsys, env)
     assert run(capsys, "shop", "diff", STORE)[0] == 0
+    before = pathlib.Path(ledger.load(STORE)["token"]).read_bytes()
     env["store"] = {"id": "77b0ba9ed7785100a418d4f9", "name": "OTHER"}
     env["lines"][:] = [env["credential"]]
     rc_, err = erun(capsys, "shop", "token", "set", STORE, "--by", "m")
     assert rc_ == 2 and "store_shop_mismatch" in err
     env["lines"][:] = [env["credential"]]
-    rc_, out, err = run(capsys, "shop", "token", "set", STORE, "--by", "m", "--force")
-    assert rc_ == 0 and "前の店の写しを捨てました" in out
-    assert ledger.read_snapshot(STORE) is None
+    rc_, err = erun(capsys, "shop", "token", "set", STORE, "--by", "m", "--force")
+    assert rc_ == 2 and "store_shop_mismatch" in err
+    assert pathlib.Path(ledger.load(STORE)["token"]).read_bytes() == before
+    assert ledger.read_snapshot(STORE) is not None
 
 
 def test_店の種類と鍵の形が合わなければ読まない(capsys, env):
