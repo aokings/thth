@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>THTH の予定（確かめ）</title>
+<style>
+  body { font: 15px/1.7 system-ui, -apple-system, "Hiragino Sans", sans-serif; margin: 12px; color: #222; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; }
+  .note { color: #666; font-size: 13px; }
+  @media (prefers-color-scheme: dark) { body { color: #eee; } th, td { border-color: #444; } .note { color: #aaa; } }
+</style>
+</head>
+<body>
+<h1>THTH の予定（確かめ）</h1>
+<p class="note" id="state">画面は読み込まれた。host からの結果を待っている。</p>
+<table id="list" hidden>
+  <thead><tr><th>番号</th><th>口座</th><th>状態</th><th>出す時刻</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+// 橋渡しは手書き（SDK を使わない・設計 §2 の 6 (a)）。使う口は ui/initialize と結果の受け取りだけ。
+(function () {
+  var nextId = 1, pending = {};
+  function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*"); }
+  function request(method, params) {
+    var id = nextId++;
+    send({ id: id, method: method, params: params });
+    return new Promise(function (resolve, reject) { pending[id] = { resolve: resolve, reject: reject }; });
+  }
+  function setState(t) { document.getElementById("state").textContent = t; }
+  function render(result) {
+    var data = result && result.structuredContent;
+    if (!data || !Array.isArray(data.items)) { setState("結果に一覧が無い。"); return; }
+    var tbody = document.querySelector("#list tbody");
+    tbody.textContent = "";
+    data.items.forEach(function (it) {
+      var tr = document.createElement("tr");
+      [it.id, it.account, it.status, it.publish_at || "（未定）"].forEach(function (v) {
+        var td = document.createElement("td"); td.textContent = String(v); tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    document.getElementById("list").hidden = false;
+    setState((data.note || "") + "・" + data.items.length + " 件");
+    send({ method: "ui/notifications/size-changed",
+           params: { width: document.body.scrollWidth, height: document.body.scrollHeight + 24 } });
+  }
+  window.addEventListener("message", function (ev) {
+    var m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id && pending[m.id] && !m.method) {
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(m.error); else p.resolve(m.result);
+      return;
+    }
+    if (m.method === "ui/notifications/tool-result") render(m.params);
+  });
+  request("ui/initialize", {
+    appInfo: { name: "thth-ui-probe", version: "0.0.1" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }).then(function () {
+    send({ method: "ui/notifications/initialized" });
+    setState("host とつながった。結果を待っている。");
+  }, function (e) { setState("host とつながらない: " + JSON.stringify(e)); });
+})();
+</script>
+</body>
+</html>
