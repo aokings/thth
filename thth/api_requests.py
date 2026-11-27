@@ -18,7 +18,7 @@ Meta の口（`server_meta`）の答えの本文・相手・配信の宛先も�
 （送り直しの答えはその欄が null で `not_kept` に名前が入る）。
 遠くの道で行ったことは `via: api` と鍵の id（credential_digest の先頭 12 字）で口座の記録に残る。
 
-括りの段 2（レーンの鍵・資格の行に `workspace` と `lane`）: 鍵の表は口座ごとでなく**括りごと**
+括りの段 2（レーンの鍵・括りの表 `ws/<括り>/private/lane-keys.json`・`thth/lane_keys.py`）: 鍵の表は口座ごとでなく**括りごと**
 （`workspace_key_table`・{sha256, workspace, expires_at}）。依頼は Worker の括りの束から `workspace` の欄つきで届く。
 レーンの鍵は括りの束からだけ、括りの束にはレーンの鍵だけが入れる（どちらも違えば「無い鍵」と同じ `invalid_key`）。
 対応表で括りの持ち主が鍵の持ち主でなくなっていれば、表にも載せず、依頼も「無い鍵」と同じに断る。

@@ -72,6 +72,12 @@ def _expiry(value):
     return parsed
 
 
+# 資格の行の欄（main の版と同じ集合・括りの段 2 で**足さない**と決めた・設計 叩き台 §8 R1）。
+# 欄を足すと、古い版に戻したときに資格のファイルごと読めなくなり、全部の鍵が止まる。括りとレーンは
+# `thth/lane_keys.py` の表に置く。柵 `tests/test_ws_lane_keys_file.py`。
+CREDENTIAL_FIELDS = frozenset(("sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor"))
+
+
 def load_credentials(path: Path):
     """Reload every request. Only owner-private regular files, never symlinks/FIFO.
 
@@ -100,7 +106,7 @@ def load_credentials(path: Path):
         credentials = []
         seen = set()
         for item in config["credentials"]:
-            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor", "workspace", "lane"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
+            if type(item) is not dict or set(item) - CREDENTIAL_FIELDS or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
                 raise ValueError("invalid_credential")
             digest = item["sha256"]
             if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -118,8 +124,7 @@ def load_credentials(path: Path):
                     value = read_registry_ledger(ledger)
                     allowed[ledger.stem] = registry_project(value)
             context = ReportContext(allowed, scope=scope, writes=item.get('writes', False), actor=item.get('actor'),
-                                    credential_digest=digest, credentials_path=str(Path(path).absolute()),
-                                    workspace=item.get('workspace'), lane=item.get('lane'))
+                                    credential_digest=digest, credentials_path=str(Path(path).absolute()))
             from . import accounts, leave, leave_gate
             from dataclasses import replace
             if scope == 'admin':
@@ -137,6 +142,9 @@ def load_credentials(path: Path):
                 context=replace(context,allowed_accounts={name:project for name,project in context.allowed_accounts.items()
                                                         if name not in excluded},excluded_accounts=excluded)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
+        # レーンの鍵は資格のファイルの外の括りごとの表から（括りの段 2・R1）。読めない表はその括りの分だけ使わない。
+        from . import lane_keys
+        credentials.extend(lane_keys.contexts(path, taken=seen))
         return root, credentials
     except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
         raise ConfigurationError("configuration_unavailable") from None

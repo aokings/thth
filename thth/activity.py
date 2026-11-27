@@ -24,7 +24,7 @@
 括りの段 2（レーンの鍵）: 同じ sync に、**括りの鍵の表**（hash・括り・期限）と括りの束の結果を足す
 （`workspace_keys`・`workspace_results`）。レーンの鍵は口座ごとの表に載せない（口座の数×レーンの数で 64 行を越えるため）。
 `thth login --lane` の頁で持ち主が secret を入れると、Worker が操作 `lane_key`（hash だけ）を置き、ここで対応表の
-`owner_of(括り) == 持ち主` を確かめてから資格の行（scope user・actor＝持ち主・workspace・lane・365 日）を作る。
+`owner_of(括り) == 持ち主` を確かめてから括りの表（`thth/lane_keys.py`・資格のファイルの外）にレーンの鍵（actor＝持ち主・workspace・lane・365 日）を作る。
 同じ持ち主・括り・レーンの前の鍵は取り消す。版ずれ: 括りの形を断る Worker（3.14.0）には 3.14.0 の形、
 それも断る Worker（3.13.0）には 3.13.0 の形で話す（どちらもしばらく覚える）。
 """
@@ -118,12 +118,6 @@ def _invite_owners(out):
             continue
         if accounts.is_invite_account(cfg) and relay.PERSON.fullmatch(name):
             out.setdefault(name, {})[name] = cfg.get("project")
-
-
-def _workspace_field() -> dict:
-    """新しい鍵の行に括りを書く（根の外の括りだけ。main は今の行の形のまま・括りの段 2）。"""
-    workspace = accounts.current_workspace()
-    return {} if workspace == accounts.MAIN_WS else {"workspace": workspace}
 
 
 def owns(credentials_path, person, account) -> bool:
@@ -315,7 +309,7 @@ def rotate(credentials_path, account, person, sha256):
                 raise ValueError("credentials_full")
             config["credentials"].append({"sha256": sha256, "expires_at": expires, "revoked": False,
                                           "accounts": {account: project}, "scope": "user", "writes": True,
-                                          "actor": person, **_workspace_field()})
+                                          "actor": person})
         return True
 
     changed = _rewrite_credentials(credentials_path, change, "credential_rotated", account, person,
@@ -471,67 +465,59 @@ def choose_workspace(person, workspace):
     return owned[0]
 
 
-def _workspace_accounts(workspace) -> dict:
-    """{口座: project}（括りの中の口座と広告の口座・発行のときの姿）。"""
-    from .ads import ledger as ads_ledger
-    try:
-        scope = accounts.use_workspace(workspace)
-    except accounts.AccountError:
-        raise ValueError("workspace_unavailable") from None
-    out = {}
-    with scope:
-        for name in accounts.list_account_names():
-            try:
-                out[name] = accounts.load_account(name).get("project")
-            except (accounts.AccountError, OSError, ValueError):
-                continue
-        for name in ads_ledger.list_names():
-            try:
-                out.setdefault(name, ads_ledger.load(name).get("project"))
-            except (accounts.AccountError, OSError, ValueError):
-                continue
-    return {name: project for name, project in sorted(out.items())
-            if relay.PERSON.fullmatch(name) and (project is None or isinstance(project, str) and project.strip())}
-
-
 def issue_lane_key(credentials_path, person, workspace, lane, sha256) -> tuple:
     """レーンの鍵の行を作る。戻り値は (括り, 頼みの宛先の口座)。断りは ValueError(符丁)。
 
-    行は scope user・actor＝持ち主・workspace・lane・書いてよい（`writes`）・365 日。口座は発行のときの括りの口座
-    全部（括りの中の通り道と、括りの中の口座への 67 の口のため）。同じ持ち主・括り・レーンの前の鍵は取り消す。
-    同じ hash の行がもうあれば何もしない（sync が落ちて同じ操作が 2 度来ても 1 本）。
+    置き場は括りの表（`thth/lane_keys.py`・`ws/<括り>/private/lane-keys.json`）で、**資格のファイルは触らない**
+    （設計 §8 R1: main の版がそのまま読める形のままにする）。行は actor＝持ち主・workspace・lane・書いてよい・365 日。
+    口座は行に持たず、照合のたびに括りの口座を引く（あとで足した口座も同じ鍵で動く）。同じ持ち主・括り・レーンの
+    前の鍵は取り消す。同じ hash の行がもうあれば何もしない（sync が落ちて同じ操作が 2 度来ても 1 本）。
     """
+    from . import lane_keys
+    from .report_http import load_credentials
     if not isinstance(sha256, str) or not HEX64.fullmatch(sha256) or not isinstance(lane, str) \
             or not LANE.fullmatch(lane):
         raise ValueError("invalid_action")
     chosen = choose_workspace(person, workspace)
-    names = _workspace_accounts(chosen)
+    try:
+        names = lane_keys.workspace_accounts(chosen)
+    except lane_keys.LaneKeysError as exc:
+        raise ValueError(str(exc)) from None
     if not names:
         raise ValueError("workspace_has_no_accounts")
     home = sorted(names)[0]
+    # ほかの鍵（資格のファイル・ほかの括りの表）と同じ hash は使わない。
+    for digest, _expiry, _revoked, context in load_credentials(Path(credentials_path))[1]:
+        if digest == sha256 and (context.lane != lane or context.workspace != chosen or context.actor != person):
+            raise ValueError("credential_conflict")
 
-    def change(config):
-        rows = config["credentials"]
+    def fn(rows):
         for row in rows:
-            if isinstance(row, dict) and row.get("sha256") == sha256:
-                if (row.get("actor"), row.get("workspace"), row.get("lane"), row.get("revoked")) == \
-                        (person, chosen, lane, False):
+            if row["sha256"] == sha256:
+                if (row["actor"], row["lane"], row["revoked"]) == (person, lane, False):
                     return False  # 前の sync で作った（完了を返しそこねた）
                 raise ValueError("credential_conflict")
-        before = [row for row in rows if isinstance(row, dict) and row.get("actor") == person
-                  and row.get("workspace") == chosen and row.get("lane") == lane and row.get("revoked") is False]
-        if len(rows) >= 100:
-            raise ValueError("credentials_full")
-        for row in before:
-            row["revoked"] = True
+        # 前に取り消した同じレーンの行は落とし、生きている行は取り消す（表がレーンの数より大きくならない）。
+        rows[:] = [row for row in rows if not (row["actor"] == person and row["lane"] == lane and row["revoked"])]
+        for row in rows:
+            if row["actor"] == person and row["lane"] == lane:
+                row["revoked"] = True
         expires = jst.iso(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=CREDENTIAL_DAYS))
-        rows.append({"sha256": sha256, "expires_at": expires, "revoked": False, "accounts": names,
-                     "scope": "user", "writes": True, "actor": person, "workspace": chosen, "lane": lane})
+        rows.append({"sha256": sha256, "expires_at": expires, "revoked": False, "actor": person,
+                     "workspace": chosen, "lane": lane, "writes": True})
         return True
 
-    with accounts.use_workspace(chosen), accounts.account_workspace(home):
-        _rewrite_credentials(credentials_path, change, "credential_rotated", home, person,
-                             {"credential": ["present", "present"], "lane": [None, lane]})
+    try:
+        changed = lane_keys.change(chosen, fn)
+    except lane_keys.LaneKeysError as exc:
+        raise ValueError(str(exc) if str(exc) in ACTION_REASONS else "credentials_unavailable") from None
+    if changed:
+        with accounts.use_workspace(chosen):
+            try:
+                admin_log.append("credential_rotated", home, _ledger(home), by=person, via="http",
+                                 diff={"credential": ["present", "present"], "lane": [None, lane]})
+            except Exception:
+                print("activity_lane_key_unlogged: " + chosen, file=sys.stderr)
     return chosen, home
 
 

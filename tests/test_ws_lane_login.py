@@ -55,15 +55,17 @@ def world(tmp_path, monkeypatch):
         # 口座の鍵（今の形）
         {"sha256": _key("acct"), "expires_at": expires, "revoked": False, "accounts": {"gamma-garden": "gammaproj"},
          "scope": "user", "writes": True, "actor": OWNER},
-        # 持ち主 delta の括り orchard のレーンの鍵
-        {"sha256": _key("delta"), "expires_at": expires, "revoked": False, "accounts": {"delta-orchard": "deltaproj"},
-         "scope": "user", "writes": True, "actor": "delta", "workspace": "orchard", "lane": "delta-desk"},
     ]
     private = root / "private"
     private.mkdir(mode=0o700)
     path = private / "report-credentials.json"
     path.write_text(json.dumps({"schema_version": 1, "root": str(root), "credentials": rows}))
     path.chmod(0o600)
+    # 持ち主 delta の括り orchard のレーンの鍵（括りの表・資格のファイルの外）
+    from thth import lane_keys
+    lane_keys.change("orchard", lambda keys: keys.append(
+        {"sha256": _key("delta"), "expires_at": expires, "revoked": False, "actor": "delta", "workspace": "orchard",
+         "lane": "delta-desk", "writes": True}) or True)
     from thth import activity
     activity._next_sync.clear()
     activity._legacy.clear()
@@ -74,8 +76,9 @@ def _rows(path):
     return json.loads(open(path).read())["credentials"]
 
 
-def _lane_rows(path, lane=LANE):
-    return [row for row in _rows(path) if row.get("lane") == lane]
+def _lane_rows(path, lane=LANE, workspace="garden"):
+    from thth import lane_keys
+    return [row for row in lane_keys.read(workspace) if row.get("lane") == lane]
 
 
 # ---- VM: 鍵を作る所（権威は対応表） -------------------------------------------------------------------
@@ -85,8 +88,8 @@ def test_owner_gets_a_lane_key_bound_to_the_workspace(world):
     root, path = world
     assert activity.issue_lane_key(path, OWNER, None, LANE, _key(1)) == ("garden", "gamma-garden")
     (row,) = _lane_rows(path)
-    assert row == {**row, "sha256": _key(1), "actor": OWNER, "workspace": "garden", "lane": LANE, "scope": "user",
-                   "writes": True, "revoked": False, "accounts": {"gamma-garden": "gammaproj"}}
+    assert row == {**row, "sha256": _key(1), "actor": OWNER, "workspace": "garden", "lane": LANE,
+                   "writes": True, "revoked": False}
     days = (datetime.fromisoformat(row["expires_at"]) - datetime.now(timezone.utc)).days
     assert 363 <= days <= 365
     # 同じ操作が 2 度来ても 1 本・同じレーンの次の鍵は前の鍵を取り消す。
@@ -94,6 +97,9 @@ def test_owner_gets_a_lane_key_bound_to_the_workspace(world):
     assert len(_lane_rows(path)) == 1
     activity.issue_lane_key(path, OWNER, "garden", LANE, _key(2))
     assert [(r["sha256"], r["revoked"]) for r in _lane_rows(path)] == [(_key(1), True), (_key(2), False)]
+    # 前に取り消した行は次の発行で落ちる（表は増え続けない）。
+    activity.issue_lane_key(path, OWNER, "garden", LANE, _key(13))
+    assert [(r["sha256"], r["revoked"]) for r in _lane_rows(path)] == [(_key(2), True), (_key(13), False)]
 
 
 @pytest.mark.parametrize("workspace", ["orchard", "nowhere", "main"])
@@ -104,6 +110,7 @@ def test_someone_elses_or_unknown_workspace_creates_nothing(world, workspace):
     with pytest.raises(ValueError, match="workspace_not_owned"):
         activity.issue_lane_key(path, OWNER, workspace, LANE, _key(3))
     assert _rows(path) == before
+    assert not _lane_rows(path) and not (root / "ws" / "garden" / "private" / "lane-keys.json").exists()
 
 
 def test_owner_of_two_workspaces_must_name_one(world):
