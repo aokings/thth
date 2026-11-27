@@ -92,7 +92,37 @@ async function confirmHash(device_id,name,args){
   return digest(device_id+'\n'+name+'\n'+canonical);
 }
 
+// 監査 (8): `Origin` の検め（MCP 仕様 2025-11-25 の Streamable HTTP: 付いていて正しくなければ 403）と CORS。
+// 頼みは Bearer だけで通り cookie を使わないので、ブラウザの中の AI の client（https の origin・手元の試しは loopback の http）
+// には CORS で答える。`null`・http の外のホスト・形の崩れた Origin は 403（DNS の付け替えで手元の頁から叩かれる形を断る）。
+// Origin の無い頼み（サーバーから来る claude.ai など）は今までどおり。
+export function acceptableOrigin(value){
+  if(typeof value!=='string'||value.length>256)return false;
+  let u;try{u=new URL(value);}catch{return false;}
+  if(u.origin!==value)return false;
+  const loop=u.hostname==='localhost'||u.hostname==='127.0.0.1'||u.hostname==='[::1]';
+  return u.protocol==='https:'||u.protocol==='http:'&&loop;
+}
+const CORS_ALLOW='authorization, content-type, mcp-protocol-version, mcp-session-id, last-event-id';
+const CORS_EXPOSE='www-authenticate, mcp-session-id';
+function withCors(response,origin){
+  if(origin===null)return response;
+  const out=new Response(response.body,response);
+  out.headers.set('access-control-allow-origin',origin);out.headers.append('vary','origin');
+  out.headers.set('access-control-expose-headers',CORS_EXPOSE);
+  return out;
+}
 export async function mcpRequest(request,env,url){
+  const origin=request.headers.get('origin');
+  if(origin!==null&&!acceptableOrigin(origin))return reply(403,{error:'forbidden'});
+  if(request.method==='OPTIONS'){
+    if(url.search||url.hash||url.pathname!=='/mcp'||origin===null)return reply(404,{error:'not_found'});
+    return new Response(null,{status:204,headers:{'access-control-allow-origin':origin,'access-control-allow-methods':'POST',
+      'access-control-allow-headers':CORS_ALLOW,'access-control-max-age':'600','vary':'origin','cache-control':'no-store'}});
+  }
+  return withCors(await mcpInner(request,env,url),origin);
+}
+async function mcpInner(request,env,url){
   try{
     if(url.search||url.hash||url.pathname!=='/mcp')return reply(404,{error:'not_found'});
     if(!env.CONNECTOR||!env.ACCOUNT||!env.PERSON||!env.API_KEY_LIMIT)return reply(503,{error:'mcp_unavailable'});

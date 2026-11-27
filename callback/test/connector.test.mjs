@@ -35,8 +35,10 @@ const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/
 const repo=fileURLToPath(new URL('../..',import.meta.url));
 function run(args,input){const r=spawnSync(openssl,args,{input,env:{PATH:'/usr/bin:/bin',OPENSSL_CONF:'/dev/null'}});assert.equal(r.status,0,'OpenSSL failed');return r.stdout;}
 // CIMD: claude.ai の身元の文書（monban 検証 10/5 の形）と、名乗りの違う文書・3xx。
+let cimdFetches=0,timeShift=0;
 function outbound(request){
   const url=new URL(request.url);
+  cimdFetches++;
   if(request.url===CLAUDE)return Response.json({client_id:CLAUDE,client_name:'Claude',redirect_uris:[CALLBACK],token_endpoint_auth_method:'none'});
   if(url.pathname==='/liar')return Response.json({client_id:'https://claude.ai/other',redirect_uris:[CALLBACK]});
   if(url.pathname==='/moved')return new Response(null,{status:302,headers:{location:CLAUDE}});
@@ -44,6 +46,7 @@ function outbound(request){
   const odd={'/odd-http':'http://evil.example/cb','/odd-js':'javascript:alert(1)','/odd-app':'myapp://cb'}[url.pathname];
   if(odd)return Response.json({client_id:request.url,redirect_uris:[odd]});
   // 監査 (11): アプリ用の戻り先と、合う戻り先を一緒に載せる CIMD（ChatGPT などの形）。
+  if(url.pathname.startsWith('/fresh-'))return Response.json({client_id:request.url,client_name:'Fresh',redirect_uris:[CALLBACK]});
   if(url.pathname==='/mixed')return Response.json({client_id:request.url,client_name:'Mixed',redirect_uris:['myapp://cb','http://evil.example/cb',CALLBACK]});
   return new Response('external_denied',{status:503});
 }
@@ -70,7 +73,7 @@ after(async()=>{
 async function keep(response){answers.push(await response.clone().text());for(const [k,v] of response.headers)if(k!=='location')answers.push(k+': '+v);return response;}
 const ip=()=>opaque();
 async function signed(type,subject,op,body={}){
-  const path=`/relay/v/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
+  const path=`/relay/v/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now()+timeShift,nonce=opaque();
   const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,'operator',subject,op,time,nonce,hash(raw)))).toString('base64url');
   return mf.dispatchFetch(ORIGIN+path,{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
 }
@@ -540,6 +543,144 @@ test('the refresh token expires after 30 days',async()=>{
   await control({clock:Date.now()+30*86_400_000+1000});
   try{assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:tokens.refresh_token})).body.error,'invalid_grant');}
   finally{await control({clock:null});}
+});
+
+// ---- 監査の「あとで」(5)〜(9)（括り 第4）。
+const register=(peer,uris=[CALLBACK])=>mf.dispatchFetch(ORIGIN+'/oauth/register',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':peer},body:JSON.stringify({client_name:'dcr',redirect_uris:uris})});
+const clientIds=async()=>(await control()).filter(([k])=>k.startsWith('client:')).map(([k])=>k.slice(7));
+
+test('audit (5): one place registers at most 8 clients a day; a full table pushes out only clients never used',async()=>{
+  // 使った登録（同意の頁で許した）を一番古い行にしておく（満ちたとき、古い順に押し出す形なら最初に消える）。
+  const p=await person();
+  const used=(await (await register(opaque())).json()).client_id;
+  const {challenge}=pkce();
+  await consent(p,{params:baseParams(challenge,{client_id:used})});
+  const peer=opaque();
+  for(let n=0;n<8;n++)assert.equal((await register(peer)).status,201);
+  const ninth=await register(peer);
+  assert.equal(ninth.status,429);assert.equal((await ninth.json()).error,'too_many_clients');
+  assert.equal((await register(opaque())).status,201,'another place still registers');
+  const before=await clientIds();
+  for(let n=before.length;n<256+4;n++)assert.equal((await register(opaque())).status,201);
+  const after=await clientIds();
+  assert.equal(after.length,256);
+  assert.ok(after.includes(used),'a used client is never pushed out');
+  // 登録した IP の hash は 1 日で外す。
+  await control({clock:Date.now()+86_400_000+1000});
+  try{await register(opaque());}finally{await control({clock:null});}
+  const peers=(await control()).filter(([k,c])=>k.startsWith('client:')&&c.peer&&c.created_at<Date.now()-1000).length;
+  assert.equal(peers,0,'the hashed address is dropped after a day');
+});
+
+test('audit (6): the connector limit counts per owner, not for everyone',async()=>{
+  const p=await person(),q=await person();
+  // VM の役が発行を途中で済ませる（Person DO の待ちの上限 16 に先に当たらないように）。
+  const settle=async()=>{const {actions}=await sync(p);
+    await sync(p,{completed:actions.filter(a=>a.kind==='lane_key').map(a=>({id:a.id,outcome:'done',reason:null,workspace:'wsx',account:'acct-x'}))});};
+  for(let n=0;n<16;n++){await consent(p);if(n%8===7)await settle();}
+  const {challenge}=pkce();const params=baseParams(challenge);
+  await keep(await mf.dispatchFetch(authorizeUrl(params),{headers:{'cf-connecting-ip':ip()}}));
+  const full=await form(ORIGIN+'/oauth/authorize',{...params,owner:p.id,secret:p.secret,workspace:''});
+  assert.equal(full.status,303);
+  assert.equal(new URL(full.headers.get('location')).searchParams.get('error'),'temporarily_unavailable');
+  await consent(q);   // ほかの持ち主はつなげる
+});
+
+test('audit (7): a reused code or an old refresh token stops the connection; a refresh right after rotating is only refused',async()=>{
+  const p=await person();
+  const once=await consent(p);
+  const body={grant_type:'authorization_code',code:once.code,code_verifier:once.verifier,client_id:CLAUDE,redirect_uri:CALLBACK};
+  const first=await tokenFor(body);assert.equal(first.status,200);sensitive.push(first.body.access_token,first.body.refresh_token);
+  assert.equal((await mcp(first.body.access_token,'ping',{},true)).status,200);
+  assert.equal((await tokenFor(body)).body.error,'invalid_grant');
+  assert.equal((await mcp(first.body.access_token,'ping',{},true)).status,401,'the code was used again: the connection stops');
+  await control({alarm:true});
+  assert.ok((await sync(p)).actions.some(a=>a.kind==='lane_revoke'),'and the VM key is revoked');
+
+  const q=await person();const t=await connect(q);
+  const r1=await tokenFor({grant_type:'refresh_token',refresh_token:t.refresh_token});assert.equal(r1.status,200);
+  sensitive.push(r1.body.access_token,r1.body.refresh_token);
+  // 回した直後の古い refresh（同時に 2 つ来た形）は断るだけ。
+  assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:t.refresh_token})).body.error,'invalid_grant');
+  assert.equal((await mcp(r1.body.access_token,'ping',{},true)).status,200,'the live pair still works');
+  // それより後に古い refresh が来たら、接続を止める。
+  await control({clock:Date.now()+31_000});
+  try{assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:t.refresh_token})).body.error,'invalid_grant');}
+  finally{await control({clock:null});}
+  assert.equal((await mcp(r1.body.access_token,'ping',{},true)).status,401,'an old refresh token stops the connection');
+  assert.equal((await tokenFor({grant_type:'refresh_token',refresh_token:r1.body.refresh_token})).body.error,'invalid_grant');
+  assert.ok((await sync(q)).actions.some(a=>a.kind==='lane_revoke'));
+});
+
+test('audit (8): the client document is fetched once in ten minutes; Origin is checked and browsers get CORS',async()=>{
+  const {challenge}=pkce();const q=baseParams(challenge,{client_id:'https://claude.ai/fresh-'+randomBytes(4).toString('hex')});
+  const before=cimdFetches;
+  for(let n=0;n<3;n++)assert.equal((await mf.dispatchFetch(authorizeUrl(q),{headers:{'cf-connecting-ip':ip()}})).status,200);
+  assert.equal(cimdFetches-before,1,'fetched once, then kept');
+  await control({clock:Date.now()+600_000+1000});
+  try{assert.equal((await mf.dispatchFetch(authorizeUrl(q),{headers:{'cf-connecting-ip':ip()}})).status,200);}
+  finally{await control({clock:null});}
+  assert.equal(cimdFetches-before,2,'fetched again after ten minutes');
+  const p=await person();const t=await connect(p);
+  const call=origin=>mf.dispatchFetch(ORIGIN+'/mcp',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip(),authorization:'Bearer '+t.access_token,origin},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'ping'})});
+  for(const bad of ['null','http://evil.example','https://x.example/path','file://','not a url']){
+    const r=await call(bad);assert.equal(r.status,403,bad);
+  }
+  const good=await call('https://app.example');
+  assert.equal(good.status,200);assert.equal(good.headers.get('access-control-allow-origin'),'https://app.example');
+  assert.match(good.headers.get('access-control-expose-headers'),/www-authenticate/);
+  const local=await call('http://localhost:6274');assert.equal(local.status,200);
+  const pre=await mf.dispatchFetch(ORIGIN+'/mcp',{method:'OPTIONS',headers:{origin:'https://app.example','access-control-request-method':'POST'}});
+  assert.equal(pre.status,204);assert.match(pre.headers.get('access-control-allow-headers'),/authorization/);
+  assert.equal((await mf.dispatchFetch(ORIGIN+'/mcp',{method:'OPTIONS',headers:{origin:'null'}})).status,403);
+  // Origin の無い頼み（サーバーから来る client）は今までどおり・CORS の欄を付けない。
+  const plain=await mcp(t.access_token,'ping',{},true);
+  assert.equal(plain.status,200);assert.equal(plain.headers.get('access-control-allow-origin'),null);
+  // sign-in を始める 401 にも CORS が付く（ブラウザの client が resource_metadata を読める）。
+  const noToken=await mf.dispatchFetch(ORIGIN+'/mcp',{method:'POST',headers:{'content-type':'application/json',origin:'https://app.example'},body:'{}'});
+  assert.equal(noToken.status,401);assert.equal(noToken.headers.get('access-control-allow-origin'),'https://app.example');
+});
+
+test('audit (9): a revocation waits for the VM for 30 days, outside the limit of other pending actions',async()=>{
+  const p=await person(),ws=workspace();
+  const t=await connect(p);await vmIssue(p,ws,'acct-'+randomBytes(3).toString('hex'));
+  assert.equal((await mf.dispatchFetch(ORIGIN+'/oauth/revoke',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':ip()},body:'token='+t.refresh_token})).status,200);
+  // VM が 2 日 sync しなくても、取り消しは残っている。
+  // 時計を 2 日進め、別の取り消しを置いて（ここで古い行を掃く）から、Person DO の中を見る。
+  const other=opaque();sensitive.push(other);
+  await sync(p,{workspace_keys:[{sha256:hash(other),workspace:ws,expires_at:later()}]});
+  const shift=async clock=>(await mf.dispatchFetch(ORIGIN+'/__person/person/'+p.id,{method:'POST',body:JSON.stringify({clock})})).json();
+  await shift(Date.now()+2*86_400_000);
+  let rows;
+  try{
+    assert.equal((await mf.dispatchFetch(ORIGIN+'/api/v1/login/revoke',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip(),authorization:'Bearer '+other},body:JSON.stringify({workspace:ws})})).status,202);
+    rows=await shift(Date.now()+2*86_400_000);
+  }finally{await shift(null);}
+  const revokes=JSON.stringify(rows).match(/"kind":"lane_revoke"/g)??[];
+  assert.equal(revokes.length,2,'the first revocation still waits after two days');
+  assert.ok((await sync(p)).actions.filter(a=>a.kind==='lane_revoke').length===2);
+  // 17 本の取り消しが待っていても、ほかの操作の待ち（16）を塞がない。
+  const q=await person();
+  for(let n=0;n<17;n++){
+    const value=opaque();
+    await sync(q,{workspace_keys:[{sha256:hash(value),workspace:ws,expires_at:later()}]});
+    const r=await mf.dispatchFetch(ORIGIN+'/api/v1/login/revoke',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip(),authorization:'Bearer '+value},body:JSON.stringify({workspace:ws})});
+    assert.equal(r.status,202);sensitive.push(value);
+  }
+  const {challenge}=pkce();const params=baseParams(challenge);
+  await keep(await mf.dispatchFetch(authorizeUrl(params),{headers:{'cf-connecting-ip':ip()}}));
+  const allowed=await form(ORIGIN+'/oauth/authorize',{...params,owner:q.id,secret:q.secret,workspace:''});
+  assert.equal(allowed.status,303);assert.ok(new URL(allowed.headers.get('location')).searchParams.get('code'),'a new key can still be asked for');
+});
+
+test('the Worker refuses to start a lane login whose name starts with connector- (old CLIs too)',async()=>{
+  const r=await mf.dispatchFetch(ORIGIN+'/api/v1/login/start',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip()},
+    body:JSON.stringify({code_hash:hash(opaque()),poll_token_hash:hash(opaque()),lane:'connector-mine'})});
+  assert.equal(r.status,400);assert.equal((await r.json()).error,'lane_reserved');
+  const ok=await mf.dispatchFetch(ORIGIN+'/api/v1/login/start',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip()},
+    body:JSON.stringify({code_hash:hash(opaque()),poll_token_hash:hash(opaque()),lane:'thth-mine'})});
+  assert.equal(ok.status,202);
 });
 
 test('fence 6: nothing secret is stored in the clear in the connector object',async()=>{

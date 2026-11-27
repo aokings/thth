@@ -9,6 +9,9 @@ export const ACTIVITY_TTL=3_600_000, ACTION_TTL=3_600_000, ACTION_PENDING_MAX=16
 // 済んだレーンの鍵の発行の結果（括り・口座・秘密は無い）は、コネクタの refresh と同じ 30 日残す。コネクタは最初の道具の
 // 呼び出しでこれを引いて括りに結ぶので、1 時間で消すと、つないで 1 時間呼ばなかったコネクタが二度と結べない（段 K の監査 2）。
 export const LANE_OUTCOME_TTL=30*86_400_000;
+// レーンの鍵の取り消し（lane_revoke）は VM が拾うまで 30 日待つ（監査 (9): 1 時間で消えると、VM が長く sync しない間の取り消しが
+// 落ちた）。ほかの操作の待ちの数（ACTION_PENDING_MAX）には数えず、別に数える。
+export const LANE_REVOKE_TTL=30*86_400_000, LANE_REVOKE_PENDING_MAX=64;
 const ACTIVITY_ACCOUNTS=8, ACTIVITY_ROWS=30, ACTIVITY_HEAD=60;
 export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'];
 const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft_id'],settings:['key','value']};
@@ -281,7 +284,9 @@ export class Person extends AtomicObject {
       // 同じ鍵の取り消しがもう待っていれば重ねない。
       for(const [,a] of this.ctx.storage.kv.list({prefix:'action:'}))
         if(a.kind==='lane_revoke'&&a.sha256===sha256&&a.status==='pending')return {status:200,body:{id:a.id}};
-      const placed=this.place({kind:'lane_revoke',workspace},sha256,now);
+      const waiting=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.kind==='lane_revoke'&&a.status==='pending').length;
+      if(waiting>=LANE_REVOKE_PENDING_MAX)return fail(409,'too_many_actions');
+      const placed=this.place({kind:'lane_revoke',workspace},sha256,now,LANE_REVOKE_TTL);
       return placed.status===200?{status:200,body:{id:placed.body.id}}:placed;
     });
     if(result.status===200)await this.wake(this.now()+ACTION_TTL);
@@ -325,10 +330,10 @@ export class Person extends AtomicObject {
     });
   }
   // 操作を 1 つ置く（VM が次の sync で拾う・1 時間）。rotate は bearer の hash だけ。
-  place(action,sha256,now){
-    const pending=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.status==='pending').length;
-    if(pending>=ACTION_PENDING_MAX)return fail(409,'too_many_actions');
-    const id=opaque(),stored={id,...action,status:'pending',reason:null,created_at:now,expires_at:now+ACTION_TTL};
+  place(action,sha256,now,ttl=ACTION_TTL){
+    const pending=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.status==='pending'&&a.kind!=='lane_revoke').length;
+    if(action.kind!=='lane_revoke'&&pending>=ACTION_PENDING_MAX)return fail(409,'too_many_actions');
+    const id=opaque(),stored={id,...action,status:'pending',reason:null,created_at:now,expires_at:now+ttl};
     if(sha256)stored.sha256=sha256;
     this.put('action:'+id,stored);
     return {status:200,body:{id,kind:action.kind,account:action.account}};

@@ -44,7 +44,11 @@ ENTRIES = {
         "fix": "`connector-` で始まらない名で login してください（例 `<repo>-<レーン>`）。",
         "command": "thth login --lane <repo>-<レーン>",
         "better": "AI から使うときは、AI の側でコネクタを足して同意の頁で許すと、レーンの名と鍵が自動で付き、https://thth.me/connectors から 1 つずつ取り消せます。",
-        "doors": ("cli", "remote"), "since": _SINCE},
+        "fix_by_door": {
+            "worker": {"why": "`connector-` で始まるレーンの名は、AI のコネクタの同意の頁だけが付ける名です。古い CLI からの login の始めを断りました。鍵は作っていません。",
+                       "text": "CLI を新しい版にし、`connector-` で始まらないレーンの名で login し直してください", "command": None},
+        },
+        "doors": ("cli", "remote", "worker"), "since": _SINCE},
     # ---- レーンの鍵（括りの段 2・`thth login --lane`・`thth/activity.py` の issue_lane_key・`thth/remote.py`）
     "workspace_mismatch": {
         "kind": "refusal",

@@ -59,8 +59,8 @@ def test_目録のworkerの口はWorkerのsourceにまだある(worker_codes):
 
 def test_Workerの符丁の数():
     view = rc.door_view("worker")
-    assert len(view) == 64
-    assert sum(1 for parts in view.values() if parts["better"]) == 61
+    assert len(view) == 66
+    assert sum(1 for parts in view.values() if parts["better"]) == 63
 
 
 def test_ほかの口にも出る符丁はWorkerの口の文を持つ():

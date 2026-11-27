@@ -6,7 +6,9 @@
 // ここが丸ごと漏れても、token が無ければ鍵は開かない。実行中のメモリを取られる脅威は保証の外（monban と同じ）。
 //
 // 1 つの object（名前 `connectors`）に全部の持ち主の行を置く。行:
-//   client:<id>    DCR の予備 {redirect_uris, name, expires_at}
+//   client:<id>    DCR の予備 {redirect_uris, name, created_at, expires_at, used_at?, peer?}（peer は登録した IP の hash・1 日で外す）
+//   cimd:<hash>    CIMD の文書の控え（10 分）{redirect_uris, name, host, expires_at}
+//   spent:<hash>   使い切った認可 code の跡（10 分）{device_id, expires_at}。使い直されたら接続ごと止める（監査 (7)）
 //   code:<hash>    認可 code 1 つ {device_id, client_id, redirect_uri, code_challenge, wrap_c, expires_at}
 //   device:<id>    {owner, client_id, client_name, scope, writes, lane, workspace_req, action, workspace, account, key_sha256,
 //                   enc_key, status, a_hash, r_hash, wrap_a, wrap_r, a_expires_at, r_expires_at, created_at, expires_at, confirms}
@@ -24,9 +26,15 @@ export const ACCESS_TTL=3_600_000;                     // 1 時間
 export const REFRESH_TTL=30*86_400_000;                // 30 日・refresh のたびに回す
 export const CLIENT_TTL=30*86_400_000;
 export const CONFIRM_TTL=600_000;                      // 書く道具の 1 段目から 2 段目まで 10 分
-export const DEVICES_MAX=256,CLIENTS_MAX=256,CODES_MAX=64,CONFIRMS_MAX=16,REVOKES_MAX=256;
+// 接続は持ち主ごとに数える（監査 (6)）。全体の上限は object の大きさの柵。
+export const DEVICES_PER_OWNER=16,DEVICES_MAX=4096,CLIENTS_MAX=256,CODES_MAX=64,CONFIRMS_MAX=16,REVOKES_MAX=1024,CIMD_MAX_ROWS=256;
+// DCR は 1 つの IP から 1 日に 8 本まで（監査 (5)）。満ちたら使われたことの無い古い登録だけを押し出し、全部使われていれば断る。
+export const CLIENTS_PER_PEER=8,PEER_WINDOW=86_400_000;
 export const SCOPES=['read','write','offline_access'];
-const REVOKE_TTL=86_400_000;                           // 取り消しの置き直しは 1 日まで
+export const REVOKE_TTL=30*86_400_000;                 // 取り消しの置き直しは 30 日まで（監査 (9)・Person DO の lane_revoke と同じ）
+export const CIMD_CACHE_TTL=600_000;                   // CIMD の文書の控えは 10 分（監査 (8)）
+export const SPENT_TTL=600_000;                        // 使い切った code の跡
+export const REUSE_GRACE=30_000;                       // 回した直後の古い refresh は、同時の頼みとみて断るだけ（監査 (7)）
 const encoder=new TextEncoder();
 const INFO=encoder.encode('thth-connector-v1');
 
@@ -49,6 +57,8 @@ export async function unwrap(secret,text){
   }catch{return null;}
 }
 const kstr=K=>b64(K);
+// 取り消しの置き直しの間隔: 1 分から倍々に、1 時間まで。
+const retryDelay=tries=>Math.min(60_000*2**Math.min(tries,6),3_600_000);
 const scopeOk=scope=>Array.isArray(scope)&&scope.length>0&&scope.length<=3&&scope.every(s=>SCOPES.includes(s))&&new Set(scope).size===scope.length;
 const sameHash=(a,b)=>typeof a==='string'&&typeof b==='string'&&equal(encoder.encode(a),encoder.encode(b));
 // 戻り先の形: https で本当のホスト名か、loopback の http（RFC 8252）。
@@ -79,16 +89,23 @@ export class Connector extends DurableObject {
   async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
 
   // DCR（client の身元の文書が無い client の予備）。
-  async registerClient(m){
+  async registerClient(m,peer=null){
     if(!m||typeof m!=='object'||!Array.isArray(m.redirect_uris)||!m.redirect_uris.length||m.redirect_uris.length>8||
        !m.redirect_uris.every(acceptableRedirect))return fail(400,'invalid_client_metadata');
     const name=typeof m.client_name==='string'&&m.client_name.length<=128&&!/[\u0000-\u001f\u007f]/.test(m.client_name)?m.client_name:null;
+    if(!(peer===null||typeof peer==='string'&&HASH_PATTERN.test(peer)))return fail();
     const result=this.atomic(()=>{
       const now=this.now();this.prune(now);
       const clients=[...this.ctx.storage.kv.list({prefix:'client:'})].sort(([,a],[,b])=>a.created_at-b.created_at);
-      for(const [k] of clients.slice(0,Math.max(0,clients.length-CLIENTS_MAX+1)))this.ctx.storage.kv.delete(k);
+      // 監査 (5): 名乗らない登録を重ねて、ほかの人の登録を押し出せないようにする。
+      if(peer!==null&&clients.filter(([,c])=>c.peer===peer).length>=CLIENTS_PER_PEER)return fail(429,'too_many_clients');
+      if(clients.length>=CLIENTS_MAX){
+        const unused=clients.filter(([,c])=>!c.used_at);
+        if(!unused.length)return fail(429,'too_many_clients');
+        this.ctx.storage.kv.delete(unused[0][0]);
+      }
       const id='c_'+opaque().slice(0,32),expires_at=now+CLIENT_TTL;
-      this.put('client:'+id,{redirect_uris:m.redirect_uris,name,created_at:now,expires_at});
+      this.put('client:'+id,{redirect_uris:m.redirect_uris,name,created_at:now,expires_at,...(peer===null?{}:{peer})});
       return {status:200,body:{client_id:id,expires_at}};
     });
     if(result.status===200)await this.wake(result.body.expires_at);
@@ -98,6 +115,20 @@ export class Connector extends DurableObject {
     const row=typeof id==='string'&&/^c_[A-Za-z0-9_-]{32}$/.test(id)?this.ctx.storage.kv.get('client:'+id):null;
     return row&&row.expires_at>this.now()?{status:200,body:{redirect_uris:row.redirect_uris,name:row.name}}:fail(404,'unknown_client');
   }
+  // CIMD の文書の控え（監査 (8): 同意の頁を開くたびに外へ取りに行かない）。控えるのは形を確かめて通った物だけ。
+  cimdGet(hash){
+    const row=typeof hash==='string'&&HASH_PATTERN.test(hash)?this.ctx.storage.kv.get('cimd:'+hash):null;
+    return row&&row.expires_at>this.now()?{status:200,body:{redirect_uris:row.redirect_uris,name:row.name,host:row.host}}:fail(404,'not_found');
+  }
+  cimdPut(hash,{redirect_uris,name,host}){return this.atomic(()=>{
+    if(typeof hash!=='string'||!HASH_PATTERN.test(hash)||!Array.isArray(redirect_uris)||!redirect_uris.length||redirect_uris.length>8||
+       !redirect_uris.every(acceptableRedirect)||typeof name!=='string'||name.length>128||typeof host!=='string'||host.length>253)return fail();
+    const now=this.now();
+    const rows=[...this.ctx.storage.kv.list({prefix:'cimd:'})].sort(([,a],[,b])=>a.expires_at-b.expires_at);
+    for(const [k] of rows.slice(0,Math.max(0,rows.length-CIMD_MAX_ROWS+1)))this.ctx.storage.kv.delete(k);
+    this.put('cimd:'+hash,{redirect_uris,name,host,expires_at:now+CIMD_CACHE_TTL});
+    return {status:200,body:{}};
+  });}
 
   // 持ち主が許した: 発行したレーンの鍵を K で、K を code で包んで置く。code を 1 度だけ返す。
   async createCode({client_id,client_name,redirect_uri,code_challenge,scope,writes,owner,lane,workspace,action,key}){
@@ -111,12 +142,16 @@ export class Connector extends DurableObject {
     const code_hash=await digest(code),key_sha256=await digest(key),device_id=b64(crypto.getRandomValues(new Uint8Array(16)));
     const result=this.atomic(()=>{
       const now=this.now();this.prune(now);
-      if(this.count('device:')>=DEVICES_MAX)return fail(429,'too_many_connectors');
+      const devices=[...this.ctx.storage.kv.list({prefix:'device:'})];
+      if(devices.length>=DEVICES_MAX||devices.filter(([,d])=>d.owner===owner).length>=DEVICES_PER_OWNER)return fail(429,'too_many_connectors');
       if(this.count('code:')>=CODES_MAX)return fail(429,'too_many_codes');
       const expires_at=now+CODE_TTL;
       this.put('device:'+device_id,{owner,client_id,client_name,scope,writes,lane,workspace_req:workspace,action,workspace:null,account:null,
         key_sha256,enc_key,status:'pending',created_at:now,expires_at,confirms:{}});
       this.put('code:'+code_hash,{device_id,client_id,redirect_uri,code_challenge,wrap_c,expires_at});
+      // 使われた DCR の登録は、満ちたときに押し出さない（監査 (5)）。
+      const c=/^c_[A-Za-z0-9_-]{32}$/.test(client_id)?this.ctx.storage.kv.get('client:'+client_id):null;
+      if(c&&!c.used_at)this.put('client:'+client_id,{...c,used_at:now});
       return {status:200,body:{code,device_id,expires_at}};
     });
     if(result.status===200)await this.wake(result.body.expires_at);
@@ -132,12 +167,19 @@ export class Connector extends DurableObject {
     const taken=this.atomic(()=>{
       const row=this.ctx.storage.kv.get('code:'+code_hash);
       if(row)this.ctx.storage.kv.delete('code:'+code_hash);
-      if(!row||row.expires_at<=this.now())return fail(400,'invalid_grant');
+      if(!row){
+        // 監査 (7): 使い切った code がもう一度来たら、その code で出した接続を止める（RFC 6749 §4.1.2・code が漏れた印）。
+        const spent=this.ctx.storage.kv.get('spent:'+code_hash);
+        if(spent&&spent.expires_at>this.now()){this.ctx.storage.kv.delete('spent:'+code_hash);this.drop(spent.device_id,this.now());}
+        return fail(400,'invalid_grant');
+      }
+      if(row.expires_at<=this.now())return fail(400,'invalid_grant');
       if(row.client_id!==client_id||(redirect_uri!==undefined&&redirect_uri!==null&&row.redirect_uri!==redirect_uri)||!sameHash(row.code_challenge,challenge)){
         // 交換に失敗した code の預かりは捨てる（VM の鍵も取り消しを置く）。
         this.drop(row.device_id,this.now());
         return fail(400,'invalid_grant');
       }
+      this.put('spent:'+code_hash,{device_id:row.device_id,expires_at:this.now()+SPENT_TTL});
       return {status:200,body:row};
     });
     if(taken.status!==200){await this.wake(this.now()+1000);return taken;}
@@ -153,7 +195,8 @@ export class Connector extends DurableObject {
       const now=this.now(),row=this.ctx.storage.kv.get('device:'+device_id);
       if(!row||(expectRHash!==null&&row.r_hash!==expectRHash))return fail(400,'invalid_grant');
       const a_expires_at=now+ACCESS_TTL,r_expires_at=now+REFRESH_TTL;
-      this.put('device:'+device_id,{...row,status:'active',expires_at:r_expires_at,a_hash,r_hash,wrap_a,wrap_r,a_expires_at,r_expires_at,rotated_at:now});
+      this.put('device:'+device_id,{...row,status:'active',expires_at:r_expires_at,a_hash,r_hash,wrap_a,wrap_r,a_expires_at,r_expires_at,rotated_at:now,
+        prev_r_hash:row.r_hash??null});
       return {status:200,body:{access_token:device_id+'.'+sa,refresh_token:device_id+'.'+sr,expires_in:ACCESS_TTL/1000,
         token_type:'Bearer',scope:row.scope.join(' ')}};
     });
@@ -162,8 +205,15 @@ export class Connector extends DurableObject {
   }
   async refresh(token){
     const parsed=splitToken(token);if(!parsed)return fail(400,'invalid_grant');
-    const row=this.ctx.storage.kv.get('device:'+parsed.id);
-    if(!row||row.status!=='active'||row.r_expires_at<=this.now()||!sameHash(row.r_hash,await digest(parsed.secret)))return fail(400,'invalid_grant');
+    const row=this.ctx.storage.kv.get('device:'+parsed.id),hashed=await digest(parsed.secret);
+    if(row&&row.status==='active'&&sameHash(row.prev_r_hash,hashed)){
+      // 監査 (7): 回したあとの古い refresh。回した直後なら同時に来た頼みとみて断るだけ。それより後なら漏れた印として接続を止める
+      // （預かりを消し、VM の鍵の取り消しを置く）。
+      if(this.now()-row.rotated_at<=REUSE_GRACE)return fail(400,'invalid_grant');
+      await this.revoke(parsed.id);
+      return fail(400,'invalid_grant');
+    }
+    if(!row||row.status!=='active'||row.r_expires_at<=this.now()||!sameHash(row.r_hash,hashed))return fail(400,'invalid_grant');
     const K=await unwrap(parsed.secret,row.wrap_r);
     if(!K)return fail(400,'invalid_grant');
     return this.issue(parsed.id,K,row.r_hash);
@@ -283,22 +333,25 @@ export class Connector extends DurableObject {
     try{placed=await (await personStub(this.env,row.owner)).laneRevoke(row.workspace,sha256);}catch{placed={status:503};}
     // 持ち主がもういない（404）なら VM はその人の sync をしないので、置き直しても届かない: 控えを外す。
     if(placed.status===200||placed.status===404||placed.status===400){this.atomic(()=>{this.ctx.storage.kv.delete('revoke:'+sha256);return {status:200};});return placed.status===200;}
-    this.atomic(()=>{const r=this.ctx.storage.kv.get('revoke:'+sha256);if(r)this.put('revoke:'+sha256,{...r,tries:r.tries+1});return {status:200};});
+    this.atomic(()=>{const r=this.ctx.storage.kv.get('revoke:'+sha256);if(r)this.put('revoke:'+sha256,{...r,tries:r.tries+1,next_at:this.now()+retryDelay(r.tries+1)});return {status:200};});
     await this.wake(this.now()+60_000);
     return false;
   }
   prune(now){
-    for(const prefix of ['client:','code:','revoke:'])
+    for(const prefix of ['client:','code:','revoke:','cimd:','spent:'])
       for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);
+    // 登録した IP の hash は数える間（1 日）だけ持つ。
+    for(const [key,row] of this.ctx.storage.kv.list({prefix:'client:'}))
+      if(row.peer&&row.created_at+PEER_WINDOW<=now){const {peer:_,...rest}=row;this.put(key,rest);}
     // 期限の切れた接続（code を交換しなかった・refresh が 30 日切れた）は、VM の鍵も取り消す。
     for(const [key,row] of this.ctx.storage.kv.list({prefix:'device:'}))if(row.expires_at<=now)this.drop(key.slice(7),now);
   }
   async alarm(){
     const now=this.now();
     this.atomic(()=>{this.prune(now);return {status:200};});
-    for(const [key] of [...this.ctx.storage.kv.list({prefix:'revoke:'})])await this.placeRevoke(key.slice(7));
+    for(const [key,row] of [...this.ctx.storage.kv.list({prefix:'revoke:'})])if((row.next_at??0)<=now)await this.placeRevoke(key.slice(7));
     const next=Math.min(...[...this.ctx.storage.kv.list()].map(([,row])=>row?.expires_at??Infinity));
-    const pending=this.count('revoke:')>0?now+60_000:Infinity;
+    const pending=Math.min(...[...this.ctx.storage.kv.list({prefix:'revoke:'})].map(([,row])=>Math.max(row.next_at??0,now+60_000)));
     const at=Math.min(next,pending);
     if(Number.isFinite(at))await this.ctx.storage.setAlarm(Math.max(at,now+1000));
   }

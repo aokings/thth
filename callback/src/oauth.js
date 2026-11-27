@@ -72,6 +72,9 @@ export async function clientRecord(env,client_id){
     let u;try{u=new URL(client_id);}catch{return null;}
     if(u.username||u.password||u.hash||u.pathname==='/'||u.hostname==='localhost'||u.hostname.endsWith('.localhost')||
        u.hostname.startsWith('[')||/^(\d+\.){3}\d+$/.test(u.hostname))return null;
+    // 監査 (8): 確かめて通った文書は 10 分控える（同意の頁を開くたび・許すたびに外へ取りに行かない）。
+    const stub=connectorStub(env),key=await digest(client_id);
+    try{const kept=await stub.cimdGet(key);if(kept.status===200)return {...kept.body,kind:'cimd'};}catch{/* 控えが読めなければ取りに行く */}
     try{
       // workerd は redirect: 'error' を受けない（monban 10/5 の失敗）。'manual' で 3xx を受け、下で断る。
       const got=await fetch(client_id,{headers:{accept:'application/json'},redirect:'manual',signal:AbortSignal.timeout(CIMD_TIMEOUT_MS)});
@@ -86,6 +89,7 @@ export async function clientRecord(env,client_id){
       if(!redirect_uris.length)return null;
       if(doc.token_endpoint_auth_method!==undefined&&doc.token_endpoint_auth_method!=='none')return null;
       const name=typeof doc.client_name==='string'&&!/[\u0000-\u001f\u007f]/.test(doc.client_name)?doc.client_name.slice(0,128):u.hostname;
+      try{await stub.cimdPut(key,{redirect_uris,name,host:u.hostname});}catch{/* 控えられなくても今回は通す */}
       return {redirect_uris,name,kind:'cimd',host:u.hostname};
     }catch{return null;}
   }
@@ -168,7 +172,7 @@ async function register(request,env){
   if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return oauthError(400,'invalid_client_metadata');
   let m;try{m=JSON.parse(await boundedBody(request,8192));}catch{return oauthError(400,'invalid_client_metadata');}
   if(m?.token_endpoint_auth_method!==undefined&&m.token_endpoint_auth_method!=='none')return oauthError(400,'invalid_client_metadata','public clients only');
-  const made=await connectorStub(env).registerClient(m);
+  const made=await connectorStub(env).registerClient(m,await digest(request.headers.get('cf-connecting-ip')||'unknown-peer'));
   if(made.status!==200)return oauthError(made.status===429?429:400,made.body.error);
   return json(201,{client_id:made.body.client_id,client_id_issued_at:Math.floor(Date.now()/1000),redirect_uris:m.redirect_uris,
     token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']});

@@ -331,7 +331,7 @@ CONNECTOR_ACCESS_HOURS = 1       # connector-object.js ACCESS_TTL
 CONNECTOR_REFRESH_DAYS = 30      # connector-object.js REFRESH_TTL
 CONNECTOR_CLIENT_DAYS = 30       # connector-object.js CLIENT_TTL（/oauth/register の登録）
 CONNECTOR_CONFIRM_MINUTES = 10   # connector-object.js CONFIRM_TTL（書く道具の 1 段目の控え）
-CONNECTOR_REVOKE_DAYS = 1        # connector-object.js REVOKE_TTL（VM への取り消しの置き直し）
+CONNECTOR_REVOKE_DAYS = 30       # connector-object.js REVOKE_TTL（VM への取り消しの置き直し）
 
 
 def _n_en(n: int, unit: str) -> str:
@@ -1013,8 +1013,8 @@ def build_privacy() -> str:
         "workspace, scope and dates; no keys or tokens) after the owner name and the owner secret are entered, and "
         f"keeps no sign-in; or {CONNECTOR_REFRESH_DAYS} days pass without a refresh. thth.me then deletes the "
         "connector's entry (the encrypted key and the token hashes), refuses its next call, and places a revocation "
-        "of its lane key for the operator's server, which stops the key at its next sync. Until the revocation is "
-        f"placed, thth.me keeps only the key's hash, the owner and the workspace, for at most "
+        "of its lane key for the operator's server, which stops the key at its next sync. Until the operator's server "
+        f"picks up the revocation, thth.me keeps only the key's hash, the owner and the workspace, for at most "
         f"{CONNECTOR_REVOKE_HOURS_EN}.</p>")
     add("<p><strong>Entering secrets.</strong> The connector's tools have no field for secrets such as platform "
         "tokens or passwords. When THTH asks for a secret through monban, the secret is entered on a page on "
@@ -1716,7 +1716,7 @@ def build_privacy() -> str:
         "範囲・日時だけで、鍵や token は出ません。サインインの状態は持ちません）。refresh の無いまま "
         f"{CONNECTOR_REFRESH_DAYS} 日たったとき。thth.me はそのコネクタの行（包んだ鍵と token のハッシュ）を消し、"
         "次の呼び出しを断り、運営者のサーバーにレーンの鍵の取り消しを置きます。運営者のサーバーは次の同期で鍵を止めます。"
-        "取り消しを置けるまで、thth.me は鍵のハッシュ・持ち主・括りだけを、最長 "
+        "運営者のサーバーが取り消しを拾うまで、thth.me は鍵のハッシュ・持ち主・括りだけを、最長 "
         f"{CONNECTOR_REVOKE_DAYS} 日持ちます。</p>")
     add("<p><strong>秘密の入力。</strong>コネクタの道具には、SNS の token やパスワードのような秘密を入れる欄がありません。"
         "THTH が monban を通して秘密を求めるときは、秘密は monban.me の頁で入力し、会話と THTH の記録を通りません。"

@@ -132,6 +132,11 @@ export const REFUSALS=Object.freeze({
   "fix": "`thth login` でブラウザから許可し直して新しい鍵を取り、その鍵で送り直してください",
   "better": "期限の近い鍵を https://thth.me/activity で早めに発行し直すと、作業の途中で止まりません"
  },
+ "lane_reserved": {
+  "why": "`connector-` で始まるレーンの名は、AI のコネクタの同意の頁だけが付ける名です。古い CLI からの login の始めを断りました。鍵は作っていません。",
+  "fix": "CLI を新しい版にし、`connector-` で始まらないレーンの名で login し直してください",
+  "better": "AI から使うときは、AI の側でコネクタを足して同意の頁で許すと、レーンの名と鍵が自動で付き、https://thth.me/connectors から 1 つずつ取り消せます。"
+ },
  "login_unavailable": {
   "why": "thth.me が、いまブラウザ式の login を受け付けられません。",
   "fix": "少し置いて `thth login` をやり直すか、鍵が手元にあれば `thth login --stdin` で入れてください",
@@ -287,13 +292,18 @@ export const REFUSALS=Object.freeze({
   "fix": "VM が前の操作を拾うまで少し待ってから、もう一度押してください。",
   "better": "同じ取り消しは 1 回だけ押して画面の表示が変わるのを待つと、操作が重なりません。"
  },
+ "too_many_clients": {
+  "why": "名乗りの文書（CIMD）を持たない AI の client の登録が多すぎます（同じ所から 1 日に 8 本まで。全体が満ちて、どれも使われているときも）。何も登録していません。",
+  "fix": "前に登録した client_id があればそれを使うか、1 日置いてから登録し直してください。続くなら、命令と時刻を添えて `thth report file` で開発のセッションへ知らせてください。",
+  "better": "client の身元を https の URL の文書（CIMD）で示すと、登録の数に縛られずにつながります。"
+ },
  "too_many_codes": {
   "why": "使われずに残っている認可の code が上限に達しています。",
   "fix": "1 分ほど置いてから（code は 60 秒で消えます）、同意の頁からやり直してください。",
   "better": "同意の頁で許したら、AI の側の戻り先をそのまま開いて code を使い切ると、上限に届きません。"
  },
  "too_many_connectors": {
-  "why": "thth.me が預かれるコネクタの数が上限に達しています。",
+  "why": "この持ち主が持てるコネクタの数（16）か、thth.me が預かれる数の上限に達しています。",
   "fix": "https://thth.me/connectors で要らないコネクタを取り消してから、もう一度許してください。",
   "better": "使わなくなったコネクタは /connectors で取り消しておくと、VM の鍵も一緒に止まります。"
  },

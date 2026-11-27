@@ -46,6 +46,8 @@ export async function loginApiRequest(request,env,url){
          typeof body.poll_token_hash!=='string'||!HASH_PATTERN.test(body.poll_token_hash)||
          'lane' in body&&(typeof body.lane!=='string'||!LANE.test(body.lane))||
          'workspace' in body&&(typeof body.workspace!=='string'||!WORKSPACE.test(body.workspace)))return reply(400,{error:'invalid_request'});
+      // `connector-` で始まる名は AI のコネクタの同意の頁だけが付ける（古い CLI からも作らせない・Mac の CLI と同じ断り）。
+      if(typeof body.lane==='string'&&body.lane.startsWith('connector-'))return reply(400,{error:'lane_reserved'});
       const started=await loginStub(env,body.code_hash).start(body.poll_token_hash,body.lane??null,body.workspace??null);
       if(started.status!==200)return reply(started.status,started.body);
       return reply(202,{url:url.origin+'/login/',expires_at:new Date(started.body.expires_at).toISOString()});
