@@ -1606,7 +1606,7 @@ ENTRIES = {
         "command": "thth admin meta watch",
         "better": "審査が通ったら `thth doctor <口座>` で同じ欄が読めるかを確かめると、次の朝から成功に数えられます",
         "doors": ("cli",),
-        "since": "5.33.0",
+        "since": "5.34.0",
     },
     "permission_keepalive_no_target": {
         "kind": "refusal",

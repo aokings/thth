@@ -921,7 +921,7 @@ ENTRIES = {
         "better": "フォロワーの数は Facebook のページの画面で見られます。審査の録画だけなら、100 人を越えたページの"
                   "口座で撮ると断られずに済みます",
         "doors": _CR,
-        "since": "5.33.0",
+        "since": "5.34.0",
     },
     # 遠くの道の Meta の口（`thth/server_meta.py`）: 手元の口が自由文で断ったもの（edit・reply・反応の一部）。
     "remote_command_refused": {
