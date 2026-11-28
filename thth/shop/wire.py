@@ -182,6 +182,8 @@ REASONS = frozenset((
     # 実店舗のレジ（Square・スマレジ・計画 実店舗 段 5・目録は `thth/refusal_catalog_part_pos.py`）。
     "pos_args_invalid", "pos_token_rejected", "pos_scope_missing", "pos_location_unknown", "pos_api_changed",
     "pos_unavailable", "pos_currency_unsupported", "pos_publish_empty", "pos_read_limit",
+    # 監査 5.32.0 の軽い 6（5.32.1）: 今の鍵のファイルがあるが読めない（別の店の照合の元が無い）。
+    "store_token_unreadable",
 ))
 # POST を打ってよい種類（本文を表で縛る口がある種類だけ）。Square・BASE・STORES・スマレジの API のホストは入れない。
 POST_KINDS = frozenset(("shopify", "smaregi_id"))

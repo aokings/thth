@@ -49,17 +49,17 @@ from . import (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_par
                refusal_catalog_part5, refusal_catalog_part6, refusal_catalog_part7, refusal_catalog_part8,
                refusal_catalog_part9, refusal_catalog_part10, refusal_catalog_part_gbp,
                refusal_catalog_part_link, refusal_catalog_part_pos, refusal_catalog_part_review,
-               refusal_catalog_part_wp, refusal_catalog_part_ws)
+               refusal_catalog_part_secret, refusal_catalog_part_wp, refusal_catalog_part_ws)
 
 # 項目を書いた部（1〜3: 設計 §1 の 8 つの口・集合・JSON の欄・説明の辞書。4〜5: 広告の口 OpsRefused と
 # 認可の口 FlowError。6: Worker の口。7: Google 広告の口。8: Search Console の口。9: 店を読む口。10: 台帳の機械。
 # gbp: Google ビジネス プロフィールの口。link: 店の変化の連動。pos: 実店舗のレジ。wp: WordPress の口。
-# review: 週の振り返りの材料）。
+# review: 週の振り返りの材料。secret: 鍵の入口と台帳の照合・5.32.1。ws: 括りとレーンの鍵と AI のコネクタ）。
 PARTS = (refusal_catalog_part1, refusal_catalog_part2, refusal_catalog_part3, refusal_catalog_part4,
          refusal_catalog_part5, refusal_catalog_part6, refusal_catalog_part7, refusal_catalog_part8,
          refusal_catalog_part9, refusal_catalog_part10, refusal_catalog_part_gbp, refusal_catalog_part_link,
          refusal_catalog_part_pos, refusal_catalog_part_wp, refusal_catalog_part_review,
-         refusal_catalog_part_ws)
+         refusal_catalog_part_secret, refusal_catalog_part_ws)
 
 LANG = "ja"
 INITIAL_SINCE = "5.10.0"

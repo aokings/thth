@@ -438,14 +438,20 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
 
 
 
-def commit_manual(account, cfg, token, *, snapshot, session, by):
-    """Token ingestion final save; input/API and observation writes are outside."""
-    path=Path(cfg['token']);changed=False
+def commit_manual(account, cfg, token, *, snapshot, session, by, ledger_user_id=None):
+    """Token ingestion final save; input/API and observation writes are outside.
+
+    `ledger_user_id`: 台帳の `user_id` が空のときに書く番号（監査 5.32.0 軽い 2・5.32.1）。鍵と同じ
+    取引の中で書き、落ちれば鍵と一緒に戻す。以後の `thth token set` は handle に加えてこの番号でも照合する。
+    """
+    path=Path(cfg['token']);changed=False;ledger_original=None
+    ledger_path=Path(accounts.accounts_dir())/(account+'.json')
     def rollback():
         if changed:
             try:
                 if snapshot is None:path.unlink(missing_ok=True)
                 else:secrets_fs.atomic_write_text(str(path),snapshot[0].decode(),mode=snapshot[1])
+                if ledger_original is not None:secrets_fs.atomic_write_json(str(ledger_path),ledger_original)
             except (OSError,ValueError):raise FlowError('token_set_rollback_failed_outcome_uncertain') from None
     with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
         path = _token_path(path)
@@ -454,5 +460,13 @@ def commit_manual(account, cfg, token, *, snapshot, session, by):
             raise FlowError('token_set_credentials_changed: 別の更新のため保存しません')
         snapshot=_token_snapshot(path);changed=True
         secrets_fs.atomic_write_json(str(path),token,mode=0o600)
-        admin_log.append('token_set',account,cfg,by=by,diff={'token':['present' if snapshot else 'absent','present'],
-                                                         'auth_via':[None,'token_set']})
+        diff={'token':['present' if snapshot else 'absent','present'],'auth_via':[None,'token_set']}
+        if ledger_user_id:
+            raw=json.loads(ledger_path.read_text(encoding='utf-8'))
+            if not isinstance(raw,dict):raise FlowError('token_set_ledger_unavailable')
+            if not str(raw.get('user_id') or '').strip():
+                ledger_original=json.loads(json.dumps(raw))
+                raw['user_id']=str(ledger_user_id)
+                secrets_fs.atomic_write_json(str(ledger_path),raw)
+                diff['user_id']=[ledger_original.get('user_id'),str(ledger_user_id)]
+        admin_log.append('token_set',account,cfg,by=by,diff=diff)

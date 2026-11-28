@@ -6104,7 +6104,9 @@ def _entry(argv=None) -> int:
     # 検査結果であって断りではないので外す。二段確認の 1 段目の 1 も断りではない
     # （依頼 3.8.2 件 3・`refusals.mark_first_stage()`）——案内も控えも出さない。
     first_stage = rc == 1 and refusals.is_first_stage()
-    if rc and not (real_argv[:1] == ["lint"] and rc == 1) and not first_stage:
+    # `thth secret accept` の 3 は「置いたが、あとの確かめが落ちた」（verified）で、断りではない（監査 5.32.0 軽い 7）。
+    stored = real_argv[:2] == ["secret", "accept"] and rc == 3
+    if rc and not (real_argv[:1] == ["lint"] and rc == 1) and not first_stage and not stored:
         account, code = _remember_refusal(real_argv, rc, tee.first_line())
         # **そのまま打てる報告の 1 行**（設計 3.3.0 B3）。account と理由の符丁を
         # 埋める（分からなければ `<account>`・`<reason_code>` のまま）。

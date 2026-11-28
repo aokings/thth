@@ -31,7 +31,8 @@ import sys
 # 家が `rejected:handler_error` に丸める。
 CODES = {
     "ok": (0, "verified"),
-    "stored_with_warning": (3, "verified"),   # 置いたが、あとの確かめが落ちた（WordPress の入口のホスト・はてなのブログ）
+    "stored_with_warning": (3, "verified"),   # 置いたが、あとの確かめが落ちた（WordPress の入口のホスト・はてなのブログ・
+                                              # 置いたあとの控え。鍵のファイルの中身が前と変わったとき・5.32.1）
     "invalid_input": (10, "rejected"),
     "target_unknown": (11, "rejected"),
     "wrong_kind": (12, "rejected"),
@@ -45,28 +46,43 @@ CODES = {
 }
 UNEXPECTED_EXIT = 70   # 表に載せない（家が handler_error に丸める）
 
+# `checked`: 置く前に何を確かめるか（家の係の表の説明・監査 5.32.0 軽い 8・5.32.1）。本人の口だけの 3 つは、動いて
+# いる値かを確かめずに置き換える。人がそれを知って入れるように、表にそのまま書く。
+_FORM_ONLY = "確かめたのは形だけ（動く値かは確かめずに、今の値を置き換えます）"
 KINDS = {
-    "app-secret": {"fields": ("app_id", "app_secret"), "target": "媒体（threads）", "owner_only": True},
-    "account-token": {"fields": ("token",), "target": "口座（Bluesky 以外）", "owner_only": False},
-    "bluesky-app-password": {"fields": ("app_password",), "target": "口座（Bluesky）", "owner_only": False},
+    "app-secret": {"fields": ("app_id", "app_secret"), "target": "媒体（threads）", "owner_only": True,
+                   "checked": _FORM_ONLY + "。App ID は数字だけ"},
+    "account-token": {"fields": ("token",), "target": "口座（Bluesky 以外）", "owner_only": False,
+                      "checked": "媒体で口座を確かめ、台帳の handle・user_id（無ければ今の鍵の user_id）と照合"},
+    "bluesky-app-password": {"fields": ("app_password",), "target": "口座（Bluesky）", "owner_only": False,
+                             "checked": "Bluesky にログインし、台帳の handle・did と照合"},
     "wordpress-app-password": {"fields": ("application_password",), "target": "主体（WordPress）",
-                               "owner_only": False},
+                               "owner_only": False, "checked": "サイトで利用者を確かめ、主体の台帳の wp_user と照合"},
     "hatena-consumer": {"fields": ("consumer_key", "consumer_secret"), "target": "主体（はてな）",
-                        "owner_only": True},
-    "hatena-verifier": {"fields": ("oauth_verifier",), "target": "主体（はてな・先に --begin）", "owner_only": False},
+                        "owner_only": True,
+                        "checked": "request token が取れるかまで（今の token が使い続けられるかは確かめません。"
+                                   "token があれば置き換えの前に標準エラーで知らせます）"},
+    "hatena-verifier": {"fields": ("oauth_verifier",), "target": "主体（はてな・先に --begin）", "owner_only": False,
+                        "checked": "はてなで access token を取り、主体の台帳のはてな ID と照合"},
     "shop-token": {"fields": ("token",), "target": "店（BASE・STORES・Square・Shopify の固定の鍵）",
-                   "owner_only": False},
+                   "owner_only": False, "checked": "店で鍵を確かめ、今の鍵の店と照合"},
     "shop-client": {"fields": ("client_id", "client_secret"), "target": "店（Shopify の client・スマレジ）",
-                    "owner_only": False},
-    "thth-login-key": {"fields": ("key",), "target": "thth.me（Mac の鍵）", "owner_only": True},
+                    "owner_only": False, "checked": "店で鍵を確かめ、今の鍵の店と照合"},
+    "thth-login-key": {"fields": ("key",), "target": "thth.me（Mac の鍵）", "owner_only": True,
+                       "checked": _FORM_ONLY},
 }
+# Threads の App ID（数字だけ）。2 つの欄を取り違えて App Secret が App ID の欄に入ると、認可の URL に載る
+# （監査 5.32.0 軽い 9・5.32.1）。
+_APP_ID = re.compile(r"[0-9]{1,32}\Z")
 
 # 中の入口の断りの符丁 → 答えの符丁。載らない符丁で rc が 0 でなければ `refused`。
 INNER = {
     "token_account_mismatch": "account_mismatch", "bluesky_account_mismatch": "account_mismatch",
+    "facebook_page_mismatch": "account_mismatch", "instagram_account_mismatch": "account_mismatch",
     "wp_user_mismatch": "account_mismatch", "hatena_id_mismatch": "account_mismatch",
     "store_shop_mismatch": "account_mismatch",
     "token_handle_missing": "identity_unknown", "bluesky_ledger_identifier_required": "identity_unknown",
+    "store_token_unreadable": "identity_unknown",
     "token_unusable": "credential_rejected", "bluesky_session_failed": "credential_rejected",
     "wordpress_auth_rejected": "credential_rejected", "wordpress_permission_missing": "credential_rejected",
     "initiate_failed": "credential_rejected", "token_failed": "credential_rejected",
@@ -85,7 +101,9 @@ INNER = {
 SHOP_TOKEN_KINDS = ("base", "stores", "square", "shopify")
 SHOP_CLIENT_KINDS = ("shopify", "smaregi")
 STDIN_MAX = 8192
-_CODE_LINE = re.compile(r"([a-z][a-z0-9_]{2,63}):")
+# 行の頭の符丁。「符丁: 文」の形のほか、行の全体が符丁だけの形も拾う（Bluesky・認可の入口はコロンの無い符丁だけを
+# 出す所がある・監査 5.32.0 軽い 3 (a)・5.32.1）。
+_CODE_LINE = re.compile(r"([a-z][a-z0-9_]{2,63})(?::|\Z)")
 
 
 class Refused(Exception):
@@ -123,12 +141,10 @@ class _Sink:
         self.out.append(str(line))
 
     def code(self, *streams) -> str | None:
+        """出力の中の符丁。表（`INNER`）に載る符丁を先に、無ければ最初に見えた符丁を返す。"""
         texts = self.err + self.out + [line for s in streams for line in s.getvalue().splitlines()]
-        for text in texts:
-            m = _CODE_LINE.match(text.strip())
-            if m:
-                return m.group(1)
-        return None
+        found = [m.group(1) for m in (_CODE_LINE.match(text.strip()) for text in texts) if m]
+        return next((c for c in found if c in INNER), found[0] if found else None)
 
     def wrote(self, *streams) -> bool:
         texts = self.err + self.out + [line for s in streams for line in s.getvalue().splitlines()]
@@ -181,6 +197,8 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
     """中の入口に値を渡す。`(rc, 中の符丁 | None)`。"""
     if kind == "app-secret":
         from . import appconfig
+        if not _APP_ID.match(values[0]):
+            raise Refused("invalid_input")
         secret = values[1]
         return appconfig.run("threads", app_id=values[0], input_func=lambda: secret, by=by, log=sink.err_line), None
     if kind in ("account-token", "bluesky-app-password"):
@@ -206,8 +224,9 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
         auth = None
         if cfg.get("kind") == "shopify":
             auth = "client" if kind == "shop-client" else "token"
+        # 人が見ていない口なので、前の鍵が読めず照合の元が無ければ断る（監査 5.32.0 軽い 6・5.32.1）。
         args = argparse.Namespace(store=target, auth=auth, expires=expires, by=by, stdin=True, force=False,
-                                  json=False)
+                                  json=False, strict_previous=True)
         old = sys.stdin
         sys.stdin = io.StringIO("".join(v + "\n" for v in values))
         try:
@@ -226,6 +245,36 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
         finally:
             sys.stdin = old
     raise Refused("target_unknown")
+
+
+def _key_paths(kind, cfg) -> tuple:
+    """種類ごとの鍵のファイルの道（置いたかを見るためだけ）。App Secret・thth.me の鍵は見ない（あとの段が無い）。"""
+    if not isinstance(cfg, dict):
+        return ()
+    if kind in ("account-token", "bluesky-app-password", "wordpress-app-password", "hatena-verifier",
+                "shop-token", "shop-client"):
+        return tuple(p for p in (cfg.get("token"),) if isinstance(p, str) and p)
+    if kind == "hatena-consumer":
+        return tuple(p for p in (cfg.get("consumer"), cfg.get("token")) if isinstance(p, str) and p)
+    return ()
+
+
+def _fingerprint(paths) -> tuple:
+    """鍵のファイルの中身の sha256（無ければ None）。値は持たず、外にも出さない。
+
+    `stat` でなく中身で見るのは、断ったあとに前の鍵を書き戻す（inode が変わる）入口を「置いた」と取り違えないため。
+    """
+    import hashlib
+    out = []
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                out.append(hashlib.sha256(f.read()).hexdigest())
+        except FileNotFoundError:
+            out.append(None)
+        except OSError:
+            out.append("unreadable")
+    return tuple(out)
 
 
 def accept(kind, target, *, by, expires=None, stdin_bytes=None) -> str:
@@ -251,14 +300,30 @@ def accept(kind, target, *, by, expires=None, stdin_bytes=None) -> str:
         redact.register_secret(value)
     sink = _Sink()
     out, err = io.StringIO(), io.StringIO()
+    # **置いたあとで落ちたら「置いたが確かめが落ちた」**（監査 5.32.0 軽い 4・5.32.1）。鍵を書いたあとの控え
+    # （doctor の記録・admin の記録の確かめ）が落ちると、以前は鍵が置かれているのに rejected（70・18）と
+    # 答えた。前とあとで鍵のファイルの中身が変わっていれば、置いたものとして `stored_with_warning` に寄せる。
+    paths = _key_paths(kind, cfg)
+    before = _fingerprint(paths)
+    if kind == "hatena-consumer" and len(before) > 1 and before[1] is not None:
+        # 置き換えの前に知らせる（値は出さない・監査 5.32.0 軽い 8）。中の入口の出力は捨てるので、ここで外に出す。
+        print(f"知らせ: 主体 {target} には token があります。request token が取れれば consumer を置き換えます。"
+              "別のアプリの consumer なら今の token は使えなくなるので、そのときは --begin から認可し直してください",
+              file=sys.stderr)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc, inner = _call(kind, target, values, cfg, by=by, expires=expires, sink=sink)
+    except Exception:
+        if paths and _fingerprint(paths) != before:
+            return "stored_with_warning"
+        raise
     finally:
         del values
     if rc == 0:
         return "ok"
     if kind in ("wordpress-app-password", "hatena-verifier") and rc == 1 and sink.wrote(out, err):
+        return "stored_with_warning"
+    if paths and _fingerprint(paths) != before:
         return "stored_with_warning"
     inner = inner or sink.code(err, out)
     return INNER.get(inner, "refused")
@@ -290,6 +355,7 @@ def cmd_accept(args) -> int:
 
 def cmd_kinds(args) -> int:
     rows = [{"kind": kind, "target": spec["target"], "fields": list(spec["fields"]), "owner_only": spec["owner_only"],
+             "checked": spec["checked"],
              "command": ["<thth の絶対パス>", "secret", "accept", kind, "<受付>", "--by", "<名前>"],
              "codes": handler_codes()} for kind, spec in KINDS.items()]
     if args.json:
@@ -297,7 +363,7 @@ def cmd_kinds(args) -> int:
         return 0
     for row in rows:
         mark = "・本人の口だけ" if row["owner_only"] else ""
-        print(f"{row['kind']}: 受付 {row['target']}・欄 {'・'.join(row['fields'])}{mark}")
+        print(f"{row['kind']}: 受付 {row['target']}・欄 {'・'.join(row['fields'])}{mark}・確かめ {row['checked']}")
     print("終了コード: " + "・".join(f"{rc} {answer}" for rc, answer in handler_codes().items()))
     print("値は標準入力だけで、欄ごとに 1 行。家の係は環境に PATH・HOME・LANG しか渡さないので、VM では表の命令を"
           " /usr/bin/env THTH_ROOT=/srv/thth /srv/thth/app/bin/thth … の形にします")
