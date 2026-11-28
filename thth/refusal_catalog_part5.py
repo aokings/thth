@@ -911,6 +911,18 @@ ENTRIES = {
         "doors": _CR,
         "since": "5.13.0",
     },
+    # 5.34.0（since は版上げのときに 5.34.0 へ直す・今の版を越えられない柵がある）。
+    "live_followers_too_few": {
+        "kind": "refusal",
+        "why": "Meta がライブを断りました。ページのフォロワーが 100 人に届かないとライブを作れない決まりです"
+               "（Meta の subcode 1363144）。",
+        "fix": "ページのフォロワーが 100 人を越えてから、もう一度 thth live create を一段目から打ってください",
+        "command": "thth live create <口座> --title <題> --by <名前>",
+        "better": "フォロワーの数は Facebook のページの画面で見られます。審査の録画だけなら、100 人を越えたページの"
+                  "口座で撮ると断られずに済みます",
+        "doors": _CR,
+        "since": "5.33.0",
+    },
     # 遠くの道の Meta の口（`thth/server_meta.py`）: 手元の口が自由文で断ったもの（edit・reply・反応の一部）。
     "remote_command_refused": {
         "kind": "refusal",

@@ -165,6 +165,13 @@ CTA_FIELDS = "id,type,web_url,status,updated_time"
 LIVE_PERMISSION = "publish_video"
 LIVE_FIELDS = "id,status,title,from{id}"
 LIVE_TITLE_MAX = 255
+# 作るときの status（5.34.0・masaru 11/28 Meta 申請の録画）。L2: graph-api/reference/page/live_videos の status は
+# UNPUBLISHED・LIVE_NOW・SCHEDULED_UNPUBLISHED・SCHEDULED_LIVE・SCHEDULED_CANCELED。THTH が送るのは前の 2 つだけ。
+# UNPUBLISHED は「ほかの利用者には見えず、数時間で自動で消えることがある」。
+LIVE_STATUS_PUBLIC, LIVE_STATUS_UNPUBLISHED = "LIVE_NOW", "UNPUBLISHED"
+# ページのフォロワーが 100 人に届かないときのライブの断り（subcode 1363144・11/28 本物で見た）。
+# 非公開（UNPUBLISHED）にも掛かるかは未確認。
+LIVE_FOLLOWERS_SUBCODES = frozenset({1363144})
 # 受信箱: `GET /{page-id}/conversations?platform=…`・`GET /{conversation-id}?fields=messages`
 # （細部が読めるのは直近 20 通・L2: messenger-platform/conversations）。
 CONVERSATIONS_MAX = 25
@@ -773,6 +780,11 @@ class FacebookAdapter(base.Adapter):
             if err.get("error_subcode") in WINDOW_CLOSED_SUBCODES or outside:
                 raise AdapterError(f"messaging_window_closed: {what}: Meta が窓の外と答えました（HTTP {e.code} {message}）",
                                    failure="definite", http_status=e.code, code=err.get("code")) from None
+            # フォロワー 100 人の決まり（subcode 1363144）は権限の不足に化けさせない（認可し直しても直らない）。
+            if err.get("error_subcode") in LIVE_FOLLOWERS_SUBCODES:
+                raise AdapterError(f"live_followers_too_few: {what}: Meta がフォロワーの数が足りないと答えました"
+                                   f"（HTTP {e.code} {message}）", failure="definite", http_status=e.code,
+                                   code=err.get("code")) from None
             if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
                 raise self._denied(permission, err, f"HTTP {e.code} {message}".strip()) from None
             message = self._with_user_msg(message, err)
@@ -804,17 +816,21 @@ class FacebookAdapter(base.Adapter):
         self._write("DELETE", f"/{value}", "行動ボタンの削除", permission=CTA_PERMISSION)
         return {"deleted": True, "cta_id": value}
 
-    def live_create(self, title: str, description: str = "") -> dict:
-        """ライブ配信を作り、配信の宛先を返す（`POST /{page-id}/live_videos`・status=LIVE_NOW）。
+    def live_create(self, title: str, description: str = "", *, unpublished: bool = False) -> dict:
+        """ライブ配信を作り、配信の宛先を返す（`POST /{page-id}/live_videos`・status=LIVE_NOW か UNPUBLISHED）。
 
+        `unpublished` が真なら `status=UNPUBLISHED`（ほかの利用者には見えない・数時間で消えることがある）。
         宛先（`secure_stream_url`）は配信の鍵を含むので、呼び手は画面に出すだけで残さない。
         """
-        form = {"status": "LIVE_NOW", "title": title}
+        if type(unpublished) is not bool:
+            raise AdapterError("ライブの作成: unpublished は真か偽です", failure="definite")
+        status = LIVE_STATUS_UNPUBLISHED if unpublished else LIVE_STATUS_PUBLIC
+        form = {"status": status, "title": title}
         if description:
             form["description"] = description
         body = self._post_object(f"/{self.page_id}/live_videos", "ライブの作成", permission=LIVE_PERMISSION,
                                  form=form, expect=("id",))
-        out = {"id": body["id"]}
+        out = {"id": body["id"], "status": status}
         for key in ("stream_url", "secure_stream_url"):
             if isinstance(body.get(key), str):
                 out[key] = body[key]

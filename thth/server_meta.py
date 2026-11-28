@@ -99,6 +99,7 @@ REASONS = frozenset((
     'messaging_window_closed', 'private_reply_window_closed', 'dm_text_invalid', 'dm_recipient_unknown',
     'meta_write_unsupported', 'meta_write_permission_missing', 'meta_ig_message_access_off', 'meta_write_digest_mismatch', 'meta_write_refused',
     'meta_write_unknown', 'meta_write_busy', 'page_cta_not_found', 'live_title_invalid', 'live_not_this_page',
+    'live_followers_too_few',
     'remote_command_refused',
     # 11/23 B1: dm event・brand・creators・shop・webhook の手元の符丁（目録の doors に remote を足した）。
     'meta_event_type_unknown', 'meta_event_value_invalid', 'meta_event_already_sent', 'meta_event_marks_unreadable',
