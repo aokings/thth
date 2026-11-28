@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>THTH の予定（確かめ）</title>
+<style>
+  body { font: 15px/1.7 system-ui, -apple-system, "Hiragino Sans", sans-serif; margin: 12px; color: #222; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; }
+  .note { color: #666; font-size: 13px; }
+  /* 演出（設計 §1-4）: 動きの芯は CSS と SVG。GIF は小さい飾りだけ（data: で埋める・既定の CSP で読める） */
+  .head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .face { width: 28px; height: 28px; flex: none; }
+  .face .eye { transform-origin: center 13px; animation: blink 4s infinite; }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+  .dots span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: #f0a040;
+               animation: hop 1s infinite ease-in-out; }
+  .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+  /* 中身は初めから見える。動きは出だしだけ上書きする（backwards）。動きが止められても中身は消えない */
+  tbody tr { animation: rise .35s ease-out backwards; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .sparkle { width: 16px; height: 16px; vertical-align: -3px; margin-left: 4px; }
+  /* 消える時: 縮みながら薄れて消え、痕の 1 行を残す（消えた物を見落とさない） */
+  tbody tr.leaving { animation: leave .3s ease-in forwards; }
+  tbody tr.leaving td { animation: squash .3s ease-in forwards; }
+  @keyframes leave { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(14px); } }
+  @keyframes squash { to { padding-top: 0; padding-bottom: 0; line-height: 0; border-color: transparent; } }
+  .trace { color: #888; font-size: 13px; margin: 6px 0 0; animation: rise .35s ease-out; }
+  .trace .gone { text-decoration: line-through; }
+  @media (prefers-reduced-motion: reduce) {
+    .face .eye, .dots span, tbody tr, .trace { animation: none; }
+    .sparkle { display: none; }
+  }
+  @media (prefers-color-scheme: dark) { body { color: #eee; } th, td { border-color: #444; } .note { color: #aaa; } }
+</style>
+</head>
+<body>
+<div class="head">
+<svg class="face" viewBox="0 0 28 28" aria-hidden="true">
+  <circle cx="14" cy="15" r="12" fill="#ffd27a"/>
+  <g class="eye"><ellipse cx="10" cy="13" rx="1.6" ry="2.2" fill="#3a2a1a"/><ellipse cx="18" cy="13" rx="1.6" ry="2.2" fill="#3a2a1a"/></g>
+  <path d="M10.5 18.5 Q14 21 17.5 18.5" stroke="#3a2a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+  <circle cx="7.5" cy="17" r="1.6" fill="#ff9f8a" opacity=".7"/><circle cx="20.5" cy="17" r="1.6" fill="#ff9f8a" opacity=".7"/>
+</svg>
+<h1 style="margin:0">THTH の予定（確かめ）</h1>
+</div>
+<p class="note"><span id="state">画面は読み込まれた。host からの結果を待っている。</span> <span class="dots" id="dots"><span></span><span></span><span></span></span></p>
+<table id="list" hidden>
+  <thead><tr><th>番号</th><th>口座</th><th>状態</th><th>出す時刻</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p class="trace" id="trace" role="status" aria-live="polite" hidden></p>
+<p><button id="less" hidden>1 件減らして呼び直す（画面から道具を呼ぶ）</button></p>
+<script>
+// 橋渡しは手書き（SDK を使わない・設計 §2 の 6 (a)）。使う口は ui/initialize と結果の受け取りだけ。
+(function () {
+  var SPARKLE = "data:image/gif;base64,R0lGODlhIAAgAIEAAAAAAP+qPAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQJCQAAACwAAAAAIAAgAAAIYQABCBxIsKDBgwgTKlzIsKHDhxAjSpwoMQDFhRYvJsyo0WCAjx09ggxJ8CNHkgBMohRociTJlicnwpzpkiHNmzMf4mzZEeZKnz9rvhQaUuXKlESLHh0YE2XTpVCjSp3qMCAAIfkECQkAAAAsBAAEABgAGACBAAAA/6o8AAAAAAAACFYAAQgcSFBggIIIExY8qLDhQocQAQSYGLHhRIYVEV7MmHAjx4UUPw68GFIkSYwfT2Y8ydLjyJYwYYKM6TKiSpESSeLMWTNlSZw9faI0+RPoToJDjToMCAAh+QQJEgAAACwDAAMAGgAaAIEAAAD/qjwAAAAAAAAIXwABCBxIcGCAgggTJjyosOFChxANBmAYseFEihUXTsxocSNHjRg/Sgwp8qJHkQJNkuSo8qPKlyYLwpxJ8+TImjYjtkSZMiZPADt/Xvw5kmjPlS5zohxqFGjTlE+dQgwIACH5BAkJAAAALAMAAwAbABsAgQAAAP+qPAAAAAAAAAhgAAEIHEhwYICCCBMqPKiw4UKHEAkGmBgx4kSGFRtezOhwI8eFFD8m9ChS4kWMJQGcRFlypciVME8ijEmzJkmDNmV+dJlSIM+eP4GG7OlzKNGbQlmmRLrU6FGiBZUCrRgQACH5BAkSAAAALAMAAwAaABoAgQAAAP+qPAAAAAAAAAhfAAEIHEhwYICCCBMmPKiw4UKHEA0GYBix4USKFRdOzGhxI0eNGD9KDCnyokeRAk2S5Kjyo8qXJgvCnEnz5MiaNiO2RJkyJk8AO39e/DmSaM+VLnOiHGoUaNOUT51CDAgAIfkECQkAAAAsBAAEABgAGACBAAAA/6o8AAAAAAAACFYAAQgcSFBggIIIExY8qLDhQocQAQSYGLHhRIYVEV7MmHAjx4UUPw68GFIkSYwfT2Y8ydLjyJYwYYKM6TKiSpESSeLMWTNlSZw9faI0+RPoToJDjToMCAA7";
+  var nextId = 1, pending = {};
+  function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*"); }
+  function request(method, params) {
+    var id = nextId++;
+    send({ id: id, method: method, params: params });
+    return new Promise(function (resolve, reject) { pending[id] = { resolve: resolve, reject: reject }; });
+  }
+  function setState(t) { document.getElementById("state").textContent = t; }
+  var REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function row(it) {
+    var tr = document.createElement("tr");
+    tr.dataset.id = it.id;
+    [it.id, it.account, it.status, it.publish_at || "（未定）"].forEach(function (v) {
+      var td = document.createElement("td"); td.textContent = String(v); tr.appendChild(td);
+    });
+    return tr;
+  }
+  function resized() {
+    send({ method: "ui/notifications/size-changed",
+           params: { width: document.body.scrollWidth, height: document.body.scrollHeight + 24 } });
+  }
+  function render(result) {
+    var data = result && result.structuredContent;
+    if (!data || !Array.isArray(data.items)) { setState("結果に一覧が無い。"); return; }
+    var tbody = document.querySelector("#list tbody");
+    var keep = {}; data.items.forEach(function (it) { keep[it.id] = true; });
+    var have = {}; var gone = [];
+    Array.prototype.forEach.call(tbody.querySelectorAll("tr:not(.leaving)"), function (tr) {
+      if (keep[tr.dataset.id]) { have[tr.dataset.id] = tr; return; }
+      gone.push(tr.dataset.id);
+      if (REDUCED) { tr.remove(); return; }
+      tr.classList.add("leaving");
+      tr.addEventListener("animationend", function (e) { if (e.target === tr) { tr.remove(); resized(); } });
+    });
+    var fresh = 0;
+    data.items.forEach(function (it) {
+      if (have[it.id]) return;
+      var tr = row(it); tr.style.animationDelay = (fresh++ * 0.08) + "s"; tbody.appendChild(tr);
+    });
+    var trace = document.getElementById("trace");
+    if (gone.length) {
+      trace.textContent = gone.length + " 件 消えた（";
+      gone.forEach(function (id, k) {
+        var sp = document.createElement("span"); sp.className = "gone"; sp.textContent = id;
+        trace.appendChild(sp); if (k < gone.length - 1) trace.appendChild(document.createTextNode("・"));
+      });
+      trace.appendChild(document.createTextNode("）"));
+      trace.hidden = false;
+      trace.style.animation = "none"; void trace.offsetWidth; trace.style.animation = "";
+    }
+    document.getElementById("list").hidden = false;
+    document.getElementById("dots").hidden = true;
+    setState((data.note || "") + "・" + data.items.length + " 件");
+    var img = document.createElement("img");
+    img.className = "sparkle"; img.alt = ""; img.src = SPARKLE;
+    document.getElementById("state").appendChild(img);
+    shown = data.items.length;
+    var less = document.getElementById("less");
+    less.hidden = false; less.disabled = shown === 0;
+    resized();
+  }
+  var shown = 0;
+  document.getElementById("less").addEventListener("click", function () {
+    var btn = this; btn.disabled = true;
+    request("tools/call", { name: "thth_ui_probe", arguments: { count: Math.max(0, shown - 1) } })
+      .then(render, function (e) { setState("呼び直せない: " + JSON.stringify(e)); btn.disabled = false; });
+  });
+  window.addEventListener("message", function (ev) {
+    var m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id && pending[m.id] && !m.method) {
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(m.error); else p.resolve(m.result);
+      return;
+    }
+    if (m.method === "ui/notifications/tool-result") render(m.params);
+  });
+  request("ui/initialize", {
+    appInfo: { name: "thth-ui-probe", version: "0.0.1" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }).then(function () {
+    send({ method: "ui/notifications/initialized" });
+    setState("host とつながった。結果を待っている。");
+  }, function (e) { setState("host とつながらない: " + JSON.stringify(e)); });
+})();
+</script>
+</body>
+</html>

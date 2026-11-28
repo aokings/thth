@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>THTH 偽の host</title><style>
+body{font:16px/1.7 system-ui,"Hiragino Sans",sans-serif;margin:20px;color:#26221c}
+button,select{font:inherit;padding:7px;margin:3px}
+iframe{width:100%;height:600px;border:1px solid #ece6da}
+#log{font-size:13px}
+</style></head>
+<body>
+
+<h1>画面の確かめ（偽の host）</h1><p>すべて見本です。本物の口座や API は使いません。</p><div id="screens"></div><div id="samples"></div>
+<div id="confirm-options" hidden>
+<label>確定結果 <select id="outcome"><option value="retract-server">取り下げ（サーバ）</option><option value="retract-cli">取り下げ（CLI）</option><option value="schedule">予約</option><option value="bookmark">ブックマーク追加</option><option value="bookmark-edit">ブックマーク編集</option><option value="bookmark-delete">ブックマーク削除</option><option value="unknown">結果不明</option><option value="error">エラー</option></select></label>
+<label>受信順 <select id="delivery"><option value="reply">RPC のみ</option><option value="reply-first">RPC → 通知</option><option value="notification-first">通知 → RPC</option></select></label>
+</div><p id="log" role="status">待っています。</p><iframe id="view" title="THTH 画面" sandbox="allow-scripts"></iframe>
+<script>
+
+
+var csp="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none';";
+
+var screen='queue',sample='normal',view=document.getElementById('view'),generation=0;
+
+var content='12 月の営業日のお知らせです。\n1 日から営業します。';
+
+var queue=[{id:'d-001',file:'drafts/d-001.md',account:'sample-threads',status:'scheduled',publish_at:'2026-12-01 09:00'},{id:'d-002',file:'drafts/d-002.md',account:'sample-bluesky',status:'draft',publish_at:'2026-12-01 12:30'}
+];
+
+// Synthetic values in the actual summary_cli.build shape; accounts are never added together.
+function summaryExample(){
+  function node(medium,published,total,unanswered,delta){return {
+    medium:medium,
+    published:{'7d':{published:published,retracted:0},basis:'sent_at（THTH を通して出したもの）'},
+    reactions:{'7d':{posts:published,measured:published,sums:{likes:{sum:total-8,n:published},replies:{sum:8,n:published}},reactions_total:total},basis:'posted_at の窓に出した投稿の、いちばん新しい実測の和'},
+    unanswered_replies:{n:unanswered,window_days:14,cannot_say:[]},
+    followers:{latest:1204,previous:1204-delta,date:'2026-11-27',previous_date:'2026-11-26',delta:delta},
+    stopped:{guard:null,publish_hold:null,inflight:false,budget:null,any:false}
+  };}
+  var nodes={'sample-threads':node('threads',12,348,3,18)},reasons=[];
+  if(sample==='multiple')nodes['sample-bluesky']=node('bluesky',4,28,0,-2);
+  if(sample==='partial'){
+    nodes['sample-threads'].followers=null;
+    nodes['sample-threads'].reactions['7d']={posts:12,measured:10,sums:{likes:{sum:300,n:10},replies:{sum:8,n:7}},reactions_total:308};
+    nodes['sample-threads'].stopped={guard:'daily_limit',publish_hold:null,inflight:false,budget:null,any:true};
+    reasons.push('followers_unreadable');
+  }
+  return {schema:'thth.summary/1',report_type:'summary',generated_at:'2026-11-27T12:00:00+09:00',target:sample==='multiple'?'sample-project':'sample-threads',target_kind:sample==='multiple'?'project':'account',accounts:Object.keys(nodes),by_account:nodes,cannot_say:reasons,limitations:['見本の数値です。公開は THTH を通したものだけ。','口座をまたいで足さない。取れていない数は 0 と混ぜない。']};
+}
+
+// analytics_report.answer returns activity_snapshot, not the summary's four metrics.
+function analyticsExample(args){
+  var end=new Date('2026-11-27T03:00:00Z'),start=new Date(end.getTime()-args.window_days*86400000),nodes={};
+  if(args.compare_previous){
+    var previousStart=new Date(start.getTime()-args.window_days*86400000);
+    function period(a,b){return {start:a.toISOString(),end:b.toISOString(),start_inclusive:true,end_inclusive:false,timezone:'Asia/Tokyo',basis:'posted_at',window_days:args.window_days};}
+    nodes[args.account]={posts:{current:{n_total:12,n_eligible:8,n_missing:4,n_immature:2,n_incomplete:2},previous:{n_total:9,n_eligible:8,n_missing:1,n_immature:0,n_incomplete:1}},cannot_say:[]};
+    return {schema_version:1,report_type:'period_comparison',periods:{current:period(start,end),previous:period(previousStart,start)},filters:{account:args.account,project:null},by_account:nodes,limitations:['見本。期間ごとの母集団数を抜粋。反応の和への換算はしません。']};
+  }
+  nodes[args.account]={posts:{n:({7:12,28:36,90:92})[args.window_days]},cannot_say:['見本。実測台帳の投稿数だけを抜粋。反応の和・未返信・フォロワー差はこの結果にありません。']};
+  return {schema_version:1,report_type:'activity_snapshot',generated_at:end.toISOString(),data_updated_at:null,data_updated_at_reason:'複数台帳の最終更新時刻をこのレポートでは検証していない',filters:{account:args.account,project:null},period:{start:start.toISOString(),end:end.toISOString(),window_days:args.window_days,start_inclusive:true,end_inclusive:true,timezone:'Asia/Tokyo',basis:'posted_at',mode:'rolling'},by_account:nodes,cannot_say:[],limitations:['投稿の母集団は所有が確認できた実測台帳の根投稿。SNS 上の全投稿ではありません。']};
+}
+
+function example(){var text=sample==='xss'?'<script>alert(1)<\/script>':sample==='long'?'あ'.repeat(2000):content;
+  if(sample==='missing')return {};
+  if(screen==='queue')return {items:queue.slice()};
+  if(screen==='preview')return {account:'sample-threads',publish_at:'2026-12-01 09:00',text:text,character_count:text.length,character_limit:500};
+  if(screen==='confirm'){
+    var kind=document.getElementById('outcome').value;
+    // Stage 1 is a proposed UI envelope: tool/reason and 16-digit digest are synthetic.
+    return {status:'confirm_required',stage:1,tool:kind==='schedule'?'thth_schedule_request':kind.startsWith('bookmark')?'thth_bookmark_request':'thth_retract_request',account:'sample-threads',target:kind==='schedule'?'d-001':kind.startsWith('bookmark')?'bm:777':'777',posted_at:'2026-11-20 10:00',text:text,permalink:'threads.example/post/777',reason:'誤字',digest:'3f9a1c7e12345678'};
+  }
+  if(sample==='comparison')return analyticsExample({account:'sample-threads',window_days:7,compare_previous:true});
+  if(sample==='observe')return {report_type:'observe',sections_by_name:{unanswered:{section:'unanswered',cannot_say:null,value:{by_account:{'sample-threads':{cannot_say:null,value:{replies:{cannot_say:null,value:{n:3,denominator:3,window:{days:14},items:[{preview:'他人の本文。この文字は画面に出さない。'}]}}}}}}}}};
+  return summaryExample();
+}
+
+function sendResult(){view.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{structuredContent:example()}
+  },'*');
+}
+
+function openScreen(){var g=++generation;
+  document.getElementById('confirm-options').hidden=screen!=='confirm';
+  fetch(screen+'.html').then(function(r){if(!r.ok)throw Error('読み込み失敗');
+    return r.text();
+  }).then(function(html){if(g!==generation)return;
+    view.srcdoc=html.replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="'+csp+'">');
+  }).catch(function(){document.getElementById('log').textContent='画面を読み込めませんでした。';
+  });
+}
+
+function button(container,label,fn){var b=document.createElement('button');
+  b.textContent=label;
+  b.addEventListener('click',fn);
+  document.getElementById(container).appendChild(b);
+}
+
+[['予定','queue'],['下見','preview'],['確定','confirm'],['数字','numbers']].forEach(function(v){button('screens',v[0],function(){screen=v[1];
+    openScreen();
+  });
+});
+
+[['通常','normal'],['script 文字','xss'],['2,000 字','long'],['欠けた結果','missing'],['数字・複数口座','multiple'],['数字・部分欠測','partial'],['数字・期間比較','comparison'],['数字・朝の報告','observe']].forEach(function(v){button('samples',v[0],function(){sample=v[1];
+    sendResult();
+  });
+});
+
+button('samples','予定を 1 件減らす',function(){queue=queue.slice(0,1);
+  sendResult();
+});
+
+document.getElementById('outcome').addEventListener('change',sendResult);
+
+function confirmResult(args){
+  var kind=document.getElementById('outcome').value,base={account:args.account,post_id:args.target};
+  if(kind==='retract-cli')return Object.assign(base,{ok:true,retracted:true});
+  if(kind==='schedule')return {account:args.account,draft_id:args.target,status:'approved',publish_at:'2026-12-01T09:00:00+09:00'};
+  if(kind==='bookmark'||kind==='bookmark-edit')return Object.assign(base,{status:kind==='bookmark'?'bookmarked':'bookmark_edited',result:'confirmed',delivery:args.target});
+  if(kind==='bookmark-delete')return Object.assign(base,{status:'bookmark_deleted'});
+  if(kind==='unknown')return Object.assign(base,{status:'unknown',result:'unknown'});
+  if(kind==='error')return Object.assign(base,{error:'confirm_mismatch'});
+  return Object.assign(base,{status:'retracted',retracted_at:'2026-11-27T12:00:00+09:00'});
+}
+
+window.addEventListener('message',function(event){if(event.source!==view.contentWindow)return;
+  var m=event.data;
+  if(!m||m.jsonrpc!=='2.0')return;
+  document.getElementById('log').textContent='受信: '+(m.method||'response');
+  if(m.method==='ui/notifications/size-changed' && m.params && Number.isFinite(m.params.height))view.style.height=Math.max(1,m.params.height)+'px';
+  if(m.method==='ui/initialize')view.contentWindow.postMessage({jsonrpc:'2.0',id:m.id,result:{protocolVersion:'2026-01-26',hostInfo:{name:'fake',version:'1'},hostCapabilities:{},hostContext:{}
+    }
+  },'*');
+  if(m.method==='ui/notifications/initialized'){view.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/tool-input',params:{arguments:{}
+      }
+    },'*');
+    sendResult();
+  }
+  if(m.method==='tools/call'){var result;
+    if(m.params.name==='analytics_report'){result=analyticsExample(m.params.arguments);
+    }
+    else if(m.params.name==='thth_ui_confirm'){result=confirmResult(m.params.arguments);
+    }
+    else result={account:'sample-threads',publish_at:'2026-12-01 09:00',text:sample==='xss'?'<script>alert(1)<\/script>':sample==='long'?'あ'.repeat(2000):content};
+    var reply={jsonrpc:'2.0',id:m.id,result:{structuredContent:result}},notice={jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{structuredContent:result}};
+    var order=m.params.name==='thth_ui_confirm'?document.getElementById('delivery').value:'reply';
+    if(order==='notification-first')view.contentWindow.postMessage(notice,'*');
+    view.contentWindow.postMessage(reply,'*');
+    if(order==='reply-first')view.contentWindow.postMessage(notice,'*');
+  }
+});
+
+openScreen();
+
+</script>
+</body>
+</html>

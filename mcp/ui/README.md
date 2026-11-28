@@ -1,0 +1,34 @@
+# mcp/ui（THTH の画面・MCP Apps）
+
+設計の正本: [docs/設計_THTH画面_MCPApps_2026-11-27.md](../../docs/設計_THTH画面_MCPApps_2026-11-27.md)。
+
+## いま有る物（確かめ用・本物の道具は呼ばない）
+
+| ファイル | 役 |
+|---|---|
+| `probe_server.py` | 最小の stdio のサーバ。道具 `thth_ui_probe`（見本の予定 3 件・偽のデータ）と画面 `ui://thth/probe` だけ。`THTH_UI_PROBE_LOG=<ファイル>` を付けると、受けた `initialize` の client の能力を 1 行ずつ残す |
+| `probe.html` | 画面 1 枚。橋渡しは手書きの JS（SDK なし）。`ui/initialize` → `ui/notifications/initialized` → `ui/notifications/tool-result` を受けて一覧を描く |
+| `probe_host.html` | 偽の host。`probe.html` の橋渡しだけを確かめる（本物の host の代わりにはならない） |
+| `catalog.json` | 部品の表の正本（4 枚の画面・出す物と順・行動の引数）。柵は `tests/test_mcp_ui_catalog.py` |
+
+柵: `tests/test_mcp_ui_fence.py`（画面に対応しない client には今と 1 字も変わらない）・`tests/test_mcp_ui_html.py`（動きを減らす設定・初めは透明にしない・痕は読み上げにも・innerHTML を使わない・外の URL を読まない）・`tests/test_mcp_ui_confirm_bound.py`。どちらも一度わざと壊して赤を見た（11/27）。
+
+## 確かめたこと（2026-11-27）
+
+- 手元で JSON-RPC を流した: `initialize`（`resources` の能力を返す）・`tools/list`（`_meta.ui.resourceUri`）・`tools/call`（`structuredContent`）・`resources/list`・`resources/read`（`text/html;profile=mcp-app`）の 5 つが期待どおり。記録に client の能力（`extensions."io.modelcontextprotocol/ui"`）が残る。
+- 偽の host（`python3 -m http.server` で `probe_host.html` を開く）で、橋渡しが通り一覧が描かれた（画面の写しあり）。
+- **未確認**: 本物の host（Claude のデスクトップ）で画面が出るか。
+
+## 本物の host で確かめる手順（設計 §6 の 1〜2）
+
+Claude のデスクトップの `claude_desktop_config.json` の `mcpServers` に 1 本足して、アプリを起こし直す:
+
+```json
+"thth-ui-probe": {
+  "command": "python3",
+  "args": ["/Volumes/NexDev/Developer/thth/.claude/worktrees/mcp-ui/mcp/ui/probe_server.py"],
+  "env": {"THTH_UI_PROBE_LOG": "/Users/masaru/Documents/thth-ui-probe.log"}
+}
+```
+
+会話で「thth_ui_probe を呼んで」と頼み、(1) 記録に `io.modelcontextprotocol/ui` が出るか、(2) 会話の中に表が出るか、(3) 演出（顔のまばたき・行のふわっと・きらめきの GIF）が出るか、(4) 画面の中の「1 件減らして呼び直す」を押すと、画面から道具が呼ばれ（記録に tools/call が増える）、行が縮んで消えて痕の 1 行が出るか、を見る。済んだら 1 本を外す。
