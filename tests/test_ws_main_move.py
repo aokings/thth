@@ -616,9 +616,61 @@ def test_record_rewrite_does_not_touch_other_names_or_common_paths(place):
     got = json.loads((place / "ws" / "main" / "state" / "alpha-main" / "rows.json").read_text())
     main = f"{place}/ws/main"
     assert got == {"a": f"{main}/state/alpha-main/x", "b": rows["b"], "c": rows["c"], "d": rows["d"],
-                   "e": f"{main}/repos/alpha", "f": rows["f"]}
+                   "e": f"{main}/repos/alpha", "f": f"文の中の {main}/repos/alpha"}
     nd = (place / "ws" / "main" / "state" / "alpha-main" / "runs.ndjson").read_text()
     assert nd == json.dumps({"repo": f"{main}/repos/beta"}) + "\n" + "{壊れた行\n"
     assert run("move", place) == 0  # もう一度打っても二重にならない（state=moved で何もしない）
     assert run("back", place) == 0
     assert json.loads((st / "rows.json").read_text()) == rows
+
+
+def _repos_hit(led, root: Path, base: Path) -> int:
+    """承認と止めの記録の各行の repo が、realpath で原稿の repo の頂上に当たる数（当たらなければ assert）。"""
+    _clear_ledger_caches()
+    hit = 0
+    for name in ("approvals.json", "holds.json"):
+        data = json.loads((base / "state" / "alpha-main" / name).read_text())
+        for key, row in data["items"].items():
+            top = led.repo_root_of(str(base / "repos" / "alpha" / key))
+            assert top and os.path.realpath(row["repo"]) == top, (name, key, row["repo"])
+            hit += 1
+    return hit
+
+
+def test_records_repo_paths_and_inflight_hit_the_drafts(place, monkeypatch, tmp_path):
+    led = _ledger_place(place, monkeypatch, tmp_path)
+    assert _repos_hit(led, place, place) == 2
+    assert run("move", place) == 0
+    main = place / "ws" / "main"
+    assert _repos_hit(led, place, main) == 2
+    inflight = json.loads((main / "state" / "alpha-main" / "inflight.json").read_text())
+    assert inflight["file"] == str(main / "repos" / "alpha" / "queue" / "a.md") and os.path.isfile(inflight["file"])
+    assert run("back", place) == 0
+    assert _repos_hit(led, place, place) == 2
+
+
+def test_move_refuses_when_a_record_rewrite_is_skipped(place, monkeypatch, tmp_path, capsys):
+    """柵: 書き替えを外すと move が自分で断り（rc 1）、back を案内する。back で元に戻る。"""
+    led = _ledger_place(place, monkeypatch, tmp_path)
+    before = snap(place)
+    monkeypatch.setattr(mv, "rewrite_records", lambda *a, **k: (0, 0))
+    assert run("move", place) == 1
+    out = capsys.readouterr().out
+    assert "移す前の根の道が残っています: state/alpha-main/" in out and "`back` で戻し" in out
+    assert (place / "ws" / ".main-move" / "MOVING").exists()  # 印は残る（新しい版は main を workspace_moving で断る）
+    monkeypatch.undo()
+    assert run("back", place) == 0
+    monkeypatch.setenv("THTH_ROOT", str(place))
+    from thth import approval_ledger
+    assert _seen(approval_ledger, place / "repos" / "alpha") == ("approved", "稽古")
+    after = snap(place)
+    assert {k: v for k, v in after.items() if k in before} == before
+
+
+def test_move_refuses_an_escaped_root_left_in_a_record(place, capsys):
+    """JSON で `/` を逃がした道（書き替えられない形）が記録に残っていれば断る。"""
+    esc = str(place).replace("/", "\\/")
+    _write(place / "state" / "alpha-main" / "odd.json", '{"repo": "' + esc + '\\/repos\\/alpha"}')
+    assert run("move", place) == 1
+    assert "state/alpha-main/odd.json（1 か所）" in capsys.readouterr().out
+    assert run("back", place) == 0

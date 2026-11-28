@@ -400,11 +400,18 @@ RECORD_EXT = (".json", ".ndjson")
 
 
 def _record_pattern(lay: Layout, srcs, *, forward: bool):
+    """`<根>/<移した物>`（戻すときは `<根>/ws/main/<移した物>`）。文字列の頭でも、文の途中でもよい。
+    前は道の切れ目（英数・`_.-/` でない）、後ろは `/`・`"`・空白・`\\`（JSON の逃がし）か終わり。"""
     roots = sorted({lay.root, os.path.realpath(lay.root)}, key=len, reverse=True)
     names = sorted(set(srcs) | TOP_WS, key=len, reverse=True)
     mid = "" if forward else f"/ws/{MAIN}"
-    return re.compile('"(' + "|".join(re.escape(r) for r in roots) + ")" + re.escape(mid)
-                      + "/(" + "|".join(re.escape(n) for n in names) + ')(?=[/"])')
+    return re.compile(r"(?<![A-Za-z0-9_.\-/])(" + "|".join(re.escape(r) for r in roots) + ")" + re.escape(mid)
+                      + "/(" + "|".join(re.escape(n) for n in names) + r')(?=[/"\s\\]|$)', re.M)
+
+
+def _escaped_roots(lay: Layout) -> list:
+    """JSON で `/` を `\\/` と逃がした根（書き替えられないので、残っていれば断る）。"""
+    return [r.replace("/", "\\/") for r in {lay.root, os.path.realpath(lay.root)}]
 
 
 def record_files(base: str, rels=None) -> list:
@@ -459,7 +466,7 @@ def _still_json(path: str, before: str, after: str) -> None:
 def rewrite_records(lay: Layout, base: str, srcs, *, forward: bool, rels=None, dry: bool = False) -> tuple[int, int]:
     """記録の中の絶対の道を書き替える。返り値は（ファイルの数・か所の数）。"""
     pat = _record_pattern(lay, srcs, forward=forward)
-    repl = (lambda m: f'"{m.group(1)}/ws/{MAIN}/{m.group(2)}') if forward else (lambda m: f'"{m.group(1)}/{m.group(2)}')
+    repl = (lambda m: f"{m.group(1)}/ws/{MAIN}/{m.group(2)}") if forward else (lambda m: f"{m.group(1)}/{m.group(2)}")
     files = hits = 0
     for path in record_files(base, rels):
         with open(path, encoding="utf-8", errors="surrogateescape") as f:
@@ -483,6 +490,20 @@ def rewrite_records(lay: Layout, base: str, srcs, *, forward: bool, rels=None, d
         os.chmod(tmp, stat.S_IMODE(info.st_mode))
         os.replace(tmp, path)
     return files, hits
+
+
+def leftover_records(lay: Layout, base: str, srcs, rels) -> list:
+    """移した記録に残っている「移す前の根の道」（ws/main を通らない道）。返り値は（ファイル・か所の数）の並び。"""
+    pat = _record_pattern(lay, srcs, forward=True)
+    escaped = _escaped_roots(lay)
+    out = []
+    for path in record_files(base, rels):
+        with open(path, encoding="utf-8", errors="surrogateescape") as f:
+            text = f.read()
+        n = len(pat.findall(text)) + sum(text.count(e) for e in escaped)
+        if n:
+            out.append((os.path.relpath(path, base), n))
+    return out
 
 
 # --------------------------------------------------------------------------- 確かめ
@@ -724,6 +745,15 @@ def cmd_move(lay: Layout, args) -> int:
         files, hits = rewrite_records(lay, base, [p["src"] for p in plan], forward=True, rels=[p["dst"] for p in plan])
         note(lay, j, "records", files=files, n=hits)
         stopper.after("records")
+        # 2''. 書き替え損ねを断る（止めが消えると止めていた投稿が出る。黙って進まない・第24 11/29）
+        left = leftover_records(lay, base, [p["src"] for p in plan], [p["dst"] for p in plan])
+        if left:
+            note(lay, j, "records_left", files=len(left), n=sum(n for _, n in left))
+            for rel, n in left[:20]:
+                say(f"NG: 記録に移す前の根の道が残っています: {rel}（{n} か所）")
+            raise Stop(f"移した記録に、移す前の根の道が {sum(n for _, n in left)} か所（ファイル {len(left)}）残っています。"
+                       "このまま進むと、承認と止めが無いものとされます（止めていた投稿が出る）。"
+                       "timer と常駐を止めたまま `back` で戻し、残った道の形を見てから打ち直してください")
         # 3. 元の場所に開けないフォルダ
         for i, item in enumerate(plan, 1):
             if not item["tomb"]:
