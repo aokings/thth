@@ -1,5 +1,5 @@
 {
-  "$comment": "THTH の画面の部品の表（正本）。設計 docs/設計_THTH画面_MCPApps_2026-11-27.md §1-3。版を上げるときは version を変える。柵は tests/test_mcp_ui_catalog.py",
+  "$comment": "THTH の画面の部品の表（正本）。設計 docs/設計_THTH画面_MCPApps_2026-11-27.md §1-3。版を上げるときは version を変える。柵は tests/test_mcp_ui_catalog.py。remote_tools は段 K のリモート MCP（thth.me/mcp・callback/src/mcp-tools.js）の道具の名で、その画面を付ける物（第24 11/28 の決め (1)・作り手 tools/render_mcp_ui.py）",
   "version": "0.1.0",
   "mimeType": "text/html;profile=mcp-app",
   "rules": [
@@ -63,11 +63,36 @@
             ],
             "additionalProperties": false
           }
+        },
+        {
+          "id": "wait_result",
+          "calls": "thth_result",
+          "remote": true,
+          "visibility": [
+            "app"
+          ],
+          "args": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}~[a-z][a-z0-9-]{0,31}$",
+                "x-thth-from-result": true
+              }
+            },
+            "required": [
+              "request_id"
+            ],
+            "additionalProperties": false
+          }
         }
       ],
       "client_side": [
         "並べ替え（時刻・口座・状態）",
         "状態で絞る"
+      ],
+      "remote_tools": [
+        "thth_board"
       ]
     },
     {
@@ -89,7 +114,8 @@
         "日時",
         "本文"
       ],
-      "actions": []
+      "actions": [],
+      "remote_tools": []
     },
     {
       "id": "confirm",
@@ -180,7 +206,8 @@
       ],
       "decided": [
         "確定の引数は reason を 1 段目の結果から写す（控えは持たない）。digest が reason を含むので写し違いは 2 段目で confirm_mismatch（第24 11/27 #9961）"
-      ]
+      ],
+      "remote_tools": []
     },
     {
       "id": "numbers",
@@ -230,7 +257,8 @@
             "additionalProperties": false
           }
         }
-      ]
+      ],
+      "remote_tools": []
     }
   ]
 }

@@ -251,7 +251,7 @@ export class Connector extends DurableObject {
     const K=await unwrap(parsed.secret,row.wrap_a);if(!K)return fail(401,'invalid_token');
     const key=await unwrap(kstr(K),row.enc_key);if(!key)return fail(401,'invalid_token');
     return {status:200,body:{device_id:parsed.id,owner:row.owner,scope:row.scope,writes:row.writes,lane:row.lane,
-      workspace:row.workspace,account:row.account,action:row.action,created_at:row.created_at,key:new TextDecoder().decode(key)}};
+      workspace:row.workspace,account:row.account,action:row.action,created_at:row.created_at,ui:row.ui===true,key:new TextDecoder().decode(key)}};
   }
   // RFC 7009 の取り消しの口: token の秘密（access か refresh）が合うときだけ。
   async revokeToken(token){
@@ -293,6 +293,15 @@ export class Connector extends DurableObject {
     if(result.status===200&&result.body.dropped)await this.wake(this.now()+1000);
     return result;
   }
+  // 画面（MCP Apps）に対応する client か。initialize の能力を控える（MCP は状態を持たないので、次の tools/list はこれを見る）。
+  // 変わらなければ書かない（initialize ごとに書き込まない）。
+  noteUi(device_id,on){return this.atomic(()=>{
+    if(typeof device_id!=='string'||!DEVICE_ID.test(device_id)||typeof on!=='boolean')return fail();
+    const row=this.ctx.storage.kv.get('device:'+device_id);
+    if(!row||row.status!=='active')return fail(404,'not_found');
+    if((row.ui===true)!==on)this.put('device:'+device_id,{...row,ui:on});
+    return {status:200,body:{}};
+  });}
   // 書く道具の二段の確認（設計 精読 GenerativeUI §1: 人が押した証明はどの仕様にも無い → 1 段目を見せたことをサーバに残す）。
   // `hash` は接続・道具・引数（confirm を除く）の SHA-256。`value` は Worker が出した確認の値（approve は VM の digest なので null）。
   noteConfirm(device_id,hash,value){return this.atomic(()=>{

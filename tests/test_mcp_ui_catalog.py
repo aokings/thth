@@ -29,6 +29,13 @@ def _existing_tool_names():
     return {t["name"] for t in mod.TOOLS + mod.SERVER_TOOLS + mod.REMOTE_TOOLS}
 
 
+def _remote_tool_names():
+    import re
+    with open(os.path.join(ROOT, "callback", "src", "mcp-tools.js"), encoding="utf-8") as f:
+        names = set(re.findall(r'"name": "(thth_[a-z_]+)"', f.read()))
+    return names | {"thth_result"}
+
+
 def _string_fields(schema, path=""):
     if not isinstance(schema, dict):
         return
@@ -47,7 +54,13 @@ def test_画面と行動が指す道具は実在する():
         for tool in screen["tools"]:
             assert tool in names, (screen["id"], tool)
         for action in screen["actions"]:
+            if action.get("remote") is True:
+                # リモート（thth.me/mcp）だけの道具（thth_result）。Worker の一覧（mcp-tools.js と thth_result）にあること。
+                assert action["calls"] in _remote_tool_names(), (screen["id"], action["id"])
+                continue
             assert action["calls"] in names or action["calls"].startswith("thth_ui_"), (screen["id"], action["id"])
+        for tool in screen.get("remote_tools", []):
+            assert tool in _remote_tool_names(), (screen["id"], tool)
 
 
 def test_行動の引数に自由な文の欄が無い():

@@ -15,6 +15,7 @@ import {workspaceCall,workspaceResult,WORKSPACE_REQUEST_ID} from './api.js';
 import {connectorStub,unauthorized} from './oauth.js';
 import {splitToken} from './connector-object.js';
 import TABLE from './mcp-tools.js';
+import UI from './mcp-ui.js';
 
 export const PROTOCOLS=['2025-11-25','2025-06-18','2025-03-26'];
 const BODY_MAX=65_536;
@@ -44,6 +45,17 @@ const COACH='THTH の道具です。あなたは持ち主のために動きま�
 const RESULT_TOOL={name:'thth_result',title:'thth_result',description:'前に pending が返った道具の答えを request_id で取り出す（読むだけ）。まだなら少し置いてもう一度。書く道具を送り直さない',
   inputSchema:{type:'object',properties:{request_id:{type:'string',maxLength:96}},required:['request_id'],additionalProperties:false},
   annotations:{readOnlyHint:true,openWorldHint:false}};
+// 画面（MCP Apps・`io.modelcontextprotocol/ui`）: `mcp-ui.js`（`tools/render_mcp_ui.py` が mcp/ui の表と HTML から作る）。
+// 出すのは client が initialize で `text/html;profile=mcp-app` を言ったときだけ。言わない client には 1 字も変えない
+// （resources を言わない・道具に _meta を付けない・resources/* は method not found）。
+const UI_EXT='io.modelcontextprotocol/ui';
+export function wantsUi(params){
+  const ext=params&&typeof params==='object'?params.capabilities?.extensions?.[UI_EXT]:undefined;
+  return !!ext&&typeof ext==='object'&&Array.isArray(ext.mimeTypes)&&ext.mimeTypes.includes(UI.mimeType);
+}
+const UI_BY_TOOL=Object.fromEntries(UI.screens.flatMap(s=>s.tools.map(t=>[t,s.uri])));
+const UI_BY_URI=Object.fromEntries(UI.screens.map(s=>[s.uri,s]));
+const withUi=(listed,ui)=>ui&&UI_BY_TOOL[listed.name]?{...listed,_meta:{ui:{resourceUri:UI_BY_TOOL[listed.name]}}}:listed;
 const rpc=(id,result)=>({jsonrpc:'2.0',id,result});
 const rpcError=(id,code,message)=>({jsonrpc:'2.0',id,error:{code,message}});
 const json=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json','cache-control':'no-store','referrer-policy':'no-referrer'}});
@@ -142,7 +154,9 @@ async function mcpInner(request,env,url){
     const c={env,...device.body};
     if(message.method==='initialize'){
       const asked=typeof params.protocolVersion==='string'&&PROTOCOLS.includes(params.protocolVersion)?params.protocolVersion:PROTOCOLS[0];
-      return json(200,rpc(id,{protocolVersion:asked,capabilities:{tools:{listChanged:false}},
+      const ui=wantsUi(params);
+      if(ui!==c.ui){try{await connectorStub(env).noteUi(c.device_id,ui);}catch{/* 控えられなければ今までの形のまま */}}
+      return json(200,rpc(id,{protocolVersion:asked,capabilities:ui?{tools:{listChanged:false},resources:{}}:{tools:{listChanged:false}},
         serverInfo:{name:'thth',title:'THTH',version:env.THTH_EDGE_VERSION||'0'},
         instructions:`${COACH}（範囲: ${c.writes?'読む・書く':'読むだけ'}）`}));
     }
@@ -151,7 +165,14 @@ async function mcpInner(request,env,url){
       // 読むだけの接続には書く道具を出さない（呼ばれても下で断る）。鍵の反映前も同じ一覧（表は Worker にある）。
       // まだ括りに結んでいなければ、ここでも結んでみる（道具を呼ばない間も結べる・結べなくても一覧は出す）。
       if(!c.workspace||!c.account){try{await bound(c);}catch{/* 次の呼び出しでもう一度 */}}
-      return json(200,rpc(id,{tools:[...TOOLS.filter(tool=>c.writes||!tool.writes).map(describe),RESULT_TOOL]}));
+      return json(200,rpc(id,{tools:[...TOOLS.filter(tool=>c.writes||!tool.writes).map(describe),RESULT_TOOL].map(t=>withUi(t,c.ui))}));
+    }
+    if(c.ui&&message.method==='resources/list')
+      return json(200,rpc(id,{resources:UI.screens.map(s=>({uri:s.uri,name:s.id,title:s.title,mimeType:UI.mimeType}))}));
+    if(c.ui&&message.method==='resources/read'){
+      const screen=params&&typeof params.uri==='string'?UI_BY_URI[params.uri]:undefined;
+      if(!screen)return json(200,rpcError(id,-32602,'unknown resource'));
+      return json(200,rpc(id,{contents:[{uri:screen.uri,mimeType:UI.mimeType,text:screen.html}]}));
     }
     if(message.method!=='tools/call')return json(200,rpcError(id,-32601,'method not found'));
     if(!params||typeof params!=='object'||typeof params.name!=='string')return json(200,rpcError(id,-32602,'invalid params'));

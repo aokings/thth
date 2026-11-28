@@ -93,7 +93,32 @@ function field(root,label,value,cls){if(!present(value))return;
 }
 
 // 未提供の欄は補わず、structuredContent のみを表示する。
-function data(result){return result && result.structuredContent && typeof result.structuredContent==='object'?result.structuredContent:{};
+// リモート MCP（thth.me/mcp）は CLI の --json を output の下に包んで返す。画面が包みを開く（Worker は包み直さない・第24 11/28）。
+var remote=false;
+function data(result){var sc=result && result.structuredContent && typeof result.structuredContent==='object'?result.structuredContent:{};
+  if(typeof sc.command==='string'&&typeof sc.workspace==='string'&&Object.prototype.hasOwnProperty.call(sc,'output')){remote=true;
+    return sc.output&&typeof sc.output==='object'&&!Array.isArray(sc.output)?sc.output:{};
+  }
+  return sc;
+}
+
+// リモートで VM の答えが遅いと pending と request_id が返る。間を置いて thth_result を同じ request_id で呼ぶ（6 回まで・書く道具は送り直さない）。
+var REQUEST_ID=/^[A-Za-z0-9_-]{43}~[a-z][a-z0-9-]{0,31}$/,waits=0;
+function waitFor(sc){var message=document.getElementById('message'),dots=document.getElementById('dots');
+  remote=true;
+  if(!REQUEST_ID.test(sc.request_id)||waits>=6){dots.hidden=true;
+    message.textContent='答えがまだ来ません。少し置いてから、もう一度頼んでください。';
+    return;
+  }
+  waits++;
+  dots.hidden=false;
+  message.textContent='THTH のサーバーの答えを待っています。';
+  var sec=Math.min(Math.max(Number(sc.retry_after_seconds)||20,5),60);
+  setTimeout(function(){ththBridge.call('thth_result',{request_id:sc.request_id}).then(function(r){window.ththRender(r||{});
+    },function(){dots.hidden=true;
+      message.textContent='答えを取り出せませんでした。';
+    });
+  },sec*1000);
 }
 
 var items=[],filter='all',previous=[];
@@ -153,7 +178,8 @@ function draw(){var list=document.getElementById('list');
     var tail=el('div');
     if(present(x.status))tail.appendChild(el('span','badge'+(x.status==='scheduled'?' scheduled':''),x.status));
     var file=x.file??(typeof x.queue_dir==='string'&&typeof x.next_file==='string'?x.queue_dir.replace(/\/$/,'')+'/'+x.next_file:null);
-    if(typeof file==='string'&&/^[^\u0000]{1,1024}\.md$/.test(file)){var button=el('button','','開く');
+    // リモートには下見の道具（thth_preview）が無いので、開くを出さない。
+    if(!remote&&typeof file==='string'&&/^[^\u0000]{1,1024}\.md$/.test(file)){var button=el('button','','開く');
       button.addEventListener('click',function(){button.disabled=true;
         ththBridge.call('thth_preview',{file:file}).then(function(result){button.disabled=false;
           var d=data(result),t=d.text??d.body;
@@ -181,7 +207,11 @@ function draw(){var list=document.getElementById('list');
 
 document.getElementById('sort').addEventListener('change',draw);
 
-window.ththRender=function(result){var d=data(result),next=[];
+window.ththRender=function(result){var sc=result&&result.structuredContent;
+  if(sc&&typeof sc==='object'&&sc.status==='pending'&&typeof sc.request_id==='string'){waitFor(sc);
+    return;
+  }
+  var d=data(result),next=[];
   document.getElementById('dots').hidden=true;
   if(result.isError||d.error){document.getElementById('message').textContent='予定を読み込めませんでした。'+(typeof d.error==='string'?' '+d.error:'');
     return;

@@ -54,7 +54,7 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-k-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/connector-harness.js','test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/refusal-catalog.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js','src/connector-object.js','src/oauth.js','src/mcp.js','src/mcp-tools.js','src/connectors.js'];
+  const files=['test/connector-harness.js','test/person-harness.js','src/worker.js','src/webhook-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/refusal-catalog.js','src/relay-object.js','src/person.js','src/webhook.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/login.js','src/login-object.js','src/connector-object.js','src/oauth.js','src/mcp.js','src/mcp-tools.js','src/mcp-ui.js','src/connectors.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     outboundService:outbound,log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey,API_HOLD_MS:String(HOLD)},
@@ -720,4 +720,57 @@ test('the Worker refuses to start a lane login whose name starts with connector-
 test('fence 6: nothing secret is stored in the clear in the connector object',async()=>{
   const rows=JSON.stringify(await control());
   for(const value of sensitive)assert.equal(rows.includes(value),false,'a secret value is stored in the clear');
+});
+
+// 画面（MCP Apps）の柵（段取り 11/30・設計_THTH画面_MCPApps §2 の 3）: 画面に対応しない client には 1 字も変えない。
+const UI_EXT='io.modelcontextprotocol/ui',UI_MIME='text/html;profile=mcp-app';
+const NO_UI_CLIENTS={
+  'params が空':{},
+  '能力が空':{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'claude-code',version:'0'}},
+  '別の拡張だけ':{protocolVersion:'2025-06-18',capabilities:{extensions:{'io.example/other':{}}},clientInfo:{name:'other',version:'0'}},
+  'ui の拡張でも html を言わない':{protocolVersion:'2025-06-18',capabilities:{extensions:{[UI_EXT]:{mimeTypes:['text/plain']}}},clientInfo:{name:'half',version:'0'}},
+};
+const UI_CLIENT={protocolVersion:'2025-11-25',capabilities:{extensions:{[UI_EXT]:{mimeTypes:[UI_MIME]}}},clientInfo:{name:'ui',version:'0'}};
+const strip=r=>{const {id:_,...rest}=r;return JSON.stringify(rest);};
+
+test('screen fence: clients that do not say the UI extension see the same initialize, tools/list and no resources',async()=>{
+  const p=await person();
+  const tokens=await connect(p);
+  const seen=new Set(),lists=new Set();
+  for(const [name,params] of Object.entries(NO_UI_CLIENTS)){
+    const init=await mcp(tokens.access_token,'initialize',params);
+    assert.deepEqual(init.result.capabilities,{tools:{listChanged:false}},name);
+    seen.add(strip(init));
+    const listed=await mcp(tokens.access_token,'tools/list');
+    const text=strip(listed);
+    assert.equal(text.includes('_meta'),false,name);assert.equal(text.includes('ui://'),false,name);
+    lists.add(text);
+    for(const method of ['resources/list','resources/read'])
+      assert.equal((await mcp(tokens.access_token,method,{uri:'ui://thth/queue'})).error.code,-32601,name+' '+method);
+  }
+  assert.equal(lists.size,1,'tools/list is the same for every non-UI client');
+  // 1 度画面の client が来て、そのあと言わない client が来ても、元に戻る（控えは最後の initialize に従う）。
+  await mcp(tokens.access_token,'initialize',UI_CLIENT);
+  await mcp(tokens.access_token,'initialize',NO_UI_CLIENTS['能力が空']);
+  assert.ok(lists.has(strip(await mcp(tokens.access_token,'tools/list'))),'back to the plain list');
+  assert.equal((await mcp(tokens.access_token,'resources/list')).error.code,-32601);
+});
+
+test('screen: a UI client gets resources, thth_board points at ui://thth/queue, and the HTML has no outside address',async()=>{
+  const p=await person();
+  const tokens=await connect(p);
+  const init=await mcp(tokens.access_token,'initialize',UI_CLIENT);
+  assert.deepEqual(init.result.capabilities,{tools:{listChanged:false},resources:{}});
+  const tools=(await mcp(tokens.access_token,'tools/list')).result.tools;
+  assert.deepEqual(tools.filter(t=>'_meta' in t).map(t=>[t.name,t._meta]),[['thth_board',{ui:{resourceUri:'ui://thth/queue'}}]]);
+  assert.deepEqual(tools.map(t=>t.name),[...TOOLS.map(t=>t.name),'thth_result'],'the same tools, only the screen pointer is added');
+  const listed=(await mcp(tokens.access_token,'resources/list')).result.resources;
+  assert.deepEqual(listed.map(r=>[r.uri,r.mimeType]),[['ui://thth/queue',UI_MIME]]);
+  const read=(await mcp(tokens.access_token,'resources/read',{uri:'ui://thth/queue'})).result.contents;
+  assert.equal(read.length,1);assert.equal(read[0].mimeType,UI_MIME);
+  const html=read[0].text;
+  assert.ok(html.startsWith('<!doctype html>')||html.toLowerCase().startsWith('<!doctype html>'),'an HTML page');
+  assert.equal(/https?:\/\//i.test(html.replace(/<!--[\s\S]*?-->/g,'')),false,'no outside address in the screen');
+  assert.ok(html.includes("'thth_result'"),'the screen waits with thth_result');
+  assert.equal((await mcp(tokens.access_token,'resources/read',{uri:'ui://thth/other'})).error.code,-32602);
 });
