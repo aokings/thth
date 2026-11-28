@@ -87,6 +87,8 @@ def build(base: Path) -> Path:
         _write(st / "lock", "", 0o644)
         (root / "logs" / name).mkdir(parents=True)
     (root / "state" / "alpha-main" / "git-origin.git").mkdir()
+    # 記録が絶対の道を持つ（本番の approvals.json・holds.json・inflight.json と同じ形・記録の道で書き替える）
+    _write(root / "state" / "alpha-main" / "inflight.json", json.dumps({"file": f"{root}/repos/alpha/queue/a.md"}))
     for common in ("_admin", "_webhook", "_meta", "_media"):
         _write(root / "state" / common / "x.json", json.dumps({"common": common}))
     _write(root / "state" / "_app.lock", "", 0o644)
@@ -282,8 +284,8 @@ def _reference(tmp_path):
     return got
 
 
-MOVE_STOPS = ["begin", "move:1", "move:9", "move", "rewrite:1", "rewrite", "tomb:1", "tomb:5", "tomb", "commit"]
-BACK_STOPS = ["back_begin", "uncommit", "untomb:1", "untomb:7", "untomb", "unrewrite:1", "unrewrite",
+MOVE_STOPS = ["begin", "move:1", "move:9", "move", "rewrite:1", "rewrite", "records", "tomb:1", "tomb:5", "tomb", "commit"]
+BACK_STOPS = ["back_begin", "uncommit", "untomb:1", "untomb:7", "untomb", "unrewrite:1", "unrewrite", "unrecords",
               "moveback:1", "moveback:6", "moveback"]
 
 
@@ -543,3 +545,80 @@ def test_report_isolation_reads_main_from_the_moved_place(place, monkeypatch, tm
     report_isolation.validate_environment(str(place), {}, allow_empty=True)
     assert run("move", place) == 0
     report_isolation.validate_environment(str(place), {}, allow_empty=True)
+
+
+# --------------------------------------------------------------------------- 記録の道（VM の写しで 1096→1・11/29）
+
+def _ledger_place(root: Path, monkeypatch, tmp_path):
+    """本物の承認と止めの口で、alpha の repo の原稿 2 本に承認と止めを書く（記録は repo を絶対の道で持つ）。"""
+    monkeypatch.setenv("THTH_ROOT", str(root))
+    for name in ("THTH_WS", "THTH_ACCOUNTS_DIR", "THTH_WS_MAP"):
+        monkeypatch.delenv(name, raising=False)
+    from thth import accounts, approval_ledger as led
+    monkeypatch.setattr(accounts, "APP_DIR", str(tmp_path / "noapp"))
+    repo = root / "repos" / "alpha"
+    (repo / ".git").mkdir()
+    for n in ("a", "b"):
+        _write(repo / "queue" / f"{n}.md", "---\naccount: alpha-main\nstatus: draft\n---\n本文\n", 0o644)
+    for n in ("approvals.json", "holds.json"):  # 稽古の偽の記録は退けて（消さない）、本物の口に書かせる
+        (root / "state" / "alpha-main" / n).rename(root / "state" / "alpha-main" / f"{n}.fake")
+    _clear_ledger_caches()
+    led.record([{"account": "alpha-main", "file": "queue/a.md", "state": led.APPROVED, "repo": str(repo),
+                 "fields": {"approved_sha": "x" * 64, "approved_at": "2026-11-29T10:00:00+09:00",
+                            "approved_by": OWNER}}])
+    led.record_hold("alpha-main", "queue/b.md", repo=str(repo), until="2026-12-31T00:00:00+09:00",
+                    reason="稽古", by=OWNER, at="2026-11-29T10:00:00+09:00")
+    return led
+
+
+def _clear_ledger_caches():
+    from thth import approval_ledger as led
+    for cache in (led._TOP_CACHE, led._LOAD_CACHE, led._HOLDS_CACHE, led._GATE_CACHE):
+        cache.clear()
+
+
+def _seen(led, repo: Path) -> tuple:
+    """照らした結果: a の台帳の行が重なるか・b の止めが見えるか。"""
+    _clear_ledger_caches()
+    a, b = str(repo / "queue" / "a.md"), str(repo / "queue" / "b.md")
+    approved = led.overlay(a, {"account": "alpha-main", "status": "draft"}).get("status")
+    held = (led.hold_for(b, "alpha-main") or {}).get("reason")
+    return approved, held
+
+
+def test_records_keep_approvals_and_holds_across_move_and_back(place, monkeypatch, tmp_path, capsys):
+    led = _ledger_place(place, monkeypatch, tmp_path)
+    assert _seen(led, place / "repos" / "alpha") == ("approved", "稽古")
+    assert run("check", place) == 0
+    assert "記録の道: 3 か所（ファイル 3）" in capsys.readouterr().out
+    assert run("move", place) == 0
+    main_repo = place / "ws" / "main" / "repos" / "alpha"
+    assert _seen(led, main_repo) == ("approved", "稽古")  # 直さないと (draft, None): 承認も止めも消える
+    assert str(place / "repos" / "alpha") not in (place / "ws" / "main" / "state" / "alpha-main" / "holds.json").read_text()
+    # 移していた間に書かれた止め（新しい道）も、戻すと根の道になる
+    led.record_hold("alpha-main", "queue/a.md", repo=str(main_repo), until="2026-12-31T00:00:00+09:00",
+                    reason="移した間", by=OWNER, at="2026-11-29T11:00:00+09:00")
+    assert run("back", place) == 0
+    assert _seen(led, place / "repos" / "alpha") == ("approved", "稽古")
+    _clear_ledger_caches()
+    assert (led.hold_for(str(place / "repos" / "alpha" / "queue" / "a.md"), "alpha-main") or {}).get("reason") == "移した間"
+    assert "/ws/main/" not in (place / "state" / "alpha-main" / "holds.json").read_text()
+
+
+def test_record_rewrite_does_not_touch_other_names_or_common_paths(place):
+    """`state/alpha-main` の書き替えが `state/alpha-main-x` や共通の `state/_admin`・`private` の道に及ばない。"""
+    st = place / "state" / "alpha-main"
+    rows = {"a": f"{place}/state/alpha-main/x", "b": f"{place}/state/alpha-main-x/y", "c": f"{place}/state/_admin/z",
+            "d": f"{place}/private/report-credentials.json", "e": f"{place}/repos/alpha", "f": f"文の中の {place}/repos/alpha"}
+    _write(st / "rows.json", json.dumps(rows, ensure_ascii=False))
+    _write(st / "runs.ndjson", json.dumps({"repo": f"{place}/repos/beta"}) + "\n" + "{壊れた行\n")
+    assert run("move", place) == 0
+    got = json.loads((place / "ws" / "main" / "state" / "alpha-main" / "rows.json").read_text())
+    main = f"{place}/ws/main"
+    assert got == {"a": f"{main}/state/alpha-main/x", "b": rows["b"], "c": rows["c"], "d": rows["d"],
+                   "e": f"{main}/repos/alpha", "f": rows["f"]}
+    nd = (place / "ws" / "main" / "state" / "alpha-main" / "runs.ndjson").read_text()
+    assert nd == json.dumps({"repo": f"{main}/repos/beta"}) + "\n" + "{壊れた行\n"
+    assert run("move", place) == 0  # もう一度打っても二重にならない（state=moved で何もしない）
+    assert run("back", place) == 0
+    assert json.loads((st / "rows.json").read_text()) == rows

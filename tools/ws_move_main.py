@@ -18,6 +18,10 @@
   台帳の置き場が読めずに止まる（R2: 黙って空の置き場を作って動き出さない）。
 - 台帳の中で置き場を指す道は、`$THTH_ROOT` の意味が「括りの根」に替わるのに合わせて直す。直した所は
   帳面（`ws/.main-move/journal.json`）に残し、戻すときに 1 つずつ元に戻す。
+- 記録（移した `state/<口座>/` などの JSON・NDJSON）の中の絶対の道 `"<根>/<移した物>…` も
+  `"<根>/ws/main/<移した物>…` に書き替え、戻すときは逆にする（承認と止めの記録は repo を絶対の道で持ち、
+  原稿の repo と照らす。直さないと移したあと承認も止めも無いものとされる・VM の写しで 1096→1・11/29）。
+  帳面に頼らず道の頭で書き替えるので、打ち直しても二重にならず、移していた間に書かれた行も戻る。
 
 依存は標準の部品だけ（VM の古い版の上でも、この 1 本を写せば回る）。thth は import しない。
 """
@@ -388,6 +392,99 @@ def apply_rewrite(path: str, rw: dict, *, forward: bool) -> str:
                "移したあとで手で直したか。中を見て、帳面か台帳を合わせてから打ち直してください")
 
 
+# --------------------------------------------------------------------------- 記録の道
+
+# 記録を書き替えない上の段: repos（原稿と git。git の設定は道の直しが扱う）・logs（読み返さない）・台帳（道の直しが扱う）。
+RECORD_SKIP = frozenset({"repos", "logs"}) | frozenset(LEDGER_DIRS)
+RECORD_EXT = (".json", ".ndjson")
+
+
+def _record_pattern(lay: Layout, srcs, *, forward: bool):
+    roots = sorted({lay.root, os.path.realpath(lay.root)}, key=len, reverse=True)
+    names = sorted(set(srcs) | TOP_WS, key=len, reverse=True)
+    mid = "" if forward else f"/ws/{MAIN}"
+    return re.compile('"(' + "|".join(re.escape(r) for r in roots) + ")" + re.escape(mid)
+                      + "/(" + "|".join(re.escape(n) for n in names) + ')(?=[/"])')
+
+
+def record_files(base: str, rels=None) -> list:
+    """`base` の下の記録のファイル。`rels` が無ければ `base` の中の全部（上の段と state/・private/ の中）。"""
+    if rels is None:
+        rels = []
+        if os.path.isdir(base):
+            for name in sorted(os.listdir(base)):
+                if name in ("state", "private"):
+                    d = os.path.join(base, name)
+                    rels += [f"{name}/{n}" for n in sorted(os.listdir(d))] if os.path.isdir(d) else []
+                else:
+                    rels.append(name)
+    out = []
+    for rel in rels:
+        if rel.split("/")[0] in RECORD_SKIP:
+            continue
+        top = os.path.join(base, rel)
+        if os.path.islink(top):
+            continue
+        if os.path.isfile(top):
+            if top.endswith(RECORD_EXT):
+                out.append(top)
+            continue
+        if not os.path.isdir(top) or is_tombstone(top):
+            continue
+        for dirpath, dirnames, filenames in os.walk(top):
+            dirnames[:] = sorted(n for n in dirnames if not os.path.islink(os.path.join(dirpath, n)))
+            for n in sorted(filenames):
+                p = os.path.join(dirpath, n)
+                if n.endswith(RECORD_EXT) and os.path.isfile(p) and not os.path.islink(p):
+                    out.append(p)
+    return out
+
+
+def _still_json(path: str, before: str, after: str) -> None:
+    """書き替えたあとも、読めた所は読めること（読めなかった行はそのまま）。"""
+    if path.endswith(".ndjson"):
+        pairs = zip(before.split("\n"), after.split("\n"))
+    else:
+        pairs = [(before, after)]
+    for b, a in pairs:
+        if not b.strip():
+            continue
+        try:
+            json.loads(b)
+        except ValueError:
+            continue
+        json.loads(a)
+
+
+def rewrite_records(lay: Layout, base: str, srcs, *, forward: bool, rels=None, dry: bool = False) -> tuple[int, int]:
+    """記録の中の絶対の道を書き替える。返り値は（ファイルの数・か所の数）。"""
+    pat = _record_pattern(lay, srcs, forward=forward)
+    repl = (lambda m: f'"{m.group(1)}/ws/{MAIN}/{m.group(2)}') if forward else (lambda m: f'"{m.group(1)}/{m.group(2)}')
+    files = hits = 0
+    for path in record_files(base, rels):
+        with open(path, encoding="utf-8", errors="surrogateescape") as f:
+            text = f.read()
+        out, n = pat.subn(repl, text)
+        if not n:
+            continue
+        files, hits = files + 1, hits + n
+        if dry:
+            continue
+        try:
+            _still_json(path, text, out)
+        except ValueError:
+            raise Stop(f"{os.path.relpath(path, base)}: 記録の道を書き替えると JSON として読めなくなります。中を見てください") from None
+        info = os.stat(path)
+        tmp = path + ".ws-move.tmp"
+        with open(tmp, "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(out)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, stat.S_IMODE(info.st_mode))
+        os.replace(tmp, path)
+    return files, hits
+
+
 # --------------------------------------------------------------------------- 確かめ
 
 def check_units(systemctl: str | None) -> list:
@@ -530,6 +627,10 @@ def cmd_check(lay: Layout, args) -> int:
     say(f"道の直し: {len(rewrites)}")
     for rw in rewrites:
         say(f"  直す {rw['file']}: {rw['old']} → {rw['new']}（{rw['count']} か所）")
+    if not unknown:
+        files, hits = rewrite_records(lay, lay.root, [p["src"] for p in plan], forward=True,
+                                      rels=[p["src"] for p in plan], dry=True)
+        say(f"記録の道: {hits} か所（ファイル {files}）を ws/main の道に書き替える")
     if issues:
         for i in issues:
             say(f"NG: {i}")
@@ -619,6 +720,10 @@ def cmd_move(lay: Layout, args) -> int:
             stopper.after("rewrite", i)
         note(lay, j, "rewrote", n=len(rewrites))
         stopper.after("rewrite")
+        # 2'. 記録の道（承認・止めの記録が持つ絶対の道。打ち直しても二重にならない）
+        files, hits = rewrite_records(lay, base, [p["src"] for p in plan], forward=True, rels=[p["dst"] for p in plan])
+        note(lay, j, "records", files=files, n=hits)
+        stopper.after("records")
         # 3. 元の場所に開けないフォルダ
         for i, item in enumerate(plan, 1):
             if not item["tomb"]:
@@ -717,6 +822,11 @@ def cmd_back(lay: Layout, args) -> int:
             stopper.after("unrewrite", i)
         note(lay, j, "unrewrote")
         stopper.after("unrewrite")
+        # 3'. 記録の道を戻す（移していた間に書かれた行も・ws/.main-staging の中の全部）
+        if os.path.isdir(lay.staging):
+            files, hits = rewrite_records(lay, lay.staging, [p["src"] for p in plan], forward=False)
+            note(lay, j, "unrecords", files=files, n=hits)
+        stopper.after("unrecords")
         # 4. 中身を根へ（移したあとでできた物も、main の物なので一緒に戻す）
         moved_back = 0
         if os.path.isdir(lay.staging):
