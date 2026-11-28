@@ -54,8 +54,10 @@ DANGER_AREAS: dict[str, tuple[str, ...]] = {
     # meta_write: Meta への書き込みの共通部・出来事の送信・ブランドの承認・商品タグ
     "meta_write": ("thth/meta_write.py", "thth/meta_events.py", "thth/meta_brand.py", "thth/meta_shop.py",
                    "thth/wa/*"),
-    # auth_keys: 認可の流れと、認可のときに鍵やメールを扱う所
-    "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py", "thth/wa/auth.py"),
+    # auth_keys: 認可の流れと、認可のときに鍵やメールを扱う所。鍵の入口の 3 つ（WordPress とはてなの主体の鍵・
+    # Bluesky のアプリパスワード・App Secret）は `thth secret accept` が値を渡す先なので一緒に入れる（監査 5.32.0 の気づき）。
+    "auth_keys": ("thth/authflow.py", "thth/adapters/auth_*.py", "thth/wa/auth.py",
+                  "thth/principal_cli.py", "thth/authpassword.py", "thth/appconfig.py"),
     # お金が動く広告の書く口と、広告と各媒体の認可（11/10・監査 5.14.0b の「危ない領域の穴」）。
     # facebook.py・instagram.py の `_write` は入れない: 読む口と同じ大きなファイルで、入れると媒体の読みの
     # 直しのたびに監査が要る。`_write` を通る書き込みは、呼ぶ側（meta_write ほか）が表に入っている。

@@ -613,6 +613,7 @@ def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, cons
         except LockBusy:
             err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
             return 2
+        drop_pending(name)   # 認可の途中の預けも捨てる（request token の secret を残さない）
         diff = {"token": [gone["token"], False]}
         if forget_consumer:
             diff["consumer"] = [gone["consumer"], False]
@@ -732,6 +733,15 @@ def _drop_pending(name) -> None:
         os.unlink(_pending_path(name))
     except FileNotFoundError:
         pass
+
+
+def drop_pending(name) -> None:
+    """はてなの認可の途中の預け（request token の secret を持つ）を捨てる。無ければ何もしない。
+
+    `--forget` と、その主体を使う最後の口座の leave が呼ぶ（監査 5.32.0 の気づき: 畳んでも預けが残っていた）。
+    捨てても困るのは認可の途中の人だけで、`--begin` からやり直せば済む。値は読まない。
+    """
+    _drop_pending(name)
 
 
 def _read_stdin_lines(read_stdin, count) -> list | None:

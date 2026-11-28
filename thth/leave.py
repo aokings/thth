@@ -533,7 +533,22 @@ def run(account,*,by,plaza_open='delete'):
             if (read(account) or {}).get('phase')=='completed':
                 from . import invites
                 invites.forget_credential(account,by=by)
+                _drop_principal_pending(account)
             return result
+
+
+def _drop_principal_pending(account):
+    """記事の口座の leave の終わりに、その主体を使う口座がもう無ければ、はてなの認可の途中の預け
+    （主体の状態の置き場の `auth_pending.json`・request token の secret を持つ）を捨てる（監査 5.32.0 の気づき）。
+    主体の鍵と台帳は残す（5.18.1 のまま）。ほかの口座がまだ使う主体の預けは、その人の認可の途中なので触らない。
+    何度呼んでも同じ結果。"""
+    from . import principal_cli,principals
+    principal=((_removed_entry(account).get('diff') or {}).get('principal') or [None,None])[-1]
+    if not isinstance(principal,str) or not _name_ok(principal):return
+    try:
+        if principals.accounts_of(principal):return
+        principal_cli.drop_pending(principal)
+    except (principals.PrincipalError,accounts.AccountError,ValueError):return
 
 
 def _stop_units(account):
