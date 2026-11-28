@@ -2,8 +2,10 @@
 
 - 5 (a): 4 つの種類（BASE・STORES・スマレジ・Shopify）とも、前の鍵と店が違えば `--force` でも置き換えない
   （前はスマレジと Shopify に柵が無く、`--force` を効く形に戻しても緑のままだった）。
-- 6: 前の鍵のファイルがあるのに読めない（壊れた JSON・店の番号の無い形）ときは、「前の鍵は無い」と同じに扱わず
-  `store_token_unreadable` で断る。今のファイルはそのまま。
+- 6: 前の鍵のファイルがあるのに読めない（壊れた JSON・店の番号の無い形）ときは、「前の鍵は無い」と同じに扱わず、
+  写しの店の番号を照合の元にする（違えば `store_shop_mismatch`）。写しも無いとき、人が見ていない口
+  （`thth secret accept`）は `store_token_unreadable`（identity_unknown 14）で断り、人の手の `token set` は
+  朝の知らせが勧める置き直し（5.18.2）のとおり受ける。
 
 偽の店だけに送る（各店の試験の偽の transport をそのまま使う）。
 """
@@ -66,22 +68,68 @@ def test_前の鍵と店が違えばforceでも置き換えない(capsys, tmp_pa
         assert path.read_bytes() == before, (kind, flags)
 
 
-@pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("broken", ["{", "shop_id_missing"])
-def test_前の鍵のファイルが読めなければ断り今のファイルはそのまま(capsys, tmp_path, monkeypatch, kind, broken):
-    store, extra, feed = _world(kind, capsys, tmp_path, monkeypatch)
-    path = pathlib.Path(ledger.load(store)["token"])
+def _break(path, broken):
     if broken == "shop_id_missing":
         token = json.loads(path.read_text())
         token.pop("shop_id")
         path.write_text(json.dumps(token))
     else:
         path.write_text(broken)
+
+
+def _snapshot(store, shop_id):
+    ledger.write_snapshot(store, shop_id=shop_id, items=[], read_at="2026-11-28T00:00:00+09:00")
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("broken", ["{", "shop_id_missing"])
+def test_前の鍵が読めなければ写しの店と照合し違えば置かない(capsys, tmp_path, monkeypatch, kind, broken):
+    store, extra, feed = _world(kind, capsys, tmp_path, monkeypatch)
+    path = pathlib.Path(ledger.load(store)["token"])
+    _snapshot(store, "another-shop-v5321")
+    _break(path, broken)
     before = path.read_bytes()
     feed()
     rc, said = _token_set(capsys, store, extra, "--force")
-    assert rc == 2 and "store_token_unreadable" in said, (kind, said)
+    assert rc == 2 and "store_shop_mismatch" in said, (kind, said)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_前の鍵が読めず写しが同じ店なら置き直せる(capsys, tmp_path, monkeypatch, kind):
+    store, extra, feed = _world(kind, capsys, tmp_path, monkeypatch)
+    path = pathlib.Path(ledger.load(store)["token"])
+    _snapshot(store, json.loads(path.read_text())["shop_id"])
+    _break(path, "{")
+    feed()
+    rc, said = _token_set(capsys, store, extra)
+    assert rc == 0, (kind, said)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("broken", ["{", "shop_id_missing"])
+def test_照合の元が無ければ人の見ていない口は断り今のファイルはそのまま(capsys, tmp_path, monkeypatch, kind, broken):
+    from tests.test_v5321_secret_accept_codes import accept, answer
+    store, extra, feed = _world(kind, capsys, tmp_path, monkeypatch)
+    path = pathlib.Path(ledger.load(store)["token"])
+    _break(path, broken)
+    before = path.read_bytes()
+    feed()   # 偽の店の試験は READ_SECRET を差し替えているので、店に通る値はそちらから入る
+    two = kind in ("smaregi", "shopify")
+    data = b"value-one-v5321\nvalue-two-v5321\n" if two else b"value-one-v5321\n"
+    rc, out, err = accept(capsys, "shop-client" if two else "shop-token", store, data,
+                          *(["--expires", "2027-01-31"] if kind == "base" else []))
+    assert (rc, answer(out)["code"]) == (14, "identity_unknown"), (kind, out, err)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_照合の元が無くても人の手のtoken_setは朝の知らせのとおり置き直せる(capsys, tmp_path, monkeypatch, kind):
+    store, extra, feed = _world(kind, capsys, tmp_path, monkeypatch)
+    _break(pathlib.Path(ledger.load(store)["token"]), "{")
+    feed()
+    rc, said = _token_set(capsys, store, extra)
+    assert rc == 0, (kind, said)
 
 
 @pytest.mark.parametrize("kind", KINDS)

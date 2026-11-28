@@ -224,8 +224,9 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
         auth = None
         if cfg.get("kind") == "shopify":
             auth = "client" if kind == "shop-client" else "token"
+        # 人が見ていない口なので、前の鍵が読めず照合の元が無ければ断る（監査 5.32.0 軽い 6・5.32.1）。
         args = argparse.Namespace(store=target, auth=auth, expires=expires, by=by, stdin=True, force=False,
-                                  json=False)
+                                  json=False, strict_previous=True)
         old = sys.stdin
         sys.stdin = io.StringIO("".join(v + "\n" for v in values))
         try:

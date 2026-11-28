@@ -291,7 +291,7 @@ def cmd_token_set(args) -> int:
     _log_ready()
     value = _secret_line(args)
     shop = kinds.client(cfg, {"access_token": value}, TRANSPORT).user()
-    before = _previous_token(cfg)
+    before = _previous_token(cfg, args, shop["shop_id"])
     if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     ledger.write_token(cfg, {"access_token": value, "expires_on": day.isoformat(), "obtained_at": ledger.now_iso(),
@@ -310,23 +310,37 @@ def cmd_token_set(args) -> int:
     return 0
 
 
-def _previous_token(cfg) -> dict | None:
-    """前の鍵（別の店の鍵を止める照合の元）。**無ければ None、あるが読めなければ断る**（監査 5.32.0 軽い 6・5.32.1）。
+def _previous_token(cfg, args, shop_id) -> dict | None:
+    """前の鍵（別の店の鍵を止める照合の元）。無い・読めなければ None（監査 5.32.0 軽い 6・5.32.1）。
 
-    以前は `load_token` の断りを「前の鍵は無い」と同じに扱ったので、鍵のファイルが壊れた JSON のときや、店の番号
-    （shop_id）の無い形のときに、別の店の鍵が置かれた。THTH が置く鍵はどれも shop_id を持つ（最初の版から）ので、
-    番号の無い鍵も「読めない」に数える。直すなら thth shop remove して add し直す。
+    以前は鍵のファイルが読めない（壊れた JSON・店の種類と違う形・店の番号の無い形）と「前の鍵は無い」と同じに
+    扱い、別の店の鍵が置かれた。今は読めないときに、照合の元を**写し（store_state/<店>/snapshot.json）の店の番号**
+    に替え、違えば `store_shop_mismatch` で断る。写しも無ければ照合の元が無い:
+    - 人の手の `thth shop token set`（朝の知らせが勧める置き直し・5.18.2）は、初めての鍵と同じに受ける。
+    - 人が見ていない口（`thth secret accept`・`args.strict_previous`）は `store_token_unreadable` で断る。
+    読めた鍵との照合は、各入口の `before["shop_id"] != shop["shop_id"]` の行がする（ここでは見ない）。
     """
     if not os.path.lexists(cfg["token"]):
         return None
     try:
         before = ledger.load_token(cfg)
     except StoreRefused:
-        raise StoreRefused("store_token_unreadable") from None
-    if not isinstance(before.get("shop_id"), (str, int)) or isinstance(before.get("shop_id"), bool) \
-            or not str(before["shop_id"]).strip():
+        before = None
+    if before is not None and isinstance(before.get("shop_id"), (str, int)) and not isinstance(
+            before.get("shop_id"), bool) and str(before["shop_id"]).strip():
+        return before
+    try:
+        snapshot = ledger.read_snapshot(args.store)
+    except StoreRefused:
+        snapshot = None
+    anchor = snapshot.get("shop_id") if isinstance(snapshot, dict) else None
+    if anchor not in (None, ""):
+        if str(anchor) != str(shop_id):
+            raise StoreRefused("store_shop_mismatch")
+        return None
+    if getattr(args, "strict_previous", False):
         raise StoreRefused("store_token_unreadable")
-    return before
+    return None
 
 
 def _drop_other_shop(store: str, shop_id) -> bool:
@@ -355,7 +369,7 @@ def _token_set_stores(args, cfg, by, prompt=PROMPT_STORES) -> int:
     value = _secret_line(args, prompt)
     token = {"auth": "bearer", "access_token": value}
     shop = kinds.client(cfg, token, TRANSPORT).user()
-    before = _previous_token(cfg)
+    before = _previous_token(cfg, args, shop["shop_id"])
     if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     expires_on = day.isoformat() if day else None
@@ -398,7 +412,7 @@ def _token_set_smaregi(args, cfg, by) -> int:
     token = {"auth": "smaregi_client", "client_id": _secret_line(args, PROMPT_SMAREGI_ID),
              "client_secret": _secret_line(args, PROMPT_SMAREGI_SECRET)}
     shop = kinds.client(cfg, token, TRANSPORT).user()
-    before = _previous_token(cfg)
+    before = _previous_token(cfg, args, shop["shop_id"])
     if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
         raise StoreRefused("store_shop_mismatch")
     ledger.write_token(cfg, {**token, "shop_id": shop["shop_id"], "obtained_at": ledger.now_iso(),
@@ -451,7 +465,7 @@ def _token_set_shopify(args, cfg, by) -> int:
     client = shopify.Client(cfg, token, transport=TRANSPORT, cache=False)
     with access.locked(args.store):
         shop = client.user()
-        before = _previous_token(cfg)
+        before = _previous_token(cfg, args, shop["shop_id"])
         if before and before.get("shop_id") and before["shop_id"] != shop["shop_id"]:
             raise StoreRefused("store_shop_mismatch")
         access.clear(args.store)
