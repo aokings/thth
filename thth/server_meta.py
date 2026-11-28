@@ -52,7 +52,7 @@ _FIELDS = {
     'doctor': ((), ()),
     'page_cta_show': ((), ()),
     'page_cta_delete': (('cta_id', 'confirm'), ('cta_id',)),
-    'live_create': (('title', 'description', 'confirm'), ('title',)),
+    'live_create': (('title', 'description', 'unpublished', 'confirm'), ('title',)),
     'live_end': (('live_id', 'confirm'), ('live_id',)),
     'dm_list': ((), ()),
     'dm_read': (('target', 'profile'), ('target',)),
@@ -88,7 +88,7 @@ READS = frozenset(('doctor', 'page_cta_show', 'dm_list', 'dm_read',
                    'brand_creators_list', 'brand_promote_show', 'brand_ads_permissions', 'brand_content',
                    'creators_search', 'shop_eligibility', 'shop_catalogs', 'shop_products', 'shop_tags',
                    'webhook_status'))
-_BOOLS = frozenset(('profile', 'human_agent', 'refresh_dataset'))
+_BOOLS = frozenset(('profile', 'human_agent', 'refresh_dataset', 'unpublished'))
 # 整数の欄（手元の argparse の型と同じ範囲は手元の関数が見る。ここは型と大まかな幅だけ）と、位置の小数の欄。
 _INTS = frozenset(('nth', 'limit'))
 _FLOATS = frozenset(('x', 'y'))
@@ -176,7 +176,8 @@ def _command(operation, account, request, actor):
         return meta_write._run(meta_write.cmd_live), dict(base, action=operation[len('live_'):],
                                                           live_id=request.get('live_id'),
                                                           title=request.get('title'),
-                                                          description=request.get('description'))
+                                                          description=request.get('description'),
+                                                          unpublished=bool(request.get('unpublished')))
     if operation == 'dm_event':
         if request.get('nth') is not None and not 1 <= request['nth'] <= 100:
             error('invalid_request', '--nth は 1〜100 の整数です')   # 手元の argparse の型（`meta_events._nth`）と同じ幅
