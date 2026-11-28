@@ -311,4 +311,5 @@ def test_second_x_account_uses_the_same_commands_and_its_own_daily_count(
     assert {row["account"] for row in list_rows()} == {"kopicha-x"}
     # 1 日の本数は account ごと・月の予算は全 X で分け合う。
     assert b.posts_status("kopicha-x")["today"] == 2 and b.posts_status(ACCOUNT)["today"] == 0
-    assert b.report()["spent_estimate_usd"] == "0.025"
+    # 5.33.0: list show の投稿者 1 人（includes.users）0.010 も同じ月の上限に入る。
+    assert b.report()["spent_estimate_usd"] == "0.035"

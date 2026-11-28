@@ -209,8 +209,8 @@ def test_owned_metrics_asks_private_only_for_posts_within_30_days(x_account, fak
     assert two["metrics"]["link_clicks"] == 7 and "video_views" not in two["available"]
     assert result["by_post"]["1900000000000000003"]["available"] == list(x_adapter_cls().OWNED_METRICS)
     assert result["private_posts"] == 2 and result["private_fallback"] == 0
-    # 課金は今までどおり返った本数 × 0.001（4 本）。
-    assert result["posts"] == 4 and result["usd_estimate"] == "0.004"
+    # 投稿は返った本数 × 0.001（4 本）。5.33.0: 付いた media 1 件は 0.005（Owned の単価を当てにしない）。
+    assert result["posts"] == 4 and result["usd_estimate"] == "0.009"
     assert sorted(r["count"] for r in owned_ledger()) == [2, 2]
 
 

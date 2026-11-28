@@ -171,6 +171,8 @@ def report(value=None,*,at=None):
     comms=read_posts(COMMUNITIES);comms_spent,comms_held=posts_totals(comms,period)
     archive=read_posts(ARCHIVE);archive_spent,archive_held=posts_totals(archive,period)
     comms_spent+=archive_spent;comms_held+=archive_held
+    expansions=read_posts(EXPANSIONS);exp_spent,exp_held=posts_totals(expansions,period)
+    comms_spent+=exp_spent;comms_held+=exp_held
     extra={kind:read_posts(kind) for kind,_key,_label in PER_REQUEST}
     for ledger in extra.values():
         a,b=posts_totals(ledger,period);comms_spent+=a;comms_held+=b
@@ -188,11 +190,12 @@ def report(value=None,*,at=None):
                    |{r['reservation_month'] for r in lists['reservations'].values()}
                    |{r['reservation_month'] for r in comms['reservations'].values()}
                    |{r['reservation_month'] for r in archive['reservations'].values()}
+                   |{r['reservation_month'] for r in expansions['reservations'].values()}
                    |{r['reservation_month'] for ledger in extra.values() for r in ledger['reservations'].values()}|{period})
     def month_row(m):
         a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m);g,h=posts_totals(lists,m)
         i,j=posts_totals(comms,m)
-        for ledger in (archive,*extra.values()):
+        for ledger in (archive,expansions,*extra.values()):
             k,l=posts_totals(ledger,m);i+=k;j+=l
         return dict(spent_estimate_usd=decimal_text(a+c+e+g+i),held_usd=decimal_text(b+d+f+h+j))
     # medium は media の別名（10/15 調べ_JSONの欄 §5 1-7・media は残す）。
@@ -202,7 +205,7 @@ def report(value=None,*,at=None):
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
         months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at),
         list_write=_lists_report(lists,at),community_read=_communities_report(comms,at),
-        archive_read=_archive_report(archive,at),
+        archive_read=_archive_report(archive,at),expansion_read=_expansions_report(expansions,at),
         **{key:_requests_report(kind,extra[kind],at) for kind,key,_label in PER_REQUEST})
 
 
@@ -399,6 +402,28 @@ COUNTS_ALL = 'counts_all'
 COUNTS_ALL_PRICE = Decimal('0.010')
 COUNTS_ALL_PRICE_VERSION = '2026-10-21-counts-all'
 COUNTS_ALL_FILE = 'budget_x_counts_all.json'
+# ----- expansions で付く物（`includes`）の読み取り（5.33.0・調べ docs/調べ_X_expansionsの数え方_2026-11-28.md）
+#
+# X の知らせ（11/6「expansions will count toward usage」・X の docs の PR #520 の書きかけ: 11/22 から）:
+# `includes` に入る物は、直に引いたときと同じ 1 件ごとの単価で数える。user（`author_id`）は
+# User: Read 0.010・media（`attachments.media_keys`）は Media: Read 0.005。**docs.x.com の料金表には
+# 11/28 時点でまだ載っていない**（【未確認】の所は多めに倒す——24 時間の重複の除きを当てにしない・
+# `GET /2/tweets?ids=` の自分の投稿でも media は Owned の 0.001 でなく 0.005 で数える）。
+# 台帳は**別のファイル**（`budget_x_expansions.json`）。投稿の台帳（`budget_x_post_reads.json` など）の
+# 形も price_version も変えない——VM に残る古い行がそのまま読めるように。単位は 0.005 USD
+# （user は 2 単位・media は 1 単位。リストの書き込みと同じ「1 つの単価で 2 つの値段」）。
+# 予約は投稿の予約と**同じ錠の中で一緒に**押さえ、月の上限を他の台帳と分け合う。1 日の本数には数えない。
+EXPANSIONS = 'expansions'
+EXPANSION_UNIT_PRICE = Decimal('0.005')
+EXPANSION_PRICE_VERSION = '2026-11-22-expansions'
+EXPANSION_FILE = 'budget_x_expansions.json'
+# 頼んでよい expansion と、その単位・1 本の投稿あたりの最大の数。**ここに無い expansion は頼めない**
+# （単価を決めずに頼む口を作らせない）。写真は 1 本に 4 枚まで（動画・GIF は 1 つ）なので media は 4。
+EXPANSION_RULES = {'author_id': ('users', 2, 1), 'attachments.media_keys': ('media', 1, 4)}
+# 応答の `includes` の鍵ごとの単位。**知らない鍵は一番高い user の 2 単位で数える**（多めに倒す）。
+INCLUDE_UNITS = {'users': 2, 'media': 1, 'tweets': 1, 'polls': 1, 'places': 1, 'topics': 1}
+INCLUDE_UNKNOWN_UNITS = 2
+EXPANSION_MAX_LIMIT = POSTS_MAX_LIMIT * 4 * 2
 _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
             ARCHIVE: (ARCHIVE_FILE, ARCHIVE_PRICE, ARCHIVE_PRICE_VERSION),
             COUNTS_ALL: (COUNTS_ALL_FILE, COUNTS_ALL_PRICE, COUNTS_ALL_PRICE_VERSION),
@@ -406,7 +431,8 @@ _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
             LISTS: (LIST_FILE, LIST_UNIT_PRICE, LIST_PRICE_VERSION),
             COMMUNITIES: (COMMUNITY_FILE, COMMUNITY_PRICE, COMMUNITY_PRICE_VERSION),
             TRENDS: (TRENDS_FILE, TRENDS_PRICE, TRENDS_PRICE_VERSION),
-            COUNTS: (COUNTS_FILE, COUNTS_PRICE, COUNTS_PRICE_VERSION)}
+            COUNTS: (COUNTS_FILE, COUNTS_PRICE, COUNTS_PRICE_VERSION),
+            EXPANSIONS: (EXPANSION_FILE, EXPANSION_UNIT_PRICE, EXPANSION_PRICE_VERSION)}
 # 要求ごとに数える台帳（`report()` の内訳の行・`_posts_liability` で月の上限に入る）。
 PER_REQUEST = ((TRENDS, 'trends_read', 'トレンド'),
                (COUNTS, 'counts_read', '語ごとの投稿数'),
@@ -416,6 +442,46 @@ _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
 def posts_empty():return {'schema_version':1,'reservations':{}}
+
+
+def expansion_units(query,posts):
+    """頼む `expansions` で付きうる物の単位の上限（`posts` 本の応答のとき）。無ければ 0。
+
+    知らない expansion は `expansion_not_priced` で断る（要求の前に・予約もしない）。
+    """
+    raw=(query or {}).get('expansions')
+    if raw is None or raw=='':return 0
+    if not isinstance(raw,str):raise BudgetError('expansion_not_priced')
+    units=0
+    for name in raw.split(','):
+        rule=EXPANSION_RULES.get(name.strip())
+        if rule is None:raise BudgetError('expansion_not_priced')
+        units+=rule[1]*rule[2]*posts
+    return units
+
+
+def included_units(value):
+    """応答の `includes` に入っていた物の単位（user 2・media ほか 1・知らない鍵は 2）。
+
+    `includes` が無ければ 0。形が読めない（dict でない・中が list でない）ときは None
+    ——呼ぶ側は確定しない（予約は押さえた上限のまま uncertain に残る）。
+    """
+    if not isinstance(value,dict):return None
+    includes=value.get('includes')
+    if includes is None:return 0
+    if not isinstance(includes,dict):return None
+    total=0
+    for key,items in includes.items():
+        if not isinstance(items,list):return None
+        total+=INCLUDE_UNITS.get(key,INCLUDE_UNKNOWN_UNITS)*len(items)
+    return total
+
+
+def included_counts(value):
+    """画面の数（`includes` の鍵ごとの件数）。読めない形は空。"""
+    includes=value.get('includes') if isinstance(value,dict) else None
+    if not isinstance(includes,dict):return {}
+    return {key:len(items) for key,items in includes.items() if isinstance(items,list)}
 
 
 def jst_day(at):return jst.to_jst(at).date().isoformat()
@@ -430,7 +496,7 @@ def _validate_posts(value,kind=POSTS):
         if (not re.fullmatch(r'[0-9a-f]{32}',key) or type(row) is not dict
                 or set(row)!={'account','state','limit','count','usd','price_version','reservation_month','day_jst','at','get_at'}
                 or not accounts.name_is_safe(row['account']) or not isinstance(row['state'],str) or row['state'] not in POSTS_STATES
-                or type(row['limit']) is not int or not 1<=row['limit']<=POSTS_MAX_LIMIT
+                or type(row['limit']) is not int or not 1<=row['limit']<=(EXPANSION_MAX_LIMIT if kind==EXPANSIONS else POSTS_MAX_LIMIT)
                 or row['price_version']!=version
                 or not isinstance(row['reservation_month'],str) or not re.fullmatch(_MONTH,row['reservation_month'])
                 or not isinstance(row['day_jst'],str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',row['day_jst'])
@@ -494,7 +560,7 @@ def posts_today(value,account,day):
 def _posts_liability(fd,at):
     """本人確認の台帳の外にある、その月の確定と押さえ（他人の投稿＋自分の投稿の数字）。"""
     total=Decimal(0)
-    for kind in (POSTS,OWNED,LISTS,COMMUNITIES,TRENDS,COUNTS,ARCHIVE,COUNTS_ALL):
+    for kind in (POSTS,OWNED,LISTS,COMMUNITIES,TRENDS,COUNTS,ARCHIVE,COUNTS_ALL,EXPANSIONS):
         spent,held=posts_totals(_read_posts(fd,kind),month(at));total+=spent+held
     return total
 
@@ -522,18 +588,31 @@ def archive_daily_cap(account):
 class PostsRead:
     """`posts_read()` の中で渡す手。`dispatch()` を GET の直前に・`settle(n)` を応答の後に。"""
 
-    def __init__(self,identifier,account,limit,kind=POSTS):
+    def __init__(self,identifier,account,limit,kind=POSTS,includes_id=None,includes_limit=0):
         self.id=identifier;self.account=account;self.limit=limit;self.count=None;self.state='reserved';self.kind=kind
+        # expansions で付く物の予約（`budget_x_expansions.json`）。頼まない読みは None。
+        self.includes_id=includes_id;self.includes_limit=includes_limit;self.includes_count=None
 
-    def _move(self,expected,change):
+    def _move(self,expected,change,kind=None,identifier=None):
+        kind=self.kind if kind is None else kind;identifier=self.id if identifier is None else identifier
         with locked() as fd:
-            value=_read_posts(fd,self.kind);row=value['reservations'][self.id]
+            value=_read_posts(fd,kind);row=value['reservations'][identifier]
             if row['state']!=expected:raise BudgetError('budget_reservation_used')
-            change(row);_save_posts(fd,value,self.kind);self.state=row['state']
+            change(row);_save_posts(fd,value,kind)
+            if kind==self.kind:self.state=row['state']
 
     def dispatch(self):
         def change(row):row['state']='get_started';row['get_at']=timestamp(now())
+        # **付く物の予約を先に発射の印へ**——投稿の側の印が失敗しても、付く物は多めに残る側に倒れる。
+        if self.includes_id is not None:self._move('reserved',change,EXPANSIONS,self.includes_id)
         self._move('reserved',change)
+
+    def settle_includes(self,units):
+        """応答の `includes` の単位で付く物の予約を確定する。上限を超える・読めない数は確定しない（uncertain）。"""
+        if self.includes_id is None:return
+        if type(units) is not int or not 0<=units<=self.includes_limit:return
+        def change(row):row['state']='settled';row['count']=units;row['usd']=decimal_text(EXPANSION_UNIT_PRICE*units)
+        self._move('get_started',change,EXPANSIONS,self.includes_id);self.includes_count=units
 
     def settle(self,count):
         """応答に入っていた投稿の本数で確定する。上限を超える数は確定しない（退出時に uncertain）。"""
@@ -544,23 +623,25 @@ class PostsRead:
 
 
 @contextlib.contextmanager
-def posts_read(account,limit):
+def posts_read(account,limit,includes=0):
     """他人の投稿を最大 `limit` 本読む 1 回の要求の予約（読む前に押さえ・応答の本数で確定）。
 
+    `includes` は expansions で付きうる物の単位の上限（`expansion_units()`）。0 より大きければ
+    `budget_x_expansions.json` にも同じ錠の中で押さえ、月の上限はその分も合わせて見る。
     断り: `budget_exhausted`（月の上限・本人確認と自分の投稿の数字と合わせて）・
     `x_daily_read_cap`（その account の JST の 1 日の本数）。どちらも**要求の前**に断る。
     """
-    with _ledger_read(POSTS,account,limit) as handle:yield handle
+    with _ledger_read(POSTS,account,limit,includes) as handle:yield handle
 
 
 @contextlib.contextmanager
-def owned_read(account,limit):
+def owned_read(account,limit,includes=0):
     """自分の投稿の数字（Owned Reads）を最大 `limit` 本読む 1 回の要求の予約。
 
     作法は `posts_read` と同じ（押さえ→発射→応答の本数で確定・読めなければ uncertain）。
     断りは `budget_exhausted` だけ（1 日の本数の上限は他人の投稿の決まりなので掛けない）。
     """
-    with _ledger_read(OWNED,account,limit) as handle:yield handle
+    with _ledger_read(OWNED,account,limit,includes) as handle:yield handle
 
 
 @contextlib.contextmanager
@@ -591,18 +672,19 @@ def request_read(kind,account):
 
 
 @contextlib.contextmanager
-def archive_read(account,limit):
+def archive_read(account,limit,includes=0):
     """全期間の検索の 1 ページ（最大 `limit` 本）の予約（4.5.0）。作法は `posts_read` と同じ。
 
     断り: `budget_exhausted`（月の上限・他の台帳と合わせて）・`x_archive_daily_read_cap`
     （その account の JST の 1 日の全期間の本数・`x_archive_daily_reads`・既定 0）。どちらも要求の前。
     """
-    with _ledger_read(ARCHIVE,account,limit) as handle:yield handle
+    with _ledger_read(ARCHIVE,account,limit,includes) as handle:yield handle
 
 
 @contextlib.contextmanager
-def _ledger_read(kind,account,limit):
+def _ledger_read(kind,account,limit,includes=0):
     if type(limit) is not int or not 1<=limit<=POSTS_MAX_LIMIT:raise BudgetError('invalid_posts_read_limit')
+    if type(includes) is not int or not 0<=includes<=EXPANSION_MAX_LIMIT:raise BudgetError('invalid_expansion_units')
     if not accounts.name_is_safe(account):raise BudgetError('invalid_budget_account')
     if _posts_current.get() is not None:raise BudgetError('budget_nested_reservation')
     price=_LEDGERS[kind][1];version=_LEDGERS[kind][2]
@@ -610,22 +692,37 @@ def _ledger_read(kind,account,limit):
     with locked() as fd:
         value=_read(fd);mine=_read_posts(fd,kind);at=now();period=month(at);day=jst_day(at)
         spent,held=totals(value,period)
-        if not _can_reserve(value['policy'],spent+held+_posts_liability(fd,at)+price*limit):raise BudgetError('budget_exhausted')
+        if not _can_reserve(value['policy'],spent+held+_posts_liability(fd,at)+price*limit+EXPANSION_UNIT_PRICE*includes):
+            raise BudgetError('budget_exhausted')
         if cap is not None and posts_today(mine,account,day)+limit>cap:
             raise BudgetError('x_archive_daily_read_cap' if kind==ARCHIVE else 'x_daily_read_cap')
+        def row_of(units,unit_price,unit_version):
+            return dict(account=account,state='reserved',limit=units,count=None,
+                usd=decimal_text(unit_price*units),price_version=unit_version,reservation_month=period,
+                day_jst=day,at=timestamp(at),get_at=None)
+        included=None
+        if includes:
+            # 付く物の台帳を先に書く。投稿の側の書き込みが落ちても、押さえは多めに残る側。
+            extra=_read_posts(fd,EXPANSIONS);included=secrets.token_hex(16)
+            extra['reservations'][included]=row_of(includes,EXPANSION_UNIT_PRICE,EXPANSION_PRICE_VERSION)
+            _save_posts(fd,extra,EXPANSIONS)
         identifier=secrets.token_hex(16)
-        mine['reservations'][identifier]=dict(account=account,state='reserved',limit=limit,count=None,
-            usd=decimal_text(price*limit),price_version=version,reservation_month=period,
-            day_jst=day,at=timestamp(at),get_at=None)
-        _save_posts(fd,mine,kind)
-    handle=PostsRead(identifier,account,limit,kind);reset=_posts_current.set(handle)
+        mine['reservations'][identifier]=row_of(limit,price,version)
+        try:_save_posts(fd,mine,kind)
+        except BaseException:
+            if included is not None:  # 投げていない——付く物の押さえも返す
+                extra['reservations'][included]['state']='released';_save_posts(fd,extra,EXPANSIONS)
+            raise
+    handle=PostsRead(identifier,account,limit,kind,included,includes);reset=_posts_current.set(handle)
     try:yield handle
     finally:
         _posts_current.reset(reset)
         with locked() as fd:
-            mine=_read_posts(fd,kind);row=mine['reservations'][identifier]
-            if row['state']=='reserved':row['state']='released';_save_posts(fd,mine,kind)  # 投げていない
-            elif row['state']=='get_started':row['state']='uncertain';_save_posts(fd,mine,kind)  # 投げて読めなかった
+            for ledger,key in ((kind,identifier),(EXPANSIONS,included)):
+                if key is None:continue
+                mine=_read_posts(fd,ledger);row=mine['reservations'][key]
+                if row['state']=='reserved':row['state']='released';_save_posts(fd,mine,ledger)  # 投げていない
+                elif row['state']=='get_started':row['state']='uncertain';_save_posts(fd,mine,ledger)  # 投げて読めなかった
 
 
 def posts_status(account,*,at=None):
@@ -662,6 +759,20 @@ def _archive_report(archive,at):
                 what='full_archive_search',day_jst=day,default_daily_cap=DEFAULT_ARCHIVE_DAILY_READS,today_by_account=today,
                 month=dict(month_utc=period,requests=len(rows),posts=posts,spent_estimate_usd=decimal_text(spent),
                            held_usd=decimal_text(held),uncertain=sum(1 for row in rows if row['state']=='uncertain')))
+
+
+def _expansions_report(expansions,at):
+    period=month(at);spent,held=posts_totals(expansions,period)
+    rows=[row for row in expansions['reservations'].values() if row['reservation_month']==period and row['state']!='released']
+    return dict(price=dict(version=EXPANSION_PRICE_VERSION,unit_usd=decimal_text(EXPANSION_UNIT_PRICE),
+                           user_usd=decimal_text(EXPANSION_UNIT_PRICE*INCLUDE_UNITS['users']),
+                           media_usd=decimal_text(EXPANSION_UNIT_PRICE*INCLUDE_UNITS['media']),source=PRICE_SOURCE,
+                           basis='no_dedup_credit'),
+                what='expansion_includes',
+                month=dict(month_utc=period,requests=len(rows),
+                           units=sum(row['count'] if row['state']=='settled' else row['limit'] for row in rows),
+                           spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),
+                           uncertain=sum(1 for row in rows if row['state']=='uncertain')))
 
 
 def _posts_report(posts,at):
@@ -741,6 +852,10 @@ def cost_lines(whole):
     if archive and archive['month']['requests']:
         m=archive['month']
         out.append(f"  全期間の検索（Posts: Read・1 本 ${archive['price']['post_read_usd']}）: {m['requests']} 回・{m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    exp=whole.get('expansion_read') or {}
+    if exp and exp['month']['requests']:
+        m=exp['month']
+        out.append(f"  expansions で付く物（includes・user 1 件 ${exp['price']['user_usd']}・media 1 件 ${exp['price']['media_usd']}・重複の除きは当てにしない）: {m['requests']} 回・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     for kind,key,label in PER_REQUEST:
         row=whole.get(key) or {}
         if row and row['month']['requests']:
