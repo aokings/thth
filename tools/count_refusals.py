@@ -11,7 +11,7 @@
   符丁の形の文字列のもの、または「符丁: 文」の形で頭に符丁がある文字列のもの。
   第 2 引数以降に文字列（文）があれば「文つき」。
 - **集合**: 名に `REASONS`・`REFUSALS`・`SAFE_ERRORS`（と `_REASON_TABLE`）を含む代入の値の中の、
-  符丁の形の文字列。
+  符丁の形の文字列。`INNER`（`secret_accept` の中の入口の符丁の表）は辞書の鍵だけ。
 - **JSON の欄**: dict の字面の `"error"`・`"reason"`・`"code"` の値が符丁の形の文字列のもの。
 - **fix の辞書**: 名に `NEXT`・`MESSAGES`・`HINTS` を含む dict の鍵（符丁の形のもの）。
   鍵は符丁にも数える（説明の辞書に載るのは断りの符丁）。説明の辞書は目録の見方（`fix_view`）に
@@ -43,9 +43,14 @@ ROOT = Path(__file__).resolve().parent.parent
 # §1 の 8 つに、広告の口（`OpsRefused`）と認可の口（`FlowError`・「符丁: 文」の形）を足した（段 A・
 # skill に出る `ads_tree_changed`・`facebook_page_not_granted` が数えから漏れていた）。
 MOUTHS = frozenset({"_fail", "_refuse", "refuse", "error", "ReportError", "GuardRefused",
-                    "RemoteError", "ReportServiceError", "OpsRefused", "FlowError"})
+                    "RemoteError", "ReportServiceError", "OpsRefused", "FlowError",
+                    # 鍵の入口の「符丁: 文」の口（`oauth._out`・`principal_cli` の `err`・5.32.0 監査の軽い 11）。
+                    "_out", "err"})
 PREFIXED = re.compile(r"([a-z][a-z0-9_]*): ")
 SET_NAME = re.compile(r"(REASONS|REFUSALS|SAFE_ERRORS|_REASON_TABLE)")
+# 鍵だけを符丁に数える辞書（`secret_accept.INNER`: 中の入口の断りの符丁 → 答えの符丁。値は家の係の答えで、
+# 断りの目録の符丁ではない・5.32.0 監査の軽い 11）。
+KEY_SET_NAME = re.compile(r"\AINNER\Z")
 FIX_NAME = re.compile(r"(NEXT|MESSAGES|HINTS)")
 JSON_KEYS = frozenset({"error", "reason", "code"})
 # 符丁の形: 英小文字で始まり、`_` で区切った 2 語以上（refusals._CODE と同じ形）。
@@ -157,6 +162,11 @@ def scan(root: Path = ROOT) -> dict:
                         if is_code(value):
                             codes[value]["sources"].add("set")
                             codes[value]["files"].add(rel)
+                if any(KEY_SET_NAME.search(name) for name in names) and isinstance(node.value, ast.Dict):
+                    for key in node.value.keys:
+                        if isinstance(key, ast.Constant) and is_code(key.value):
+                            codes[key.value]["sources"].add("set")
+                            codes[key.value]["files"].add(rel)
                 if any(FIX_NAME.search(name) for name in names) and isinstance(node.value, ast.Dict):
                     name = next(n for n in names if FIX_NAME.search(n))
                     table = {}

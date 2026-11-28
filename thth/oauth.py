@@ -31,6 +31,7 @@ from . import leave_gate
 import getpass
 import json
 import os
+import re
 import secrets
 import sys
 import urllib.error
@@ -812,7 +813,15 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
             adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
             me = adapter.whoami()
         except adapters_mod.base.AdapterError as e:
-            _out(f"token_unusable: トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
+            said = redact_mod.redact(str(e))
+            # **媒体が「別の口座」と言ったら、使えない鍵でなく取り違え**として出す（fb の
+            # `facebook_page_mismatch`・ig の `instagram_account_mismatch`・監査 5.32.0 軽い 3 (b)・5.32.1）。
+            # どちらも置かないのは同じで、人に見せる理由（と `thth secret accept` の答え）だけが変わる。
+            if re.match(r"[a-z][a-z0-9_]*_mismatch: ", said):
+                _out(f"token_account_mismatch: 保存しませんでした: {said}", log=log)
+                _out("台帳の口座（page_id・ig_user_id）で鍵を発行し直して入れてください。", log=log)
+                return 1
+            _out(f"token_unusable: トークンが使えませんでした（{said}）", log=log)
             return 1
         user_id = me.get("user_id", "")
         username = me.get("username", "")
@@ -838,27 +847,41 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         # 2026-11-27）。以前は `handle_matches` の「判らない」（None）を素通りさせて
         # いたので、handle の無い台帳にはどの口座のトークンでも入った。人が見ていない
         # 入力口から値が届くと、取り違えを止める者がいない。
+        # 台帳を直す命令は、鍵があると断られる（handle・user_id は照合の片側・`handle_locked_by_token`）。
+        # 勧める命令が実際に通るように、鍵があれば先に外す 1 手を添える（監査 5.32.0 軽い 1・5.32.1）。
+        unlock = (f"thth token revoke {account_name} --by <名前> で今の鍵を外してから、"
+                  if snapshot is not None else "")
         handle = (account_cfg.get("handle") or "").strip()
         if not handle:
             _out(f"token_handle_missing: 保存しませんでした: 台帳 {account_name} に handle が無いので、"
                  f"このトークン（{username}）が正しい口座のものか照合できません。", log=log)
-            _out(f"台帳に handle を書いてから入れ直してください"
+            _out(f"{unlock}台帳に handle を書いてから入れ直してください"
                  f"（thth account set {account_name} handle <handle> --by <名前>）。", log=log)
             return 1
         if handle_matches(handle, username) is not True:
             _out(f"token_account_mismatch: 保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
                  f"このトークンは {username} のものです。", log=log)
-            _out("正しいアカウントで発行し直すか、台帳の handle を直してください"
+            _out(f"正しいアカウントで発行し直すか、{unlock}台帳の handle を直してください"
                  f"（thth account set {account_name} handle {username} --by <名前>）。", log=log)
             return 1
         # **台帳に user_id があれば、それも照合する**（同じ日）。handle は付け替えられる
-        # ので、変わらない番号でも同じ口座かを見る。台帳の user_id が空なら handle だけ。
+        # ので、変わらない番号でも同じ口座かを見る。
         ledger_uid = str(account_cfg.get("user_id") or "").strip()
         if ledger_uid and ledger_uid != str(user_id):
             _out(f"token_account_mismatch: 保存しませんでした: 台帳 {account_name} の user_id は {ledger_uid} ですが、"
                  f"このトークンは user_id {user_id}（{username}）のものです。", log=log)
-            _out("正しいアカウントで発行し直すか、台帳の user_id を直してください"
+            _out(f"正しいアカウントで発行し直すか、{unlock}台帳の user_id を直してください"
                  f"（thth account set {account_name} user_id {user_id} --by <名前>）。", log=log)
+            return 1
+        # **台帳の user_id が空なら、今ある鍵の user_id と比べる**（監査 5.32.0 軽い 2・5.32.1）。店の
+        # 「前の鍵が照合の元」と同じ考え。handle は付け替えられるので、同じ名前を別の人が取り直しても、
+        # 番号が違えば置かない。今の鍵が読めない・番号を持たないときは比べる元が無いので handle だけ。
+        previous_uid = _snapshot_user_id(snapshot) if not ledger_uid else ""
+        if previous_uid and previous_uid != str(user_id):
+            _out(f"token_account_mismatch: 保存しませんでした: {account_name} の今の鍵は user_id {previous_uid} の"
+                 f"口座のものですが、このトークンは user_id {user_id}（{username}）のものです。", log=log)
+            _out(f"正しいアカウントで発行し直すか、別の口座に替えるなら thth token revoke {account_name} --by <名前> で"
+                 "今の鍵を外してから入れ直してください。", log=log)
             return 1
 
         token_data = {
@@ -881,13 +904,35 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
             token_data["no_expiry"] = True
         else:
             token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
-        authflow.commit_manual(account_name,account_cfg,token_data,snapshot=snapshot,session=session,by=by)
+        # 台帳の user_id が空なら、照合を通ったこの番号を書く（以後は番号でも照合する・5.32.1）。
+        authflow.commit_manual(account_name,account_cfg,token_data,snapshot=snapshot,session=session,by=by,
+                               ledger_user_id=None if ledger_uid else str(user_id))
+    if not ledger_uid:
+        # 台帳に番号を書いたので、控えは書いたあとの台帳で取る（前の台帳のままだと「変わった」と控えを捨てる）。
+        try:
+            account_cfg = accounts_mod.load_account(account_name)
+        except accounts_mod.AccountError:
+            pass
     from . import doctor
     doctor.record_auth(account_name,account_cfg,token_data,log=log)
 
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)
     return 0
+
+
+def _snapshot_user_id(snapshot) -> str:
+    """今の鍵のファイル（`authflow._token_snapshot` の写し）の `user_id`。読めない・無ければ空。値は外に出さない。"""
+    if snapshot is None:
+        return ""
+    try:
+        data = json.loads(snapshot[0])
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(data, dict) or not isinstance(data.get("user_id"), (str, int)) or isinstance(
+            data.get("user_id"), bool):
+        return ""
+    return str(data["user_id"]).strip()
 
 
 @leave_gate.scoped

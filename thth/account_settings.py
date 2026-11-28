@@ -50,7 +50,7 @@ TIGHTER_WHEN_LARGER = frozenset(("burst_minutes", "hold_minutes", "min_interval_
 MIN_INTERVAL_MAX = 168
 REASONS = frozenset(("invalid_setting", "settings_loosen_requires_owner", "schedule_unavailable",
                      "ledger_unavailable", "settings_unavailable", "invalid_handle",
-                     "handle_locked_by_token"))
+                     "handle_locked_by_token", "invalid_user_id", "user_id_locked_by_token"))
 
 
 class SettingsError(ValueError):
@@ -378,6 +378,55 @@ def change_handle(account, value, *, by) -> dict:
     return {"account": account, "key": "handle", "before": before, "after": after, "changed": True}
 
 
+USER_ID_RE = re.compile(r"[A-Za-z0-9:._-]{1,128}")
+
+
+def change_user_id(account, value, *, by) -> dict:
+    """台帳の `user_id` を直す（**運営者の CLI だけ・トークンが無いときだけ**・監査 5.32.0 軽い 1・5.32.1）。
+
+    `thth token set` は台帳の user_id があれば、トークンの番号と照合する。違えば断りの文がこの命令を
+    勧めるが、以前は `account set` が user_id を受けず、JSON を手で書くしか無かった。
+
+    handle と同じく、**トークンがあれば断る**（`user_id_locked_by_token`）。番号は照合の片側で、鍵の
+    あとに書き換えられると別の口座の鍵を通す道になる。`-` で外す（次の `thth token set` が書き直す）。
+    MCP・遠くの道からは変えられない（`KEYS` に無い）。
+    """
+    admin_log.actor(by)
+    if not accounts.name_is_safe(account):
+        raise SettingsError("invalid_setting")
+    text = str(value or "").strip()
+    after = "" if text == "-" else text
+    if after and not USER_ID_RE.fullmatch(after):
+        raise SettingsError("invalid_user_id")
+    cfg = accounts.load_account(account)
+    before = cfg.get("user_id")
+    if str(before or "") == after:
+        return {"account": account, "key": "user_id", "before": before, "after": before, "changed": False}
+    try:
+        token = accounts.load_token(cfg, refresh_x=False)
+    except (OSError, ValueError):
+        token = True  # 読めないトークンも「在る」として扱う
+    if token is not None:
+        raise SettingsError("user_id_locked_by_token")
+    path = _ledger_path(account)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SettingsError("ledger_unavailable") from exc
+    if not isinstance(raw, dict):
+        raise SettingsError("ledger_unavailable")
+    original = json.loads(json.dumps(raw))
+    raw["user_id"] = after
+    secrets_fs.atomic_write_json(str(path), raw)
+    try:
+        accounts.load_account(account)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(str(path), original)
+        raise SettingsError("invalid_user_id") from None
+    admin_log.append("settings_set", account, cfg, by=by, via="cli", diff={"user_id": [before, after]})
+    return {"account": account, "key": "user_id", "before": before, "after": after, "changed": True}
+
+
 def status(account, *, now=None, table=False) -> dict:
     """安全装置の数値・止まっているか・今日の公開数/削除数（読むだけ）。
 
@@ -497,6 +546,7 @@ def cmd_set(args) -> int:
     try:
         pairs = _pairs(rest)
         results = [change_handle(args.name, value, by=args.by) if key == "handle"
+                   else change_user_id(args.name, value, by=args.by) if key == "user_id"
                    else change_scheduled(args.name, value, by=args.by) if key == "scheduled"
                    else change_stock_daily_min(args.name, value, by=args.by) if key == STOCK_DAILY_MIN_KEY
                    else change_instagram_linked(args.name, value, by=args.by) if key == INSTAGRAM_LINKED_KEY
@@ -504,7 +554,7 @@ def cmd_set(args) -> int:
     except SettingsError as exc:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
-            reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）・"
+            reason += (f": 名前は {'・'.join(KEYS)}・handle・user_id（- で外す）・scheduled（true／false）・"
                        f"{STOCK_DAILY_MIN_KEY}（1 日の本数・- で外す）・"
                        f"{INSTAGRAM_LINKED_KEY}（true／false・Threads の口座だけ）"
                        "（burst は `burst <件数> <分>` でも）・柵の行の id（"
@@ -514,6 +564,11 @@ def cmd_set(args) -> int:
         elif reason == "schedule_unavailable" and any(k == "scheduled" for k, _ in pairs):
             reason += (f": {args.name} は猶予（hold_minutes）が 1 以上なので timer から外しません。"
                        f"先に thth account set {args.name} hold_minutes 0 --by <名前>")
+        elif reason == "invalid_user_id":
+            reason += ": user_id は英数字と `:`・`.`・`_`・`-` だけ（128 字まで・- で外す）"
+        elif reason == "user_id_locked_by_token":
+            reason += (f": {args.name} にはトークンがあるので user_id を変えません（取り違え防止の照合の片側の"
+                       f"ため）。変えるなら thth token revoke {args.name} --by <名前> で外してから直し、入れ直す")
         elif reason == "handle_locked_by_token":
             reason += (f": {args.name} にはトークンがあるので handle を変えません（取り違え防止の"
                        "照合の片側のため）。変えるなら、トークンを外してから handle を直し、認可し直す")

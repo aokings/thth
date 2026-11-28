@@ -31,7 +31,8 @@ import sys
 # 家が `rejected:handler_error` に丸める。
 CODES = {
     "ok": (0, "verified"),
-    "stored_with_warning": (3, "verified"),   # 置いたが、あとの確かめが落ちた（WordPress の入口のホスト・はてなのブログ）
+    "stored_with_warning": (3, "verified"),   # 置いたが、あとの確かめが落ちた（WordPress の入口のホスト・はてなのブログ・
+                                              # 置いたあとの控え。鍵のファイルの中身が前と変わったとき・5.32.1）
     "invalid_input": (10, "rejected"),
     "target_unknown": (11, "rejected"),
     "wrong_kind": (12, "rejected"),
@@ -64,6 +65,7 @@ KINDS = {
 # 中の入口の断りの符丁 → 答えの符丁。載らない符丁で rc が 0 でなければ `refused`。
 INNER = {
     "token_account_mismatch": "account_mismatch", "bluesky_account_mismatch": "account_mismatch",
+    "facebook_page_mismatch": "account_mismatch", "instagram_account_mismatch": "account_mismatch",
     "wp_user_mismatch": "account_mismatch", "hatena_id_mismatch": "account_mismatch",
     "store_shop_mismatch": "account_mismatch",
     "token_handle_missing": "identity_unknown", "bluesky_ledger_identifier_required": "identity_unknown",
@@ -85,7 +87,9 @@ INNER = {
 SHOP_TOKEN_KINDS = ("base", "stores", "square", "shopify")
 SHOP_CLIENT_KINDS = ("shopify", "smaregi")
 STDIN_MAX = 8192
-_CODE_LINE = re.compile(r"([a-z][a-z0-9_]{2,63}):")
+# 行の頭の符丁。「符丁: 文」の形のほか、行の全体が符丁だけの形も拾う（Bluesky・認可の入口はコロンの無い符丁だけを
+# 出す所がある・監査 5.32.0 軽い 3 (a)・5.32.1）。
+_CODE_LINE = re.compile(r"([a-z][a-z0-9_]{2,63})(?::|\Z)")
 
 
 class Refused(Exception):
@@ -123,12 +127,10 @@ class _Sink:
         self.out.append(str(line))
 
     def code(self, *streams) -> str | None:
+        """出力の中の符丁。表（`INNER`）に載る符丁を先に、無ければ最初に見えた符丁を返す。"""
         texts = self.err + self.out + [line for s in streams for line in s.getvalue().splitlines()]
-        for text in texts:
-            m = _CODE_LINE.match(text.strip())
-            if m:
-                return m.group(1)
-        return None
+        found = [m.group(1) for m in (_CODE_LINE.match(text.strip()) for text in texts) if m]
+        return next((c for c in found if c in INNER), found[0] if found else None)
 
     def wrote(self, *streams) -> bool:
         texts = self.err + self.out + [line for s in streams for line in s.getvalue().splitlines()]
@@ -228,6 +230,36 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
     raise Refused("target_unknown")
 
 
+def _key_paths(kind, cfg) -> tuple:
+    """種類ごとの鍵のファイルの道（置いたかを見るためだけ）。App Secret・thth.me の鍵は見ない（あとの段が無い）。"""
+    if not isinstance(cfg, dict):
+        return ()
+    if kind in ("account-token", "bluesky-app-password", "wordpress-app-password", "hatena-verifier",
+                "shop-token", "shop-client"):
+        return tuple(p for p in (cfg.get("token"),) if isinstance(p, str) and p)
+    if kind == "hatena-consumer":
+        return tuple(p for p in (cfg.get("consumer"), cfg.get("token")) if isinstance(p, str) and p)
+    return ()
+
+
+def _fingerprint(paths) -> tuple:
+    """鍵のファイルの中身の sha256（無ければ None）。値は持たず、外にも出さない。
+
+    `stat` でなく中身で見るのは、断ったあとに前の鍵を書き戻す（inode が変わる）入口を「置いた」と取り違えないため。
+    """
+    import hashlib
+    out = []
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                out.append(hashlib.sha256(f.read()).hexdigest())
+        except FileNotFoundError:
+            out.append(None)
+        except OSError:
+            out.append("unreadable")
+    return tuple(out)
+
+
 def accept(kind, target, *, by, expires=None, stdin_bytes=None) -> str:
     """値を受けて置く。答えの符丁（`CODES` の鍵）を返す。値はどこにも出さない。"""
     from . import admin_log
@@ -251,14 +283,25 @@ def accept(kind, target, *, by, expires=None, stdin_bytes=None) -> str:
         redact.register_secret(value)
     sink = _Sink()
     out, err = io.StringIO(), io.StringIO()
+    # **置いたあとで落ちたら「置いたが確かめが落ちた」**（監査 5.32.0 軽い 4・5.32.1）。鍵を書いたあとの控え
+    # （doctor の記録・admin の記録の確かめ）が落ちると、以前は鍵が置かれているのに rejected（70・18）と
+    # 答えた。前とあとで鍵のファイルの中身が変わっていれば、置いたものとして `stored_with_warning` に寄せる。
+    paths = _key_paths(kind, cfg)
+    before = _fingerprint(paths)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc, inner = _call(kind, target, values, cfg, by=by, expires=expires, sink=sink)
+    except Exception:
+        if paths and _fingerprint(paths) != before:
+            return "stored_with_warning"
+        raise
     finally:
         del values
     if rc == 0:
         return "ok"
     if kind in ("wordpress-app-password", "hatena-verifier") and rc == 1 and sink.wrote(out, err):
+        return "stored_with_warning"
+    if paths and _fingerprint(paths) != before:
         return "stored_with_warning"
     inner = inner or sink.code(err, out)
     return INNER.get(inner, "refused")
