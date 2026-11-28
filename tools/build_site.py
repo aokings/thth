@@ -292,7 +292,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = None  # 括り・レーンの鍵・AI のコネクタ・monban の節（枝 worktree-ws-stage-d・出すのは Meta の審査のあとの Worker の deploy の日）。出す日に、その日付を入れ、TERMS_EFFECTIVE も同じ日にする（None のままだと release_gate が release_privacy_date_unset で止める）。前: 2026-11-20 # 5.27.0（Google ビジネス プロフィールの節・店の変化の連動の節。11-19 の予定を出す日に直した）。出す日がずれたら直す。前: 2026-11-17（5.26.0 監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
+PRIVACY_EFFECTIVE = "2026-11-28"  # 6.0.0 の Worker の deploy の日（masaru 11/28 に出すと決めた）。括り・レーンの鍵・AI のコネクタ・monban の節（枝 worktree-ws-stage-d・出すのは Meta の審査のあとの Worker の deploy の日）。出す日に、その日付を入れ、TERMS_EFFECTIVE も同じ日にする（None のままだと release_gate が release_privacy_date_unset で止める）。前: 2026-11-20 # 5.27.0（Google ビジネス プロフィールの節・店の変化の連動の節。11-19 の予定を出す日に直した）。出す日がずれたら直す。前: 2026-11-17（5.26.0 監査 5.20.0 の 3・4: 外す命令・持ち主の範囲・短い値・鍵の文）。出す日がずれたら直す。前: 2026-11-14（5.20.0 の台帳の器の節）・2026-11-13（5.19.0 の台帳の節と実店舗のレジの節）・2026-11-12（5.14.4 の原則の書の承認・5.14.5・5.15.0 のネットショップ・5.16.0 の WordPress）・2026-11-10（5.14.1・5.14.0）・2026-11-08（5.13.0）・2026-11-05（5.12.4）・2026-09-27（3.14.2）
 
 
 # 台帳に THTH が書く欄（`thth/register/form.MANAGED` と同じ並び・tests/test_privacy_matches_code.py が結ぶ）。
@@ -1899,7 +1899,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = None  # 括り・レーンの鍵・AI のコネクタの項（枝 worktree-ws-stage-d）。出す日に PRIVACY_EFFECTIVE と同じ日付を入れる。前: 2026-11-12 # 5.14.4 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-08（5.13.0）・2026-09-26（3.13.0）・初版 2026-09-25
+TERMS_EFFECTIVE = "2026-11-28"  # 6.0.0 の Worker の deploy の日。括り・レーンの鍵・AI のコネクタの項（枝 worktree-ws-stage-d）。出す日に PRIVACY_EFFECTIVE と同じ日付を入れる。前: 2026-11-12 # 5.14.4 の Worker の deploy の日（出す日がずれたら直す）。前: 2026-11-08（5.13.0）・2026-09-26（3.13.0）・初版 2026-09-25
 
 
 def contact_html(lang: str) -> str:
