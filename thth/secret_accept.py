@@ -46,21 +46,34 @@ CODES = {
 }
 UNEXPECTED_EXIT = 70   # 表に載せない（家が handler_error に丸める）
 
+# `checked`: 置く前に何を確かめるか（家の係の表の説明・監査 5.32.0 軽い 8・5.32.1）。本人の口だけの 3 つは、動いて
+# いる値かを確かめずに置き換える。人がそれを知って入れるように、表にそのまま書く。
+_FORM_ONLY = "確かめたのは形だけ（動く値かは確かめずに、今の値を置き換えます）"
 KINDS = {
-    "app-secret": {"fields": ("app_id", "app_secret"), "target": "媒体（threads）", "owner_only": True},
-    "account-token": {"fields": ("token",), "target": "口座（Bluesky 以外）", "owner_only": False},
-    "bluesky-app-password": {"fields": ("app_password",), "target": "口座（Bluesky）", "owner_only": False},
+    "app-secret": {"fields": ("app_id", "app_secret"), "target": "媒体（threads）", "owner_only": True,
+                   "checked": _FORM_ONLY + "。App ID は数字だけ"},
+    "account-token": {"fields": ("token",), "target": "口座（Bluesky 以外）", "owner_only": False,
+                      "checked": "媒体で口座を確かめ、台帳の handle・user_id（無ければ今の鍵の user_id）と照合"},
+    "bluesky-app-password": {"fields": ("app_password",), "target": "口座（Bluesky）", "owner_only": False,
+                             "checked": "Bluesky にログインし、台帳の handle・did と照合"},
     "wordpress-app-password": {"fields": ("application_password",), "target": "主体（WordPress）",
-                               "owner_only": False},
+                               "owner_only": False, "checked": "サイトで利用者を確かめ、主体の台帳の wp_user と照合"},
     "hatena-consumer": {"fields": ("consumer_key", "consumer_secret"), "target": "主体（はてな）",
-                        "owner_only": True},
-    "hatena-verifier": {"fields": ("oauth_verifier",), "target": "主体（はてな・先に --begin）", "owner_only": False},
+                        "owner_only": True,
+                        "checked": "request token が取れるかまで（今の token が使い続けられるかは確かめません。"
+                                   "token があれば置き換えの前に標準エラーで知らせます）"},
+    "hatena-verifier": {"fields": ("oauth_verifier",), "target": "主体（はてな・先に --begin）", "owner_only": False,
+                        "checked": "はてなで access token を取り、主体の台帳のはてな ID と照合"},
     "shop-token": {"fields": ("token",), "target": "店（BASE・STORES・Square・Shopify の固定の鍵）",
-                   "owner_only": False},
+                   "owner_only": False, "checked": "店で鍵を確かめ、今の鍵の店と照合"},
     "shop-client": {"fields": ("client_id", "client_secret"), "target": "店（Shopify の client・スマレジ）",
-                    "owner_only": False},
-    "thth-login-key": {"fields": ("key",), "target": "thth.me（Mac の鍵）", "owner_only": True},
+                    "owner_only": False, "checked": "店で鍵を確かめ、今の鍵の店と照合"},
+    "thth-login-key": {"fields": ("key",), "target": "thth.me（Mac の鍵）", "owner_only": True,
+                       "checked": _FORM_ONLY},
 }
+# Threads の App ID（数字だけ）。2 つの欄を取り違えて App Secret が App ID の欄に入ると、認可の URL に載る
+# （監査 5.32.0 軽い 9・5.32.1）。
+_APP_ID = re.compile(r"[0-9]{1,32}\Z")
 
 # 中の入口の断りの符丁 → 答えの符丁。載らない符丁で rc が 0 でなければ `refused`。
 INNER = {
@@ -184,6 +197,8 @@ def _call(kind, target, values, cfg, *, by, expires, sink):
     """中の入口に値を渡す。`(rc, 中の符丁 | None)`。"""
     if kind == "app-secret":
         from . import appconfig
+        if not _APP_ID.match(values[0]):
+            raise Refused("invalid_input")
         secret = values[1]
         return appconfig.run("threads", app_id=values[0], input_func=lambda: secret, by=by, log=sink.err_line), None
     if kind in ("account-token", "bluesky-app-password"):
@@ -289,6 +304,11 @@ def accept(kind, target, *, by, expires=None, stdin_bytes=None) -> str:
     # 答えた。前とあとで鍵のファイルの中身が変わっていれば、置いたものとして `stored_with_warning` に寄せる。
     paths = _key_paths(kind, cfg)
     before = _fingerprint(paths)
+    if kind == "hatena-consumer" and len(before) > 1 and before[1] is not None:
+        # 置き換えの前に知らせる（値は出さない・監査 5.32.0 軽い 8）。中の入口の出力は捨てるので、ここで外に出す。
+        print(f"知らせ: 主体 {target} には token があります。request token が取れれば consumer を置き換えます。"
+              "別のアプリの consumer なら今の token は使えなくなるので、そのときは --begin から認可し直してください",
+              file=sys.stderr)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc, inner = _call(kind, target, values, cfg, by=by, expires=expires, sink=sink)
@@ -334,6 +354,7 @@ def cmd_accept(args) -> int:
 
 def cmd_kinds(args) -> int:
     rows = [{"kind": kind, "target": spec["target"], "fields": list(spec["fields"]), "owner_only": spec["owner_only"],
+             "checked": spec["checked"],
              "command": ["<thth の絶対パス>", "secret", "accept", kind, "<受付>", "--by", "<名前>"],
              "codes": handler_codes()} for kind, spec in KINDS.items()]
     if args.json:
@@ -341,7 +362,7 @@ def cmd_kinds(args) -> int:
         return 0
     for row in rows:
         mark = "・本人の口だけ" if row["owner_only"] else ""
-        print(f"{row['kind']}: 受付 {row['target']}・欄 {'・'.join(row['fields'])}{mark}")
+        print(f"{row['kind']}: 受付 {row['target']}・欄 {'・'.join(row['fields'])}{mark}・確かめ {row['checked']}")
     print("終了コード: " + "・".join(f"{rc} {answer}" for rc, answer in handler_codes().items()))
     print("値は標準入力だけで、欄ごとに 1 行。家の係は環境に PATH・HOME・LANG しか渡さないので、VM では表の命令を"
           " /usr/bin/env THTH_ROOT=/srv/thth /srv/thth/app/bin/thth … の形にします")

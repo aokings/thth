@@ -826,6 +826,10 @@ def run_auth_hatena_stdin(name, *, by, force=False, consumer=False, begin=False,
             redact.register_secret(temp["oauth_token_secret"])
             if consumer:
                 had = os.path.exists(consumer_path)
+                if os.path.exists(token_path):
+                    # 置き換えの前に知らせる（値は出さない・監査 5.32.0 軽い 8・5.32.1）。
+                    err("知らせ: token があります。consumer を置き換えます。別のアプリの consumer なら今の token は"
+                        f"使えなくなるので、そのときは thth principal auth {name} --begin --by <名前> から認可し直してください")
                 secrets_fs.atomic_write_json(consumer_path, consumer_data)
                 admin_log.append("principal_auth", name, subject, by=by, diff={"consumer": [had, True]})
                 out(f"consumer を書きました: {consumer_path}（request token が取れたので）")
