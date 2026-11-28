@@ -178,10 +178,6 @@ items	email
 prep	email を求める認可は端末で thth auth <口座> --by <名前> を打つ（招待の画面では値は出ない）。認可の最後に出る「認可したユーザーのメール」の行を映す（画面に出すだけ・保存しない）
 cmd	thth doctor {FB}
 end
-seg	fb-search	facebook	Page Public Content Access — search public Pages and their posts (counts only).
-items	page_public_content_access
-cmd	thth where {FB} {WORD}
-end
 seg	fb-brand-content	facebook	facebook_branded_content_ads_brand — read the partnership content a business can advertise.
 items	facebook_branded_content_ads_brand
 cmd	thth brand content {FB} --business {BUSINESS}

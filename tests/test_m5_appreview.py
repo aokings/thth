@@ -84,8 +84,13 @@ def test_申し込む口の無いものと審査の要らないものは今回�
     assert segs <= {s["id"] for s in appreview.DEFERRED_SEGMENTS}
     rows = appreview.tsv()
     assert not [seg for seg in segs if f"{seg}\t" in rows or f"\t{seg}\t" in rows]
-    # PPCA は残す（PPMA と入れ替え）。口と見張りの行は残す
-    assert "page_public_content_access" in appreview.names() and "fb-search" in {s["id"] for s in appreview.SEGMENTS}
+    # PPCA も 11/28 に外した（画面に申し込む行が無い・A3）。Standard Access は画面に名前が無く Marketing API Access Tier が出る
+    for name, seg in (("page_public_content_access", "fb-search"), ("ads_management_standard_access", None)):
+        assert name in appreview.DEFERRED and name not in appreview.names()
+        assert name not in {item["name"] for item in appreview.items()}
+        if seg:
+            assert seg not in {s["id"] for s in appreview.SEGMENTS} and seg in {s["id"] for s in appreview.DEFERRED_SEGMENTS}
+    assert "marketing_api_access_tier" in appreview.names()
     assert {"pages_manage_cta", "read_audience_network_insights"} <= set(pw.PERMISSIONS)
     assert {"threads_oembed_read", "page_public_metadata_access"} <= set(appreview.FEATURES)
 

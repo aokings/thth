@@ -182,8 +182,6 @@ SEGMENTS = (
          ("prep", "email を求める認可は端末で thth auth <口座> --by <名前> を打つ（招待の画面では値は出ない）。"
                   "認可の最後に出る「認可したユーザーのメール」の行を映す（画面に出すだけ・保存しない）"),
          ("cmd", "thth doctor {FB}")),
-    _seg("fb-search", "facebook", "Page Public Content Access — search public Pages and their posts (counts only).",
-         ["page_public_content_access"], ("cmd", "thth where {FB} {WORD}")),
     _seg("fb-brand-content", "facebook", "facebook_branded_content_ads_brand — read the partnership content a "
          "business can advertise.", ["facebook_branded_content_ads_brand"],
          ("cmd", "thth brand content {FB} --business {BUSINESS}")),
@@ -330,6 +328,9 @@ DEFERRED_SEGMENTS = (
          ("cmd", "thth embed {TH} {TH_URL}")),
     _seg("meta-embed", "facebook", "Meta oEmbed Read — the embed HTML of a public Facebook post.",
          ["meta_oembed_read"], ("cmd", "thth embed {FB} {FB_URL}")),
+    # 2026-11-28 の Dashboard でも PPCA を申し込む行が無い（理由の正本は `DEFERRED`）
+    _seg("fb-search", "facebook", "Page Public Content Access — search public Pages and their posts (counts only).",
+         ["page_public_content_access"], ("cmd", "thth where {FB} {WORD}")),
     _seg("fb-who", "facebook", "Page Public Metadata Access — public metadata of another Page.",
          ["page_public_metadata_access"], ("cmd", "thth who {FB} {FBPAGE} --profile")),
     _seg("fb-cta", "facebook", "pages_manage_cta — read and remove a call-to-action button.", ["pages_manage_cta"],
@@ -409,6 +410,12 @@ DEFERRED = {
                                                "探すだけの creators search は instagram_creator_marketplace_discovery）",
     "commerce_manage_accounts": _NO_DOOR + "（コマースの口座を作る・直す口が無い。ショップは catalog_management と"
                                 "商品タグ `thth shop` で足りる）",
+    # 以下は 2026-11-28（docs/対応表_Meta申請の画面とTHTHの58件_2026-11-23.md の照らし・A3）。画面に申し込む行が無い。
+    "page_public_content_access": "どのユースケースの権限と機能の表にも出ず、アプリから申し込む口が無い"
+                                  "（11/18 と 11/28 の Dashboard・ページのユースケースの機能は Live Video API・"
+                                  "Page Mentions・Business Asset User Profile Access の 3 つ）。口の `thth where` はそのまま",
+    "ads_management_standard_access": "その名前の行が Dashboard に無く、下書きにある Marketing API Access Tier が"
+                                      "広告の段の申し込み口（11/23・11/28 の Dashboard）。口の `thth ads show` はそのまま",
 }
 
 # 計画 §1.10 の判断で申請から落とした権限（理由と出所）。PLANNED・PERMISSIONS と重ねない（試験が縛る）。
