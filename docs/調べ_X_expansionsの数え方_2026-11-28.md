@@ -62,8 +62,14 @@ https://docs.x.com/x-api/posts/manage-tweets/integrate — 「写真 4 枚、GIF
 - `budget_x.EXPANSION_RULES` に無い expansion は、要求も予約もせずに断る（`expansion_not_priced`）。
 - 全期間の検索（`archive`）は投稿者の handle しか使わないので、`user.fields` を `username` だけにした。値段は変わらない（数えるのは user の件数で、欄の数ではない）。検索・枝・リストはフォロワー数・投稿数を画面と `--json` に出すので残した。`author_id` の expansion は、どの命令も permalink と仮名（`author_key`）に username を使うので外せない。
 
-## 5. 気づいたが今回は直していない所
+## 5. 続けて直したこと（5.33.0・第24 の依頼）
 
-- `recent_posts`（`GET /2/users/:id/tweets`・最大 100 本）は本人確認と同じ 1 回 0.010 で押さえている。料金表では投稿 1 本ごと（Owned Reads なら 0.001×本数、そうでなければ 0.005×本数）なので、少なく見積もっている。
-- 自分の投稿の数字（`GET /2/tweets?ids=`）を Owned Reads の 0.001 で数えているが、この口は料金表の Owned Reads の表に無い（`docs/照合_XのDeveloperAgreement_自分の泉_2026-09-16_Codex.md` の 192 行目にも同じ指摘）。0.005 なら 5 倍。
-- 画面の 1 行「X の読み取り: 今回 10 本・約 $0.070」（`thth/where_cli.py`）は、金額に投稿者の分が入ったが、文は「本」のまま。
+最初の commit（f0708585）のあとで気づいた、少なく見積もる側の穴 3 つ。
+
+- `recent_posts`（`GET /2/users/:id/tweets`・最大 100 本）を、本人確認と同じ 1 回 0.010 で押さえていた。今は `owned_read` で `max_results` 本ぶんを押さえ、返った本数で確定する。読めない応答は押さえた上限のまま、断りの応答は 0。本人確認の口（`READ_PATH`）からこの path を外したので、1 回 0.010 では通らない。
+- 自分の投稿の読みを Owned Reads の 0.001 で数えていた。でも `GET /2/tweets?ids=` は料金表の Owned Reads の表に無い（`docs/照合_XのDeveloperAgreement_自分の泉_2026-09-16_Codex.md` の 192 行目と同じ）。`/2/users/{id}/tweets` も「自分の developer app の持ち主＝認可した人」のときだけで、THTH では確かめられない。そこで 1 本 0.005 にした（版 `2026-11-28-owned-read-standard`）。前の版 `2026-10-12-owned-read` の行は `_LEGACY_PRICES` によって 0.001 のまま検める。この形の行（確定・押さえ・uncertain・released）が読めることは、直す前と直した後の両方で試験で確かめた（VM の現物は見ていない）。
+- where・thread の 1 行を「約 $0.070（投稿 $0.050＋投稿者の分 $0.020）」にした。投稿者の分も入った金額だと分かる。
+
+## 6. まだ残る所
+
+- `docs/使い方_プロジェクトのセッション向け_2026-09-09.md` などの使い方の文書には、まだ「1 本約 0.001 USD」と書いてある（範囲の外なので直していない）。

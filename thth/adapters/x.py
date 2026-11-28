@@ -772,22 +772,43 @@ class XAdapter(base.Adapter):
 
         `user_id` は `.token`（`thth auth` が `GET /2/users/me` から書いたもの）を
         使う——ここで暗黙に `whoami()` を叩くと、**1 回の一覧で 2 回課金される**。
+        5.33.0: 投稿は返った 1 本ごとに数える（料金表は resource ごと）。`max_results` 本を
+        `budget_x.owned_read` で押さえ、応答の本数で確定する（1 本 0.005・Owned の 0.001 を当てにしない）。
+        断りの応答は 0 本・応答が読めなければ押さえた上限のまま uncertain。1 日の本数には数えない。
         """
+        from decimal import Decimal
         from .. import budget_x
         if not POST_ID.fullmatch(self.user_id or ''):
             raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
         path = '/2/users/' + self.user_id + '/tweets'
         query = {'max_results': max(5, min(int(limit), 100)),
                  'tweet.fields': 'created_at,text,note_tweet'}
-        with budget_x.user_read(self.auth_account):
-            budget_x.before_read(path)
-            try:
-                status, value = request(self, 'GET', path, query=query)
-            except urllib.error.HTTPError as exc:
-                raise AdapterError('x_posts_http_' + str(exc.code), http_status=exc.code) from None
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                raise AdapterError('x_posts_failed: ' + self._scrub(exc)) from None
-            budget_x.observed(value)
+        cap = query['max_results']
+        charged = 0
+        try:
+            # 予算の断り（`budget_x.BudgetError`）は今までどおりそのまま上げる（要求の前）。
+            with budget_x.owned_read(self.auth_account, cap) as slot:
+                slot.dispatch()
+                charged = cap   # 投げた: 確定するまでは押さえた上限のまま数える
+                self._owned['calls'] += 1
+                try:
+                    status, value = request(self, 'GET', path, query=query)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    charged = 0
+                    raise AdapterError('x_posts_http_' + str(exc.code), http_status=exc.code) from None
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                    raise AdapterError('x_posts_failed: ' + self._scrub(exc)) from None
+                data = value.get('data') if isinstance(value, dict) else None
+                if status == 200 and isinstance(data, list):
+                    slot.settle(len(data))
+                elif status == 200 and data is None and isinstance(value.get('meta'), dict):
+                    slot.settle(0)   # 0 件の応答（`meta` だけ）
+                if slot.count is not None:
+                    charged = slot.count
+        finally:
+            self._owned['posts'] += charged
+            self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged)
         rows = value.get('data', [])
         if status != 200 or not isinstance(rows, list):
             # **「取れなかった」を「取れて 0 件」にしない**（`_get_list` と同じ規律）。

@@ -143,7 +143,7 @@ def test_owned_private_media_is_counted_at_the_standard_media_rate(x_account, fa
                                          ages={"1900000000000000001": 1.0})
     [row] = exp_rows()   # 公開の数だけの要求（expansions 無し）は付く物の予約を作らない
     assert row["limit"] == 4 and row["count"] == 2 and row["usd"] == "0.010"
-    assert result["usd_estimate"] == "0.012"   # 投稿 2 本 × 0.001 ＋ media 2 件 × 0.005
+    assert result["usd_estimate"] == "0.020"   # 投稿 2 本 × 0.005 ＋ media 2 件 × 0.005
 
 
 # ----- 柵 4: 古い版の行（VM に残る行）がそのまま読める ---------------------------------------

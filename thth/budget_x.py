@@ -273,7 +273,9 @@ def before_post():
 # ——綴りを 1 か所に置いて、予算の外を通る読み取りを構造で作らせない。
 # 3.17.0: `thth list add|remove @handle` の handle → id（`GET /2/users/by/username/:username`）も
 # 本人確認と同じ 1 回 0.010 USD の予約で引く（Users: Read）。
-READ_PATH=re.compile(r'/2/users/(?:me|[0-9]{1,19}/tweets|by/username/[A-Za-z0-9_]{1,15})')
+# 5.33.0: `/2/users/:id/tweets`（`recent_posts`）は外した——投稿が最大 100 本返るのに、ここでは
+# 1 回 0.010 しか押さえない。今は `owned_read` で返った本数ごとに数える。
+READ_PATH=re.compile(r'/2/users/(?:me|by/username/[A-Za-z0-9_]{1,15})')
 
 
 def before_read(path):
@@ -341,8 +343,12 @@ _posts_current = contextvars.ContextVar('thth_x_posts_read_reservation', default
 # （`x_daily_reads`）は他人の投稿の読み取りの決まりなので、こちらには掛けない。
 POSTS = 'posts'
 OWNED = 'owned'
-OWNED_PRICE = Decimal('0.001')
-OWNED_PRICE_VERSION = '2026-10-12-owned-read'
+# 5.33.0: **0.005 に上げた**（多めに倒す）。料金表の Owned Reads（0.001）の表に載るのは
+# `GET /2/users/{id}/…` だけで、THTH が使う `GET /2/tweets?ids=` は載っていない。`recent_posts`
+# の `GET /2/users/{id}/tweets` は表にあるが「自分の developer app の持ち主＝認可した人」のときだけで、
+# THTH では確かめられない。古い版（0.001）の行は `_LEGACY_PRICES` で今までの単価のまま読む。
+OWNED_PRICE = Decimal('0.005')
+OWNED_PRICE_VERSION = '2026-11-28-owned-read-standard'
 OWNED_FILE = 'budget_x_owned_reads.json'
 # ----- 非公開リストの書き込み（3.17.0・`thth list create|add|remove`）
 #
@@ -424,6 +430,8 @@ EXPANSION_RULES = {'author_id': ('users', 2, 1), 'attachments.media_keys': ('med
 INCLUDE_UNITS = {'users': 2, 'media': 1, 'tweets': 1, 'polls': 1, 'places': 1, 'topics': 1}
 INCLUDE_UNKNOWN_UNITS = 2
 EXPANSION_MAX_LIMIT = POSTS_MAX_LIMIT * 4 * 2
+# 前の版の単価（VM に残る行を読めなくしない）。行はその行の版の単価で検め、確定する。
+_LEGACY_PRICES = {OWNED: {'2026-10-12-owned-read': Decimal('0.001')}}
 _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
             ARCHIVE: (ARCHIVE_FILE, ARCHIVE_PRICE, ARCHIVE_PRICE_VERSION),
             COUNTS_ALL: (COUNTS_ALL_FILE, COUNTS_ALL_PRICE, COUNTS_ALL_PRICE_VERSION),
@@ -442,6 +450,13 @@ _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
 def posts_empty():return {'schema_version':1,'reservations':{}}
+
+
+def row_price(kind,version):
+    """その台帳のその版の 1 単位の値段。知らない版は None。"""
+    _file,price,current=_LEDGERS[kind]
+    if version==current:return price
+    return _LEGACY_PRICES.get(kind,{}).get(version) if isinstance(version,str) else None
 
 
 def expansion_units(query,posts):
@@ -488,7 +503,6 @@ def jst_day(at):return jst.to_jst(at).date().isoformat()
 
 
 def _validate_posts(value,kind=POSTS):
-    _file,price,version=_LEDGERS[kind]
     if (type(value) is not dict or set(value)!={'schema_version','reservations'}
             or type(value['schema_version']) is not int or value['schema_version']!=1
             or type(value['reservations']) is not dict or len(value['reservations'])>100000):raise BudgetError('budget_unreadable')
@@ -497,11 +511,11 @@ def _validate_posts(value,kind=POSTS):
                 or set(row)!={'account','state','limit','count','usd','price_version','reservation_month','day_jst','at','get_at'}
                 or not accounts.name_is_safe(row['account']) or not isinstance(row['state'],str) or row['state'] not in POSTS_STATES
                 or type(row['limit']) is not int or not 1<=row['limit']<=(EXPANSION_MAX_LIMIT if kind==EXPANSIONS else POSTS_MAX_LIMIT)
-                or row['price_version']!=version
+                or row_price(kind,row['price_version']) is None
                 or not isinstance(row['reservation_month'],str) or not re.fullmatch(_MONTH,row['reservation_month'])
                 or not isinstance(row['day_jst'],str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',row['day_jst'])
                 or not isinstance(row['at'],str) or not jst.parse(row['at'])):raise BudgetError('budget_unreadable')
-        at=jst.parse(row['at'])
+        at=jst.parse(row['at']);price=row_price(kind,row['price_version'])
         if month(at)!=row['reservation_month'] or jst_day(at)!=row['day_jst']:raise BudgetError('budget_unreadable')
         if row['state']=='settled':
             if type(row['count']) is not int or not 0<=row['count']<=row['limit']:raise BudgetError('budget_unreadable')
@@ -617,8 +631,8 @@ class PostsRead:
     def settle(self,count):
         """応答に入っていた投稿の本数で確定する。上限を超える数は確定しない（退出時に uncertain）。"""
         if type(count) is not int or not 0<=count<=self.limit:return
-        price=_LEDGERS[self.kind][1]
-        def change(row):row['state']='settled';row['count']=count;row['usd']=decimal_text(price*count)
+        # その行の版の単価で（出したあとに版が変わった行も、押さえた単価のまま確定する）。
+        def change(row):row['state']='settled';row['count']=count;row['usd']=decimal_text(row_price(self.kind,row['price_version'])*count)
         self._move('get_started',change);self.count=count
 
 
@@ -841,7 +855,7 @@ def cost_lines(whole):
         out.append(f"  他人の投稿（Posts: Read・1 本 ${posts['price']['post_read_usd']}）: ${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     if owned:
         m=owned['month']
-        out.append(f"  自分の投稿の数字（Owned Reads・1 本 ${owned['price']['owned_read_usd']}）: {m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+        out.append(f"  自分の投稿の読み（数字と一覧・1 本 ${owned['price']['owned_read_usd']}・Owned Reads の 0.001 を当てにしない）: {m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     if lists:
         m=lists['month']
         out.append(f"  非公開リストの書き込み（作る ${lists['price']['create_usd']}・足す／外す ${lists['price']['manage_usd']}）: {m['requests']} 回・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")

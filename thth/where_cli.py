@@ -1050,7 +1050,18 @@ def read_cost_line(cost: dict) -> str:
     """有償の読み取りの 1 行（`where`・`thread` が共有）。推定であって請求額ではない。"""
     def dash(value):
         return "—" if value is None else value
-    line = (f"X の読み取り: 今回 {cost['posts']} 本・約 ${cost['usd_estimate']}"
+    # 5.33.0: `usd_estimate` は投稿＋expansions で付いた物（投稿者・`includes`）の合計。内訳を言う
+    # （「10 本・約 $0.070」だと投稿だけの値段に読める）。内訳の無い古い形の dict は今までどおり。
+    money = f"約 ${cost['usd_estimate']}"
+    includes = cost.get("includes_usd_estimate")
+    if includes is not None:
+        try:
+            from decimal import Decimal
+            posts_usd = Decimal(cost["usd_estimate"]) - Decimal(includes)
+            money = f"約 ${cost['usd_estimate']}（投稿 ${posts_usd}＋投稿者の分 ${includes}）"
+        except (ArithmeticError, TypeError, ValueError):
+            money = f"約 ${cost['usd_estimate']}（投稿者の分を含む）"
+    line = (f"X の読み取り: 今回 {cost['posts']} 本・{money}"
             f"・今日 {dash(cost.get('today'))}/{dash(cost.get('daily_cap'))} 本"
             f"・今月 ${dash(cost.get('month_used_usd'))}/${dash(cost.get('cap_usd'))}")
     if cost.get("truncated"):

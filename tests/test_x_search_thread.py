@@ -259,7 +259,7 @@ def test_where_on_x_shows_the_cost_line(x_account, fake, capsys):
     fake["routes"]["/2/tweets/search/recent"] = {"data": data, "includes": USERS}
     assert cli.main(["where", ACCOUNT, "コーヒー", "--max-per-author", "2"]) == 0
     out = capsys.readouterr().out
-    assert "X の読み取り: 今回 10 本・約 $0.070・今日 10/60 本・今月 $0.070/$15" in out
+    assert "X の読み取り: 今回 10 本・約 $0.070（投稿 $0.050＋投稿者の分 $0.020）・今日 10/60 本・今月 $0.070/$15" in out
     assert fake["calls"][0][2]["max_results"] == 10 and fake["calls"][0][2]["sort_order"] == "relevancy"
     assert cli.main(["where", ACCOUNT, "コーヒー", "--recent", "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -288,7 +288,7 @@ def test_thread_on_x_shows_ids_truncation_and_cost(x_account, fake, capsys):
     assert cli.main(["thread", ACCOUNT, ROOT]) == 0
     out = capsys.readouterr().out
     assert f"id={ROOT}" in out and "id=1900000000000000000" in out
-    assert "X の読み取り: 今回 4 本・約 $0.050・今日 4/60 本" in out
+    assert "X の読み取り: 今回 4 本・約 $0.050（投稿 $0.020＋投稿者の分 $0.030）・今日 4/60 本" in out
     conversation_routes(fake, 50)
     assert cli.main(["thread", ACCOUNT, ROOT, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
