@@ -514,14 +514,17 @@ def test_メールを読めた日は権限の最後に成功した日に数え�
     assert mail["last_success_at"] is not None
 
 
-def test_招待の権限にはメールとイベントをまだ載せない():
-    """綴り（pages_events／page_events）と構成を M0 で Dashboard に見るまで、外の人の招待の scope に足さない（11/09 合流）。
+def test_招待の権限にはメールとFacebookのイベントをまだ載せない():
+    """Facebook のイベントは Dashboard の綴りが `page_events`（11/28）で、Worker の形の検査が `page_` の頭を断る。
 
-    綴りが違うと Meta の認可の画面が権限の名を断り、招待がまるごと通らない（`pages_user_*` と同じ扱い）。
+    `pages_events` の綴りで送ると Meta の認可の画面が名前を断る見込み（構成の無い所）。どちらも載せない。
+    `instagram_manage_events` は下書きの綴りと同じで Worker も通すので、11/28 に載せた。理由は `scopes.META_INVITE_LEFT_OUT`。
     """
     from thth import scopes
     assert "pages_events" not in scopes.META_INVITE_EXTRA["facebook"]
     assert "page_events" not in scopes.META_INVITE_EXTRA["facebook"]
-    assert "instagram_manage_events" not in scopes.META_INVITE_EXTRA["instagram"]
+    assert "pages_events" in scopes.META_INVITE_LEFT_OUT
+    assert "instagram_manage_events" in scopes.META_INVITE_EXTRA["instagram"]
     # email は Worker の形の検査（<頭>_<名前>）を通らないので招待には足さない（Dashboard の構成に足す）。
     assert all("email" not in extra for extra in scopes.META_INVITE_EXTRA.values())
+    assert "email" in scopes.META_INVITE_LEFT_OUT

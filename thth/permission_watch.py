@@ -111,7 +111,7 @@ PERMISSIONS = {
     "catalog_management": _p(ADS, READ, "ads_catalog", also={"instagram": ("shop_catalogs",)}),
     "leads_retrieval": _p(ADS, READ, "ads_leads"),
     "ads_mcp_management": _p(ADS, READ),     # 口が無い（外の公式の広告 MCP で使う・THTH の記録に残らない）
-    # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ。
+    # 計画 Meta 全部盛り M3 が `META_INVITE_EXTRA` に足した 3 つ（下の 2 つは 11/28 に申請から外し、招待からも外した・行は残す）。
     "instagram_manage_upcoming_events": _p("instagram", READ, "upcoming_events"),
     "read_audience_network_insights": _p(ADS, READ, "ads_network"),
     "commerce_account_read_settings": _p(ADS, READ, "ads_shop"),
