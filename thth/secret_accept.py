@@ -69,6 +69,7 @@ INNER = {
     "wp_user_mismatch": "account_mismatch", "hatena_id_mismatch": "account_mismatch",
     "store_shop_mismatch": "account_mismatch",
     "token_handle_missing": "identity_unknown", "bluesky_ledger_identifier_required": "identity_unknown",
+    "store_token_unreadable": "identity_unknown",
     "token_unusable": "credential_rejected", "bluesky_session_failed": "credential_rejected",
     "wordpress_auth_rejected": "credential_rejected", "wordpress_permission_missing": "credential_rejected",
     "initiate_failed": "credential_rejected", "token_failed": "credential_rejected",

@@ -50,6 +50,14 @@ ENTRIES = {
         "thth account <口座>",
         "台帳は thth account set で直すと、形を崩さずに書き換えられます。",
         kind="cannot_say"),
+    # ---------------------------------------------------------------- 店（thth/shop/cli.py）
+    "store_token_unreadable": _entry(
+        "この店の今の鍵のファイルはあるのに読めない（壊れた JSON・店の番号の無い形）ので、新しい鍵が前と同じ店の"
+        "ものか照合できず、置き換えずに止めました（今のファイルはそのままです）。",
+        "thth shop remove <店> --by <名前> で外し（鍵と写しと台帳を消します）、thth shop add から作り直してから"
+        "鍵を入れてください。",
+        "thth shop remove <店> --by <名前>",
+        "鍵のファイルは手で書き換えず thth shop token set だけで置くと、照合の元（店の番号）が崩れません。"),
     # ---------------------------------------------------------------- 台帳の user_id（thth/account_settings.py）
     "invalid_user_id": _entry(
         "user_id に使えない字があります（英数字と :・.・_・- だけ、128 字まで）。",
