@@ -483,9 +483,10 @@ class FacebookAdapter(base.Adapter):
     def _denied(permission: str, err: dict, detail: str) -> base.PermissionMissing:
         """権限系の断りの例外。IG の持ち主が DM の読みを止めているときは、認可し直しを勧めない子の例外。"""
         code = err.get("code") if type(err.get("code")) is int else None
+        subcode = err.get("error_subcode") if type(err.get("error_subcode")) is int else None
         if meta_errors.is_message_access_off(err):
-            return base.MessageAccessOff(permission, detail, code=code)
-        return base.PermissionMissing(permission, detail, code=code)
+            return base.MessageAccessOff(permission, detail, code=code, subcode=subcode)
+        return base.PermissionMissing(permission, detail, code=code, subcode=subcode)
 
     def _user_msg(self, err: dict) -> str:
         """Meta の人向けの説明（`error_user_msg`）を、人に見せてよい形にして返す（無ければ空）。

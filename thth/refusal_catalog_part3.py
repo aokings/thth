@@ -1597,7 +1597,7 @@ ENTRIES = {
         "doors": ("cli",),
         "since": "5.13.0",
     },
-    # 5.34.0（since は版上げのときに 5.34.0 へ直す・今の版を越えられない柵がある）。
+    # 5.34.0: 鍵にある権限の読みを Meta が #100 で断る（審査前の見込み・見張りの withheld）。
     "permission_keepalive_withheld": {
         "kind": "cannot_say",
         "why": ("権限は鍵の一覧（/debug_token）にありますが、Meta がこの読みを #100 で断りました。審査で Advanced を"

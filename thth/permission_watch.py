@@ -725,13 +725,17 @@ def _error_code(exc) -> str:
 # 鍵の一覧（/debug_token）に権限があるのに Meta が #100 で断る読み（5.34.0・11/28 本番: kopicha-ig の
 # threads_business_basic が毎朝 #100 で `thth-meta-keepalive.service` が failed）。審査で Advanced を得る前の
 # 見込み。見張り全体の失敗には数えず、成功にも数えない（`withheld` の行）。
+# subcode 33（「Object with ID … cannot be loaded due to missing permissions」＝ページの役が外れた・IG がページから
+# 外れたなど口座ごと見えない）は審査前の見込みでないので withheld にしない（監査 5.34.0 の軽い 1）。
 WITHHELD_CODES = frozenset({100})
+NOT_WITHHELD_SUBCODES = frozenset({33})
 WITHHELD = "permission_keepalive_withheld"
 
 
 def _withheld(row, permission, exc) -> bool:
     from .adapters import base
     return (isinstance(exc, base.PermissionMissing) and getattr(exc, "code", None) in WITHHELD_CODES
+            and getattr(exc, "subcode", None) not in NOT_WITHHELD_SUBCODES
             and permission in row.get("listed", ()))
 
 
