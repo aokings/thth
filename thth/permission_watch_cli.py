@@ -25,7 +25,11 @@ def _render_watch(view) -> None:
         last = row["last_success_at"] or ("記録なし・鍵の取得から数える" if row["counted_from"] else "記録なし")
         idle = "—" if row["days_idle"] is None else f"{row['days_idle']} 日"
         mark = "見張る" if row["watched"] else "Standard"
-        note = f"  最小の読みの失敗: {row['keepalive_error']}" if row["keepalive_error"] else ""
+        if row["keepalive_error"] == watch.WITHHELD:
+            # 5.34.0: 失敗と呼ばない（keepalive の出力・目録と同じ言い方）。
+            note = "  最小の読み: Meta が出さない（審査前の見込み・失敗に数えず成功にも数えない）"
+        else:
+            note = f"  最小の読みの失敗: {row['keepalive_error']}" if row["keepalive_error"] else ""
         print(f"{row['permission']}（{row['media']}・{row['kind']}・{mark}）: {idle}・{row['stage']}・{last}{note}")
     for row in view["accounts"]:
         print(f"{row['account']}: {row['permission']} {row['days_idle']} 日（利用者ごとの 90 日）")
@@ -84,6 +88,9 @@ def cmd_keepalive(args) -> int:
     else:
         for row in result["results"]:
             detail = row.get("error") or row.get("reason") or ""
+            if row["result"] == "withheld":
+                # 5.34.0: 鍵に権限はあるのに Meta が #100 で出さない（審査前の見込み）。失敗に数えない。
+                detail = "権限は鍵にありますが Meta がこの読みを出しません・審査で Advanced を得る前の見込み・失敗に数えません"
             print(f"{row['account']}: {row['permission']}: {row['result']}" + (f"（{detail}）" if detail else ""))
     return 1 if any(row["result"] == "error" for row in result["results"]) else 0
 

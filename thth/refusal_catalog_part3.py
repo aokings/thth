@@ -1597,6 +1597,17 @@ ENTRIES = {
         "doors": ("cli",),
         "since": "5.13.0",
     },
+    # 5.34.0: 鍵にある権限の読みを Meta が #100 で断る（審査前の見込み・見張りの withheld）。
+    "permission_keepalive_withheld": {
+        "kind": "cannot_say",
+        "why": ("権限は鍵の一覧（/debug_token）にありますが、Meta がこの読みを #100 で断りました。審査で Advanced を"
+                "得る前の見込みで、成功にも失敗にも数えていません。"),
+        "fix": "審査が通るのを待ってください。認可し直しても変わらない見込みです。様子は `thth admin meta watch` で見られます",
+        "command": "thth admin meta watch",
+        "better": "審査が通ったら `thth doctor <口座>` で同じ欄が読めるかを確かめると、次の朝から成功に数えられます",
+        "doors": ("cli",),
+        "since": "5.34.0",
+    },
     "permission_keepalive_no_target": {
         "kind": "refusal",
         "why": "読む相手の投稿が無いので、この権限の読みを打てません。",

@@ -1602,22 +1602,39 @@ def _meta_live(args, account):
                 f"  題: {live.get('title') or '—'}  状態: {live.get('status') or '—'}",
                 "  終えると録画が動画としてページに残ります"], f"thth live end {account} {args.live_id}")
         return _shown(args, value, lambda v: _say(f"終えました: {account} ライブ {v.get('live_id')}"))
-    value = call("live_create", account, title=args.title, description=args.description, confirm=args.confirm)
+    # 5.34.0 監査の危ない 1: `--unpublished` を黙って捨てると公開のライブが立つ。旗は VM まで運ぶ。
+    # 旗なしでは欄を送らない（旗の無い古い VM とも今までどおり組める・旗ありで古い VM なら invalid_request で断られる）。
+    unpublished = bool(getattr(args, "unpublished", False))
+    value = call("live_create", account, title=args.title, description=args.description,
+                 unpublished=True if unpublished else None, confirm=args.confirm)
     if value.get("stage") == 1:
+        # VM が見せた形を言う（VM が旗を読まなかったら、一段目の答えで分かる）。
+        shown_unpublished = value.get("unpublished") is True
+        if unpublished and not shown_unpublished:
+            raise RemoteError("remote_unsupported",
+                              reason="thth.me の鍵の道の VM が --unpublished を読みませんでした（公開になるので打ちません）",
+                              rc=2)
+        if shown_unpublished:
+            visibility = ["  公開: しない（UNPUBLISHED）。ほかの人には見えません。Meta が数時間で自動で消すことがあります",
+                          "  ページのフォロワー 100 人の決まりが非公開にも掛かるかは未確認です（断られたらそう言います）。"
+                          "終えるのは thth live end"]
+        else:
+            visibility = ["  作るとすぐ「配信中」になり、宛先に映像を送るとページに出ます（止め絵・ループは使わないでください）。"
+                          "終えるのは thth live end"]
         return _meta_stage_one(args, value, [
-            f"作りません（確認の一段目です）: {account} ライブ配信",
-            f"  題  : {value.get('title')}", f"  説明: {value.get('description') or '—'}",
-            "  作るとすぐ「配信中」になり、宛先に映像を送るとページに出ます（止め絵・ループは使わないでください）。"
-            "終えるのは thth live end"],
+            f"作りません（確認の一段目です）: {account} ライブ配信" + ("（非公開）" if shown_unpublished else ""),
+            f"  題  : {value.get('title')}", f"  説明: {value.get('description') or '—'}", *visibility],
             f"thth live create {account} --title {_quoted(value.get('title'))}"
-            + (f" --description {_quoted(value['description'])}" if value.get("description") else ""))
+            + (f" --description {_quoted(value['description'])}" if value.get("description") else "")
+            + (" --unpublished" if shown_unpublished else ""))
     target = value.get("stream_url")
     if isinstance(target, str):
         redact.register_secret(target)  # 配信の鍵を含む（ログ・例外の文に出さない）
     if _meta_json(args):
         _print_json(value)
         return 0
-    print(f"作りました: {account} ライブ {value.get('live_id')}")
+    print(f"作りました: {account} ライブ {value.get('live_id')}"
+          + ("（非公開・ほかの人には見えません）" if value.get("unpublished") is True else ""))
     if isinstance(target, str):
         print("  配信の宛先（配信の鍵を含みます・VM にも残していません・人に見せないでください）:")
         print(f"  {target}")

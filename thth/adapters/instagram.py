@@ -1145,6 +1145,17 @@ class InstagramAdapter(fb.FacebookAdapter):
         try:
             body = self._get(f"/{self.ig_user_id}/connected_threads_user", "Threads の口座（connected_threads_user）",
                              params={"fields": "threads_user_id"}, permission="threads_business_basic")
+        except base.PermissionMissing as e:
+            # 5.34.0: 11/28 soh-ig・kopicha-ig は /debug_token の一覧に threads_business_basic があるのに #100 だった。
+            # 一覧にあるときは「乗っていません」と言わない（認可し直しても直らない）。一覧に無い・読めないときは今の文。
+            if granted is not None and "threads_business_basic" in granted:
+                detail = ("権限は鍵にあります（/debug_token）が、Meta がこの欄を出しません。審査で Advanced を得る前の"
+                          "見込みで、認可し直しても変わりません（" + self._scrub(e.detail or "")[:160] + "）")
+                row("connected_threads_user", "Threads 広告の下地（connected_threads_user）", "threads_business_basic",
+                    None, detail, http_status=getattr(e, "http_status", None))
+            else:
+                row("connected_threads_user", "Threads 広告の下地（connected_threads_user）", "threads_business_basic",
+                    None, "読めませんでした（" + self._scrub(e)[:200] + "）", http_status=getattr(e, "http_status", None))
         except Exception as e:   # noqa: BLE001 — 下地の読み。× にせず「確かめられなかった」（doctor を赤にしない）
             row("connected_threads_user", "Threads 広告の下地（connected_threads_user）", "threads_business_basic",
                 None, "読めませんでした（" + self._scrub(e)[:200] + "）", http_status=getattr(e, "http_status", None))

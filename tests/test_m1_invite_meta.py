@@ -30,13 +30,12 @@ from tests.test_v3100_invite_worker import Relay, Worker
 REAL_CONNECT = socket.socket.connect
 V = "/" + fb.GRAPH_VERSION
 PAGE, IG_ID, ACT = "61596075596464", "17841437318552220", "1234567890"
-# 計画 §1 の表の写し。`thth/scopes.py` を直しても、ここが一致しなければ赤（口を作る権限の取りこぼしを防ぐ）。
+# 計画 §1 の表の写し（11/28 に申請の一覧 `appreview.names()` に合わせた）。`thth/scopes.py` を直しても、ここが一致しなければ赤（口を作る権限の取りこぼしを防ぐ）。
 REVIEW = {
-    "facebook": {"pages_manage_ads", "pages_manage_cta", "publish_video", "pages_messaging", "pages_utility_messaging"},
+    "facebook": {"pages_manage_ads", "publish_video", "pages_messaging", "pages_utility_messaging"},
     "instagram": {"instagram_manage_engagement", "instagram_manage_messages", "pages_read_user_content",
-                  "threads_business_basic", "instagram_manage_upcoming_events"},
-    "ads": {"catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list",
-            "read_audience_network_insights", "commerce_account_read_settings"},
+                  "threads_business_basic", "instagram_manage_upcoming_events", "instagram_manage_events"},
+    "ads": {"catalog_management", "leads_retrieval", "ads_mcp_management", "pages_manage_ads", "pages_show_list"},
 }
 
 

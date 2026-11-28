@@ -73,6 +73,12 @@ done
 if [ "${1:-}" = "send" ] && [ -z "$SEND_BODY_GIVEN" ]; then
   STDIN_WANTED=1
 fi
+# 5.34.0: `secret accept <種類> <受付>` は値を標準入力だけで受ける（旗は無い・5.32.0）。`-n` で捨てると
+# VM は空の値として断る（monban の家の秘密の係が Mac から呼ぶ道・11/28 に気づいた）。tty は割り当てない
+# （値が画面に出ない形のまま、パイプで渡す）。
+if [ "${1:-}" = "secret" ] && [ "${2:-}" = "accept" ]; then
+  STDIN_WANTED=1
+fi
 if [ -n "$STDIN_WANTED" ]; then
   exec ssh "$HOST" "$REMOTE"
 fi

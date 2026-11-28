@@ -2,8 +2,9 @@
 
     thth page cta show <FB の口座> [--json]                              行動ボタンを読む
     thth page cta delete <FB の口座> <cta_id> --by 名前 [--confirm D]     行動ボタンを消す（二段）
-    thth live create <FB の口座> --title T [--description D] --by 名前 [--confirm D]
-                                                                           ライブの宛先を作る（二段）
+    thth live create <FB の口座> --title T [--description D] [--unpublished] --by 名前 [--confirm D]
+                                                                           ライブの宛先を作る（二段・--unpublished は
+                                                                           ほかの人に見えない UNPUBLISHED）
     thth live end <FB の口座> <live_id> --by 名前 [--confirm D]           ライブを終える（二段）
     thth dm list <FB|IG の口座> [--json]                                  受信箱の会話（本文なし）
     thth dm read <FB|IG の口座> <会話の id> [--profile] [--json]          直近の通を画面に出す
@@ -250,6 +251,10 @@ def _write(args, account_cfg, action, permission, call, *, extra=None):
                     _record(args.account, action, media, "error", permission=permission,
                             error="messaging_window_closed")
                     _refuse("messaging_window_closed", message, rc=1)
+                if message.startswith("live_followers_too_few"):
+                    _record(args.account, action, media, "error", permission=permission,
+                            error="live_followers_too_few")
+                    _refuse("live_followers_too_few", message, rc=1)
                 if getattr(exc, "failure", None) == "ambiguous":
                     _record(args.account, action, media, "unknown", permission=permission, error="meta_write_unknown")
                     _refuse("meta_write_unknown", f"済んだかどうか分かりません（打ち直していません）。媒体の画面で"
@@ -332,28 +337,41 @@ def cmd_live(args) -> int:
     if args.action == "create":
         title = _clean_line(args.title, "題", LIVE_TITLE_MAX, required=True)
         description = _clean_line(args.description, "説明", LIVE_DESCRIPTION_MAX, required=False)
-        digest = digest_of("live_create", args.account, title, description)
+        unpublished = bool(getattr(args, "unpublished", False))
+        status = fb.LIVE_STATUS_UNPUBLISHED if unpublished else fb.LIVE_STATUS_PUBLIC
+        # 公開か非公開かも digest に入れる（一段目で見せた形と違う形を二段目で打てないように・5.34.0）。
+        digest = digest_of("live_create", args.account, title, description, status)
+        if unpublished:
+            visibility = ["  公開: しない（UNPUBLISHED）。ほかの人には見えません。Meta が数時間で自動で消すことがあります",
+                          "  ページのフォロワー 100 人の決まりが非公開にも掛かるかは未確認です（断られたらそう言います）。"
+                          "終えるのは thth live end"]
+        else:
+            visibility = ["  作るとすぐ「配信中」になり、宛先に映像を送るとページに出ます（止め絵・ループは"
+                          "使わないでください）。終えるのは thth live end"]
         if not args.confirm:
-            return _stage_one(args, digest=digest, payload={"title": title, "description": description, "by": by},
-                              lines=[f"作りません（確認の一段目です）: {args.account} ライブ配信",
+            return _stage_one(args, digest=digest,
+                              payload={"title": title, "description": description, "unpublished": unpublished,
+                                       "status": status, "by": by},
+                              lines=[f"作りません（確認の一段目です）: {args.account} ライブ配信"
+                                     + ("（非公開）" if unpublished else ""),
                                      f"  題  : {title}", f"  説明: {description or '—'}", f"  by  : {by}",
-                                     "  作るとすぐ「配信中」になり、宛先に映像を送るとページに出ます（止め絵・ループは"
-                                     "使わないでください）。終えるのは thth live end",
-                                     *production_note],
+                                     *visibility, *production_note],
                               again=(f"thth live create {args.account} --title {json.dumps(title, ensure_ascii=False)}"
                                      + (f" --description {json.dumps(description, ensure_ascii=False)}"
                                         if description else "")
+                                     + (" --unpublished" if unpublished else "")
                                      + f" --by {json.dumps(by, ensure_ascii=False)}"))
         _check_confirm(args, digest)
         _ready(args, account_cfg)
         made = _write(args, account_cfg, "live_create", fb.LIVE_PERMISSION,
-                      lambda: adapter.live_create(title, description))
+                      lambda: adapter.live_create(title, description, unpublished=unpublished))
         target = made.get("secure_stream_url") or made.get("stream_url")
         if args.json:
             _print_json({"ok": True, "account": args.account, "live_id": made["id"], "stream_url": target,
-                         "storage": "display_only"})
+                         "unpublished": unpublished, "status": status, "storage": "display_only"})
         else:
-            print(f"作りました: {args.account} ライブ {made['id']}（{by}）")
+            print(f"作りました: {args.account} ライブ {made['id']}"
+                  + ("（非公開・ほかの人には見えません）" if unpublished else "") + f"（{by}）")
             print("  配信の宛先（配信の鍵を含みます・どこにも残していません・人に見せないでください）:")
             print(f"  {target or '（宛先が返りませんでした・ページの画面で確かめてください）'}")
             print(f"  終えるとき: thth live end {args.account} {made['id']} --by {json.dumps(by, ensure_ascii=False)}")
@@ -581,6 +599,8 @@ def register(sub) -> None:
     live.add_argument("live_id", nargs="?", default=None, help="end で終えるライブの id（create が返す）")
     live.add_argument("--title", default=None, help="create のライブの題（必須）")
     live.add_argument("--description", default=None, help="create のライブの説明（任意）")
+    live.add_argument("--unpublished", action="store_true",
+                      help="create を非公開（status=UNPUBLISHED）で作る。ほかの人には見えず、数時間で消えることがある")
     _write_flags(live)
     live.set_defaults(func=_run(cmd_live))
 
