@@ -7,7 +7,7 @@ thth/refusal_catalog.py が読む。
 from __future__ import annotations
 
 _C = ("cli",)
-_SINCE = "5.31.0"
+_SINCE = "6.0.0"
 _LIST = "thth admin ws list"
 
 

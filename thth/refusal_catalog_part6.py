@@ -23,7 +23,7 @@ def _entry(why, fix, better, kind="refusal"):
 
 def _entry_k(why, fix, better):
     """段 K（リモート MCP・自前の認可サーバ）の符丁。版は括りの段と同じ（版上げのとき直す）。"""
-    return {**_entry(why, fix, better), "since": "5.31.0"}
+    return {**_entry(why, fix, better), "since": "6.0.0"}
 
 
 ENTRIES = {
