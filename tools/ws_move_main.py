@@ -197,15 +197,21 @@ def classify(lay: Layout, keep: set, move: set) -> tuple[list, list]:
 
 # --------------------------------------------------------------------------- 道の直し
 
-def _json_strings(value, out):
+def _json_strings(value, out, key=None):
+    """台帳の中の文字を（欄の名, 値）で集める（並びの中は、その並びの欄の名）。"""
     if isinstance(value, str):
-        out.append(value)
+        out.append((key, value))
     elif isinstance(value, dict):
-        for v in value.values():
-            _json_strings(v, out)
+        for k, v in value.items():
+            _json_strings(v, out, k)
     elif isinstance(value, list):
         for v in value:
-            _json_strings(v, out)
+            _json_strings(v, out, key)
+
+
+# 台帳で `$THTH_ROOT` が開かれる欄（thth/accounts.py の load・principals.py・invites.py の `_expand`）。
+# ほかの欄の `$THTH_ROOT` は文字のまま読まれる（監査 6.0.0 の 6）。そこでは移した道を絶対の道（ws/main の下）で書く。
+EXPANDED_KEYS = frozenset({"repo_dir", "env", "token", "consumer"})
 
 
 def _first(rest: str) -> str:
@@ -293,20 +299,25 @@ def plan_rewrites(lay: Layout, plan: list) -> tuple[list, list]:
         except ValueError:
             problems.append(f"{rel_file}: JSON として読めません（直さずに移すと、あとで道を数えられません）")
             continue
-        strings = []
-        _json_strings(data, strings)
-        seen = set()
-        for v in strings:
-            if v in seen:
+        pairs = []
+        _json_strings(data, pairs)
+        keys_of = {}
+        for k, v in pairs:
+            keys_of.setdefault(v, set()).add(k)
+        for v in sorted(keys_of):
+            opened = {k in EXPANDED_KEYS for k in keys_of[v]}
+            if len(opened) > 1 and (v.startswith("$THTH_ROOT/") or any(v.startswith(r + "/") for r in roots)):
+                problems.append(f"{rel_file}: 道 {v} が $THTH_ROOT を開く欄と開かない欄の両方にあります。"
+                                "1 つの書き方では直せないので、手でどちらかに寄せてください")
                 continue
-            seen.add(v)
+            expanded = opened == {True}
             new = None
             if v == "$THTH_ROOT" or v == "$THTH_ROOT/":
                 problems.append(f"{rel_file}: 根そのもの（{v}）を指しています。括りの根か共通の根か決めて手で直してください")
                 continue
             if v.startswith("$THTH_ROOT/"):
                 rest = v[len("$THTH_ROOT/"):]
-                if not _moved_rel(rest, moved) and _first(rest) in TOP_COMMON | {"state"}:
+                if expanded and not _moved_rel(rest, moved) and _first(rest) in TOP_COMMON | {"state"}:
                     # 共通の物を $THTH_ROOT で指している。移したあとも同じ所を指すよう、絶対の道にする。
                     new = os.path.join(lay.root, rest)
             else:
@@ -314,7 +325,7 @@ def plan_rewrites(lay: Layout, plan: list) -> tuple[list, list]:
                     if v.startswith(r + "/"):
                         rest = v[len(r) + 1:]
                         if _moved_rel(rest, moved):
-                            new = "$THTH_ROOT/" + rest
+                            new = "$THTH_ROOT/" + rest if expanded else os.path.join(lay.root, "ws", MAIN, rest)
                         break
                     if v == r:
                         problems.append(f"{rel_file}: 根そのもの（{v}）を指しています。手で直してください")
@@ -325,6 +336,11 @@ def plan_rewrites(lay: Layout, plan: list) -> tuple[list, list]:
                 problems.append(f"{rel_file}: 道 {v} の書き方が読めません（エスケープなど）。手で直してください")
                 continue
             new_lit = json.dumps(new, ensure_ascii=False) if lit == json.dumps(v, ensure_ascii=False) else json.dumps(new)
+            if new_lit in text or json.dumps(new) in text or json.dumps(new, ensure_ascii=False) in text:
+                # 同じ所を 2 つの書き方で持っている（監査 6.0.0 の 6）。戻すときに数が合わず back が途中で止まる。
+                problems.append(f"{rel_file}: 道 {v} と同じ所を指す {new} が、前から同じ台帳にあります。"
+                                "戻すときに数が合わなくなるので、移す前に手でどちらかの書き方にそろえてください")
+                continue
             rewrites.append({"file": rel_file, "kind": "json", "old": lit, "new": new_lit, "count": n})
     for path in git_files(lay.root):
         rel_file = os.path.relpath(path, lay.root)
@@ -409,6 +425,27 @@ def _record_pattern(lay: Layout, srcs, *, forward: bool):
                       + "/(" + "|".join(re.escape(n) for n in names) + r')(?=[/"\s\\]|$)', re.M)
 
 
+def _main_leftover_pattern(lay: Layout):
+    """戻したあとの記録に残る `<根>/ws/main` の道（区切りの書き方は広く取る）。"""
+    roots = sorted({lay.root, os.path.realpath(lay.root)}, key=len, reverse=True)
+    alts = [r"(?:\\?/)+".join(re.escape(p) for p in r.split("/") if p) for r in roots]
+    sep = r"(?:\\?/|\\?/\.(?=\\?/))+"
+    return re.compile(r"(?:\\?/)(?:" + "|".join(alts) + ")" + sep + "ws" + sep + re.escape(MAIN) + r"(?![A-Za-z0-9_\-])")
+
+
+def staged_names(base: str) -> list:
+    """置き場の中の名（上の段・state/<名>・private/<名>）。移していた間に足した口座も入る（監査 6.0.0 の 5）。"""
+    out = []
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            if name in ("state", "private"):
+                d = os.path.join(base, name)
+                out += [f"{name}/{n}" for n in sorted(os.listdir(d))] if os.path.isdir(d) else []
+            else:
+                out.append(name)
+    return out
+
+
 def _escaped_roots(lay: Layout) -> list:
     """JSON で `/` を `\\/` と逃がした根（書き替えられないので、残っていれば断る）。"""
     return [r.replace("/", "\\/") for r in {lay.root, os.path.realpath(lay.root)}]
@@ -426,6 +463,39 @@ def _leftover_pattern(lay: Layout, srcs):
     sep = r"(?:\\?/|\\?/\.(?=\\?/))+"
     return re.compile(r"(?:\\?/)(?:" + "|".join(alts) + ")" + sep + "(?:" + "|".join(re.escape(n) for n in names)
                       + r")(?![A-Za-z0-9_\-])")
+
+
+def common_rels(lay: Layout, plan: list, keep) -> list:
+    """共通の根に残す物のうち、記録を書く所（--keep で残す控えは見ない）。"""
+    moved = {p["src"] for p in plan}
+    out = [n for n in sorted(TOP_COMMON - {"app", "venv", "ws", "state", "private"}) if n not in keep]
+    state = lay.at_root("state")
+    if os.path.isdir(state) and not os.path.islink(state):
+        out += [f"state/{n}" for n in sorted(os.listdir(state))
+                if f"state/{n}" not in moved and f"state/{n}" not in keep]
+    priv = lay.at_root("private")
+    if os.path.isdir(priv) and not os.path.islink(priv):
+        out += [f"private/{n}" for n in sorted(os.listdir(priv))
+                if f"private/{n}" not in moved and f"private/{n}" not in keep]
+    return out
+
+
+def common_paths(lay: Layout, plan: list, keep) -> list:
+    """共通に残す記録の中の、移す物の道（監査 6.0.0 の 7: 移すと開けないフォルダを指したままになる）。"""
+    return leftover_records(lay, lay.root, [p["src"] for p in plan], common_rels(lay, plan, keep))
+
+
+def common_issues(lay: Layout, plan: list, args) -> list:
+    found = common_paths(lay, plan, set(args.keep))
+    if not found:
+        return []
+    lines = [f"共通に残す記録に移す物の道: {rel}（{n} か所）" for rel, n in found[:20]]
+    if args.common_paths_ok:
+        for line in lines:
+            say(f"注意: {line}（--common-paths-ok で進める。移したあと手で ws/main の道に直す）")
+        return []
+    return lines + ["共通に残す物は書き替えないので、移すと古い所を指したままになります。中を見て、要らない控えなら"
+                    "名前を替えて退けるか --keep で残し、要る道なら --common-paths-ok を付けて移し、移したあと手で直してください"]
 
 
 def record_files(base: str, rels=None) -> list:
@@ -656,6 +726,8 @@ def cmd_check(lay: Layout, args) -> int:
         issues.append(f"振り分けの分からない物: {u}（--keep {u.split('（')[0]} で共通に残す・--move で括りへ）")
     rewrites, problems = plan_rewrites(lay, plan) if not unknown else ([], [])
     issues += problems
+    if not unknown:
+        issues += common_issues(lay, plan, args)
     say(f"根: {lay.root}")
     say(f"移す物: {len(plan)}（上の段 {sum(1 for p in plan if '/' not in p['src'])}・state の中 "
         f"{sum(1 for p in plan if p['src'].startswith('state/'))}・private の中 {sum(1 for p in plan if p['src'].startswith('private/'))}）")
@@ -697,6 +769,8 @@ def cmd_move(lay: Layout, args) -> int:
             issues.append("根に accounts/ がありません（移す前の形でない）")
         rewrites, problems = plan_rewrites(lay, plan) if not unknown else ([], [])
         issues += problems
+        if not unknown:
+            issues += common_issues(lay, plan, args)
     else:
         plan, rewrites = j["plan"], j["rewrites"]
     if issues:
@@ -870,8 +944,23 @@ def cmd_back(lay: Layout, args) -> int:
         stopper.after("unrewrite")
         # 3'. 記録の道を戻す（移していた間に書かれた行も・ws/.main-staging の中の全部）
         if os.path.isdir(lay.staging):
-            files, hits = rewrite_records(lay, lay.staging, [p["src"] for p in plan], forward=False)
+            names = sorted({p["src"] for p in plan} | set(staged_names(lay.staging)))
+            files, hits = rewrite_records(lay, lay.staging, names, forward=False)
             note(lay, j, "unrecords", files=files, n=hits)
+            # 戻し損ねを断る（戻したあと古い版が ws/main の道を読めず、承認と止めが無いものとされる）。
+            pat = _main_leftover_pattern(lay)
+            left = []
+            for path in record_files(lay.staging):
+                with open(path, encoding="utf-8", errors="surrogateescape") as f:
+                    n = len(pat.findall(f.read()))
+                if n:
+                    left.append((os.path.relpath(path, lay.staging), n))
+            if left:
+                note(lay, j, "unrecords_left", files=len(left), n=sum(n for _, n in left))
+                for rel, n in left[:20]:
+                    say(f"NG: 戻す記録に ws/main の道が残っています: {rel}（{n} か所）")
+                raise Stop(f"戻す記録に ws/main の道が {sum(n for _, n in left)} か所残っています。中身はまだ根へ戻していません"
+                           "（timer と常駐は止めたまま）。残った道を手で根の道に直してから、back を打ち直してください")
         stopper.after("unrecords")
         # 4. 中身を根へ（移したあとでできた物も、main の物なので一緒に戻す）
         moved_back = 0
@@ -933,6 +1022,8 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="何をするかだけ出す")
     ap.add_argument("--keep", action="append", default=[], help="振り分けの分からない物を共通の根に残す（state/ の中は state/<名>）")
     ap.add_argument("--move", action="append", default=[], help="振り分けの分からない物を括りへ移す")
+    ap.add_argument("--common-paths-ok", action="store_true",
+                    help="共通に残す記録の中の移す物の道を、読んだうえで残して進める（移したあと手で直す）")
     ap.add_argument("--systemctl", default="systemctl", help="timer と常駐の確かめに使う systemctl")
     ap.add_argument("--no-units-check", action="store_true", help="systemd の無い手元の稽古だけ（VM では使わない）")
     ap.add_argument("--stop-after", help=argparse.SUPPRESS)  # 通し稽古の「途中で落ちた」

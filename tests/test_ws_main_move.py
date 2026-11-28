@@ -684,3 +684,70 @@ def test_move_refuses_other_forms_the_rewrite_does_not_take(place, capsys, form)
     assert run("move", place) == 1
     assert "state/alpha-main/odd.json（1 か所）" in capsys.readouterr().out
     assert run("back", place) == 0
+
+
+# --------------------------------------------------------------------------- 監査 6.0.0 の 5〜7（段 5 の夜の残り）
+
+def _edit_json(path: Path, **fields):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.update(fields)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def test_back_restores_records_of_an_account_added_while_moved(place):
+    """5: 移していた間に足した口座の記録の ws/main の道も、back で根の道に戻す。"""
+    assert run("move", place) == 0
+    _write(place / "ws" / "main" / "state" / "new-main" / "inflight.json",
+           json.dumps({"file": f"{place}/ws/main/state/new-main/draft.md", "repo": f"{place}/ws/main/repos/alpha"}))
+    assert run("back", place) == 0
+    data = json.loads((place / "state" / "new-main" / "inflight.json").read_text(encoding="utf-8"))
+    assert data == {"file": f"{place}/state/new-main/draft.md", "repo": f"{place}/repos/alpha"}
+
+
+def test_back_refuses_before_moving_back_when_a_main_path_is_left(place, capsys):
+    """5: 戻し損ねた ws/main の道があれば、中身を根へ戻す前に断る。直せば打ち直せる。"""
+    assert run("move", place) == 0
+    odd = place / "ws" / "main" / "state" / "alpha-main" / "odd.json"
+    _write(odd, json.dumps({"note": f"{place}/ws/main"}))
+    assert run("back", place) == 1
+    assert "state/alpha-main/odd.json（1 か所）" in capsys.readouterr().out
+    assert not (place / "state" / "alpha-main").is_dir() or mv.is_tombstone(str(place / "state" / "alpha-main"))
+    staged = place / "ws" / ".main-staging" / "state" / "alpha-main" / "odd.json"
+    _write(staged, json.dumps({"note": f"{place}"}))
+    assert run("back", place) == 0
+    assert (place / "state" / "alpha-main" / "odd.json").is_file()
+
+
+def test_ledger_path_in_a_field_that_is_not_expanded_becomes_an_absolute_main_path(place):
+    """6: $THTH_ROOT を開かない欄の道は、$THTH_ROOT でなく ws/main の下の絶対の道に直す（戻せば元の文字）。"""
+    ledger = place / "accounts" / "beta-main.json"
+    before = ledger.read_text(encoding="utf-8")
+    _edit_json(ledger, queue_dir=f"{place}/repos/beta/queue")
+    edited = ledger.read_text(encoding="utf-8")
+    assert run("move", place) == 0
+    moved = json.loads((place / "ws" / "main" / "accounts" / "beta-main.json").read_text(encoding="utf-8"))
+    assert moved["queue_dir"] == f"{place}/ws/main/repos/beta/queue"
+    assert moved["repo_dir"] == "$THTH_ROOT/repos/beta"
+    assert run("back", place) == 0
+    assert ledger.read_text(encoding="utf-8") == edited != before
+
+
+def test_check_refuses_a_ledger_that_has_the_same_place_in_two_forms(place, capsys):
+    """6: 同じ所を絶対の道と $THTH_ROOT の両方で持つ台帳は、移す前に断る（back が途中で止まるため）。"""
+    _edit_json(place / "accounts" / "beta-main.json", env="$THTH_ROOT/repos/beta")
+    assert run("check", place) == 1
+    assert "前から同じ台帳にあります" in capsys.readouterr().out
+    assert run("move", place) == 1
+    assert not (place / "ws" / "main").exists()
+
+
+def test_check_refuses_a_moved_path_kept_in_a_common_record(place, capsys):
+    """7: 共通に残す記録の中に移す物の道があれば断る。読んだうえで --common-paths-ok なら進める。"""
+    _write(place / "state" / "_admin" / "seen.json", json.dumps({"repo": f"{place}/repos/alpha"}))
+    assert run("check", place) == 1
+    assert "共通に残す記録に移す物の道: state/_admin/seen.json（1 か所）" in capsys.readouterr().out
+    assert run("move", place) == 1
+    assert not (place / "ws" / "main").exists()
+    assert run("check", place, "--common-paths-ok") == 0
+    assert run("move", place, "--common-paths-ok") == 0
+    assert run("back", place) == 0
