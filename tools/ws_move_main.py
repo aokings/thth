@@ -414,6 +414,20 @@ def _escaped_roots(lay: Layout) -> list:
     return [r.replace("/", "\\/") for r in {lay.root, os.path.realpath(lay.root)}]
 
 
+def _leftover_pattern(lay: Layout, srcs):
+    """移した記録に残る「移す前の根の道」の型（検め用・書き替えの型より広い）。"""
+    roots = sorted({lay.root, os.path.realpath(lay.root)}, key=len, reverse=True)
+    alts = []
+    for r in roots:
+        parts = [p for p in r.split("/") if p]
+        # 根の中の区切りも `/` と `\/` のどちらでもよい。
+        alts.append(r"(?:\\?/)+".join(re.escape(p) for p in parts))
+    names = sorted(set(srcs) | TOP_WS, key=len, reverse=True)
+    sep = r"(?:\\?/|\\?/\.(?=\\?/))+"
+    return re.compile(r"(?:\\?/)(?:" + "|".join(alts) + ")" + sep + "(?:" + "|".join(re.escape(n) for n in names)
+                      + r")(?![A-Za-z0-9_\-])")
+
+
 def record_files(base: str, rels=None) -> list:
     """`base` の下の記録のファイル。`rels` が無ければ `base` の中の全部（上の段と state/・private/ の中）。"""
     if rels is None:
@@ -494,13 +508,15 @@ def rewrite_records(lay: Layout, base: str, srcs, *, forward: bool, rels=None, d
 
 def leftover_records(lay: Layout, base: str, srcs, rels) -> list:
     """移した記録に残っている「移す前の根の道」（ws/main を通らない道）。返り値は（ファイル・か所の数）の並び。"""
-    pat = _record_pattern(lay, srcs, forward=True)
-    escaped = _escaped_roots(lay)
+    # 書き替えと同じ型で数えない（監査 6.0.0 の 4: 型が拾わない形は検めも拾わず rc 0 で進んだ）。
+    # 根と移した名の間の区切りの書き方（`/`・`//`・`/./`・JSON の `\/`）を広く取り、前の字は見ない
+    # （`file:///<根>/…` も数える）。後ろは名の続きの字でなければ何でも（`:`・`)`・`;` も）。広く取って断る側に倒す。
+    pat = _leftover_pattern(lay, srcs)
     out = []
     for path in record_files(base, rels):
         with open(path, encoding="utf-8", errors="surrogateescape") as f:
             text = f.read()
-        n = len(pat.findall(text)) + sum(text.count(e) for e in escaped)
+        n = len(pat.findall(text))
         if n:
             out.append((os.path.relpath(path, base), n))
     return out

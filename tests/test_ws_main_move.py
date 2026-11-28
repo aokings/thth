@@ -674,3 +674,13 @@ def test_move_refuses_an_escaped_root_left_in_a_record(place, capsys):
     assert run("move", place) == 1
     assert "state/alpha-main/odd.json（1 か所）" in capsys.readouterr().out
     assert run("back", place) == 0
+
+
+@pytest.mark.parametrize("form", ["file://{root}/repos/alpha", "{root}/repos:main", "({root}/repos)", "{root}/repos;x",
+                                  "{root}//repos/alpha", "{root}/./repos/alpha"])
+def test_move_refuses_other_forms_the_rewrite_does_not_take(place, capsys, form):
+    """監査 6.0.0 の 4: 書き替えの型が拾わない形も、検めは拾って断る（同じ型で数えない）。"""
+    _write(place / "state" / "alpha-main" / "odd.json", '{"note": "' + form.format(root=str(place)) + '"}')
+    assert run("move", place) == 1
+    assert "state/alpha-main/odd.json（1 か所）" in capsys.readouterr().out
+    assert run("back", place) == 0

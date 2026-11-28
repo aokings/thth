@@ -104,6 +104,9 @@ COMPAT_TESTS = (
 # privacy の生成物に、施行日が未設定のしるしが残っていないか（build_site.py が None のとき出す表示）。
 PRIVACY_PAGE = "callback/public/privacy/index.html"
 PRIVACY_UNSET_MARKS = ("Unpublished update", "未公開の更新案")
+# 規約も同じ（build_site.py の TERMS_EFFECTIVE が None のとき出す表示）。監査 6.0.0 の 1: privacy だけ見ていた。
+TERMS_PAGE = "callback/public/terms/index.html"
+TERMS_UNSET_MARKS = ("Unpublished draft", "未公開の案")
 
 TEST_WORKFLOW = "test.yml"
 AUDIT_GLOB = "docs/監査_*.md"
@@ -372,6 +375,10 @@ def check(root: Path = ROOT, ref: str = "HEAD", *, ci=ci_state, compat=run_compa
     left = [mark for mark in PRIVACY_UNSET_MARKS if mark in privacy]
     if left:
         blocks.append(_refuse("release_privacy_date_unset", f"{PRIVACY_PAGE} に「{'」「'.join(left)}」が残っている"))
+    terms = show(root, sha, TERMS_PAGE) or ""
+    left = [mark for mark in TERMS_UNSET_MARKS if mark in terms]
+    if left:
+        blocks.append(_refuse("release_terms_date_unset", f"{TERMS_PAGE} に「{'」「'.join(left)}」が残っている"))
 
     # ④ 互換の柵
     ok, seen = compat(root)

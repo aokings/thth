@@ -241,6 +241,22 @@ def test_privacyに施行日が入っていれば止めない(repo):
     assert "release_privacy_date_unset" not in codes(repo, skip_ci=True)
 
 
+@pytest.mark.parametrize("mark", ["Unpublished draft", "未公開の案"])
+def test_規約の施行日が未設定のまま残っていれば止まる(repo, mark):
+    # 監査 6.0.0 の 1: privacy だけ入れて規約を忘れると通っていた。
+    repo.version("1.1.0")
+    repo.commit("1.1.0", **{"callback__public__terms__index.html": f"<p>{mark} — x</p>\n"})
+    blocks = gate.check(repo.path, "HEAD", ci=GREEN, compat=COMPAT_OK, skip_ci=True)
+    hit = [b for b in blocks if b.code == "release_terms_date_unset"]
+    assert hit and mark in hit[0].seen
+
+
+def test_規約に施行日が入っていれば止めない(repo):
+    repo.version("1.1.0")
+    repo.commit("1.1.0", **{"callback__public__terms__index.html": "<p>Effective 2026-12-04</p>\n"})
+    assert "release_terms_date_unset" not in codes(repo, skip_ci=True)
+
+
 def test_危ない領域にMetaの書く口と認可がある():
     for path, name in (("thth/meta_write.py", "meta_write"), ("thth/meta_events.py", "meta_write"),
                        ("thth/meta_brand.py", "meta_write"), ("thth/meta_shop.py", "meta_write"),
@@ -273,7 +289,7 @@ def test_関門の符丁はすべて目録にあり3つがそろう():
     found = {node.args[0].value for node in ast.walk(tree)
              if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_refuse"
              and node.args and isinstance(node.args[0], ast.Constant)}
-    assert len(found) == 11
+    assert len(found) == 12  # 6.0.0 で release_terms_date_unset を足した（監査 6.0.0 の 1）
     for code in found:
         entry = rc.CATALOG[code]
         assert entry["why"] and entry["fix"]["text"] and entry["better"], code

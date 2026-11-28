@@ -17,6 +17,15 @@ def _entry(why, fix, command, better):
 
 
 ENTRIES = {
+    # 監査 6.0.0 の 1: 規約の施行日も関門で見る（privacy の release_privacy_date_unset と対）。
+    "release_terms_date_unset": {
+        "kind": "refusal",
+        "why": "公開の規約の頁（callback/public/terms/index.html）に、施行日が未設定のしるし（「Unpublished draft」「未公開の案」）が残っています。このまま deploy すると、規約が「まだ公開していない案」と名乗ります。",
+        "fix": "tools/build_site.py の TERMS_EFFECTIVE に、PRIVACY_EFFECTIVE と同じ deploy の日（YYYY-MM-DD）を入れ、python3 tools/build_site.py で生成し直して commit し、打ち直してください。",
+        "better": "privacy と規約の施行日を同じ commit で入れると、片方だけ忘れることがありません。",
+        "doors": _C,
+        "since": _SINCE,
+    },
     "pass_unsupported": {
         "kind": "refusal",
         "why": "その命令か旗は、鍵で括りの中に通す表にありません。何も打っていません。",
