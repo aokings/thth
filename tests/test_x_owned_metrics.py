@@ -41,28 +41,28 @@ def owned_ledger():
 
 def test_owned_read_is_its_own_ledger_and_price(x_account):
     with b.owned_read(ACCOUNT, 3) as slot:
-        assert b.report()["held_usd"] == "0.003"
+        assert b.report()["held_usd"] == "0.015"   # 5.33.0: 1 本 0.005（Owned の 0.001 を当てにしない）
         slot.dispatch()
         slot.settle(2)
     whole = b.report()
-    assert whole["spent_estimate_usd"] == "0.002" and whole["held_usd"] == "0"
-    assert whole["owned_read"]["price"]["owned_read_usd"] == "0.001"
+    assert whole["spent_estimate_usd"] == "0.010" and whole["held_usd"] == "0"
+    assert whole["owned_read"]["price"]["owned_read_usd"] == "0.005"
     assert whole["owned_read"]["month"] == {"month_utc": "2026-09", "posts": 2,
-                                            "spent_estimate_usd": "0.002", "held_usd": "0",
+                                            "spent_estimate_usd": "0.010", "held_usd": "0",
                                             "uncertain": 0}
     # 他人の投稿の台帳（と 1 日 60 本）には数えない。
     assert b.read_posts()["reservations"] == {} and b.posts_status(ACCOUNT)["today"] == 0
     assert whole["posts_read"]["month"]["spent_estimate_usd"] == "0"
     with server_files.directory(b.folder(), private=True) as fd:
         assert b.OWNED_FILE in set(os.listdir(fd))
-    assert whole["months"]["2026-09"] == {"spent_estimate_usd": "0.002", "held_usd": "0"}
+    assert whole["months"]["2026-09"] == {"spent_estimate_usd": "0.010", "held_usd": "0"}
 
 
 def test_owned_reads_share_the_monthly_cap_with_the_other_two(x_account):
-    b.configure("0.015", by="operator")
+    b.configure("0.035", by="operator")
     with b.posts_read(ACCOUNT, 2) as slot:   # 0.010
         slot.dispatch(); slot.settle(2)
-    with b.owned_read(ACCOUNT, 5) as slot:   # 0.005 → ちょうど上限
+    with b.owned_read(ACCOUNT, 5) as slot:   # 0.025（5.33.0・1 本 0.005）→ ちょうど上限
         slot.dispatch(); slot.settle(5)
     with pytest.raises(b.BudgetError, match="budget_exhausted"):
         with b.owned_read(ACCOUNT, 1):
@@ -79,7 +79,7 @@ def test_owned_read_is_not_limited_by_the_daily_posts_cap(x_account):
     assert cli.main(["account", "set", ACCOUNT, "x_daily_reads", "0", "--by", "operator"]) == 0
     with b.owned_read(ACCOUNT, 100) as slot:
         slot.dispatch(); slot.settle(100)
-    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.100"
+    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.500"
 
 
 def test_owned_ledger_is_strictly_validated(x_account):
@@ -87,7 +87,7 @@ def test_owned_ledger_is_strictly_validated(x_account):
         slot.dispatch(); slot.settle(2)
     with b.locked() as fd:
         value = b._read_posts(fd, b.OWNED)
-        next(iter(value["reservations"].values()))["usd"] = "0.010"   # 他人の投稿の単価
+        next(iter(value["reservations"].values()))["usd"] = "0.002"   # 新しい版の行に前の単価（0.001）
         server_files.replace_at(fd, b.OWNED_FILE, server_files.encode(value), private=True)
     with pytest.raises(b.BudgetError, match="budget_unreadable"):
         b.report()
@@ -117,9 +117,9 @@ def test_owned_metrics_query_mapping_and_charge(x_account, fake):
     # 読めない指標は入れない（0 と混ぜない）。
     assert "views" not in result["by_post"]["1900000000000000003"]["metrics"]
     assert result["not_returned"] == ["1900000000000000002"]
-    # 課金は返ってきた本数（3 本・0.001 ずつ）。他人の投稿の台帳には何も無い。
-    assert result["posts"] == 3 and result["usd_estimate"] == "0.003"
-    assert [(row["state"], row["count"], row["usd"]) for row in owned_ledger()] == [("settled", 3, "0.003")]
+    # 課金は返ってきた本数（3 本・5.33.0 から 0.005 ずつ）。他人の投稿の台帳には何も無い。
+    assert result["posts"] == 3 and result["usd_estimate"] == "0.015"
+    assert [(row["state"], row["count"], row["usd"]) for row in owned_ledger()] == [("settled", 3, "0.015")]
     assert b.read_posts()["reservations"] == {}
 
 
@@ -131,14 +131,14 @@ def test_owned_metrics_batches_by_100(x_account, fake):
     result = adapter_for().owned_metrics(ids, now=NOW)
     assert [len(c[2]["ids"].split(",")) for c in fake["calls"]] == [100, 50]
     assert len(result["by_post"]) == 150 and result["requests"] == 2
-    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.150"
+    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.750"
 
 
 def test_owned_metrics_failure_keeps_the_hold_and_refusal_settles_zero(x_account, fake):
     fake["routes"]["/2/tweets"] = urllib.error.URLError("boom")
     with pytest.raises(base.AdapterError, match="x_read_failed"):
         adapter_for().owned_metrics(["1900000000000000001", "1900000000000000002"], now=NOW)
-    assert [(r["state"], r["usd"]) for r in owned_ledger()] == [("uncertain", "0.002")]
+    assert [(r["state"], r["usd"]) for r in owned_ledger()] == [("uncertain", "0.010")]
     assert b.report()["owned_read"]["month"]["uncertain"] == 1
     fake["routes"]["/2/tweets"] = urllib.error.HTTPError("u", 503, "x", {}, None)
     with pytest.raises(base.AdapterError, match="x_owned_read_http_503"):
@@ -209,8 +209,8 @@ def test_owned_metrics_asks_private_only_for_posts_within_30_days(x_account, fak
     assert two["metrics"]["link_clicks"] == 7 and "video_views" not in two["available"]
     assert result["by_post"]["1900000000000000003"]["available"] == list(x_adapter_cls().OWNED_METRICS)
     assert result["private_posts"] == 2 and result["private_fallback"] == 0
-    # 課金は今までどおり返った本数 × 0.001（4 本）。
-    assert result["posts"] == 4 and result["usd_estimate"] == "0.004"
+    # 5.33.0: 投稿は返った本数 × 0.005（4 本）＋付いた media 1 件 0.005（Owned の 0.001 を当てにしない）。
+    assert result["posts"] == 4 and result["usd_estimate"] == "0.025"
     assert sorted(r["count"] for r in owned_ledger()) == [2, 2]
 
 
@@ -241,7 +241,7 @@ def test_private_request_refused_falls_back_to_public_without_double_charge(x_ac
     assert "link_clicks" not in result["by_post"]["1900000000000000001"]["available"]
     assert result["private_fallback"] == 1 and result["private_posts"] == 0
     assert sorted((r["state"], r["count"]) for r in owned_ledger()) == [("settled", 0), ("settled", 1)]
-    assert result["usd_estimate"] == "0.001"
+    assert result["usd_estimate"] == "0.005"
 
 
 def test_public_403_is_still_permission_missing(x_account, fake):
@@ -329,7 +329,7 @@ def test_collect_reads_only_own_sent_posts_at_the_threads_marks(x_account, fake)
     cfg = accounts_mod.load_account(ACCOUNT)
     assert not os.listdir(accounts_mod.data_dirs(cfg, ACCOUNT)["replies"]) if os.path.isdir(
         accounts_mod.data_dirs(cfg, ACCOUNT)["replies"]) else True
-    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.002"
+    assert b.report()["owned_read"]["month"]["spent_estimate_usd"] == "0.010"
 
     # 同じ時刻にもう一度: 済んだ刻みは読まない（要求も予約もしない）。
     collect_mod.collect_once(ACCOUNT, adapter=adapter_for(), now=NOW, log=lambda _l: None)
@@ -419,11 +419,11 @@ def test_admin_and_doctor_show_the_owned_reads_line(x_account, capsys):
         slot.dispatch(); slot.settle(4)
     assert cli.main(["admin", "budget", "x"]) == 0
     out = capsys.readouterr().out
-    assert "自分の投稿の数字（Owned Reads・1 本 $0.001）: 4 本・$0.004" in out
+    assert "自分の投稿の読み（数字と一覧・1 本 $0.005・Owned Reads の 0.001 を当てにしない）: 4 本・$0.020" in out
     assert "他人の投稿（Posts: Read・1 本 $0.005）" in out
     assert cli.main(["doctor", ACCOUNT]) == 2   # X は probe を叩かない（既存どおり rc=2）
     out = capsys.readouterr().out
-    assert "自分の投稿の数字（Owned Reads・1 本 $0.001）: 4 本・$0.004" in out
+    assert "自分の投稿の読み（数字と一覧・1 本 $0.005・Owned Reads の 0.001 を当てにしない）: 4 本・$0.020" in out
     assert cli.main(["doctor", ACCOUNT, "--json"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["x_costs"]["owned_read"]["month"]["posts"] == 4

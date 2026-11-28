@@ -135,7 +135,8 @@ def test_failure_after_dispatch_keeps_the_upper_bound_as_uncertain(x_account, fa
         adapter_for().keyword_search("コーヒー", limit=10)
     assert TOKEN not in str(caught.value)
     assert [row["state"] for row in posts_rows()] == ["uncertain"]
-    assert b.report()["spent_estimate_usd"] == "0.050"
+    # 5.33.0: 付く物（投稿者 10 人ぶん 0.100）も押さえた上限のまま uncertain に数える。
+    assert b.report()["spent_estimate_usd"] == "0.150"
     assert b.report()["posts_read"]["month"]["uncertain"] == 1
     assert b.posts_status(ACCOUNT)["today"] == 10
 
@@ -189,10 +190,11 @@ def test_keyword_search_row_shape_and_charge(x_account, fake):
         "medium": "x", "author_key": base.author_key("x", "alice"), "reply_deadline": None,
         "permalink": "https://x.com/alice/status/1900000000000000001",
         "author_followers": None, "author_posts": None, "reply_count": None}
-    # 課金は応答に入っていた本数（画面に出す 3 本ではない）。
+    # 課金は応答に入っていた本数（画面に出す 3 本ではない）。5.33.0: 投稿者 2 人（includes）0.020 も。
     cost = adapter.read_cost()
-    assert cost["posts"] == 10 and cost["usd_estimate"] == "0.050" and cost["today"] == 10
-    assert cost["daily_cap"] == 60 and cost["cap_usd"] == "15" and cost["month_used_usd"] == "0.050"
+    assert cost["posts"] == 10 and cost["usd_estimate"] == "0.070" and cost["today"] == 10
+    assert cost["includes_usd_estimate"] == "0.020"
+    assert cost["daily_cap"] == 60 and cost["cap_usd"] == "15" and cost["month_used_usd"] == "0.070"
 
 
 def test_search_over_25_is_refused_without_request_or_reservation(x_account, fake):
@@ -212,7 +214,9 @@ ROOT = "1800000000000000000"
 
 
 def conversation_routes(fake, n, *, next_token=True):
-    fake["routes"]["/2/tweets/" + ROOT] = {"data": tweet(ROOT, author="u2"), "includes": USERS}
+    # 1 本の応答に付く投稿者は 1 人（`expansions=author_id`・5.33.0 で付く物も数えるので本物の形に）。
+    fake["routes"]["/2/tweets/" + ROOT] = {"data": tweet(ROOT, author="u2"),
+                                           "includes": {"users": [USERS["users"][1]]}}
     replies = [tweet(ROOT, author="u2")]   # 根そのものも検索に出る
     replies += [tweet(str(1900000000000000000 + i), conversation=ROOT,
                       replied=ROOT if i == 0 else "1900000000000000000")
@@ -237,7 +241,8 @@ def test_conversation_truncates_at_50_and_maps_replied_to(x_account, fake):
     assert rows[0]["replied_to"] == {"id": ROOT}
     assert rows[1]["replied_to"] == {"id": "1900000000000000000"}
     cost = adapter.read_cost()
-    assert cost["truncated"] is True and cost["posts"] == 51 and cost["usd_estimate"] == "0.255"
+    # 5.33.0: 根の投稿者 1 人（0.010）と枝の投稿者 2 人（0.020）も足す。
+    assert cost["truncated"] is True and cost["posts"] == 51 and cost["usd_estimate"] == "0.285"
 
 
 def test_collect_does_not_read_x_branches(x_account, fake):
@@ -254,7 +259,7 @@ def test_where_on_x_shows_the_cost_line(x_account, fake, capsys):
     fake["routes"]["/2/tweets/search/recent"] = {"data": data, "includes": USERS}
     assert cli.main(["where", ACCOUNT, "コーヒー", "--max-per-author", "2"]) == 0
     out = capsys.readouterr().out
-    assert "X の読み取り: 今回 10 本・約 $0.050・今日 10/60 本・今月 $0.050/$15" in out
+    assert "X の読み取り: 今回 10 本・約 $0.070（投稿 $0.050＋投稿者の分 $0.020）・今日 10/60 本・今月 $0.070/$15" in out
     assert fake["calls"][0][2]["max_results"] == 10 and fake["calls"][0][2]["sort_order"] == "relevancy"
     assert cli.main(["where", ACCOUNT, "コーヒー", "--recent", "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -283,7 +288,7 @@ def test_thread_on_x_shows_ids_truncation_and_cost(x_account, fake, capsys):
     assert cli.main(["thread", ACCOUNT, ROOT]) == 0
     out = capsys.readouterr().out
     assert f"id={ROOT}" in out and "id=1900000000000000000" in out
-    assert "X の読み取り: 今回 4 本・約 $0.020・今日 4/60 本" in out
+    assert "X の読み取り: 今回 4 本・約 $0.050（投稿 $0.020＋投稿者の分 $0.030）・今日 4/60 本" in out
     conversation_routes(fake, 50)
     assert cli.main(["thread", ACCOUNT, ROOT, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)

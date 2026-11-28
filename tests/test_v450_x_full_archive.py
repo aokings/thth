@@ -110,15 +110,17 @@ def test_archive_daily_cap_explicit_zero(x_account, fake, capsys):
 # ----- 柵 1-b: 全期間と件数の台帳は月の上限に合算される -------------------------------
 
 def test_archive_spend_counts_toward_monthly_cap(x_account, fake, capsys):
-    b.configure("0.06", by="operator")
+    # 5.33.0: 10 本の予約は投稿 0.050＋投稿者（includes.users）10 人ぶん 0.100 を押さえる。
+    b.configure("0.16", by="operator")
     fake["answer"] = lambda *a: _posts(10)
     rc, payload, _ = run(capsys, per_call=10, max_total=10)
-    assert rc == 0 and payload["x_read_cost"]["usd_estimate"] == "0.050"
+    # 確定は返った物: 投稿 10 本 0.050＋投稿者 1 人 0.010。
+    assert rc == 0 and payload["x_read_cost"]["usd_estimate"] == "0.060"
     report = b.report()
-    assert report["spent_estimate_usd"] == "0.050" and report["remaining_usd"] == "0.010"
-    # 残り 0.010 を超える予約は、どの台帳でも要求の前に断る。
+    assert report["spent_estimate_usd"] == "0.060" and report["remaining_usd"] == "0.100"
+    # 残り 0.100 を超える予約（投稿 0.050＋付く物 0.100）は、どの台帳でも要求の前に断る。
     with pytest.raises(b.BudgetError, match="budget_exhausted"):
-        with b.posts_read(ACCOUNT, 10):
+        with b.posts_read(ACCOUNT, 10, 20):
             pytest.fail("残りを超える予約が通った")
     rc, payload, _ = run(capsys, per_call=10, max_total=10)
     assert rc == 1 and payload["error"] == "budget_exhausted" and len(fake["calls"]) == 1
@@ -183,10 +185,11 @@ def test_charge_is_returned_posts_not_reserved(x_account, fake, capsys):
     assert ledger["state"] == "settled" and ledger["limit"] == 50 and ledger["count"] == 7
     assert ledger["usd"] == "0.035"
     cost = payload["x_read_cost"]
-    assert cost["posts"] == 7 and cost["usd_estimate"] == "0.035" and cost["requests"] == 1
+    # 5.33.0: 投稿者 1 人（includes.users）の 0.010 が足される。投稿の台帳の行は投稿の分だけ。
+    assert cost["posts"] == 7 and cost["usd_estimate"] == "0.045" and cost["requests"] == 1
     assert cost["today"] == 7 and cost["daily_cap"] == 1000
     report = b.report()
-    assert report["spent_estimate_usd"] == "0.035"
+    assert report["spent_estimate_usd"] == "0.045"
     assert report["archive_read"]["month"]["posts"] == 7
     # 今の口座の 1 日の本数（x_daily_reads）には数えない。
     assert b.posts_status(ACCOUNT)["today"] == 0

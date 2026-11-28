@@ -342,8 +342,15 @@ class XAdapter(base.Adapter):
     # `note_tweet`（10/15・点検 §B-3）: 280 字を超える長文の全文。既定の欄ではないので頼まないと
     # 来ない（一次資料 docs.x.com data dictionary「Contains the full text of a Post for long-form
     # Posts (>280 characters)」）。課金は返った本数なので、欄を足しても費用は変わらない。
+    #
+    # `expansions=author_id`（5.33.0）: 11/22 から `includes.users` の 1 件ごとに User: Read（0.010 USD）が
+    # 付く（`budget_x.EXPANSIONS` の台帳で数える）。username は permalink と `author_key`（仮名）に
+    # どの命令でも使うので expansion は残す。`user.fields` は値段を変えない（数えるのは user の件数）が、
+    # 使わない欄は頼まない: `public_metrics`（フォロワー数・投稿数）は search・where・thread・list show が
+    # 画面と `--json` に出す。全期間の検索（`archive`）は handle しか使わないので username だけ。
     READ_FIELDS = {'tweet.fields': 'created_at,author_id,conversation_id,referenced_tweets,note_tweet',
                    'expansions': 'author_id', 'user.fields': 'username,public_metrics'}
+    ARCHIVE_READ_FIELDS = {**READ_FIELDS, 'user.fields': 'username'}
     TOKEN_KEYS = ('access_token',)
     TOKEN_SETUP_HINT = 'thth auth'
     POST_ID_FORM_HINT = 'X の post_id は 19 桁までの数字です。'
@@ -765,22 +772,43 @@ class XAdapter(base.Adapter):
 
         `user_id` は `.token`（`thth auth` が `GET /2/users/me` から書いたもの）を
         使う——ここで暗黙に `whoami()` を叩くと、**1 回の一覧で 2 回課金される**。
+        5.33.0: 投稿は返った 1 本ごとに数える（料金表は resource ごと）。`max_results` 本を
+        `budget_x.owned_read` で押さえ、応答の本数で確定する（1 本 0.005・Owned の 0.001 を当てにしない）。
+        断りの応答は 0 本・応答が読めなければ押さえた上限のまま uncertain。1 日の本数には数えない。
         """
+        from decimal import Decimal
         from .. import budget_x
         if not POST_ID.fullmatch(self.user_id or ''):
             raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
         path = '/2/users/' + self.user_id + '/tweets'
         query = {'max_results': max(5, min(int(limit), 100)),
                  'tweet.fields': 'created_at,text,note_tweet'}
-        with budget_x.user_read(self.auth_account):
-            budget_x.before_read(path)
-            try:
-                status, value = request(self, 'GET', path, query=query)
-            except urllib.error.HTTPError as exc:
-                raise AdapterError('x_posts_http_' + str(exc.code), http_status=exc.code) from None
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                raise AdapterError('x_posts_failed: ' + self._scrub(exc)) from None
-            budget_x.observed(value)
+        cap = query['max_results']
+        charged = 0
+        try:
+            # 予算の断り（`budget_x.BudgetError`）は今までどおりそのまま上げる（要求の前）。
+            with budget_x.owned_read(self.auth_account, cap) as slot:
+                slot.dispatch()
+                charged = cap   # 投げた: 確定するまでは押さえた上限のまま数える
+                self._owned['calls'] += 1
+                try:
+                    status, value = request(self, 'GET', path, query=query)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    charged = 0
+                    raise AdapterError('x_posts_http_' + str(exc.code), http_status=exc.code) from None
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                    raise AdapterError('x_posts_failed: ' + self._scrub(exc)) from None
+                data = value.get('data') if isinstance(value, dict) else None
+                if status == 200 and isinstance(data, list):
+                    slot.settle(len(data))
+                elif status == 200 and data is None and isinstance(value.get('meta'), dict):
+                    slot.settle(0)   # 0 件の応答（`meta` だけ）
+                if slot.count is not None:
+                    charged = slot.count
+        finally:
+            self._owned['posts'] += charged
+            self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged)
         rows = value.get('data', [])
         if status != 200 or not isinstance(rows, list):
             # **「取れなかった」を「取れて 0 件」にしない**（`_get_list` と同じ規律）。
@@ -810,7 +838,9 @@ class XAdapter(base.Adapter):
         counter = self._archive if archive else self._reads
         reserve = budget_x.archive_read if archive else budget_x.posts_read
         try:
-            with reserve(self.auth_account, limit) as slot:
+            # expansions で付きうる物（`includes`）の上限も一緒に押さえる（5.33.0）。
+            includes = budget_x.expansion_units(query, limit)
+            with reserve(self.auth_account, limit, includes) as slot:
                 slot.dispatch()
                 counter['calls'] += 1
                 try:
@@ -819,6 +849,7 @@ class XAdapter(base.Adapter):
                     # 断りの応答（4xx・5xx）は投稿を返していない——0 本で確定する。
                     # 応答そのものが無い（下の except）は押さえた上限のまま uncertain。
                     slot.settle(0)
+                    slot.settle_includes(0)
                     charged = 0
                     if exc.code == 403:
                         raise base.PermissionMissing('tweet.read', 'x_read_http_403') from None
@@ -833,15 +864,17 @@ class XAdapter(base.Adapter):
                 except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
                         base.AdapterError) as exc:
                     # 応答が読めなかった: 台帳は押さえた上限のまま uncertain（多めに数える側）。
-                    self._count(limit, counter)
+                    self._count(limit, counter, includes)
                     raise AdapterError(what + ': x_read_failed: ' + self._scrub(exc)) from None
                 data = value.get('data')
                 if status != 200 or not (isinstance(data, (list, dict)) or isinstance(value.get('meta'), dict)):
-                    self._count(limit, counter)
+                    self._count(limit, counter, includes)
                     raise AdapterError(what + ': x_read_response_invalid')
                 n = len(data) if isinstance(data, list) else (1 if isinstance(data, dict) else 0)
                 slot.settle(n)
+                slot.settle_includes(budget_x.included_units(value))
                 charged = slot.count if slot.count is not None else limit
+                charged_includes = slot.includes_count if slot.includes_count is not None else includes
         except budget_x.BudgetError as exc:
             code = str(exc)
             message = {
@@ -852,17 +885,20 @@ class XAdapter(base.Adapter):
                                             '（既定 0＝読まない）。thth account set <名前> x_archive_daily_reads '
                                             '<本数> --by <名前> で変えられます',
                 'x_archive_daily_read_cap_unreadable': '台帳の x_archive_daily_reads が読めません',
+                'expansion_not_priced': '単価を決めていない expansions は頼みません（budget_x.EXPANSION_RULES）',
             }.get(code, 'X の読み取りの予約ができません')
             raise AdapterError(f'{code}: {message}') from None
-        self._count(charged, counter)
+        self._count(charged, counter, charged_includes)
         return value, n
 
-    def _count(self, n, counter=None):
+    def _count(self, n, counter=None, includes=0):
         from decimal import Decimal
         from .. import budget_x
         counter = self._reads if counter is None else counter
         counter['posts'] += n
-        counter['usd'] = str(Decimal(counter['usd']) + budget_x.POSTS_PRICE * n)
+        counter['includes_units'] = counter.get('includes_units', 0) + includes
+        counter['usd'] = str(Decimal(counter['usd']) + budget_x.POSTS_PRICE * n
+                             + budget_x.EXPANSION_UNIT_PRICE * includes)
 
     @staticmethod
     def _metric(metrics, key):
@@ -1154,9 +1190,9 @@ class XAdapter(base.Adapter):
         0 本で確定する（投稿は返っていない）。
 
         `private=True` は非公開の数も頼む（`OWNED_PRIVATE_QUERY`）。そのとき 400／403 は
-        **None を返す**（0 本で確定済み・呼ぶ側が公開の数だけで頼み直す）。単価は同じ
-        Owned Reads の 1 本 0.001 USD として数える——非公開の欄や media の展開で料金が変わるとは
-        料金表に書いていない（**本物で確かめる**: 請求の本数が返った投稿の本数と合うか）。
+        **None を返す**（0 本で確定済み・呼ぶ側が公開の数だけで頼み直す）。投稿は
+        Owned Reads の 1 本 0.001 USD として数える。media の展開で付く物（`includes.media`）は
+        5.33.0 から 1 件 0.005 USD で別に数える（調べ docs/調べ_X_expansionsの数え方_2026-11-28.md）。
         """
         from decimal import Decimal
         from .. import budget_x
@@ -1164,15 +1200,22 @@ class XAdapter(base.Adapter):
         query = {'ids': ','.join(chunk), **(self.OWNED_PRIVATE_QUERY if private
                                             else {'tweet.fields': fields or self.OWNED_FIELDS})}
         charged = limit
+        charged_includes = 0
         try:
-            with budget_x.owned_read(self.auth_account, limit) as slot:
+            # media の展開（非公開の数のときだけ）は 1 件 0.005 USD で別に押さえる（5.33.0・`GET /2/tweets`
+            # は Owned Reads の表に無いので、Owned の 0.001 を当てにしない——多めに倒す）。
+            includes = budget_x.expansion_units(query, limit)
+            charged_includes = includes
+            with budget_x.owned_read(self.auth_account, limit, includes) as slot:
                 slot.dispatch()
                 self._owned['calls'] += 1
                 try:
                     status, value = request(self, 'GET', '/2/tweets', query=query)
                 except urllib.error.HTTPError as exc:
                     slot.settle(0)
+                    slot.settle_includes(0)
                     charged = 0
+                    charged_includes = 0
                     if private and exc.code in (400, 403):
                         return None   # 0 本で確定済み。呼ぶ側が公開の数だけで頼み直す
                     if exc.code == 403:
@@ -1198,6 +1241,9 @@ class XAdapter(base.Adapter):
                 else:
                     raise AdapterError('自分の投稿の数字: x_read_response_invalid')
                 slot.settle(n)
+                slot.settle_includes(budget_x.included_units(value))
+                if slot.includes_count is not None:
+                    charged_includes = slot.includes_count
                 if slot.count is None:
                     raise AdapterError('自分の投稿の数字: x_read_response_invalid（頼んだより多い）')
                 charged = n
@@ -1207,7 +1253,9 @@ class XAdapter(base.Adapter):
                        'thth admin budget x で確かめてください') if code == 'budget_exhausted' else 'X の読み取りの予約ができません'
             raise AdapterError(f'{code}: {message}') from None
         self._owned['posts'] += charged
-        self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged)
+        self._owned['includes_units'] = self._owned.get('includes_units', 0) + charged_includes
+        self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged
+                                 + budget_x.EXPANSION_UNIT_PRICE * charged_includes)
         return value
 
     # ----- コミュニティの検索（3.19.0・**community_read の予約の中でだけ動く**） ----
@@ -1507,7 +1555,7 @@ class XAdapter(base.Adapter):
         if not text or len(text) > 1024:
             raise AdapterError('x_archive_query: 語は 1〜1024 字です')
         pause = time.sleep if sleep is None else sleep
-        base_query = {'query': text, 'start_time': start_time, 'sort_order': sort_order, **self.READ_FIELDS}
+        base_query = {'query': text, 'start_time': start_time, 'sort_order': sort_order, **self.ARCHIVE_READ_FIELDS}
         if end_time:
             base_query['end_time'] = end_time
         rows, seen, token, pages, stopped, charged = [], set(), None, 0, None, 0
@@ -1647,6 +1695,10 @@ class XAdapter(base.Adapter):
                 'requests': self._reads['calls'], 'truncated': self._reads['truncated'],
                 'price_usd_per_post': str(budget_x.POSTS_PRICE),
                 'price_version': budget_x.POSTS_PRICE_VERSION,
+                # `usd_estimate` は投稿＋expansions で付いた物（`includes`・user 1 件 0.010・media 0.005）。
+                'includes_usd_estimate': budget_x.decimal_text(
+                    budget_x.EXPANSION_UNIT_PRICE * self._reads.get('includes_units', 0)),
+                'includes_price_version': budget_x.EXPANSION_PRICE_VERSION,
                 'search_window_days': self.SEARCH_WINDOW_DAYS,
                 'basis': 'estimate_not_actual_charge', **status}
 

@@ -117,7 +117,9 @@ def test_an_empty_page_is_not_a_failure_and_still_settles_the_read(env, wire):
     set_read_budget()
     assert env[1].recent_posts() == []
     report = budget_x.report()
-    assert report['spent_estimate_usd'] == '0.010' and report['held_usd'] == '0'
+    # 5.33.0: 一覧は返った投稿 1 本ごと（0 本なら 0）。本人確認の 1 回 0.010 では押さえない。
+    assert report['spent_estimate_usd'] == '0.000' and report['held_usd'] == '0'
+    assert [(r['state'], r['count']) for r in budget_x.read_posts(budget_x.OWNED)['reservations'].values()] == [('settled', 0)]
 
 
 # ----- 429・不明 --------------------------------------------------------------
