@@ -127,7 +127,10 @@ def validate(data: Any) -> list[str]:
     if "unlisted" not in data:
         errs.append("unlisted が無い（\"<括り>\" か null）")
     unl = data.get("unlisted")
-    if unl is not None and unl not in wss:
+    # 文字列でない値は `in` で引かずに誤りとして返す（配列・object だと TypeError で落ちていた・監査 5.32.0 軽い 10）。
+    if unl is not None and not isinstance(unl, str):
+        errs.append(f"unlisted が文字列か null でない: {type(unl).__name__}")
+    elif unl is not None and unl not in wss:
         errs.append(f"unlisted の先が workspaces に無い: {unl!r}")
     if len(wss) >= 2 and unl is not None:
         errs.append("括りが 2 つ以上なのに unlisted が null でない（表に無い媒体が混ざる）")
@@ -139,7 +142,9 @@ def validate(data: Any) -> list[str]:
     for m, ws in media.items():
         if not MEDIUM_RE.match(str(m)):
             errs.append(f"媒体の名前の形が違う: {m!r}")
-        if ws not in wss:
+        if not isinstance(ws, str):
+            errs.append(f"media.{m} が文字列でない: {type(ws).__name__}")
+        elif ws not in wss:
             errs.append(f"media.{m} の先が workspaces に無い: {ws!r}")
 
     for path, value in _strings(data):
