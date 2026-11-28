@@ -227,6 +227,8 @@ def test_wrapper_forwards_stdin_only_when_asked(tmp_path):
         (["send", "acct", "--text-file", "x.txt"], "n"),
         (["send", "acct", "--text", "hi"], "n"),
         (["approve", "docs/sns/queue/a.md"], "n"),
+        (["secret", "accept", "bluesky-app-password", "r1", "--by", "monban"], "stdin"),  # 値は標準入力だけ
+        (["secret", "kinds", "--json"], "n"),
     ]
     for argv, expected in cases:
         if log.exists():
