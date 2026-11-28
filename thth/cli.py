@@ -6065,9 +6065,37 @@ def _enter_account_workspace(argv) -> int | None:
     except accounts_mod.WorkspaceError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    if ws and ws != accounts_mod.MAIN_WS:
-        os.environ[accounts_mod.WS_ENV] = ws
+    # 段 6: main の口座でも名指しを付ける（名指しの印 `ws/.name-required` があっても timer が止まらないように）。
+    os.environ[accounts_mod.WS_ENV] = ws or accounts_mod.MAIN_WS
     return None
+
+
+# 段 6: 名指しの印があっても、名指し無しで打ってよい一番上の命令。括りをまたいで回す常駐と管理者の道具
+# （中で `use_workspace` に入る）と、括りなし（`command_scope.LOCAL`）。ほかは括りの中の物とみなして断る。
+NO_NAME_COMMANDS = frozenset({"maintain", "worker", "approval-worker", "serve-reports", "systemd", "admin"})
+
+
+def _require_workspace_name(argv) -> int | None:
+    """段 6（設計 §8 R11）: 印のある置き場（VM）で、括りを名指ししない打ち方を断る。
+
+    名指しは `THTH_WS`（鍵の道は VM が付ける・timer は `_enter_account_workspace` が付ける）。
+    印が無ければ今までどおり main と読む（6.1.0 で印が無くても断る形に替える・`accounts.MAIN_DEFAULT_UNTIL`）。
+    """
+    if os.environ.get(accounts_mod.WS_ENV):
+        return None
+    top = next((a for a in argv if not a.startswith("-")), None)
+    if top is None or top in NO_NAME_COMMANDS:
+        return None
+    from . import command_scope
+    if command_scope.scope_of(top) in (None, command_scope.LOCAL):
+        return None
+    try:
+        if not accounts_mod.workspace_name_required():
+            return None
+    except accounts_mod.AccountError:
+        return None
+    from . import ws_admin
+    return ws_admin._refuse("workspace_name_required", "--json" in argv)
 
 
 def _entry(argv=None) -> int:
@@ -6084,6 +6112,9 @@ def _entry(argv=None) -> int:
         passed = _remote._fail(exc.code)
     if passed is not None:
         return passed
+    refused = _require_workspace_name(argv)
+    if refused is not None:
+        return refused
     real_argv = list(argv)
     _PARSED.clear()
     refusals.clear_first_stage()

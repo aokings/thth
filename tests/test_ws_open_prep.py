@@ -103,7 +103,7 @@ def _forget_entered_workspace():
 @pytest.mark.parametrize("argv,mark,want", [
     (["run", "gamma-garden"], "1", "garden"),
     (["collect", "gamma-garden"], "1", "garden"),
-    (["run", "alpha-main"], "1", None),            # main の口座は今までどおり（THTH_WS を書かない）
+    (["run", "alpha-main"], "1", "main"),          # 段 6: main の口座も名指しを付ける（名指しの印があっても止まらない）
     (["run", "gamma-garden"], None, None),         # 印が無ければ名前で入らない
     (["board"], "1", None),                        # timer の命令でない
 ])
@@ -218,7 +218,7 @@ def test_project_in_two_workspaces_is_refused(two_workspaces, monkeypatch, capsy
 @pytest.mark.parametrize("argv,mark,want", [
     (["map", "collect", "gammaproj"], "1", "garden"),
     (["map", "collect", "gamma-garden"], "1", "garden"),   # 口座の名前でもよい（map と同じ）
-    (["map", "collect", "alphaproj"], "1", None),          # main は THTH_WS を書かない
+    (["map", "collect", "alphaproj"], "1", "main"),        # 段 6: main も名指しを付ける
     (["map", "collect", "gammaproj"], None, None),         # 印が無ければ入らない
     (["map", "show", "gammaproj"], "1", None),             # timer の命令でない
 ])

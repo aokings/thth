@@ -396,6 +396,9 @@ MAIN_MOVING_MARK = "MOVING"
 # R11: 名指しの無い打ち方（`THTH_WS` も鍵も無い）を main と読むのは、この版まで（段 6 で「VM の上では名指しが要る」に替える）。
 # 版を上げてこの値に届くと tests/test_ws_main_move.py が赤になり、替え忘れを止める。
 MAIN_DEFAULT_UNTIL = "6.1.0"
+# 段 6（VM の上では括りの名指しが要る）の印。`<共通の根>/ws/.name-required` があれば、`cli._require_workspace_name`
+# が括りの中の命令を名指し（`THTH_WS`・鍵）無しでは断る。置くのは段 6 の作業（版でなく・masaru の「やって」）。
+NAME_REQUIRED_MARK = ".name-required"
 WS_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 _WS_CTX: contextvars.ContextVar = contextvars.ContextVar("thth_workspace", default=None)
 
@@ -414,6 +417,11 @@ def current_workspace() -> str:
 
 def workspaces_base() -> str:
     return os.path.join(common_root(), "ws")
+
+
+def workspace_name_required() -> bool:
+    """段 6 の印があるか（VM の上で、括りを名指ししない打ち方を断るか）。"""
+    return os.path.lexists(os.path.join(workspaces_base(), NAME_REQUIRED_MARK))
 
 
 def workspace_dir(name: str) -> str:
