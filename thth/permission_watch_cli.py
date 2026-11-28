@@ -84,6 +84,9 @@ def cmd_keepalive(args) -> int:
     else:
         for row in result["results"]:
             detail = row.get("error") or row.get("reason") or ""
+            if row["result"] == "withheld":
+                # 5.34.0: 鍵に権限はあるのに Meta が #100 で出さない（審査前の見込み）。失敗に数えない。
+                detail = "権限は鍵にありますが Meta がこの読みを出しません・審査で Advanced を得る前の見込み・失敗に数えません"
             print(f"{row['account']}: {row['permission']}: {row['result']}" + (f"（{detail}）" if detail else ""))
     return 1 if any(row["result"] == "error" for row in result["results"]) else 0
 

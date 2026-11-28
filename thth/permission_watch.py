@@ -187,6 +187,7 @@ NOTICE_REFUSALS = ("data_access_expired", "duc_overdue", "permission_unused", "d
                    "duc_due_soon", "ads_tier_at_risk", "ads_tier_ready")
 # 最小の読みの結果の符丁と台帳の断り（`thth/refusal_catalog_part3.py`）。
 KEEPALIVE_REFUSALS = ("permission_keepalive_denied", "permission_keepalive_failed", "permission_keepalive_no_target",
+                      "permission_keepalive_withheld",
                       "keepalive_quota_high", "keepalive_tried_today", "keepalive_next_run", "meta_rate_waiting")
 LEDGER_REFUSALS = ("meta_ledger_key_unknown", "meta_ledger_value_invalid", "meta_ledger_unreadable")
 
@@ -329,6 +330,14 @@ def _held(media, token) -> set:
     return expected & set(scopes) if isinstance(scopes, list) else expected
 
 
+def _listed(token) -> set:
+    """`/debug_token` が言った鍵の権限（`scopes_source: response` の一覧だけ・ほかは空）。"""
+    if not isinstance(token, dict) or token.get("scopes_source") != "response":
+        return set()
+    scopes = token.get("scopes")
+    return {s for s in scopes if isinstance(s, str)} if isinstance(scopes, list) else set()
+
+
 def _account_row(name, cfg, now):
     try:
         token = accounts.load_token(cfg, refresh_x=False)
@@ -344,8 +353,8 @@ def _account_row(name, cfg, now):
         # 認可のとき 1 回だけメールを読めた日（値は保存していない・印だけ）。
         _note(found, "auth_email", jst.parse(token.get("email_read_at")))
     return {"name": name, "media": cfg.get("media"), "owner": not accounts.is_invite_account(cfg), "cfg": cfg,
-            "held": _held(cfg.get("media"), token), "found": found, "keepalive": keepalive, "obtained": obtained,
-            "data_access": _data_access(cfg, now)}
+            "held": _held(cfg.get("media"), token), "listed": _listed(token), "found": found, "keepalive": keepalive,
+            "obtained": obtained, "data_access": _data_access(cfg, now)}
 
 
 def _data_access(cfg, now):
@@ -713,9 +722,23 @@ def _error_code(exc) -> str:
     return "permission_keepalive_denied" if denied else "permission_keepalive_failed"
 
 
+# 鍵の一覧（/debug_token）に権限があるのに Meta が #100 で断る読み（5.34.0・11/28 本番: kopicha-ig の
+# threads_business_basic が毎朝 #100 で `thth-meta-keepalive.service` が failed）。審査で Advanced を得る前の
+# 見込み。見張り全体の失敗には数えず、成功にも数えない（`withheld` の行）。
+WITHHELD_CODES = frozenset({100})
+WITHHELD = "permission_keepalive_withheld"
+
+
+def _withheld(row, permission, exc) -> bool:
+    from .adapters import base
+    return (isinstance(exc, base.PermissionMissing) and getattr(exc, "code", None) in WITHHELD_CODES
+            and permission in row.get("listed", ()))
+
+
 def _record(row, permission, error, now) -> None:
+    status = "ok" if not error else "withheld" if error == WITHHELD else "error"
     line = {"account": row["name"], "action": ACTION, "medium": row["media"], "permission": permission,
-            "status": "error" if error else "ok", "error": error}
+            "status": status, "error": error}
     if row["media"] == ADS:
         from .ads import ledger
         runs_mod.append_run(ledger.ensure_state_dir(row["name"]),
@@ -754,7 +777,8 @@ def keepalive(*, now=None, dry_run=False) -> dict:
             results.append({**item, "result": "skipped", "reason": "account_stopped"})
             continue
         except Exception as exc:  # noqa: BLE001 — 1 つの読みで残りを止めない（文は残さず符丁だけ）
-            error = _error_code(exc)
+            error = WITHHELD if _withheld(row, permission, exc) else _error_code(exc)
         _record(row, permission, error, now)
-        results.append({**item, "result": "error" if error else "ok", **({"error": error} if error else {})})
+        result = "ok" if not error else "withheld" if error == WITHHELD else "error"
+        results.append({**item, "result": result, **({"error": error} if error else {})})
     return {"generated_at": jst.iso(now), "dry_run": bool(dry_run), "called": called, "results": results}

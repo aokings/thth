@@ -133,9 +133,11 @@ class PermissionMissing(AdapterError):
     分かっているとき）の順。**不明なら叩く**（判らないことを「無い」にしない）。
     """
 
-    def __init__(self, permission: str, detail: str = ""):
+    def __init__(self, permission: str, detail: str = "", *, code: int | None = None):
         self.permission = permission
         self.detail = detail
+        # 媒体の答えの code（Meta の `error.code`・分かるときだけ）。5.34.0: 権限の見張りが #100 を言い分ける。
+        self.code = code
         super().__init__(not_granted_message(permission, detail))
 
 
@@ -150,8 +152,8 @@ class MessageAccessOff(PermissionMissing):
     `meta_ig_message_access_off` で、正しい直し方を言う。
     """
 
-    def __init__(self, permission: str, detail: str = ""):
-        super().__init__(permission, detail)
+    def __init__(self, permission: str, detail: str = "", *, code: int | None = None):
+        super().__init__(permission, detail, code=code)
         self.args = (f"Instagram の持ち主が外の道具から DM を読むのを止めています（{detail}）",) if detail else \
             ("Instagram の持ち主が外の道具から DM を読むのを止めています",)
 
